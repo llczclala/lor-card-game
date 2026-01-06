@@ -1,0 +1,273 @@
+import type { Keyword } from '../types';
+
+// [修正] 批量导入 36 个关键词图标
+import icon1 from '../image/keyword/01.png';   // Overwhelm
+import icon2 from '../image/keyword/02.png';   // QuickAttack
+import icon3 from '../image/keyword/03.png';   // Regeneration
+import icon4 from '../image/keyword/04.png';   // Elusive
+import icon5 from '../image/keyword/05.png';   // Challenger
+import icon6 from '../image/keyword/06.png';   // Barrier
+import icon7 from '../image/keyword/07.png';   // CantBlock
+import icon8 from '../image/keyword/08.png';   // Lifesteal
+import icon9 from '../image/keyword/09.png';   // Last Breath
+import icon10 from '../image/keyword/10.png'; // Fearsome
+import icon11 from '../image/keyword/11.png'; // Frostbite
+import icon12 from '../image/keyword/12.png'; // Scout
+import icon13 from '../image/keyword/13.png'; // Ephemeral
+import icon14 from '../image/keyword/14.png'; // Stun
+import icon15 from '../image/keyword/15.png'; // Tough
+import icon16 from '../image/keyword/16.png'; // Double Attack
+import icon17 from '../image/keyword/17.png'; // Support
+import icon18 from '../image/keyword/18.png'; // Deadly
+import icon19 from '../image/keyword/19.png'; // SpellShield
+import icon20 from '../image/keyword/20.png'; // Silence
+import icon21 from '../image/keyword/21.png'; // Berserk
+import icon22 from '../image/keyword/22.png'; // Cleave
+import icon23 from '../image/keyword/23.png'; // Thorns
+import icon24 from '../image/keyword/24.png'; // Vanguard
+import icon25 from '../image/keyword/25.png'; // Ambush
+import icon26 from '../image/keyword/26.png'; // Plunder
+import icon27 from '../image/keyword/27.png'; // Exposed
+import icon28 from '../image/keyword/28.png'; // Shroud
+import icon29 from '../image/keyword/29.png'; // Immobile
+import icon30 from '../image/keyword/30.png'; // Reborn
+import icon31 from '../image/keyword/31.png'; // Execute
+import icon32 from '../image/keyword/32.png'; // Sniper
+import icon33 from '../image/keyword/33.png'; // Volatile
+import icon34 from '../image/keyword/34.png'; // Echo
+import icon35 from '../image/keyword/35.png'; // Impact
+import icon36 from '../image/keyword/36.png'; // Channel
+
+export interface KeywordConfig {
+    label: string;
+    description: string;
+    color: string;
+    icon: string; // [新增] 图标路径字段
+}
+
+// 关键词数据库
+export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
+    // --- 1. 进攻性 (Offensive) ---
+    'Overwhelm': {
+        label: '碾压',
+        description: '攻击时，超出阻挡者生命值的伤害会对敌方水晶造成打击。',
+        color: 'red',
+        icon: icon1
+    },
+    'QuickAttack': {
+        label: '先攻',
+        description: '进攻时会先造成伤害。如果击杀阻挡者，则不会受到反击。',
+        color: 'yellow',
+        icon: icon2
+    },
+    'Double Attack': {
+        label: '连击',
+        description: '进攻时打击两次：第一次为先攻，第二次为普通攻击。',
+        color: 'orange',
+        icon: icon16
+    },
+    'Scout': {
+        label: '侦察',
+        description: '每回合首次仅使用侦察单位进攻时，进攻后再次获得进攻机会。',
+        color: 'emerald',
+        icon: icon12
+    },
+    'Challenger': {
+        label: '挑战者',
+        description: '进攻时，可以将敌方单位拖入战场强制阻挡自己。',
+        color: 'orange',
+        icon: icon5
+    },
+    'Fearsome': {
+        label: '凶恶',
+        description: '只能被攻击力 3 或以上的单位阻挡。',
+        color: 'purple',
+        icon: icon10
+    },
+    'Berserk': {
+        label: '狂暴',
+        description: '当该单位击杀敌方单位并存活时，获得 +1/+1。',
+        color: 'rose',
+        icon: icon21
+    },
+    'Cleave': {
+        label: '溅射',
+        description: '进攻时，同时对阻挡者左右相邻的单位造成伤害。',
+        color: 'red',
+        icon: icon22
+    },
+    'Sniper': {
+        label: '狙击',
+        description: '进攻发起时，对阻挡者造成 1 点伤害。',
+        color: 'cyan',
+        icon: icon32
+    },
+    'Impact': {
+        label: '冲击',
+        description: '进攻并打击时，对敌方水晶造成 1 点伤害。',
+        color: 'red',
+        icon: icon35
+    },
+
+    // --- 2. 防御/生存 (Defensive) ---
+    'Regeneration': {
+        label: '再生',
+        description: '回合开始时，生命值完全恢复。',
+        color: 'green',
+        icon: icon3
+    },
+    'Barrier': {
+        label: '屏障',
+        description: '抵挡下一次受到的伤害。持续一回合。',
+        color: 'yellow',
+        icon: icon6
+    },
+    'SpellShield': {
+        label: '魔免',
+        description: '抵挡下一次敌方施放的法术或技能。',
+        color: 'fuchsia',
+        icon: icon19
+    },
+    'Tough': {
+        label: '坚韧',
+        description: '受到的所有伤害减少 1 点。',
+        color: 'slate',
+        icon: icon15
+    },
+    'Lifesteal': {
+        label: '吸血',
+        description: '造成的伤害将治疗我方水晶。',
+        color: 'rose',
+        icon: icon8
+    },
+    'Reborn': {
+        label: '复生',
+        description: '首次死亡时，移除此词条并以 1 点生命值复活。',
+        color: 'amber',
+        icon: icon30
+    },
+    'Thorns': {
+        label: '反伤',
+        description: '受到攻击伤害时，对攻击者造成 1 点伤害。',
+        color: 'lime',
+        icon: icon23
+    },
+    'Shroud': {
+        label: '帷幕',
+        description: '无法被敌方法术或技能指定为目标。',
+        color: 'indigo',
+        icon: icon28
+    },
+
+    // --- 3. 控制/干扰 (Control) ---
+    'Frostbite': {
+        label: '冻结',
+        description: '本回合内将一个单位的攻击力设为 0。',
+        color: 'cyan',
+        icon: icon11
+    },
+    'Stun': {
+        label: '眩晕',
+        description: '将单位移出战斗，且本回合无法攻击或阻挡。',
+        color: 'yellow',
+        icon: icon14
+    },
+    'Silence': {
+        label: '沉默',
+        description: '移除单位的所有关键词、技能文本和增益效果。',
+        color: 'neutral',
+        icon: icon20
+    },
+    'Deadly': {
+        label: '剧毒',
+        description: '造成的任何伤害都会直接消灭目标。',
+        color: 'green',
+        icon: icon18
+    },
+    'Execute': {
+        label: '处决',
+        description: '打击生命值低于自身攻击力的单位时，直接将其消灭。',
+        color: 'red',
+        icon: icon31
+    },
+    'Immobile': {
+        label: '哨兵',
+        description: '无法进攻，也无法格挡。',
+        color: 'stone',
+        icon: icon29
+    },
+
+    // --- 4. 战术/资源 (Tactical) ---
+    'Elusive': {
+        label: '隐秘',
+        description: '只能被拥有隐秘的单位阻挡。',
+        color: 'violet',
+        icon: icon4
+    },
+    'CantBlock': {
+        label: '无法格挡',
+        description: '该单位不能进行格挡。',
+        color: 'gray',
+        icon: icon7
+    },
+    'Last Breath': {
+        label: '亡语',
+        description: '死亡时触发特定效果。',
+        color: 'emerald',
+        icon: icon9
+    },
+    'Support': {
+        label: '支援',
+        description: '进攻时，给予右边的友军增益效果。',
+        color: 'blue',
+        icon: icon17
+    },
+    'Ephemeral': {
+        label: '幻象',
+        description: '打击一次或回合结束时自动死亡。',
+        color: 'purple',
+        icon: icon13
+    },
+    'Vanguard': {
+        label: '先锋',
+        description: '若为本回合打出的第一张牌，触发额外效果。',
+        color: 'amber',
+        icon: icon24
+    },
+    'Ambush': {
+        label: '伏击',
+        description: '若为本回合打出的非第一张牌，触发额外效果。',
+        color: 'zinc',
+        icon: icon25
+    },
+    'Plunder': {
+        label: '劫掠',
+        description: '若本回合已对敌方水晶造成伤害，打出时触发效果。',
+        color: 'yellow',
+        icon: icon26
+    },
+    'Exposed': {
+        label: '暴露',
+        description: '可以被敌方任意单位挑战（强制阻挡）。',
+        color: 'orange',
+        icon: icon27
+    },
+    'Volatile': {
+        label: '瞬逝',
+        description: '回合结束时若未打出，自动从手牌弃置。',
+        color: 'orange',
+        icon: icon33
+    },
+    'Echo': {
+        label: '回响',
+        description: '打出时，在手牌生成一张该牌的瞬逝复制品。',
+        color: 'cyan',
+        icon: icon34
+    },
+    'Channel': {
+        label: '充能',
+        description: '召唤时恢复 1 点法术法力。',
+        color: 'blue',
+        icon: icon36
+    }
+};
