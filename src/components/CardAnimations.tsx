@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
+import { motion, AnimatePresence} from 'framer-motion';
 // 引入必要的图标
 import { Check, RefreshCw, X, ChevronUp } from 'lucide-react';
 import type { CardData } from '../types';

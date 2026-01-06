@@ -1,12 +1,11 @@
 import React from 'react';
-import { Shield, Sword } from 'lucide-react';
+import { Sword } from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
 
 interface BattlefieldProps {
     combatField: {attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy',isChallenged?: boolean}[];
-    phase: string;
-    turnOwner: 'player' | 'enemy';
+
 
     selectedBlockerId: string | null;
     onCombatClick: (fightIndex: number) => void;
@@ -21,7 +20,7 @@ interface BattlefieldProps {
 }
 
 export const Battlefield: React.FC<BattlefieldProps> = ({
-    combatField, phase, turnOwner, selectedBlockerId, onCombatClick, onCardClick, onViewArt,
+    combatField, selectedBlockerId, onCombatClick, onCardClick, onViewArt,
     speakingCardId,
     // [新增] 解构
     selectedChallengerId, onChallengerClick,

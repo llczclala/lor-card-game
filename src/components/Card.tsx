@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Eye, Hexagon, Triangle, Sparkles, ChevronDown, Sword } from 'lucide-react';
+import { Eye, Hexagon, Triangle, Sparkles, ChevronDown} from 'lucide-react';
 // [新增] 引入 Framer Motion
 import { motion } from 'framer-motion';
 import type { CardData, Keyword } from '../types';
@@ -136,7 +136,6 @@ export const Card: React.FC<CardProps> = ({
 
     const isOnBoard = location === 'bench' || location === 'combat' || location === 'enemy_bench';
     const isPreview = location === 'preview';
-    const isDeckBuilder = location === 'deck-builder';
 
     const baseCard = CARD_DB[data.key];
     let basePower = baseCard.power;

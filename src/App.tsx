@@ -153,8 +153,6 @@ export default function App() {
       );
   }, [userSystem.activeDeck]);
 
-  // [新增] 计算当前是否为全卡模式 (Dev Mode)
-  const isDevMode = userSystem.userId.includes('dev_full');
 
   // [新增] 如果用户数据还没加载好，显示简单的加载中
   if (!userSystem.isReady) {
