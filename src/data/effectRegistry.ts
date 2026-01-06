@@ -1,4 +1,3 @@
-import type { CardData, GameState } from '../types';
 /**
  * Snowbreak Rivals - 法术效果注册表
  */

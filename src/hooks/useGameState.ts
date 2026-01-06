@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import type { CardData, GameState, SpellStackItem } from '../types';
 import { createCard, CARD_DB } from '../data/cards';
-import { canAffordCard, calculateNewMana, checkCardLevelUp, getLeveledUpCard } from '../utils/gameRules';
+import {  calculateNewMana,getLeveledUpCard } from '../utils/gameRules';
 import { executeSpellEffect } from '../logic/spells';
-import { calculateCombatOutcome, resolveSingleCombat } from '../logic/combat';
+import { resolveSingleCombat } from '../logic/combat';
 import { calculateRoundStart } from '../logic/core';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { applyRoundStartKeywords } from '../logic/keywords'; // [新增]
@@ -162,7 +162,6 @@ export const useGameState = (initialDeck: string[] = []) => {
         const processDeaths = (
             bench: CardData[],
             setBench: React.Dispatch<React.SetStateAction<CardData[]>>,
-            owner: 'player' | 'enemy'
         ) => {
             const deadUnits: CardData[] = [];
             const livingUnits: CardData[] = [];

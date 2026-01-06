@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Flame, Snowflake, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
+import { X, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import type { CardData } from '../types';
 import { KEYWORD_DB } from '../data/keywords';
 // [新增] 引入故事数据库
@@ -10,7 +10,7 @@ import { ChampionLevelUp } from './ChampionLevelUp';
 export const FullArtOverlay = ({ card, onClose }: { card: CardData, onClose: () => void }) => {
     const [isLoreOpen, setIsLoreOpen] = useState(false);
 
-    const getRegionLabel = (region: string, key: string) => {
+    const getRegionLabel = (region: string) => {
         return region.toUpperCase();
     };
 

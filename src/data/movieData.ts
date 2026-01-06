@@ -14,10 +14,6 @@ import lyfe_win from '../movie/win/里芙_win.mp4';
 // 定义视频类型
 export type MovieType = 'title' | 'levelup' | 'win';
 
-// 视频资源结构
-interface MovieCollection {
-    [key: string]: string[]; // 键名通常是英雄 Key (如 'lyfe') 或 'title'
-}
 
 export const MOVIE_DB = {
     title: [title_bg_1],

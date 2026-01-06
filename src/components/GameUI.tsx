@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Sword, Layers } from 'lucide-react';
 // [修改] 引入 PERSONALIZATION_ASSETS 以获取所有卡背
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
@@ -41,7 +41,7 @@ export const ManaDisplay = ({ current, max, spellMana, label, align }: { current
     </div>
 );
 
-export const NexusDisplay = ({ health, isEnemy, hasToken, damageTaken }: { health: number, isEnemy: boolean, hasToken: boolean, damageTaken?: number }) => {
+export const NexusDisplay = ({ health, isEnemy, damageTaken }: { health: number, isEnemy: boolean, damageTaken?: number }) => {
     const displayHealth = useNumberTicker(health, 1000);
 
     // [修改] 极简设计，只保留数字和进攻令牌

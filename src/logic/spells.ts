@@ -11,13 +11,11 @@ export interface SpellContext {
   enemyBench: CardData[];
   setEnemyBench: React.Dispatch<React.SetStateAction<CardData[]>>;
   triggerShake: () => void;
-  // 增加手牌操作以支持"洗入牌库"模拟
-  setMessage: (msg: string) => void;
 }
 
 // [重构] 通用法术执行器
 export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', targets: any[], ctx: SpellContext) => {
-  const { game, playerBench, enemyBench, setGame, setPlayerBench, setEnemyBench, triggerShake, setMessage } = ctx;
+  const { game, playerBench, enemyBench, setGame, setPlayerBench, setEnemyBench, triggerShake} = ctx;
 
   // 1. 获取卡牌定义 (包含 effects 列表)
   const cardDef = CARD_DB[cardKey];

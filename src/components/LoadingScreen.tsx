@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect} from 'react';
 import { Sword } from 'lucide-react';
 import { HERO_IMAGES } from '../data/imageData';
 // [新增] 引入 CARD_DB 以支持普通单位图片查找

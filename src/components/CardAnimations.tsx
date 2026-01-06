@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence} from 'framer-motion';
 // 引入必要的图标
-import { Check, RefreshCw, X, ChevronUp } from 'lucide-react';
+import { Check, RefreshCw} from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
 import { canAffordCard } from '../utils/gameRules';
@@ -121,7 +121,6 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
 // --- 组件 2: 开局换牌阶段 (Opening Mulligan) ---
 interface OpeningMulliganProps {
     initialHand: CardData[];
-    onReplaceConfirm: (indicesToReplace: number[]) => Promise<void>;
     onComplete: () => void;
     cardBackUrl: string;
     // 状态受控
@@ -133,7 +132,7 @@ interface OpeningMulliganProps {
 
 // --- 组件 2: OpeningMulligan ---
 export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
-    initialHand, onReplaceConfirm, onComplete, cardBackUrl,
+    initialHand,onComplete, cardBackUrl,
     selectedIndices, onToggleIndex, isConfirmed, onReplaceLogic
 }) => {
     const [phase, setPhase] = useState<'enter' | 'select' | 'discard' | 'draw' | 'exit'>('enter');

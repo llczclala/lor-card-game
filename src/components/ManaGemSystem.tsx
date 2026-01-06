@@ -3,7 +3,6 @@ import { MANA_IMAGES } from '../data/imageData';
 
 interface ManaGemSystemProps {
     currentMana: number;
-    maxMana: number;
     spellMana: number;
     previewManaCost: number;
     previewSpellManaCost: number;
@@ -12,7 +11,7 @@ interface ManaGemSystemProps {
 }
 
 export const ManaGemSystem: React.FC<ManaGemSystemProps> = ({
-    currentMana, maxMana, spellMana,
+    currentMana, spellMana,
     previewManaCost, previewSpellManaCost,
     isPlayer, round
 }) => {

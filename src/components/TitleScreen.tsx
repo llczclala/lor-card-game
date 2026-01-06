@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sword, Globe, Dices, UserCircle, Skull, BookOpen, Gamepad2, Swords, ArrowLeft} from 'lucide-react';
+import { Sword,Dices, UserCircle, Skull, BookOpen,Swords, ArrowLeft} from 'lucide-react';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { UI_IMAGES } from '../data/imageData';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -8,24 +8,18 @@ import type { useUserSystem } from '../hooks/useUserSystem';
 
 interface TitleScreenProps {
     onTitleStartClick: () => void;
-    playBgm: (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat') => void;
     mode: 'title' | 'mode_select';
     onPvESelect: () => void;
     onEnterModeSelect: () => void;
-    isDevMode?: boolean;
-    onSwitchProfile?: () => void;
     onBack?: () => void;
     userSystem: ReturnType<typeof useUserSystem>;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
     onTitleStartClick,
-    playBgm,
     mode,
     onPvESelect,
     onEnterModeSelect,
-    isDevMode,
-    onSwitchProfile,
     onBack,
     userSystem // [修复] 在这里解构出 userSystem
 }) => {

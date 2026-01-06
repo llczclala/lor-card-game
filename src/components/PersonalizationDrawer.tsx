@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, Palette } from 'lucide-react';
+import { Palette } from 'lucide-react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 import { StyleSelector } from './StyleSelector';
 
