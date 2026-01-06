@@ -1,56 +1,58 @@
-name: Deploy static content to Pages
+# Simple workflow for deploying static content to GitHub Pages
+name: Deploy to GitHub Pages
 
 on:
-  # 当代码推送到 main 分支时触发
+  # 监听 main 分支的推送事件
   push:
-    branches: ['main']
+    branches: ["main"]
 
   # 允许在 Actions 页面手动触发
   workflow_dispatch:
 
-# 赋予脚本修改 GitHub Pages 的权限
+# 设置权限
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# 防止并发冲突
+# 允许并发部署，但在新部署开始时取消正在进行的部署
 concurrency:
-  group: 'pages'
+  group: "pages"
   cancel-in-progress: true
 
 jobs:
+  # 构建任务
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
   # 部署任务
   deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    needs: build
     steps:
-      - name: Checkout (拉取代码)
-        uses: actions/checkout@v4
-
-      - name: Set up Node (安装环境)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: 'npm'
-
-      - name: Install dependencies (安装依赖)
-        run: npm ci
-
-      - name: Build (打包项目)
-        run: npm run build
-
-      - name: Setup Pages (设置页面)
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact (上传文件)
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # 注意：Vite 默认打包输出文件夹是 dist
-          path: './dist'
-
-      - name: Deploy to GitHub Pages (发布!)
-        id: deployment
+      - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4
+        id: deployment
