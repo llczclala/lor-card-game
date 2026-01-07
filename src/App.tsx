@@ -182,8 +182,6 @@ export default function App() {
             onBack={handleBackToLobby}
 
             userSystem={userSystem}
-            isDevMode={isDevMode}
-            onSwitchProfile={() => userSystem.switchUserMode(isDevMode ? 'starter' : 'full')}
         />
       )}
 

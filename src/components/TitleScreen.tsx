@@ -11,15 +11,12 @@ interface TitleScreenProps {
     mode: 'title' | 'mode_select';
     onPvESelect: () => void;
     onEnterModeSelect: () => void;
-    isDevMode?: boolean;
-    onSwitchProfile?: () => void;
     onBack?: () => void;
     userSystem: ReturnType<typeof useUserSystem>;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
     onTitleStartClick,playBgm,mode,onPvESelect,onEnterModeSelect,
-    isDevMode, onSwitchProfile,
     onBack,userSystem // [修复] 在这里解构出 userSystem
 }) => {
     const [showAccountModal, setShowAccountModal] = useState(false);
