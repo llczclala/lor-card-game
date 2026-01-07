@@ -24,7 +24,7 @@ export const useVoice = () => {
     // 记录当前正在“排队”等待播放的最高优先级语音
     const pendingVoice = useRef<{ card: CardData, src: string, priority: number } | null>(null);
     // 计时器引用
-    const debounceTimer = useRef<any>(null);
+    const debounceTimer = useRef<number | null>(null);
 
 // [新增] 冷却记录 Map: key = "cardId_eventType", value = timestamp
     const cooldownMap = useRef<Map<string, number>>(new Map());

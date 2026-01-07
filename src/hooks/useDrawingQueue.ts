@@ -9,7 +9,7 @@ export const useDrawingQueue = (hand: CardData[], duration: number = 2000) => {
     const seenIds = useRef<Set<string>>(new Set());
 
     // 计时器池：用于组件卸载时清理，防止内存泄漏
-    const timers = useRef<any>(null);
+    const timers = useRef<number[]>([]);
 
     // 卸载清理：只在组件彻底销毁时清除所有计时器
     useEffect(() => {
