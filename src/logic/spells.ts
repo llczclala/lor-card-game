@@ -26,6 +26,7 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
   const cardDef = CARD_DB[cardKey];
   if (!cardDef || !cardDef.effects || cardDef.effects.length === 0) {
       console.warn(`No effects configured for card: ${cardKey}`);
+      if (setMessage) setMessage(`法术 ${cardKey} 无生效效果！`);
       return;
   }
 
@@ -56,7 +57,10 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
       // 处理副作用事件 (Events)
       result.events.forEach(event => {
           if (event.type === 'nexus_damage') triggerShake();
-          if (event.type === 'sfx_strike') { /* 可以在这里触发 eventBus.emit('SFX_STRIKE') */ }
+          if (setMessage && event.type === 'nexus_damage') {
+              setMessage(`法术生效！对敌方水晶造成 ${event.payload.amount} 点伤害`);
+          }
+          if (event.type === 'sfx_strike')
       });
   });
 };

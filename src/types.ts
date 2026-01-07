@@ -1,6 +1,5 @@
 export type Region = 'Lyfe' | 'Fenny' | 'Logistics' | 'TEST';
 export type CardType = 'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow';
-import type { CardData } from './cards';
 // 完整的 36 个关键词定义
 export type Keyword =
     | 'Overwhelm' | 'QuickAttack' | 'Regeneration' | 'Elusive' | 'Challenger' | 'CantBlock'

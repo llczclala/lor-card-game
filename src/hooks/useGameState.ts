@@ -162,6 +162,7 @@ export const useGameState = (initialDeck: string[] = []) => {
         const processDeaths = (
             bench: CardData[],
             setBench: React.Dispatch<React.SetStateAction<CardData[]>>,
+            owner: 'player' | 'enemy'
         ) => {
             const deadUnits: CardData[] = [];
             const livingUnits: CardData[] = [];
@@ -185,8 +186,8 @@ export const useGameState = (initialDeck: string[] = []) => {
 
                 // 2. 广播死亡事件 (触发语音、亡语等)
                 deadUnits.forEach(u => {
-                    console.log(`[DeathCheck] ${u.name} died in bench.`);
-                    eventBus.emit(GameEvents.UNIT_DIE, u);
+                    console.log(`[DeathCheck] ${owner === 'player' ? '玩家' : '敌方'} ${u.name} died in bench.`);
+                    eventBus.emit(GameEvents.UNIT_DIE, { unit: u, owner });
                 });
             }
         };

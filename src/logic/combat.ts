@@ -1,4 +1,4 @@
-import type { CardData, GameState } from '../types';
+import type { CardData, GameState, Keyword } from '../types';
 import { checkCardLevelUp, getLeveledUpCard } from '../utils/gameRules';
 import { calculateCombatInteraction } from './keywords'; // [新增]
 
@@ -9,6 +9,16 @@ export interface SingleCombatResult {
     nexusDamage?: { target: 'player' | 'enemy', amount: number };
     levelUpUpdate?: CardData;
     killedUnits: CardData[];
+}
+
+export interface CombatResult {
+    nextField: { attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy' }[];
+    survivorsPlayer: CardData[];
+    survivorsEnemy: CardData[];
+    playerNexus: number;
+    enemyNexus: number;
+    nexusDmgInfo?: { target: 'player' | 'enemy', amount: number };
+    levelUpCards: CardData[];
 }
 
 // [新增] 计算单个槽位的战斗结果
@@ -119,7 +129,7 @@ export const calculateCombatOutcome = (
         }
         // [新增] 如果屏障破碎，移除关键词
         if (result.attackerBarrierPopped) {
-            newAttacker.keywords = newAttacker.keywords.filter(k => k !== 'Barrier');
+            newAttacker.keywords = newAttacker.keywords.filter((k: Keyword) => k !== 'Barrier');
         }
 
         if (newBlocker) {
@@ -129,7 +139,7 @@ export const calculateCombatOutcome = (
             }
             // [新增] 如果屏障破碎，移除关键词
             if (result.blockerBarrierPopped) {
-                newBlocker.keywords = newBlocker.keywords.filter(k => k !== 'Barrier');
+                newBlocker.keywords = newBlocker.keywords.filter((k: Keyword) => k !== 'Barrier');
             }
         }
 
