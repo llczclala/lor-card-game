@@ -1,4 +1,3 @@
-// 关键修复：添加 type 关键字
 import type { CardData, GameState } from '../types';
 import { checkCardLevelUp, getLeveledUpCard } from '../utils/gameRules';
 import { calculateCombatInteraction } from './keywords'; // [新增]

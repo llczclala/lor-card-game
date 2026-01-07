@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { eventBus, GameEvents } from '../utils/eventBus';
 // 确保使用了 type 导入
-import { VOICE_DB, type VoiceEventType } from '../data/voiceData';
+import { VOICE_DB } from '../data/voiceData';
+import type { VoiceEventType } from '../data/voiceData';
 import type { CardData } from '../types';
 
 // [关键修复] 补全缺失的优先级定义
