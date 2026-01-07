@@ -27,7 +27,7 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
     // --- 英雄专属配置区 ---
 
     // [里芙] 专属动画配置
-    const lyfeVariants = {
+    const lyfeVariants: Variants = {
         initial: { scale: 1, opacity: 1, rotateY: 0, filter: "brightness(1)" },
         // Phase 1: 高速旋转并收缩成光点
         spin: {
