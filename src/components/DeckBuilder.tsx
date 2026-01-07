@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect  } from 'react';
+import React, { useState, useMemo,useEffect} from 'react';
 import { Search, Zap, Shield, LayoutGrid, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ChevronDown } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
 import { Card } from './Card';
@@ -321,7 +321,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         data={card}
                                         location="deck-builder"
                                         isFaceUp={true}
-                                        onViewArt={(c) => setViewCard(c)}
+                                        onViewArt={(c) => setViewCard({...c,id: c.key + '_fullart',strikeCount: 0,damageTaken: 0,buffs: undefined,})}
                                     />
                                 </div>
 
@@ -384,7 +384,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         {/* 下拉卡组列表 */}
                         {showDeckList && (
                             <div className="absolute top-full left-0 w-full bg-slate-800 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto mt-2">
-                                {userSystem.decks.map(d => (
+                                {userSystem.decks.map((d: Deck)=> (
                                     <div
                                         key={d.id}
                                         className="flex items-center justify-between p-3 hover:bg-slate-700 cursor-pointer border-b border-gray-700 last:border-0"
@@ -440,7 +440,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 key={key}
                                 className="relative group bg-gray-800 rounded-md overflow-hidden border border-gray-700 hover:border-blue-500 transition-all cursor-pointer h-12"
                                 onClick={() => removeFromDeck(key)}
-                                onContextMenu={(e) => { e.preventDefault(); setViewCard(card); }}
+                                onContextMenu={(e) => { e.preventDefault(); setViewCard({...card,id: card.key + '_context',strikeCount: 0,damageTaken: 0,buffs: undefined,}); }}
                             >
                                 <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
                                 <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent"></div>
