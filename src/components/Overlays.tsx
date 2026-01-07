@@ -10,7 +10,9 @@ import { ChampionLevelUp } from './ChampionLevelUp';
 export const FullArtOverlay = ({ card, onClose }: { card: CardData, onClose: () => void }) => {
     const [isLoreOpen, setIsLoreOpen] = useState(false);
 
-    const getRegionLabel = (region: string) => {
+    const getRegionLabel = (region: string, key: string) => {
+        if (key.startsWith('test_')) return 'TEST';
+        // 'Lyfe', 'Fenny', 'Logistics' match their display names mostly, just uppercase
         return region.toUpperCase();
     };
 
@@ -93,7 +95,7 @@ export const FullArtOverlay = ({ card, onClose }: { card: CardData, onClose: () 
                     {/* 1. 顶部标题 (居中 + 放大) */}
                     <div className="flex flex-col items-center text-center">
                         <div className="text-sm font-black text-gray-500 uppercase tracking-[0.3em] mb-2 flex items-center gap-3 bg-black/40 px-4 py-1 rounded-full border border-white/5">
-                            <span className={card.region === 'Demacia' ? 'text-yellow-500' : (card.region === 'Noxus' ? 'text-red-500' : 'text-purple-500')}>
+                            <span className={card.region === 'Lyfe' ? 'text-yellow-500' : (card.region === 'Fenny' ? 'text-red-500' : 'text-purple-500')}>
                                 {getRegionLabel(card.region, card.key)}
                             </span>
                             <span className="text-gray-600">|</span>

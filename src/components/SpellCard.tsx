@@ -37,7 +37,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
                  ? 'bg-gradient-to-b from-gray-900 via-blue-950 to-gray-900'
                  : 'bg-gradient-to-b from-gray-900 via-grey-950 to-gray-900'));
 
-    const costColor = data.region === 'Noxus' ? 'bg-red-800 border-red-500' : 'bg-blue-600 border-blue-400';
+    const costColor = data.region === 'Fenny' ? 'bg-red-800 border-red-500' : 'bg-blue-600 border-blue-400';
 
     return (
         <div className={`w-full h-full relative overflow-hidden rounded-2xl border-[4px] ${borderColor} ${bgGradient} flex flex-col items-center pt-6 ${className}`}>
