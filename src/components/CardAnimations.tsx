@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence} from 'framer-motion';
-// 引入必要的图标
-import { Check, RefreshCw} from 'lucide-react';
+import { motion, AnimatePresence,type Variants } from 'framer-motion';
+// 引入必要的图
+import { Check, RefreshCw, X, ChevronUp } from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
 import { canAffordCard } from '../utils/gameRules';
@@ -271,7 +271,7 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                         const trajectory = getDeckTrajectory(index);
                         const isFaceUp = cardFaces[index];
 
-                        const variants = {
+                        const variants: Variants = {
                             // [Enter]: 从牌库飞出 (背面 -> 正面)
                             enter: (i: number) => ({
                                 x: 0, y: 0, scale: 0.8, rotate: 0, opacity: 1,

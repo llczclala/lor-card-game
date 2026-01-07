@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import type { CardData } from '../types';
 import { Card } from './Card';
 import { CARD_DB } from '../data/cards';
@@ -56,7 +56,7 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
     };
 
     // [通用/默认] 动画配置 (用于未配置专属动画的英雄)
-    const defaultVariants = {
+    const defaultVariants: Variants = {
         initial: { scale: 1, opacity: 1, rotateY: 0, filter: "brightness(1)" },
         spin: {
             scale: [1, 1.2, 0],
