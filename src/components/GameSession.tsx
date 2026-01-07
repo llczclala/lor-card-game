@@ -1,7 +1,5 @@
 import React, { useState, useEffect} from 'react';
 import { Clock, Home } from 'lucide-react';
-// [新增] Framer Motion 核心组件
-import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import type { CardData } from '../types';
 import { Card } from './Card';
 import { NexusDisplay, Deck } from './GameUI';
@@ -84,7 +82,6 @@ interface GameSessionProps {
     playBgm: (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat') => void;
     playLevelUpMovie: (heroKey: string, onEnd?: () => void) => void;
     playVictoryMovie: (heroKeys: string[], onEnd?: () => void) => void;
-    stopMovie: (immediate?: boolean) => void;
     // [新增] 接收样式索引
     deskIndex: number;
     cardBackIndex?: number;
@@ -92,7 +89,7 @@ interface GameSessionProps {
 
 export const GameSession: React.FC<GameSessionProps> = ({
     deck, onExit, playBgm,
-    playLevelUpMovie, playVictoryMovie,stopMovie,
+    playLevelUpMovie, playVictoryMovie,
     deskIndex, cardBackIndex = 0 // [新增]
 }) => {
     const {

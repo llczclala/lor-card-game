@@ -24,7 +24,7 @@ export const useVoice = () => {
     // 记录当前正在“排队”等待播放的最高优先级语音
     const pendingVoice = useRef<{ card: CardData, src: string, priority: number } | null>(null);
     // 计时器引用
-    const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+    const debounceTimer = useRef<any>(null);
 
 // [新增] 冷却记录 Map: key = "cardId_eventType", value = timestamp
     const cooldownMap = useRef<Map<string, number>>(new Map());
@@ -117,15 +117,6 @@ export const useVoice = () => {
             playVoice(hero, 'attack_block', 200);
         };
 
-//         // 4. 敌人生成 (Enemy Spawn)
-//         // Payload 应该是新生成的敌方单位
-//         const handleEnemySpawn = (enemyUnit: CardData) => {
-//             // 查找我方场上是否有里芙 (或其他英雄)
-//             // 注意：useVoice 内部没有 store 状态，我们需要 payload 传递上下文，或者依赖外部传入
-//             // 为了简化，我们假设 eventBus 传递了 "reactor" (做出反应的英雄)
-//             // *但在当前架构下，最简单的是在 GameSession 里找到英雄并触发通用事件*
-//             // 这里先预留接口
-//         };
 
         // 5. 击杀敌人
         const handleKill = (hero: CardData) => {

@@ -45,7 +45,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 // 3. 玩家备战席 (用于判断威胁? 这里主要是处理 field 里的 attacker)
 
                 // 遍历每一个战斗槽位进行决策
-                newCombatField.forEach((fight, index) => {
+                newCombatField.forEach((fight) => {
                     const attacker = fight.attacker;
                     if (!attacker) return;
 

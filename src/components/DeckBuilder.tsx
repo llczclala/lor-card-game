@@ -32,7 +32,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const [filterRegion, setFilterRegion] = useState<FilterRegion>('ALL');
     const [searchTerm, setSearchTerm] = useState('');
     const [showDeckList, setShowDeckList] = useState(false); // 控制卡组列表下拉框
-    const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const hoverTimerRef = useRef<any>(null);
 
     // [新增] 监听 activeDeck 变化，同步到本地编辑器
     useEffect(() => {

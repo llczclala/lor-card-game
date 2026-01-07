@@ -107,7 +107,7 @@ export const Card: React.FC<CardProps> = ({
     }, [shouldAnimateDraw, isFaceUp]);
 
 
-    const timerRef = useRef<NodeJS.Timeout | null>(null);
+    const timerRef = useRef<any>(null);
     const isRegenerating = data.animState === 'regenerating';
 
     const safeHealth = (data.health || 0) + (data.buffs?.health || 0);

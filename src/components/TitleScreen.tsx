@@ -16,7 +16,7 @@ interface TitleScreenProps {
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
-    onTitleStartClick,playBgm,mode,onPvESelect,onEnterModeSelect,
+    onTitleStartClick,mode,onPvESelect,onEnterModeSelect,
     onBack,userSystem // [修复] 在这里解构出 userSystem
 }) => {
     const [showAccountModal, setShowAccountModal] = useState(false);
