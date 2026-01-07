@@ -8,6 +8,7 @@ import { FullArtOverlay } from './Overlays';
 import { PersonalizationDrawer } from './PersonalizationDrawer';
 import type { useUserSystem } from '../hooks/useUserSystem';
 import { ArrowLeft } from 'lucide-react'; // [新增]
+import type { Deck } from '../types';
 
 interface DeckBuilderProps {
     onStartGame: (deck: string[]) => void;
