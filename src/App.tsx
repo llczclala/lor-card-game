@@ -20,7 +20,7 @@ export default function App() {
   const [loadingTarget, setLoadingTarget] = useState<AppState>('lobby');
   const [lobbyVideoIndex, setLobbyVideoIndex] = useState(0);
   const userSystem = useUserSystem();
-  const [gameId, setGameId] = useState(0);
+  const [setGameId] = useState(0);
   const { playBgm, stopBgm } = useAudio();
   useSfx();
 
