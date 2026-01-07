@@ -8,7 +8,6 @@ import { FullArtOverlay } from './Overlays';
 import { PersonalizationDrawer } from './PersonalizationDrawer';
 import type { useUserSystem } from '../hooks/useUserSystem';
 import { ArrowLeft } from 'lucide-react'; // [新增]
-import type { Deck } from '../types';
 
 interface DeckBuilderProps {
     onStartGame: (deck: string[]) => void;
@@ -322,7 +321,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         data={card}
                                         location="deck-builder"
                                         isFaceUp={true}
-                                        onViewArt={(c) => setViewCard({...c,id: c.key + '_fullart',strikeCount: 0,damageTaken: 0,buffs: undefined,})}
+                                        onViewArt={(c: Omit<CardData, "id" | "strikeCount" | "animState" | "damageTaken" | "buffs">) => setViewCard({
+                                        ...c,
+                                        id: c.key + '_fullart', // 补全必选 id
+                                        strikeCount: 0, // 补全必选 strikeCount
+                                        animState: 'idle', // 补全可选属性（解决类型缺失）
+                                        damageTaken: 0,
+                                        buffs: undefined,
+                                        })}
                                     />
                                 </div>
 
@@ -385,7 +391,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         {/* 下拉卡组列表 */}
                         {showDeckList && (
                             <div className="absolute top-full left-0 w-full bg-slate-800 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto mt-2">
-                                {userSystem.decks.map((d: Deck)=> (
+                                {userSystem.decks.map((d: {
+                                 id: string;
+                                 name: string;
+                                 hero: string;
+                                 cards: Record<string, number>;
+                                 createdAt: number;
+                                 updatedAt: number;
+                                })=> (
                                     <div
                                         key={d.id}
                                         className="flex items-center justify-between p-3 hover:bg-slate-700 cursor-pointer border-b border-gray-700 last:border-0"
@@ -441,7 +454,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 key={key}
                                 className="relative group bg-gray-800 rounded-md overflow-hidden border border-gray-700 hover:border-blue-500 transition-all cursor-pointer h-12"
                                 onClick={() => removeFromDeck(key)}
-                                onContextMenu={(e) => { e.preventDefault(); setViewCard({...card,id: card.key + '_context',strikeCount: 0,damageTaken: 0,buffs: undefined,}); }}
+                                onContextMenu={(e) => {
+                                  e.preventDefault();
+                                  setViewCard({
+                                    ...card,
+                                    id: card.key + '_context', // 补全必选 id
+                                    strikeCount: 0, // 补全必选 strikeCount
+                                    animState: 'idle', // 补全可选属性（解决类型缺失）
+                                    damageTaken: 0,
+                                    buffs: undefined,
+                                 });
+                                }}
                             >
                                 <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
                                 <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent"></div>

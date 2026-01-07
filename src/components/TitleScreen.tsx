@@ -6,6 +6,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AccountSelectionModal } from './AccountSelectionModal';
 import type { useUserSystem } from '../hooks/useUserSystem';
 
+interface User {
+    uid: string;
+    displayName: string;
+    // 可补充其他属性（如 avatar、createdAt 等，根据实际业务）
+}
+
 interface TitleScreenProps {
     onTitleStartClick: () => void;
     mode: 'title' | 'mode_select';
@@ -36,7 +42,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             // 显示欢迎 Toast
             // 注意：userSystem.switchUser 是同步更新 state，
             // 但 profile 更新需要一点时间，这里我们直接从 list 里找名字显示
-            const targetUser = userSystem.userList.find(u => u.uid === uid);
+            const targetUser = userSystem.userList.find((u: User) => u.uid === uid);
             const name = targetUser ? targetUser.displayName : 'Analyst';
             setWelcomeToast(`欢迎回来, ${name}`);
 

@@ -39,7 +39,11 @@ export const ManaDisplay = ({ current, max, spellMana, label, align }: { current
     </div>
 );
 
-export const NexusDisplay = ({ health, isEnemy, damageTaken }: { health: number, isEnemy: boolean, damageTaken?: number }) => {
+export const NexusDisplay = ({
+                              health,
+                              isEnemy,
+                              damageTaken
+                             }: { health: number, isEnemy: boolean, damageTaken?: number }) => {
     const displayHealth = useNumberTicker(health, 1000);
 
     // [修改] 极简设计，只保留数字和进攻令牌

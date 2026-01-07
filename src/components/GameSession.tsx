@@ -504,6 +504,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     card={game.levelUpCard}
                     onClose={actions.closeLevelUp}
                     onPlayMovie={playLevelUpMovie}
+                    onStopMovie={() => {}}
                 />
             )}
             {(viewCard || game.fullArtCard) && <FullArtOverlay card={viewCard || game.fullArtCard!} onClose={() => setViewCard(null)} />}
@@ -577,7 +578,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     <NexusDisplay
                         health={game.enemyNexus}
                         isEnemy={true}
-                        hasToken={game.attackToken.enemy !== null}
                         damageTaken={game.nexusDamage?.target === 'enemy' ? game.nexusDamage.amount : undefined}
                     />
                 </div>
@@ -606,7 +606,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     <NexusDisplay
                         health={game.playerNexus}
                         isEnemy={false}
-                        hasToken={game.attackToken.player !== null}
                         damageTaken={game.nexusDamage?.target === 'player' ? game.nexusDamage.amount : undefined}
                     />
                 </div>
@@ -751,8 +750,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             }}
                             onViewArt={setViewCard}
                             speakingCardId={speakingCardId}
-                            selectedChallengerId={game.selectedChallengerId}
-                            onChallengerClick={actions.selectChallenger}
                         />
                     </div>
 
@@ -905,10 +902,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     currentMana={displayPlayerMana}
                                     maxMana={game.playerMaxMana}
                                     spellMana={game.playerSpellMana}
-                                    previewManaCost={previewManaCost}
-                                    previewSpellManaCost={previewSpellManaCost}
-                                    isPlayer={true}
-                                    round={game.round}
                                 />
 
                                 {/* 敌方水晶 (上半部分) */}
@@ -917,10 +910,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     currentMana={displayEnemyMana}
                                     maxMana={game.enemyMaxMana}
                                     spellMana={game.enemySpellMana}
-                                    previewManaCost={0}
-                                    previewSpellManaCost={0}
-                                    isPlayer={false}
-                                    round={game.round}
                                 />
                             </div>
                         </div>
