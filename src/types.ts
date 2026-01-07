@@ -94,6 +94,14 @@ export interface GameState {
 }
 // --- [新增] 用户系统相关接口 ---
 
+export interface UserSummary {
+  uid: string; // 用户唯一ID
+  displayName: string; // 用户显示名称
+  avatarId: string; // 头像ID（与 UserProfile 中的 avatarId 类型一致）
+  lastLoginAt: number; // 最后登录时间戳
+  type: 'full' | 'starter'; // 用户模式（全卡/初始卡）
+}
+
 export interface UserProfile {
   uid: string;           // 用户唯一ID
   displayName: string;   // 显示昵称 (如 "分析员#1234")

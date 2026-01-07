@@ -20,7 +20,7 @@ export interface UserSummary {
     type: 'starter' | 'full'; // 标记账户类型
 }
 
-export const generateUUID = (): string => {
+const generateUUID = (): string => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -32,6 +32,9 @@ export const generateUUID = (): string => {
  * 泛型存储工具类
  */
 export const StorageUtils = {
+
+    generateUUID,
+
     save: <T>(key: string, data: T): boolean => {
         try {
             const serialized = JSON.stringify(data);
@@ -67,7 +70,7 @@ export const StorageUtils = {
     getOrCreateUserId: (): string => {
         let uid = localStorage.getItem(STORAGE_KEYS.USER_ID);
         if (!uid) {
-            uid = `guest_${generateUUID()}`;
+            uid = `guest_${StorageUtils.generateUUID()}`;
             localStorage.setItem(STORAGE_KEYS.USER_ID, uid);
         }
         return uid;
@@ -100,3 +103,5 @@ export const StorageUtils = {
         localStorage.setItem(STORAGE_KEYS.USER_INDEX, JSON.stringify(newList));
     }
 };
+
+export { generateUUID };

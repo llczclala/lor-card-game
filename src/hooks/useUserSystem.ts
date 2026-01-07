@@ -8,7 +8,7 @@ import {
     createInitialProfile,
     STARTER_DECK_LYFE
 } from '../data/initialUserData';
-import type { UserProfile, UserSettings, UserCollection, SavedDeck } from '../types';
+import type { UserProfile, UserSettings, UserCollection, SavedDeck, UserSummary } from '../types';
 
 export interface UserSystemState {
     userId: string;
@@ -161,7 +161,7 @@ export const useUserSystem = () => {
         profile.displayName = mode === 'full' ? 'DEVELOPER' : `GUEST-${Date.now().toString().slice(-4)}`;
         StorageUtils.save(`${STORAGE_KEYS.USER_PROFILE}_${newId}`, profile);
 
-        loadUserData(newId, mode, mode === 'full'); // 全卡档强制刷新资产
+        loadUserData(newId, mode); // 全卡档强制刷新资产
     };
 
 
