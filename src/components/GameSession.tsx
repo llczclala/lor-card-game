@@ -94,7 +94,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 }) => {
     const {
         game, setGame,
-        playerHand, enemyHand, setEnemyHand,
+        playerHand,setPlayerHand,enemyHand, setEnemyHand,
         playerBench, setPlayerBench,
         enemyBench, setEnemyBench,
         combatField, setCombatField,
@@ -250,7 +250,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
 
 
-        if (game.spellCasting?.step === 'choose_mode') {
+        if (game.spellCasting) {
             const step = game.spellCasting.step;
             if (step === 'select_ally' && owner === 'player' && location === 'bench') {
                 if (game.spellCasting.cardId.includes('single_combat') || card.name.includes('单挑')) {
@@ -518,7 +518,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         className="fixed inset-0 z-[500] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
                         onClick={() => {
                             eventBus.emit(GameEvents.CANCEL_SPELL);
-                            actions.setGame((prev:any) => ({ ...prev, activeCard: null, spellCasting: null }));
+                            setGame((prev: typeof game) => ({ ...prev, activeCard: null, spellCasting: null }));
                         }}
                     >
                         <div className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-yellow-600 mb-12 drop-shadow-[0_0_10px_rgba(234,179,8,0.5)] tracking-widest">FATE'S CHOICE</div>
@@ -556,7 +556,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     actions.updateSpellCasting(null);
                                     // 这里的逻辑可能需要 useGameState 暴露 cancelSpell 方法，或者手动重置
                                     setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
-                                    setPlayerHand(prev => [...prev, game.activeCard!]); // 卡牌回手
+                                    setPlayerHand((prev: CardData[]) => [...prev, game.activeCard!]); // 卡牌回手
                                 }}
                             >
                         </div>
@@ -635,7 +635,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             {enemyHand.map((c, index) => {
                                 const total = enemyHand.length;
                                 const angle = (index - (total - 1) / 2) * 5;
-                                const translateY = Math.abs(index - (total - 1) / 2) * 2;
                                 const archY = Math.abs(index - (total - 1) / 2) * 5;
                                 return (
                                     <div
@@ -703,7 +702,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             phase={game.phase}
                             turnOwner={game.turnOwner}
                             selectedBlockerId={game.selectedBlockerId}
-                            // [修正] 补全交互逻辑：既能分配(Assign)，也能撤回(Recall)
                             onCombatClick={(i) => {
                                 // 1. 优先判定：是否处于"格挡宣言"阶段且"已选中备战席单位"
                                 // 如果选中了人，点击槽位 = 分配阻挡
