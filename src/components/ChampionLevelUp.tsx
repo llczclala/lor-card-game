@@ -56,7 +56,8 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
     };
 
     // [通用/默认] 动画配置 (用于未配置专属动画的英雄)
-    const defaultConfig = {
+    const defaultVariants = {
+        initial: { scale: 1, opacity: 1, rotateY: 0, filter: "brightness(1)" },
         spin: {
             scale: [1, 1.2, 0],
             opacity: [1, 1, 0],
@@ -68,6 +69,7 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
             transition: { duration: 0.6, ease: "backOut" }
         }
     };
+
 
     // 根据英雄 Key 选择配置
     const variants = card.key === 'lyfe' ? lyfeVariants : defaultVariants;
