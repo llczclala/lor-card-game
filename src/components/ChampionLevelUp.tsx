@@ -18,7 +18,7 @@ interface ChampionLevelUpProps {
  * 英雄升级动画控制器
  * 负责调度：Phase 1 (旋转聚气) -> Phase 2 (播放影片) -> Phase 3 (爆发展示)
  */
-export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete }) => {
+export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete,onStopMovie }) => {
     // 动画阶段：spin (旋转消失) -> video (播放视频) -> burst (爆发出现)
     const [phase, setPhase] = useState<'spin' | 'video' | 'burst'>('spin');
     // [新增] 跳过按钮显示状态
@@ -27,13 +27,14 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
     // --- 英雄专属配置区 ---
 
     // [里芙] 专属动画配置
-    const lyfeConfig = {
+    const lyfeVariants = {
+        initial: { scale: 1, opacity: 1, rotateY: 0, filter: "brightness(1)" },
         // Phase 1: 高速旋转并收缩成光点
         spin: {
-            rotateY: [0, 720, 1080], // 旋转 3 圈
-            scale: [1, 0.8, 0],      // 缩小直至消失
+            rotateY: [0, 720, 1080],
+            scale: [1, 0.8, 0],
             opacity: [1, 1, 0],
-            filter: ["brightness(1)", "brightness(2)", "brightness(10)"], // 变亮成为光球
+            filter: ["brightness(1)", "brightness(2)", "brightness(10)"],
             transition: {
                 duration: 1.5,
                 ease: "easeIn",
@@ -42,14 +43,14 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
         },
         // Phase 3: 从光芒中爆裂而出
         burst: {
-            scale: [0, 1.5, 1.2],    // 放大过冲后回弹
+            scale: [0, 1.5, 1.2],
             opacity: [0, 1, 1],
-            filter: ["brightness(5)", "brightness(1)"], // 光芒消散
-            rotateY: [180, 0],       // 稍微带一点旋转复位
+            filter: ["brightness(5)", "brightness(1)"],
+            rotateY: [180, 0],
             transition: {
                 duration: 0.8,
                 ease: "circOut",
-                delay: 0.1 // 稍微延迟一点等待视频完全黑屏
+                delay: 0.1
             }
         }
     };
@@ -69,7 +70,7 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
     };
 
     // 根据英雄 Key 选择配置
-    const config = card.key === 'lyfe' ? lyfeConfig : defaultConfig;
+    const variants = card.key === 'lyfe' ? lyfeVariants : defaultVariants;
 
     // --- 事件处理 ---
 
@@ -144,13 +145,15 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
             {phase !== 'video' && (
                 <motion.div
                     // 根据阶段应用不同的动画参数
-                    initial={phase === 'spin' ? { scale: 1, opacity: 1 } : { scale: 0, opacity: 0 }}
-                    animate={phase === 'spin' ? config.spin : config.burst}
-                    onAnimationComplete={() => {
-                        if (phase === 'spin') handleSpinComplete();
-                        if (phase === 'burst') handleBurstComplete();
-                    }}
                     className="relative z-50"
+                    variants={variants}
+                    initial="initial"
+                    animate={phase === 'spin' ? 'spin' : 'burst'}
+                    onAnimationComplete={(definition) => {
+                        // Framer Motion 的 onAnimationComplete 会传入当前动画的定义名称
+                        if (definition === 'spin') handleSpinComplete();
+                        if (definition === 'burst') handleBurstComplete();
+                    }}
                 >
                     {/* 这里渲染的是 Level 2 的卡牌数据。
                        在 Spin 阶段，虽然逻辑上是 L1 变 L2，但视觉上旋转很快，直接用 L2 问题不大。
