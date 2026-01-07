@@ -15,11 +15,12 @@ export interface SpellContext {
   setPlayerHand?: React.Dispatch<React.SetStateAction<CardData[]>>;
   enemyHand?: CardData[];
   setEnemyHand?: React.Dispatch<React.SetStateAction<CardData[]>>;
+  setMessage?: React.Dispatch<React.SetStateAction<string>>;
 }
 
 // [重构] 通用法术执行器
 export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', targets: any[], ctx: SpellContext) => {
-  const { game, playerBench, enemyBench, setGame, setPlayerBench, setEnemyBench, triggerShake} = ctx;
+  const { game, playerBench, enemyBench, setGame, setPlayerBench, setEnemyBench, triggerShake, setMessage} = ctx;
 
   // 1. 获取卡牌定义 (包含 effects 列表)
   const cardDef = CARD_DB[cardKey];
