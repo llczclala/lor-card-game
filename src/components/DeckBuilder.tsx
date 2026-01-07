@@ -325,9 +325,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         ...c,
                                         id: c.key + '_fullart', // 补全必选 id
                                         strikeCount: 0, // 补全必选 strikeCount
-                                        animState: 'idle', // 补全可选属性（解决类型缺失）
+                                        animState: 'idle' as const, // 补全可选属性（解决类型缺失）
                                         damageTaken: 0,
-                                        buffs: undefined,
+                                        buffs: { power: 0, health: 0 },
                                         })}
                                     />
                                 </div>
@@ -460,9 +460,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     ...card,
                                     id: card.key + '_context', // 补全必选 id
                                     strikeCount: 0, // 补全必选 strikeCount
-                                    animState: 'idle', // 补全可选属性（解决类型缺失）
+                                    animState: 'idle' as const, // 补全可选属性（解决类型缺失）
                                     damageTaken: 0,
-                                    buffs: undefined,
+                                    buffs: { power: 0, health: 0 },
                                  });
                                 }}
                             >
