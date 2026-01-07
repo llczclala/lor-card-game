@@ -216,13 +216,11 @@ export default function App() {
       {/* 6. 战斗 */}
       {appState === 'game' && (
         <GameSession
-            key={gameId}
             deck={currentPlayerDeckList}
             onExit={handleExitGame} // [Link 7]
             playBgm={playBgm}
             playLevelUpMovie={playLevelUpMovie}
             playVictoryMovie={playVictoryMovie}
-            stopMovie={stopMovie}
             deskIndex={userSystem.settings.customization.currentDeskIndex}
             cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
         />
