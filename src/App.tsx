@@ -20,7 +20,7 @@ export default function App() {
   const [loadingTarget, setLoadingTarget] = useState<AppState>('lobby');
   const [lobbyVideoIndex, setLobbyVideoIndex] = useState(0);
   const userSystem = useUserSystem();
-  const [setGameId] = useState(0);
+  const [gameId, setGameId] = useState(0);
   const { playBgm, stopBgm } = useAudio();
   useSfx();
 
@@ -216,6 +216,7 @@ export default function App() {
       {/* 6. 战斗 */}
       {appState === 'game' && (
         <GameSession
+            key={gameId}
             deck={currentPlayerDeckList}
             onExit={handleExitGame} // [Link 7]
             playBgm={playBgm}
