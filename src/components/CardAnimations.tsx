@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence,type Variants } from 'framer-motion';
 // 引入必要的图
-import { Check, RefreshCw, X, ChevronUp } from 'lucide-react';
+import { Check, RefreshCw} from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
 import { canAffordCard } from '../utils/gameRules';
