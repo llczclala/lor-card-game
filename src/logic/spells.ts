@@ -60,7 +60,7 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
           if (setMessage && event.type === 'nexus_damage') {
               setMessage(`法术生效！对敌方水晶造成 ${event.payload.amount} 点伤害`);
           }
-          if (event.type === 'sfx_strike')
+          if (event.type === 'sfx_strike'){}
       });
   });
 };
