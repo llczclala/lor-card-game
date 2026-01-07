@@ -170,16 +170,10 @@ export default function App() {
         <TitleScreen
             // [修复] 使用新定义的函数名
             onTitleStartClick={handleTitleStart}
-            playBgm={playBgm}
             mode={appState === 'title' ? 'title' : 'mode_select'}
-
-            // [修复] 将 handlePvESelect 同时传给两个 props，确保兼容
             onPvESelect={handlePvESelect}
             onEnterModeSelect={handlePvESelect}
-
-            // [修复] 传入返回大厅的逻辑
             onBack={handleBackToLobby}
-
             userSystem={userSystem}
         />
       )}
