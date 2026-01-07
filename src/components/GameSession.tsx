@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect} from 'react';
 import { Clock, Home } from 'lucide-react';
 // [新增] Framer Motion 核心组件
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import type { CardData } from '../types';
 import { Card } from './Card';
-import { ManaDisplay, NexusDisplay, Deck } from './GameUI';
+import { NexusDisplay, Deck } from './GameUI';
 import { FullArtOverlay, LevelUpOverlay, GameOverScreen } from './Overlays';
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
@@ -16,7 +16,7 @@ import { useVoice } from '../hooks/useVoice';
 import { UI_IMAGES, PERSONALIZATION_ASSETS } from '../data/imageData';
 import { ManaGemSystem } from './ManaGemSystem';
 import { calculateNewMana } from '../utils/gameRules';
-import { getCardBackUrl, getDeskUrl } from '../utils/styleUtils';
+import { getCardBackUrl} from '../utils/styleUtils';
 // [修改] 引用新的 Hook
 import { PlayerHand, OpeningMulligan } from './CardAnimations';
 import { GameAnnouncement } from './GameAnnouncement';
@@ -365,8 +365,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
             const count = mulliganSelected.size;
 
-            const timerText = ` (${mulliganTimeLeft}s)`;
-
             if (count > 0) {
                 // 红色：确认更换
                 return {
@@ -646,12 +644,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         key={c.id}
                                         className="absolute top-0 left-1/2 -ml-[65px] w-[130px] h-[202px] bg-gradient-to-br from-slate-700 to-slate-800 rounded border border-slate-600 shadow-xl origin-center transition-transform duration-500"
                                             style={{
-                                                // [修正4] 变换逻辑：
-                                                // rotate(180 + angle): 顶部朝向玩家
-                                                // translateY(calc(15% + ${archY}px)):
-                                                //    旋转180度后，Y轴向上。
-                                                //    15% 的位移会让卡牌向上浮动一小段，正好露出底部的 ~35% (因为容器本身有下沉)
-                                                //    如果不加 translateY，卡牌会露出一半。
                                                 transform: `translateX(${(index - (total - 1) / 2) * 40}px) rotate(${180 -0.5*angle}deg) translateY(calc(50% + ${archY}px))`,
                                             zIndex: index
                                         }}

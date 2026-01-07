@@ -1,7 +1,6 @@
 import React from 'react';
 import type { CardData } from '../types';
 import { Zap, Clock } from 'lucide-react';
-import { CARD_BORDERS } from '../data/imageData';
 interface SpellCardProps {
     data: CardData;
     className?: string;

@@ -22,7 +22,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     // UI 显隐状态
     const [showUI, setShowUI] = useState(true);
 
-    const { profile, collection, settings } = userSystem;
+    const { profile, collection} = userSystem;
 
     // 获取头像图片 (默认里芙)
     const avatarUrl = profile ? HERO_IMAGES[profile.avatarId as keyof typeof HERO_IMAGES]?.base : HERO_IMAGES['lyfe'].base;

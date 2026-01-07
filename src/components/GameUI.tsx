@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { Sword, Layers } from 'lucide-react';
-// [修改] 引入 PERSONALIZATION_ASSETS 以获取所有卡背
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 
 const useNumberTicker = (targetValue: number, duration: number = 1000) => {
@@ -55,7 +53,6 @@ export const NexusDisplay = ({ health, isEnemy, damageTaken }: { health: number,
             )}
 
             {/* 进攻令牌：现在改为悬浮在数字旁边的小图标 */}
-            {/* (已移除 Sword，交由 GameSession 独立图层处理) */}
 
             {/* 核心数值：纯数字，无背景，适配背景图方框 */}
             <div className={`

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, {useState} from 'react';
 import { X, Check } from 'lucide-react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 
