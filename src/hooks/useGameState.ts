@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import type { CardData, GameState, SpellStackItem } from '../types';
+import type { CardData, GameState, SpellStackItem, CombatFieldItem } from '../types';
 import { createCard, CARD_DB } from '../data/cards';
 import {  calculateNewMana,getLeveledUpCard } from '../utils/gameRules';
 import { executeSpellEffect } from '../logic/spells';
@@ -11,7 +11,7 @@ import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 
-
+const [combatField, setCombatField] = useState<CombatFieldItem[]>([]);
 
 // 1. 接收 initialDeck 参数，默认为空数组
 export const useGameState = (initialDeck: string[] = []) => {
@@ -981,9 +981,6 @@ const startRound = () => {
 
         // 1. 获取要替换的卡牌
         const cardsToReplace = indicesToReplace.map(index => playerHand[index]);
-
-        // 2. 从手牌中移除这些卡
-        const keptCards = playerHand.filter((_, index) => !indicesToReplace.includes(index));
 
         // 3. 将被替换的卡洗回牌库 (简单处理：加到末尾并洗牌，或者随机插入)
         // 这里我们模拟洗牌：先合并，再打乱
