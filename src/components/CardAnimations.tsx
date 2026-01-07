@@ -274,12 +274,11 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                             // [Enter]: 从牌库飞出 (背面 -> 正面)
                             enter: (i: number) => ({
                                 x: 0, y: 0, scale: 0.8, rotate: 0, opacity: 1,
-                                scaleX: [1, 0, 1],
+                                scaleX: 1,
                                 transition: {
                                     delay: i * 0.08,
                                     duration: DURATION, // 0.8s
                                     type: 'spring', damping: 20,
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1] }
                                 }
                             }),
 
@@ -298,34 +297,31 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                                 y: isSelected ? trajectory.y : 0,
                                 scale: isSelected ? 0.2 : 0.8,
                                 opacity: isSelected ? 0 : 1,
-                                scaleX: isSelected ? [1, 0, 1] : 1,
+                                scaleX: isSelected ? 1 : 1,
                                 transition: {
                                     duration: DURATION, // 0.8s
                                     ease: "easeInOut",
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1] }
                                 }
                             },
 
                             // [Draw]: 新卡从牌库飞出 (背面 -> 正面)
                             draw: {
                                 x: 0, y: 0, scale: 0.8, opacity: 1,
-                                scaleX: isSelected ? [1, 0, 1] : 1,
+                                scaleX: isSelected ? 1 : 1,
                                 transition: {
                                     duration: DURATION, // 0.8s
                                     ease: "backOut",
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1] }
                                 }
                             },
 
                             // [Exit]: 全体飞回牌库 (正面 -> 背面)
                             exit: {
                                 x: trajectory.x, y: trajectory.y, scale: 0.2, opacity: 0,
-                                scaleX: [1, 0, 1],
+                                scaleX: 1,
                                 transition: {
                                     duration: DURATION, // 0.8s
                                     ease: "easeInOut",
                                     delay: index * 0.05,
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1], delay: index * 0.05 }
                                 }
                             }
                         };
@@ -349,7 +345,24 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                                     custom={index}
                                     variants={variants}
                                     initial={getInitial()}
-                                    animate={phase}
+                                    animate={{
+                                             ...variants[phase as keyof typeof variants],
+                                             scaleX: (() => {
+                                                              if (phase === 'enter') return [1, 0, 1];
+                                                              if (phase === 'discard' && isSelected) return [1, 0, 1];
+                                                              if (phase === 'draw' && isSelected) return [1, 0, 1];
+                                                              if (phase === 'exit') return [1, 0, 1];
+                                                              return 1;
+                                             })(),
+                                             transition: {
+                                                             ...variants[phase as keyof typeof variants].transition,
+                                                             scaleX: {
+                                                                      duration: DURATION,
+                                                                      times: [0, 0.5, 1],
+                                                                      delay: phase === 'enter' ? index * 0.08 : (phase === 'exit' ? index * 0.05 : 0)
+                                                             }
+                                             }
+                                    }}
                                 >
                                     {/* 选中高亮框 */}
                                     {isSelected && phase === 'select' && (
