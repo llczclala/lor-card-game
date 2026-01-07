@@ -902,6 +902,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     currentMana={displayPlayerMana}
                                     maxMana={game.playerMaxMana}
                                     spellMana={game.playerSpellMana}
+                                    previewManaCost={previewManaCost}
+                                    previewSpellManaCost={previewSpellManaCost}
+                                    isPlayer={true}
+                                    round={game.round}
                                 />
 
                                 {/* 敌方水晶 (上半部分) */}
@@ -910,6 +914,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     currentMana={displayEnemyMana}
                                     maxMana={game.enemyMaxMana}
                                     spellMana={game.enemySpellMana}
+                                    previewManaCost={0}
+                                    previewSpellManaCost={0}
+                                    isPlayer={false}
+                                    round={game.round}
                                 />
                             </div>
                         </div>
