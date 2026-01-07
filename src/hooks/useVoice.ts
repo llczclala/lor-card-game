@@ -30,67 +30,76 @@ export const useVoice = () => {
     const cooldownMap = useRef<Map<string, number>>(new Map());
     // 播放语音的核心函数 (新版：防抖 + 择优播放)
     const playVoice = (card: CardData, type: VoiceEventType, cooldown: number = 3000) => {
-        if (!card || !card.isChampion) return;
+        const heroVoiceConfig = VOICE_DB[card.key];
+        if (!heroVoiceConfig) return;
+        let src = '';
+        if (type === 'attack_block') {
+            // 随机选一个
+            const list = heroVoiceConfig.attack_block || [];
+            if (list.length > 0) src = list[Math.floor(Math.random() * list.length)];
+        } else if (type === 'kill') {
+            // 随机选一个
+            const list = heroVoiceConfig.kill || [];
+            if (list.length > 0) src = list[Math.floor(Math.random() * list.length)];
+        } else if (type === 'enemy_spawn') {
+            const list = heroVoiceConfig.enemy_spawn || [];
+             if (list.length > 0) src = list[Math.floor(Math.random() * list.length)];
+        } else {
+            src = (heroVoiceConfig as any)[type];
+        }
+
+        if (!src) return;
 
         // [新增] 冷却检查：同一张卡牌的同类型语音，2秒内只触发一次
         const cooldownKey = `${card.id}_${eventType}`;
         const now = Date.now();
         const lastTime = cooldownMap.current.get(cooldownKey) || 0;
-        if (now - lastTime < 2000) return;
+        if (now - lastTime < cooldown) {
+            return; // 冷却中，跳过
+        }
+                // 3. 检查优先级 (Priority Check)
+        // 规则：只有比当前正在播放的语音优先级更高，才能打断
+        // 或者当前没有在播放
+        const newPriority = PRIORITY_MAP[type];
+        const currentPriority = audioRef.current && !audioRef.current.paused
+            ? (audioRef.current as any)._priority || 0
+            : 0;
 
-        const heroConfig = VOICE_DB[card.key];
-        if (!heroConfig) return;
-
-        const clips = heroConfig[eventType];
-        if (!clips || clips.length === 0) return;
-
-        const priority = PRIORITY_MAP[eventType] || 0;
-        const src = clips[Math.floor(Math.random() * clips.length)];
-
-        // 1. 如果当前正在播放更高优先级的语音，直接忽略新请求 (保持“低不打断高”)
-        if (audioRef.current && !audioRef.current.paused && (audioRef.current as any)._priority > priority) {
-            return;
+        if (newPriority < currentPriority) {
+            return; // 优先级不够，忽略
         }
 
-        // 2. 更新缓冲区：如果新语音优先级 >= 缓冲区里的，则替换缓冲区
-        if (!pendingVoice.current || priority >= pendingVoice.current.priority) {
-            pendingVoice.current = { card, src, priority };
+        if (debounceTimer.current) {
+            clearTimeout(debounceTimer.current);
         }
 
-        // 3. 重置计时器 (防抖：100ms 内如果有新事件，会重新计时)
-        // 100ms 足够覆盖“同时发生”的逻辑事件 (如击杀+胜利)，但对玩家来说几乎是瞬时的
-        if (debounceTimer.current) clearTimeout(debounceTimer.current);
-
-        debounceTimer.current = setTimeout(() => {
-            if (!pendingVoice.current) return;
-
-            const { card: targetCard, src: targetSrc, priority: targetPriority } = pendingVoice.current;
-
-            // 真正开始播放
+        debounceTimer.current = window.setTimeout(() => {
             if (audioRef.current) {
                 audioRef.current.pause();
-                setSpeakingCardId(null);
+                audioRef.current.currentTime = 0;
             }
 
-            const audio = new Audio(targetSrc);
-            audio.volume = 0.8;
-            // 标记这个 Audio 的优先级，供步骤 1 判断
-            (audio as any)._priority = targetPriority;
-            audioRef.current = audio;
+            const audio = new Audio(src);
+            audio.volume = 1.0; // 语音音量
+            (audio as any)._priority = newPriority; // 挂载优先级属性 hack
 
-            setSpeakingCardId(targetCard.id);
+            // UI 联动：显示气泡
+            setSpeakingCardId(card.id);
 
-            const cleanup = () => setSpeakingCardId(null);
-            audio.onended = cleanup;
-            audio.onerror = cleanup;
+            audio.onended = () => {
+                setSpeakingCardId(null);
+                audioRef.current = null;
+            };
 
             audio.play().catch(e => console.warn("Voice play failed", e));
+            audioRef.current = audio;
 
-            // 清理缓冲区
-            pendingVoice.current = null;
-            debounceTimer.current = null;
-        }, 100);
+            // 更新冷却
+            cooldownMap.current.set(cooldownKey, now);
+
+        }, 50);
     };
+
 
     useEffect(() => {
         // --- 事件监听处理 ---
@@ -100,27 +109,36 @@ export const useVoice = () => {
 
         // 2. 单位阵亡
         const handleUnitDie = (unit: CardData) => {
-            // [修正] 移除了不存在的 allyDiedThisRound 设置
             if (unit.isChampion) {
-                playVoice(unit, 'die');
+                // [修复] 传递 cooldown 参数
+                playVoice(unit, 'die', 0); // 死亡语音无冷却
             }
         };
 
         // 3. 打出卡牌 (登场) - [修改] 统一为普通登场
         const handlePlayCard = (card: CardData) => {
-            if (!card.type.includes('unit')) return;
-            playVoice(card, 'play', 300);
+            if (card.isChampion) {
+                playVoice(card, 'play');
+            }
         };
 
         // [新增] 英雄首次进攻/格挡
         const handleHeroFirstAction = (hero: CardData) => {
-            playVoice(hero, 'attack_block', 200);
+            // [修复] 传递 cooldown 参数
+            playVoice(hero, 'attack_block', 5000);
         };
 
 
         // 5. 击杀敌人
         const handleKill = (hero: CardData) => {
-            playVoice(hero, 'kill', 200);
+             // 击杀语音优先级较高
+             playVoice(hero, 'kill');
+        };
+
+        // 4. 敌人生成 (Enemy Spawn)
+        const handleEnemySpawn = (enemyUnit: CardData) => {
+             const mockLyfe = { key: 'lyfe', id: 'voice_trigger_lyfe' } as CardData;
+             playVoice(mockLyfe, 'enemy_spawn');
         };
 
 
@@ -137,6 +155,7 @@ export const useVoice = () => {
         const handleVictory = (survivingHeroes: CardData[]) => {
             if (survivingHeroes.length > 0) {
                 // 让第一个活着的英雄说话
+                // [修复] 传递 cooldown 参数
                 playVoice(survivingHeroes[0], 'victory', 1000);
             }
         };
@@ -158,6 +177,8 @@ export const useVoice = () => {
             eventBus.off(GameEvents.UNIT_KILL, handleKill);
             eventBus.off(GameEvents.SPELL_CHOICE, handleSpellChoice);
             eventBus.off(GameEvents.GAME_VICTORY, handleVictory);
+
+            if (debounceTimer.current) clearTimeout(debounceTimer.current);
         };
     }, []);
 
