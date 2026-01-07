@@ -47,7 +47,7 @@ export const useVoice = () => {
         if (!src) return;
 
         // [新增] 冷却检查：同一张卡牌的同类型语音，2秒内只触发一次
-        const cooldownKey = `${card.id}_${eventType}`;
+        const cooldownKey = `${card.id}_${VoiceEventType}`;
         const now = Date.now();
         const lastTime = cooldownMap.current.get(cooldownKey) || 0;
         if (now - lastTime < cooldown) {
