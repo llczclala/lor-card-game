@@ -19,10 +19,6 @@ const PRIORITY_MAP: Record<VoiceEventType, number> = {
 export const useVoice = () => {
     const [speakingCardId, setSpeakingCardId] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
-
-    // [修改] 移除 currentPriority (旧逻辑)，改为 buffer 逻辑
-    // 记录当前正在“排队”等待播放的最高优先级语音
-    const pendingVoice = useRef<{ card: CardData, src: string, priority: number } | null>(null);
     // 计时器引用
     const debounceTimer = useRef<number | null>(null);
 
@@ -133,12 +129,6 @@ export const useVoice = () => {
         const handleKill = (hero: CardData) => {
              // 击杀语音优先级较高
              playVoice(hero, 'kill');
-        };
-
-        // 4. 敌人生成 (Enemy Spawn)
-        const handleEnemySpawn = (enemyUnit: CardData) => {
-             const mockLyfe = { key: 'lyfe', id: 'voice_trigger_lyfe' } as CardData;
-             playVoice(mockLyfe, 'enemy_spawn');
         };
 
 
