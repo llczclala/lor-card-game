@@ -26,7 +26,7 @@ export const useGameState = (initialDeck: string[] = []) => {
         turnOwner: 'player',
         consecutivePasses: 0,
         spellCasting: null,
-        spellStack: [],
+        spellStack: [] as SpellStackItem[],
         activeCard: null,
         selectedBlockerId: null,
         selectedChallengerId: null, // [新增]
@@ -101,11 +101,15 @@ export const useGameState = (initialDeck: string[] = []) => {
                     return {
                         ...spellData,
                         id: card.id,
+                        key: spellData.key || card.key,
+                        strikeCount: card.strikeCount || 0,
+                        damageTaken: card.damageTaken || 0,
+                        buffs: card.buffs || { power: 0, health: 0 },
                         associatedChampionKey: card.key,
-                        animState: 'transform',
+                        animState: 'transform' as const,
                         isTransformed: true, // 标记：我是变形来的
                         originalBaseKey: card.key
-                    } as any;
+                    } as CardData;
                 }
 
                 // --- 情况 B: 法术 -> 英雄 ---
@@ -124,7 +128,13 @@ export const useGameState = (initialDeck: string[] = []) => {
                     return {
                         ...championData,
                         id: card.id,
-                        animState: 'transform'
+                        strikeCount: championData.strikeCount || 0,
+                        damageTaken: championData.damageTaken || 0,
+                        buffs: championData.buffs || { power: 0, health: 0 },
+                        animState: 'transform' as const,
+                        maxHealth: championData.maxHealth || championData.health,
+                        isChampion: championData.isChampion || true,
+                        level: championData.level || 1
                     } as CardData;
                 }
 
@@ -275,7 +285,7 @@ const startRound = () => {
             ...currentGameState,
             ...nextRoundBase,
             spellCasting: null,
-            spellStack: [],
+            spellStack: [] as SpellStackItem[],
             selectedBlockerId: null,
             nexusDamage: undefined,
             lastActionTimestamp: Date.now()
@@ -330,7 +340,10 @@ const startRound = () => {
 
         // 6. [统一提交] 将最终计算好的状态一次性写入 React State
         // 移除了所有的 setTimeout，消除了竞态条件
-        setGame(tempGame);
+        setGame(prev => ({
+        ...prev,
+        ...tempGame
+        }));
         setPlayerBench(tempPBench);
         setEnemyBench(tempEBench);
 
@@ -606,14 +619,14 @@ const startRound = () => {
 
         finalField.forEach(f => {
             if (f.attacker.health > 0) {
-                const unit = { ...f.attacker, animState: 'idle', damageTaken: 0 };
-                if (f.owner === 'player') survivorsP.push(unit as any);
-                else survivorsE.push(unit as any);
+                const unit = { ...f.attacker, animState: 'idle' as const, damageTaken: 0,strikeCount: f.attacker.strikeCount || 0,buffs: f.attacker.buffs || { power: 0, health: 0 },maxHealth: f.attacker.maxHealth || f.attacker.health};
+                if (f.owner === 'player') survivorsP.push(unit);
+                else survivorsE.push(unit);
             }
             if (f.blocker && f.blocker.health > 0) {
-                const unit = { ...f.blocker, animState: 'idle', damageTaken: 0 };
-                if (f.owner === 'player') survivorsE.push(unit as any);
-                else survivorsP.push(unit as any);
+                const unit = { ...f.blocker, animState: 'idle', damageTaken: 0,strikeCount: f.blocker.strikeCount || 0,buffs: f.blocker.buffs || { power: 0, health: 0 },maxHealth: f.blocker.maxHealth || f.blocker.health};
+                if (f.owner === 'player') survivorsE.push(unit);
+                else survivorsP.push(unit);
             }
         });
 
