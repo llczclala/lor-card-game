@@ -50,7 +50,7 @@ export const resolveSingleCombat = (
     // 3. 溢出伤害或直接攻击
     if (interaction.nexusDamage > 0) {
         nexusDmgInfo = {
-            target: owner === 'player' ? 'enemy' : 'player',
+            target: (owner === 'player' ? 'enemy' : 'player') as 'player' | 'enemy',
             amount: interaction.nexusDamage
         };
     }
