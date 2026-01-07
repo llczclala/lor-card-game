@@ -153,7 +153,6 @@ export default function App() {
       ) as string[];
   }, [userSystem.activeDeck]);
 
-  const isDevMode = userSystem.userId.includes('dev_full');
 
 
   // [新增] 如果用户数据还没加载好，显示简单的加载中
