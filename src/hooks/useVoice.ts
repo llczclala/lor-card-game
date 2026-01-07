@@ -29,7 +29,7 @@ export const useVoice = () => {
 // [新增] 冷却记录 Map: key = "cardId_eventType", value = timestamp
     const cooldownMap = useRef<Map<string, number>>(new Map());
     // 播放语音的核心函数 (新版：防抖 + 择优播放)
-    const playVoice = (card: CardData | undefined, eventType: VoiceEventType) => {
+    const playVoice = (card: CardData, type: VoiceEventType, cooldown: number = 3000) => {
         if (!card || !card.isChampion) return;
 
         // [新增] 冷却检查：同一张卡牌的同类型语音，2秒内只触发一次
