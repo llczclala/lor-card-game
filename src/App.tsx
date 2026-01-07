@@ -78,7 +78,7 @@ export default function App() {
 
   // 5. [DeckBuilder -> Loading]
   // 构筑完成点击 "START GAME" 触发
-  const handleStartGame = (deck: string[]) => {
+  const handleStartGame = ( ) => {
     setAppState('loading');
     stopMovie();
   };
@@ -167,12 +167,11 @@ export default function App() {
       {/* 1. 标题体系 */}
       {(appState === 'title' || appState === 'mode_select') && (
         <TitleScreen
-            onTitleStartClick={handleTitleStart} // [Link 1]
+            onTitleStartClick={handleStartPvE}
             playBgm={playBgm}
             mode={appState === 'title' ? 'title' : 'mode_select'}
-            onPvESelect={handlePvESelect}       // [Link 4]
-            onEnterModeSelect={handlePvESelect}
-            onBack={handleBackToLobby}
+            onPvESelect={handleEnterModeSelect}
+            onBack={() => setAppState('lobby')}
             userSystem={userSystem}
         />
       )}

@@ -32,8 +32,6 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const [filterRegion, setFilterRegion] = useState<FilterRegion>('ALL');
     const [searchTerm, setSearchTerm] = useState('');
     const [showDeckList, setShowDeckList] = useState(false); // 控制卡组列表下拉框
-    // [新增] 悬停预览状态
-    const [hoveredDeckCard, setHoveredDeckCard] = useState<string | null>(null);
     const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // [新增] 监听 activeDeck 变化，同步到本地编辑器
