@@ -11,6 +11,10 @@ export interface SpellContext {
   enemyBench: CardData[];
   setEnemyBench: React.Dispatch<React.SetStateAction<CardData[]>>;
   triggerShake: () => void;
+  playerHand?: CardData[]; // 可选属性（避免修改所有传参）
+  setPlayerHand?: React.Dispatch<React.SetStateAction<CardData[]>>;
+  enemyHand?: CardData[];
+  setEnemyHand?: React.Dispatch<React.SetStateAction<CardData[]>>;
 }
 
 // [重构] 通用法术执行器

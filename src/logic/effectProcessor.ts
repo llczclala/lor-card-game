@@ -2,7 +2,6 @@ import type { CardData, GameState } from '../types';
 // [关键修复] 将值导入和类型导入分开
 import { EFFECT_DB } from '../data/effectRegistry';
 import { createCard } from '../data/cards';
-import type { CardData, GameState } from '../types'; // 确保导入 CardData
 /**
  * 上下文接口：描述执行法术时所需的全部游戏状态
  */

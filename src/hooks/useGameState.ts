@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { CardData, GameState, SpellStackItem, CombatFieldItem } from '../types';
 import { createCard, CARD_DB } from '../data/cards';
-import {  calculateNewMana,getLeveledUpCard } from '../utils/gameRules';
+import { calculateNewMana,getLeveledUpCard } from '../utils/gameRules';
 import { executeSpellEffect } from '../logic/spells';
 import { resolveSingleCombat } from '../logic/combat';
 import { calculateRoundStart } from '../logic/core';
@@ -11,7 +11,7 @@ import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 
-const [combatField, setCombatField] = useState<CombatFieldItem[]>([]);
+
 
 // 1. 接收 initialDeck 参数，默认为空数组
 export const useGameState = (initialDeck: string[] = []) => {
@@ -47,7 +47,7 @@ export const useGameState = (initialDeck: string[] = []) => {
     const [enemyHand, setEnemyHand] = useState<CardData[]>([]);
     const [playerBench, setPlayerBench] = useState<CardData[]>([]);
     const [enemyBench, setEnemyBench] = useState<CardData[]>([]);
-    const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy'}[]>([]);
+    const [combatField, setCombatField] = useState<CombatFieldItem[]>([]);
 
     // 新增：记录胜利时存活的英雄 Key，用于播放对应的胜利 CG
     const [winningHeroKeys, setWinningHeroKeys] = useState<string[]>([]);
