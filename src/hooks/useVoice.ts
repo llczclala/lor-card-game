@@ -48,7 +48,7 @@ export const useVoice = () => {
         if (!src) return;
 
         // [新增] 冷却检查：同一张卡牌的同类型语音，2秒内只触发一次
-        const cooldownKey = `${card.id}_${VoiceEventType}`;
+        const cooldownKey = `${card.id}_${type}`;
         const now = Date.now();
         const lastTime = cooldownMap.current.get(cooldownKey) || 0;
         if (now - lastTime < cooldown) {
@@ -162,7 +162,7 @@ export const useVoice = () => {
 
         return () => {
             eventBus.off(GameEvents.ROUND_START, handleRoundStart);
-            eventBus.on(GameEvents.HERO_FIRST_ACTION, handleHeroFirstAction);
+            eventBus.off(GameEvents.HERO_FIRST_ACTION, handleHeroFirstAction);
             eventBus.off(GameEvents.UNIT_DIE, handleUnitDie);
             eventBus.off(GameEvents.PLAY_CARD_VOICE, handlePlayCard);
             eventBus.off(GameEvents.UNIT_KILL, handleKill);
