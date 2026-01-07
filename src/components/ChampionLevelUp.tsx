@@ -72,7 +72,7 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
 
 
     // 根据英雄 Key 选择配置
-    const variants: Variants = card.key === 'lyfe' ? lyfeVariants : defaultVariants;
+    const variants = card.key === 'lyfe' ? lyfeVariants : defaultVariants;
 
     // --- 事件处理 ---
 
@@ -148,7 +148,7 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
                 <motion.div
                     // 根据阶段应用不同的动画参数
                     className="relative z-50"
-                    variants={variants: Variants}
+                    variants={variants}
                     initial="initial"
                     animate={phase === 'spin' ? 'spin' : 'burst'}
                     onAnimationComplete={(definition) => {
