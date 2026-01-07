@@ -321,14 +321,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         data={card}
                                         location="deck-builder"
                                         isFaceUp={true}
-                                        onViewArt={(c: Omit<CardData, "id" | "strikeCount" | "animState" | "damageTaken" | "buffs">) => setViewCard({
+                                        onViewArt={(c) => {const fullCard: CardData = {
                                         ...c,
                                         id: c.key + '_fullart', // 补全必选 id
                                         strikeCount: 0, // 补全必选 strikeCount
                                         animState: 'idle' as const, // 补全可选属性（解决类型缺失）
                                         damageTaken: 0,
                                         buffs: { power: 0, health: 0 },
-                                        }as CardData)}
+                                        };
+                                        setViewCard(fullCard);
+                                        }}
                                     />
                                 </div>
 
@@ -456,14 +458,15 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 onClick={() => removeFromDeck(key)}
                                 onContextMenu={(e) => {
                                   e.preventDefault();
-                                  setViewCard({
+                                  const fullCard: CardData = {
                                     ...card,
                                     id: card.key + '_context', // 补全必选 id
                                     strikeCount: 0, // 补全必选 strikeCount
                                     animState: 'idle' as const, // 补全可选属性（解决类型缺失）
                                     damageTaken: 0,
                                     buffs: { power: 0, health: 0 },
-                                 }as CardData);
+                                 };
+                                 setViewCard(fullCard);
                                 }}
                             >
                                 <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
