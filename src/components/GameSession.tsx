@@ -84,6 +84,7 @@ interface GameSessionProps {
     playBgm: (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat') => void;
     playLevelUpMovie: (heroKey: string, onEnd?: () => void) => void;
     playVictoryMovie: (heroKeys: string[], onEnd?: () => void) => void;
+    stopMovie: (immediate?: boolean) => void;
     // [新增] 接收样式索引
     deskIndex: number;
     cardBackIndex?: number;
@@ -91,7 +92,7 @@ interface GameSessionProps {
 
 export const GameSession: React.FC<GameSessionProps> = ({
     deck, onExit, playBgm,
-    playLevelUpMovie, playVictoryMovie,
+    playLevelUpMovie, playVictoryMovie,stopMovie,
     deskIndex, cardBackIndex = 0 // [新增]
 }) => {
     const {
