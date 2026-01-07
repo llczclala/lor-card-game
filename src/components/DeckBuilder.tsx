@@ -328,7 +328,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         animState: 'idle' as const, // 补全可选属性（解决类型缺失）
                                         damageTaken: 0,
                                         buffs: { power: 0, health: 0 },
-                                        })}
+                                        }as CardData)}
                                     />
                                 </div>
 
@@ -463,7 +463,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     animState: 'idle' as const, // 补全可选属性（解决类型缺失）
                                     damageTaken: 0,
                                     buffs: { power: 0, health: 0 },
-                                 });
+                                 }as CardData);
                                 }}
                             >
                                 <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
