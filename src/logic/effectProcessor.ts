@@ -1,5 +1,4 @@
 import type { CardData, GameState } from '../types';
-// [关键修复] 将值导入和类型导入分开
 import { EFFECT_DB } from '../data/effectRegistry';
 import { createCard } from '../data/cards';
 /**
@@ -12,6 +11,11 @@ export interface EffectContext {
     playerHand: CardData[];
     enemyHand: CardData[];
     owner: 'player' | 'enemy'; // 施法者是谁
+}
+
+export interface EffectParams {
+    value?: number;
+    relatedCardKey?: string; // 新增该属性，匹配代码中的使用
 }
 
 /**
@@ -44,9 +48,10 @@ export const validateTargets = (effectId: string, targets: any[]): boolean => {
     // 计算需要手动选择的目标总数
     // 排除掉 'ALL' (全体), 'SELF' (自身), 'NEXUS' (水晶) 等自动目标
     const requiredCount = effect.targetRequirements.reduce((sum, req) => {
-        if (req.count === 'ALL') return sum;
+        if (typeof req.count === 'string' && req.count === 'ALL') return sum;
         if (['SELF', 'PLAYER_NEXUS', 'ENEMY_NEXUS', 'PLAYER_DECK', 'ENEMY_DECK'].includes(req.type)) return sum;
-        return sum + req.count;
+        const count = typeof req.count === 'number' ? req.count : 0;
+        return sum + count;
     }, 0);
 
     // 如果不需要目标，targets 应该为空 (或忽略)
@@ -95,7 +100,7 @@ export const processEffect = (
                 finalTargets.push({ type: context.owner === 'player' ? 'player_nexus' : 'enemy_nexus' });
             }
             // SELF 目标
-            else if (req.type === 'SELF') {
+            else if (String(req.type) === 'SELF') {
                 // 寻找持有该效果的卡牌 ID (需要在 context 中传递 sourceId，这里暂时略过或由调用方处理)
             }
         });
@@ -186,9 +191,9 @@ export const processEffect = (
         }
 
         case 'SUMMON': {
-            const cardKey = effect.params.relatedCardKey;
+            const cardKey = (effect.params as EffectParams).relatedCardKey;
             if (cardKey) {
-                const newCard = createCard(cardKey, context.owner);
+                const newCard = createCard(cardKey);
                 if (context.owner === 'player') {
                     if (nextPlayerBench.length < 6) nextPlayerBench.push(newCard);
                 } else {
