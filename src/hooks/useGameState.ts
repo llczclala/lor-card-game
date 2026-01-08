@@ -203,11 +203,8 @@ export const useGameState = (initialDeck: string[] = []) => {
             }
         };
 
-        // 分别检查双方备战席
-        // 注意：战斗区(CombatField)的死亡由 resolveCombatAnimation 独立处理，这里只管备战席
-        // 如果需要法术能击杀战斗区单位并在结算前移除，需要更复杂的逻辑，但通常备战席击杀是主要痛点
-        if (playerBench.length > 0) processDeaths(playerBench, setPlayerBench, 'player');
-        if (enemyBench.length > 0) processDeaths(enemyBench, setEnemyBench, 'enemy');
+        if (playerBench.length > 0) processDeaths(playerBench, setPlayerBench);
+        if (enemyBench.length > 0) processDeaths(enemyBench, setEnemyBench);
 
     }, [playerBench, enemyBench]); // 依赖于备战席变化
 
