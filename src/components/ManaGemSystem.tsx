@@ -3,6 +3,7 @@ import { MANA_IMAGES } from '../data/imageData';
 
 interface ManaGemSystemProps {
     currentMana: number;
+    maxMana: number;
     spellMana: number;
     previewManaCost: number;
     previewSpellManaCost: number;

@@ -9,6 +9,7 @@ interface BattlefieldProps {
 
     selectedBlockerId: string | null;
     onCombatClick: (fightIndex: number) => void;
+    phase: string;
     onCardClick: (card: CardData, location: string, owner: string) => void;
     onViewArt: (card: CardData) => void;
     speakingCardId: string | null;
