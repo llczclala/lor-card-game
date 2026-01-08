@@ -11,9 +11,9 @@ import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 
+// [修复 A] 显式断言类型
 const createFullCard = (key: string): CardData => {
     const base = createCard(key);
-    // createCard 现在只返回静态数据 (Omit<...>)，我们需要补全运行时数据
     return {
         ...base,
         id: Math.random().toString(36).substr(2, 9),
@@ -21,12 +21,14 @@ const createFullCard = (key: string): CardData => {
         animState: 'idle',
         damageTaken: 0,
         buffs: { power: 0, health: 0 }
-    };
+    } as CardData;
 };
 
 // 1. 接收 initialDeck 参数，默认为空数组
 export const useGameState = (initialDeck: string[] = []) => {
     // --- 1. 状态定义 ---
+    const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
+
     const [game, setGame] = useState<GameState>({
         playerMana: 0, playerMaxMana: 0, playerSpellMana: 0,
         enemyMana: 0, enemyMaxMana: 0, enemySpellMana: 0,
@@ -58,7 +60,6 @@ export const useGameState = (initialDeck: string[] = []) => {
     const [enemyHand, setEnemyHand] = useState<CardData[]>([]);
     const [playerBench, setPlayerBench] = useState<CardData[]>([]);
     const [enemyBench, setEnemyBench] = useState<CardData[]>([]);
-    const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
 
     // 新增：记录胜利时存活的英雄 Key，用于播放对应的胜利 CG
     const [winningHeroKeys, setWinningHeroKeys] = useState<string[]>([]);
@@ -222,20 +223,14 @@ export const useGameState = (initialDeck: string[] = []) => {
         if (delay > 0) await wait(delay);
 
         for (let i = 0; i < count; i++) {
-            // 1. 从 Ref 中获取最新的牌库快照
-            // 由于每次循环都有 wait(800)，React 渲染有足够时间更新 Ref，因此这里取到的是安全的最新值
             const currentDeck = owner === 'player' ? stateRef.current.playerDeck : stateRef.current.enemyDeck;
-
-            // 牌库空处理
             if (currentDeck.length === 0) {
                 if (owner === 'player') {
                     setMessage("牌库已空！");
                 } else {
-                    // 敌方无牌可抽时生成一张新兵 (无限资源兜底)
                     const token = createCard('soldier');
                     setEnemyHand(prev => [...prev, token]);
                 }
-                // 即使没抽到牌，也等待一下保持节奏，或者 continue
                 if (i < count - 1) await wait(800);
                 continue;
             }

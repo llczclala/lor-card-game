@@ -750,7 +750,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             }}
                             onViewArt={setViewCard}
                             speakingCardId={speakingCardId}
-                            selectedChallengerId={selectedChallengerId}
+                            selectedChallengerId={game.selectedChallengerId}
                             onChallengerClick={actions.selectChallenger}
                             cardBackUrl={currentCardBackUrl}
                         />
