@@ -17,6 +17,14 @@ interface DeckBuilderProps {
 
 type FilterRegion = 'ALL' | 'LYFE' | 'FENNY' | 'LOGISTICS' | 'TEST';
 
+const toFullCardData = (staticData: any): CardData => ({
+    ...staticData,
+    id: 'preview_id', // 虚拟 ID
+    strikeCount: 0,
+    animState: 'idle',
+    damageTaken: 0,
+    buffs: { power: 0, health: 0 }
+});
 
 export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     onStartGame,
@@ -310,27 +318,21 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         // [新增] 如果该卡未拥有，显示锁定样式
                         const isLocked = ownedCount === 0;
 
+                        const fullCard = toFullCardData(card);
+
+
                         return (
                             <div
                                 key={card.key}
                                 className={`group relative transition-all duration-300 ${isLocked ? 'opacity-50 grayscale' : 'hover:scale-105 hover:z-10'}`}
-                                onContextMenu={(e) => { e.preventDefault(); setViewCard(card); }}
+                                onContextMenu={(e) => { e.preventDefault(); setViewCard(fullCard); }}
                             >
                                 <div onClick={() => !isLocked && addToDeck(card.key)}>
                                     <Card
-                                        data={card}
+                                        data={fullCard} // 使用 fullCard
                                         location="deck-builder"
                                         isFaceUp={true}
-                                        onViewArt={(c) => {const fullCard: CardData = {
-                                        ...c,
-                                        id: c.key + '_fullart', // 补全必选 id
-                                        strikeCount: 0, // 补全必选 strikeCount
-                                        animState: 'idle' as const, // 补全可选属性（解决类型缺失）
-                                        damageTaken: 0,
-                                        buffs: { power: 0, health: 0 },
-                                        };
-                                        setViewCard(fullCard);
-                                        }}
+                                        onViewArt={(c) => setViewCard(c)}
                                     />
                                 </div>
 
@@ -451,23 +453,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         // 兜底：防止 deleted cards 报错
                         if (!card) return null;
 
+                        const fullCard = toFullCardData(card);
+
                         return (
                             <div
                                 key={key}
                                 className="relative group bg-gray-800 rounded-md overflow-hidden border border-gray-700 hover:border-blue-500 transition-all cursor-pointer h-12"
                                 onClick={() => removeFromDeck(key)}
-                                onContextMenu={(e) => {
-                                  e.preventDefault();
-                                  const fullCard: CardData = {
-                                    ...card,
-                                    id: card.key + '_context', // 补全必选 id
-                                    strikeCount: 0, // 补全必选 strikeCount
-                                    animState: 'idle' as const, // 补全可选属性（解决类型缺失）
-                                    damageTaken: 0,
-                                    buffs: { power: 0, health: 0 },
-                                 };
-                                 setViewCard(fullCard);
-                                }}
+                                onContextMenu={(e) => { e.preventDefault(); setViewCard(fullCard); }}
                             >
                                 <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
                                 <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent"></div>
