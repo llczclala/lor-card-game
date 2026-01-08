@@ -81,7 +81,10 @@ export const NexusDisplay = ({
 };
 
 // [修改] 牌库组件：接收 cardBackIndex
-export const Deck = ({ isEnemy, cardBackIndex = 0 }: { isEnemy?: boolean, cardBackIndex?: number }) => {
+export const Deck = ({
+                      // @ts-ignore: TS6133 - isEnemy is used in GameSession.tsx but not here
+                      isEnemy,
+                      cardBackIndex = 0 }: { isEnemy?: boolean, cardBackIndex?: number }) => {
     // 获取对应的卡背图片，如果索引无效则回退到默认(0)
     const cardBackImg = PERSONALIZATION_ASSETS.cardBacks[cardBackIndex] || PERSONALIZATION_ASSETS.cardBacks[0];
 
