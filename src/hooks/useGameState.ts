@@ -11,9 +11,11 @@ import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 
-// [修复 A] 显式断言类型
+// [修复 A] 显式断言类型，并确保 createCard 返回的是 Partial CardData 或正确的基类
 const createFullCard = (key: string): CardData => {
     const base = createCard(key);
+    // 强制断言 base 为 Partial<CardData> 以便与后续属性合并
+    // 或者直接构建完整对象并断言为 CardData
     return {
         ...base,
         id: Math.random().toString(36).substr(2, 9),
@@ -85,10 +87,102 @@ export const useGameState = (initialDeck: string[] = []) => {
         stateRefs.current = { game, playerBench, enemyBench, combatField, playerHand, enemyHand };
     }, [game, playerBench, enemyBench, combatField, playerHand, enemyHand]);
 
+    useEffect(() => {
+        if (!initializedRef.current) {
+            setPlayerHand([]);
+            setEnemyHand([]);
+
+            let pDeck: CardData[] = [];
+            if (initialDeck.length > 0) {
+                pDeck = initialDeck.map(key => createFullCard(key)); // 使用 createFullCard
+            } else {
+                pDeck = [createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('test_unit_01'), createFullCard('test_unit_01')];
+            }
+            pDeck = pDeck.sort(() => Math.random() - 0.5);
+
+            let eDeck = Array(40).fill(null).map(() => createFullCard(Math.random() > 0.5 ? 'fenny' : 'Dream_Guardians_Squad-Martina')); // 使用 createFullCard
+
+            const pHand = pDeck.splice(0, 4);
+
+            setTimeout(() => {
+                setPlayerHand(pHand);
+                setPlayerDeck(pDeck);
+                setEnemyHand([]);
+                setEnemyDeck(eDeck);
+                // 启动第一回合逻辑移交给了 useEffect(game.round)
+            }, 500);
+
+            initializedRef.current = true;
+        }
+    }, []);
+
+    useEffect(() => {
+        // 只有当回合数变化时才检查
+        if (game.round > 0) {
+            const timer = setTimeout(() => {
+                const currentGame = stateRefs.current.game;
+                const currentPBench = stateRefs.current.playerBench;
+                const currentEBench = stateRefs.current.enemyBench;
+
+                let tempGame = { ...currentGame };
+                let tempPBench = [...currentPBench];
+                let tempEBench = [...currentEBench];
+                let hasEffectTriggered = false;
+
+                const scanAndApply = (units: CardData[], owner: 'player' | 'enemy') => {
+                    units.forEach(unit => {
+                        if (unit.effects) {
+                            unit.effects.forEach(effId => {
+                                const def = EFFECT_DB[effId];
+                                // 检查时机：ROUND_START
+                                if (def && def.timing === 'ROUND_START') {
+                                    const ctx: EffectContext = {
+                                        game: tempGame,
+                                        playerBench: tempPBench,
+                                        enemyBench: tempEBench,
+                                        playerHand: [],
+                                        enemyHand: [],
+                                        owner
+                                    };
+
+                                    const targets: any[] = [];
+                                    if (def.targetRequirements.some(r => r.type.includes('NEXUS'))) {
+                                        targets.push({ type: owner === 'player' ? 'player_nexus' : 'enemy_nexus' });
+                                    }
+
+                                    const res = processEffect(effId, targets, ctx);
+                                    tempGame = res.game;
+                                    tempPBench = res.playerBench;
+                                    tempEBench = res.enemyBench;
+                                    hasEffectTriggered = true;
+
+                                    if (res.events.some(e => e.type === 'gain_token')) {
+                                        setMessage(`${unit.name} 发动：获得进攻机会！`);
+                                    }
+                                }
+                            });
+                        }
+                    });
+                };
+
+                scanAndApply(currentPBench, 'player');
+                scanAndApply(currentEBench, 'enemy');
+
+                if (hasEffectTriggered) {
+                    setGame(tempGame);
+                    setPlayerBench(tempPBench);
+                    setEnemyBench(tempEBench);
+                } else {
+                    setMessage(`第 ${currentGame.round} 回合开始`);
+                }
+            }, 100);
+
+            return () => clearTimeout(timer);
+        }
+    }, [game.round]);
+
+
     // --- 2. 英雄卡变形逻辑 (Champion Spell Transformation) ---
-    // [修正] 实时变形逻辑
-    // 1. 增加了 playerHand 依赖，确保抽到牌瞬间就能响应
-    // 2. 增加了 isTransformed 标记，区分"原生法术"和"变形法术"
     useEffect(() => {
         // 通用变形处理函数
         const processHandTransformation = (
@@ -117,7 +211,7 @@ export const useGameState = (initialDeck: string[] = []) => {
                         animState: 'transform',
                         isTransformed: true, // 标记：我是变形来的
                         originalBaseKey: card.key
-                    } as any;
+                    } as unknown as CardData;
                 }
 
                 // --- 情况 B: 法术 -> 英雄 ---
@@ -218,26 +312,19 @@ export const useGameState = (initialDeck: string[] = []) => {
     // [重构] 序列化抽卡：利用 Ref 分离读写，彻底修复 StrictMode 下的双重调用 Bug
     const drawCards = async (count: number, owner: 'player' | 'enemy', delay: number = 0) => {
         if (delay > 0) await wait(delay);
-
         for (let i = 0; i < count; i++) {
             const currentDeck = owner === 'player' ? stateRef.current.playerDeck : stateRef.current.enemyDeck;
             if (currentDeck.length === 0) {
-                if (owner === 'player') {
-                    setMessage("牌库已空！");
-                } else {
-                    const token = createCard('soldier');
+                if (owner === 'player') setMessage("牌库已空！");
+                 else {
+                    const token = createFullCard('soldier');
                     setEnemyHand(prev => [...prev, token]);
                 }
                 if (i < count - 1) await wait(800);
                 continue;
             }
-
-            // 2. 取出顶端卡牌 (逻辑计算)
             const cardToDraw = currentDeck[0];
             const newDeck = currentDeck.slice(1);
-
-            // 3. 分别更新牌库和手牌 (解耦更新)
-            // 这样 setDeck 和 setHand 互不干扰，不会因为 StrictMode 执行两次而导致副作用叠加
             if (owner === 'player') {
                 setPlayerDeck(newDeck);
                 setPlayerHand(prev => [...prev, cardToDraw]);
@@ -245,8 +332,6 @@ export const useGameState = (initialDeck: string[] = []) => {
                 setEnemyDeck(newDeck);
                 setEnemyHand(prev => [...prev, cardToDraw]);
             }
-
-            // [关键] 每张卡之间间隔 800ms，确保上一张飞出来后，下一张才动
             if (i < count - 1) await wait(2250);
         }
     };
@@ -254,25 +339,14 @@ export const useGameState = (initialDeck: string[] = []) => {
 const startRound = () => {
         heroActionHistory.current.clear();
         eventBus.emit(GameEvents.ROUND_START);
-
-        // 1. 获取当前状态快照
         const currentGameState = stateRef.current.game;
-
-        // 2. [同步计算] 核心数值 (Round, Mana, Token)
-        // 直接计算出下一回合的基准状态，不依赖 setGame 的异步更新
         const nextRoundBase = calculateRoundStart(currentGameState);
-
-        // 3. [同步计算] 备战席关键词 (再生、移除屏障)
         const removeBarrier = (cards: CardData[]) => cards.map(c => ({
             ...c,
             keywords: c.keywords.filter(k => k !== 'Barrier')
         }));
-
         const nextPlayerBench = applyRoundStartKeywords(removeBarrier(stateRef.current.playerBench));
         const nextEnemyBench = applyRoundStartKeywords(removeBarrier(stateRef.current.enemyBench));
-
-        // 4. 构建这一刻的"临时游戏世界" (Context)
-        // 这代表了"回合刚刚开始，所有数值已重置，但法术还没触发"的瞬间
         let tempGame = {
             ...currentGameState,
             ...nextRoundBase,
@@ -282,177 +356,48 @@ const startRound = () => {
             nexusDamage: undefined,
             lastActionTimestamp: Date.now()
         };
-        let tempPBench = [...nextPlayerBench];
-        let tempEBench = [...nextEnemyBench];
-        let hasEffectTriggered = false;
-
-        // 5. 扫描并执行 ROUND_START 效果 (如里芙 L2)
-        // 现在 context 里的 tempGame 已经是新回合的状态了(例如 token='enemy')
-        // 所以里芙的效果逻辑 (if_enemy_has_token) 能正确判断出敌人有 token
-        const scanAndApply = (units: CardData[], owner: 'player' | 'enemy') => {
-            units.forEach(unit => {
-                if (unit.effects) {
-                    unit.effects.forEach(effId => {
-                        const def = EFFECT_DB[effId];
-                        if (def && def.timing === 'ROUND_START') {
-                            const ctx: EffectContext = {
-                                game: tempGame, // 传入最新的临时状态
-                                playerBench: tempPBench,
-                                enemyBench: tempEBench,
-                                playerHand: stateRef.current.playerHand,
-                                enemyHand: stateRef.current.enemyHand,
-                                owner
-                            };
-
-                            const targets: any[] = [];
-                            if (def.targetRequirements.some(r => r.type.includes('NEXUS'))) {
-                                targets.push({ type: owner === 'player' ? 'player_nexus' : 'enemy_nexus' });
-                            }
-
-                            const res = processEffect(effId, targets, ctx);
-
-                            // 累加状态变更
-                            tempGame = res.game;
-                            tempPBench = res.playerBench;
-                            tempEBench = res.enemyBench;
-                            hasEffectTriggered = true;
-
-                            if (res.events.some(e => e.type === 'gain_token')) {
-                                setMessage(`${unit.name} 发动：获得进攻机会！`);
-                            }
-                        }
-                    });
-                }
-            });
-        };
-
-        // 执行扫描
-        scanAndApply(tempPBench, 'player');
-        scanAndApply(tempEBench, 'enemy');
-
-        // 6. [统一提交] 将最终计算好的状态一次性写入 React State
-        // 移除了所有的 setTimeout，消除了竞态条件
-        setGame(tempGame);
-        setPlayerBench(tempPBench);
-        setEnemyBench(tempEBench);
-
-        if (!hasEffectTriggered) {
-            setMessage(`第 ${tempGame.round} 回合开始`);
-        }
-        // 发牌逻辑：从构筑的卡组中洗牌并抽取
-        if (!initializedRef.current) {
-            // [修正] 初始化时不抽卡，只准备牌库
-            // 抽卡动作将由 useGameAnnouncer 在播报"第一回合"时触发
-            setPlayerHand([]);
-            setEnemyHand([]);
-
-            // 1. 构建并洗混玩家卡组
-            let pDeck: CardData[] = [];
-            if (initialDeck.length > 0) {
-                pDeck = initialDeck.map(key => createFullCard(key));
-            } else {
-                pDeck = [createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('soldier'), createFullCard('soldier')];
-            }
-            pDeck = pDeck.sort(() => Math.random() - 0.5);
-
-            // 2. 构建敌方卡组
-            let eDeck = Array(40).fill(null).map(() => createFullCard(Math.random() > 0.5 ? 'fenny' : 'Dream_Guardians_Squad_Martina'));
-
-            // [修改] 玩家开局发4张用于进入换牌阶段(Mulligan)
-            const pHand = pDeck.splice(0, 4);
-
-            // [修正] 敌方开局不发牌，等待玩家换牌结束进入 Round 1 后，再通过 drawCards 统一抽取
-            // const eHand = eDeck.splice(0, 4); <--- 删除
-
-            setTimeout(() => {
-                setPlayerHand(pHand);
-                setPlayerDeck(pDeck);
-                setEnemyHand([]);     // [修正] 敌方手牌初始化为空
-                setEnemyDeck(eDeck);
-            }, 500);
-
-            initializedRef.current = true;
-        } else {
-            // [修正] 回合开始时不再自动抽卡
-            // 这一步也移交给 useGameAnnouncer 在播报"第X回合"时触发
-            // drawCards(1, 'player', 500); <--- 删除
-            // drawCards(1, 'enemy', 500);  <--- 删除
-        }
-
-        // 英雄被动检查 (如里芙)
-        setTimeout(() => {
-        // 获取最新的游戏状态快照 (此时 calculateRoundStart 和 applyRoundStartKeywords 已执行完毕)
-        const currentGame = stateRefs.current.game;
-        const currentPBench = stateRefs.current.playerBench;
-        const currentEBench = stateRefs.current.enemyBench;
-
-        // 构建临时状态链，用于在循环中累加多个效果产生的变更
-        let tempGame = { ...currentGame };
-        let tempPBench = [...currentPBench];
-        let tempEBench = [...currentEBench];
-        let hasEffectTriggered = false;
-
-        // 定义扫描函数：遍历单位，查找并执行时机为 ROUND_START 的法术
-        const scanAndApply = (units: CardData[], owner: 'player' | 'enemy') => {
-            units.forEach(unit => {
-                if (unit.effects) {
-                    unit.effects.forEach(effId => {
-                        const def = EFFECT_DB[effId];
-
-                        // 1. 检查时机：必须是回合开始 (ROUND_START)
-                        if (def && def.timing === 'ROUND_START') {
-
-                            // 2. 构建执行上下文
-                            const ctx: EffectContext = {
-                                game: tempGame,
-                                playerBench: tempPBench,
-                                enemyBench: tempEBench,
-                                playerHand: [], // 回合开始通常不涉及手牌操作
-                                enemyHand: [],
-                                owner
-                            };
-
-                            // 3. 自动构建隐式目标 (针对那些不需要手动选择的目标，如"我方水晶")
-                            const targets: any[] = [];
-                            if (def.targetRequirements.some(r => r.type.includes('NEXUS'))) {
-                                targets.push({ type: owner === 'player' ? 'player_nexus' : 'enemy_nexus' });
-                            }
-                            // 如果有其他自动目标逻辑(如 SELF)，可在此扩展
-
-                            // 4. 调用核心处理器
-                            const res = processEffect(effId, targets, ctx);
-
-                            // 5. 更新临时状态
-                            tempGame = res.game;
-                            tempPBench = res.playerBench;
-                            tempEBench = res.enemyBench;
-                            hasEffectTriggered = true;
-
-                            // 6. 触发反馈 (如里芙发动的提示)
-                            if (res.events.some(e => e.type === 'gain_token')) {
-                                setMessage(`${unit.name} 发动：获得进攻机会！`);
-                            }
-                        }
-                    });
-                }
-            });
-        };
-
-        // 分别扫描我方和敌方备战席
-        scanAndApply(currentPBench, 'player');
-        scanAndApply(currentEBench, 'enemy');
-
-        // 如果有效果触发，统一更新 React 状态
-        if (hasEffectTriggered) {
-            setGame(tempGame);
-            setPlayerBench(tempPBench);
-            setEnemyBench(tempEBench);
-        } else {
-            setMessage(`第 ${currentGame.round} 回合开始`);
-        }
-
-    }, 100);
+        setGame(tempGame as GameState);
+        setPlayerBench(nextPlayerBench);
+        setEnemyBench(nextEnemyBench);
     };
+//         let tempPBench = [...nextPlayerBench];
+//         let tempEBench = [...nextEnemyBench];
+//         let hasEffectTriggered = false;
+//         const scanAndApply = (units: CardData[], owner: 'player' | 'enemy') => {
+//             units.forEach(unit => {
+//                 if (unit.effects) {
+//                     unit.effects.forEach(effId => {
+//                         const def = EFFECT_DB[effId];
+//                         if (def && def.timing === 'ROUND_START') {
+//                             const ctx: EffectContext = {
+//                                 game: tempGame, // 传入最新的临时状态
+//                                 playerBench: tempPBench,
+//                                 enemyBench: tempEBench,
+//                                 playerHand: stateRef.current.playerHand,
+//                                 enemyHand: stateRef.current.enemyHand,
+//                                 owner
+//                             };
+//
+//                             const targets: any[] = [];
+//                             if (def.targetRequirements.some(r => r.type.includes('NEXUS'))) {
+//                                 targets.push({ type: owner === 'player' ? 'player_nexus' : 'enemy_nexus' });
+//                             }
+//
+//                             const res = processEffect(effId, targets, ctx);
+//
+//                             // 累加状态变更
+//                             tempGame = res.game;
+//                             tempPBench = res.playerBench;
+//                             tempEBench = res.enemyBench;
+//                             hasEffectTriggered = true;
+//
+//                             if (res.events.some(e => e.type === 'gain_token')) {
+//                                 setMessage(`${unit.name} 发动：获得进攻机会！`);
+//                             }
+//                         }
+//                     });
+//                 }
+//             });
 
     const resetGame = () => window.location.reload();
 
@@ -461,7 +406,7 @@ const startRound = () => {
     const initiateAttack = () => {
         if (game.phase !== 'main') return;
         if (game.spellStack.length > 0) return;
-        setGame(prev => ({ ...prev, phase: 'attack_declare', turnOwner: 'player', consecutivePasses: 0, lastActionTimestamp: Date.now() }));
+        setGame(prev => ({ ...prev, phase: 'attack_declare' as const, turnOwner: 'player', consecutivePasses: 0, lastActionTimestamp: Date.now() }));
         setMessage("选择进攻单位");
     };
 
@@ -471,28 +416,17 @@ const startRound = () => {
             return;
         }
 
-        // [修改] 移除了此处的 HERO_FIRST_ACTION 触发
         setGame(prev => ({ ...prev, phase: 'block_declare', turnOwner: 'enemy', consecutivePasses: 0, lastActionTimestamp: Date.now() }));
         setMessage("等待格挡...");
     };
 
-    // [重构] 序列化战斗结算
+
     const resolveCombatAnimation = async () => {
-        // 1. 锁定状态
         setGame(prev => ({ ...prev, phase: 'animating' }));
-
-        // 获取战斗队列长度 (注意：循环中要始终读取 ref 中的最新 combatField)
         const totalFights = stateRef.current.combatField.length;
-
-        // 2. 开始循环结算 (从左到右)
         for (let i = 0; i < totalFights; i++) {
-
-            // --- A. 动画阶段 (冲锋) ---
-            // 每次循环重新获取最新的 combatField
             let currentFight = stateRef.current.combatField[i];
             const { attacker, blocker } = currentFight;
-
-            // 设置当前这一对为 'attacking'
             setCombatField(prev => {
                 const n = [...prev];
                 n[i] = {
@@ -520,9 +454,6 @@ const startRound = () => {
 
             // 等待直到撞击发生
             await wait(impactDelay + 150);
-
-            // --- B. 数值结算阶段 (Impact) ---
-            // 使用最新的 game 状态计算（例如 Nexus 血量可能在前一次攻击中变了）
             const gameSnapshot = stateRef.current.game;
             const result = resolveSingleCombat(currentFight, gameSnapshot);
 
@@ -552,8 +483,6 @@ const startRound = () => {
             if (result.levelUpUpdate) {
                 const leveledCard = result.levelUpUpdate;
                 const heroKey = leveledCard.key;
-
-                // 1. 更新全局状态
                 setGame(prev => {
                     // 如果列表里还没有这个英雄，加进去
                     const newLeveledList = prev.leveledChampions.includes(heroKey)
@@ -566,9 +495,6 @@ const startRound = () => {
                         leveledChampions: newLeveledList
                     };
                 });
-
-                // 2. [关键] 广播升级：遍历牌库和手牌，将同名英雄全部升级
-                // 辅助函数：升级列表中的特定英雄
                 const upgradeList = (list: CardData[]) => {
                     return list.map(c => {
                         // 如果是该英雄且还没升级 (Level 1)
@@ -578,23 +504,15 @@ const startRound = () => {
                         return c;
                     });
                 };
-
-                // 立即更新牌库和手牌
                 setPlayerDeck(prev => upgradeList(prev));
                 setPlayerHand(prev => upgradeList(prev));
                 setPlayerBench(prev => upgradeList(prev)); // 备战席的其他同名卡也一起升级
-
-                // [新增] 阻塞等待... (保持不变)
                 await wait(200);
                 while (stateRef.current.game.levelUpCard !== null) {
                     await wait(200);
                 }
             }
-
-            // --- C. 节奏停顿 ---
             await wait(600);
-
-            // 清除伤害飘字，准备下一轮
             setGame(prev => ({ ...prev, nexusDamage: undefined }));
         }
 
@@ -689,7 +607,7 @@ const startRound = () => {
 
         if (card.type === 'spell-burst') {
             executeSpellEffect(card.key, owner, targets, {
-                game, setGame, playerBench, setPlayerBench, enemyBench, setEnemyBench, playerHand, setPlayerHand, triggerShake, setMessage
+                game, setGame, playerBench, setPlayerBench, enemyBench, setEnemyBench, playerHand, setPlayerHand, triggerShake
             });
             // 修复：必须将 phase 重置为 'main'，否则游戏会卡在 animating 状态无法操作
             setGame(prev => ({ ...prev, phase: 'main', lastActionTimestamp: Date.now() }));
@@ -709,8 +627,6 @@ const startRound = () => {
     };
 
     const playCard = (card: CardData, owner: 'player' | 'enemy', targets: any[] = []) => {
-        // --- 技能卡变身/抉择逻辑 ---
-        // 修复：如果是玩家打出且需要抉择（Level 2），则暂停出牌，进入抉择模式
         if (owner === 'player' && card.isLevel2Choice && card.associatedChampionKey) {
             const champKey = card.associatedChampionKey;
             const hasLv2 = playerBench.some(c => c.key === champKey && c.level === 2);
@@ -730,7 +646,7 @@ const startRound = () => {
                 return;
             } else {
                 const targetKey = (champKey === 'lyfe' ? 'lyfe_rush' : 'fenny_strike');
-                const transformed = createCard(targetKey);
+                const transformed = createFullCard(targetKey);
                 card = { ...transformed, id: card.id };
             }
         }
@@ -801,12 +717,6 @@ const startRound = () => {
         const originalCard = game.activeCard;
         // 防御性检查
         if (!originalCard || !game.spellCasting || game.spellCasting.step !== 'choose_mode') return;
-
-        // [新增] 触发抉择语音
-        // 需要传入英雄本体信息，这里假设 originalCard 关联了英雄
-        // 我们通过 originalCard.associatedChampionKey 找到手牌或场上的英雄有点麻烦
-        // 简化处理：传递一个包含 heroKey 的对象，让 useVoice 自己去匹配场上英雄
-        // 或者更简单：我们假设英雄在场，直接发事件
         const heroData = playerBench.find(c => c.key === originalCard.associatedChampionKey);
         if (heroData) {
             eventBus.emit(GameEvents.SPELL_CHOICE, {
@@ -829,7 +739,7 @@ const startRound = () => {
         setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
 
         // 2. 创建新卡并打出
-        const transformed = createCard(targetKey);
+        const transformed = createFullCard(targetKey);
         // 重要：使用原始卡牌的 ID，这样 playCard 里的 filter 才能正确移除手牌里的旧卡
         playCard({ ...transformed, id: originalCard.id }, 'player');
     };
