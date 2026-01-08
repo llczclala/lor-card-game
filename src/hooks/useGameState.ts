@@ -222,9 +222,8 @@ export const useGameState = (initialDeck: string[] = []) => {
                     // 检查该英雄是否已升级
                     let championData = CARD_DB[originalKey];
                     if (leveledChampions.includes(originalKey)) {
-                        championData = getLeveledUpCard(championData);
+                        championData = getLeveledUpCard(championData as CardData);
                     }
-
                     hasChanged = true;
                     // 变回英雄
                     return {
@@ -431,8 +430,8 @@ const startRound = () => {
                 const n = [...prev];
                 n[i] = {
                     ...n[i],
-                    attacker: { ...n[i].attacker, animState: 'attacking' },
-                    blocker: n[i].blocker ? { ...n[i].blocker, animState: 'attacking' } : null
+                    attacker: { ...n[i].attacker, animState: 'attacking' } as CardData,
+                    blocker: n[i].blocker ? { ...n[i].blocker, animState: 'attacking' } as CardData : null
                 };
                 return n;
             });
