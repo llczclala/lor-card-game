@@ -3,13 +3,13 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 
 // 直接引入音效文件
 // 确保文件名完全匹配，包括中文
-import clickSound from '../music/music/点击.mp3';
-import recallSound from '../music/music/撤回.mp3';
-import strikeSound from '../music/music/打击.mp3';
-import nexusStrikeSound from '../music/music/打击水晶.mp3';
-import quickStrikeSound from '../music/music/快攻打击.mp3';
-import quickCounterSound from '../music/music/快攻反击.mp3';
-import startBattleSound from '../music/music/开始战斗.mp3';
+import clickSound from '../music/music/click.mp3';
+import recallSound from '../music/music/recall.mp3';
+import strikeSound from '../music/music/strike.mp3';
+import startBattleSound from '../music/music/battle_start.mp3';
+import nexusStrikeSound from '../music/music/nexus_strike.mp3';
+import quickStrikeSound from '../music/music/quick_strike.mp3';
+import quickCounterSound from '../music/music/quick_counter.mp3';
 
 export const useSfx = () => {
     useEffect(() => {
