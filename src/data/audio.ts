@@ -1,5 +1,5 @@
 // 引入 BGM 文件
-import titleBgm from '../music/bgm/Title_bgm.mp3';
+import titleBgm from '../music/bgm/title_bgm.mp3';
 import defaultBgm from '../music/bgm/defult_bgm.mp3'; // 注意文件名拼写 defult
 import battle1 from '../music/bgm/battle_bgm_1.mp3';
 import battle2 from '../music/bgm/battle_bgm_2.mp3';
