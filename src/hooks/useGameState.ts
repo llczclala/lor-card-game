@@ -11,7 +11,18 @@ import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 
-
+const createFullCard = (key: string): CardData => {
+    const base = createCard(key);
+    // createCard 现在只返回静态数据 (Omit<...>)，我们需要补全运行时数据
+    return {
+        ...base,
+        id: Math.random().toString(36).substr(2, 9),
+        strikeCount: 0,
+        animState: 'idle',
+        damageTaken: 0,
+        buffs: { power: 0, health: 0 }
+    };
+};
 
 // 1. 接收 initialDeck 参数，默认为空数组
 export const useGameState = (initialDeck: string[] = []) => {
@@ -47,7 +58,7 @@ export const useGameState = (initialDeck: string[] = []) => {
     const [enemyHand, setEnemyHand] = useState<CardData[]>([]);
     const [playerBench, setPlayerBench] = useState<CardData[]>([]);
     const [enemyBench, setEnemyBench] = useState<CardData[]>([]);
-    const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy'}[]>([]);
+    const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
 
     // 新增：记录胜利时存活的英雄 Key，用于播放对应的胜利 CG
     const [winningHeroKeys, setWinningHeroKeys] = useState<string[]>([]);
@@ -346,14 +357,14 @@ const startRound = () => {
             // 1. 构建并洗混玩家卡组
             let pDeck: CardData[] = [];
             if (initialDeck.length > 0) {
-                pDeck = initialDeck.map(key => createCard(key));
+                pDeck = initialDeck.map(key => createFullCard(key));
             } else {
-                pDeck = [createCard('lyfe'), createCard('lyfe'), createCard('lyfe'), createCard('soldier'), createCard('soldier')];
+                pDeck = [createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('soldier'), createFullCard('soldier')];
             }
             pDeck = pDeck.sort(() => Math.random() - 0.5);
 
             // 2. 构建敌方卡组
-            let eDeck = Array(40).fill(null).map(() => createCard(Math.random() > 0.5 ? 'fenny' : 'Dream_Guardians_Squad_Martina'));
+            let eDeck = Array(40).fill(null).map(() => createFullCard(Math.random() > 0.5 ? 'fenny' : 'Dream_Guardians_Squad_Martina'));
 
             // [修改] 玩家开局发4张用于进入换牌阶段(Mulligan)
             const pHand = pDeck.splice(0, 4);
