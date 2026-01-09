@@ -10,7 +10,7 @@ export default defineConfig(({ command }) => {
   const isBuild = command === 'build';
 
   return {
-    base: './lor-card-game', // 保持相对路径
+    base: '/lor-card-game/', // 保持相对路径
     plugins: [
       react(),
 
