@@ -25,6 +25,9 @@ export const GameEvents = {
     SFX_QUICK_ATTACK: 'sfx_quick_attack',         // 快攻打击
     SFX_QUICK_BLOCK: 'sfx_quick_block',           // 格挡者反击快攻
 
+    // [新增] 设置类事件 (解决 TS 报错的核心)
+    SET_VOICE_VOLUME: 'set_voice_volume',
+
     UNIT_DIE: 'unit_die',
     UNIT_KILL: 'unit_kill',
     HERO_LEVEL_UP: 'hero_level_up',
@@ -32,6 +35,12 @@ export const GameEvents = {
     GAME_VICTORY: 'game_victory',
     ENEMY_SPAWN: 'enemy_spawn',
     HERO_FIRST_ACTION: 'hero_first_action',         // 敌人登场 (用于触发互动语音)
+
+    GACHA_START_SINGLE: 'gacha_start_single',
+    GACHA_START_TEN: 'gacha_start_ten',
+    GACHA_REVEAL_RARE: 'gacha_reveal_rare',
+    GACHA_REVEAL_COMMON: 'gacha_reveal_common',
+    GACHA_CONVERT: 'gacha_convert',
 } as const;
 
 // 导出类型，方便 TypeScript 提示

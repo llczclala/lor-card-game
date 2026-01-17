@@ -12,23 +12,59 @@ import { CARD_DB } from './data/cards';
 import { useUserSystem } from './hooks/useUserSystem';
 import { SystemLoadingScreen } from './components/SystemLoadingScreen';
 import { GameLobby } from './components/GameLobby';
+import { GachaScreen } from './components/GachaScreen';
+import { SettingsModal } from './components/SettingsModal';
+import { eventBus, GameEvents } from './utils/eventBus';
 
-type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game';
+type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha';
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('title');
-  const [loadingTarget, setLoadingTarget] = useState<AppState>('lobby');
+  const [pendingAppState, setPendingAppState] = useState<AppState | null>(null);
   const [lobbyVideoIndex, setLobbyVideoIndex] = useState(0);
   const userSystem = useUserSystem();
   const [gameId, setGameId] = useState(0);
-  const { playBgm, stopBgm } = useAudio();
-  useSfx();
 
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+
+  const { playBgm, stopBgm, setBgmVolume } = useAudio();
+  const { setSfxVolume } = useSfx();
   const {
       currentMovie, isVisible, isLooping,
       playTitleMovie, playLevelUpMovie, playVictoryMovie, stopMovie,isImmediate,
-      handleVideoEnded,playHallMovie
+      handleVideoEnded,playHallMovie,setMovieVolume
   } = useMovie();
+
+  // --- 初始化同步音量 ---
+  useEffect(() => {
+      if (userSystem.isReady && userSystem.settings) {
+          const v = userSystem.settings.volume;
+          setBgmVolume(v.bgm);
+          setSfxVolume(v.sfx);
+          setMovieVolume(v.movie);
+          setTimeout(() => {
+             eventBus.emit(GameEvents.SET_VOICE_VOLUME, v.voice);
+          }, 500);
+      }
+  }, [userSystem.isReady]);
+
+  // --- 音量变更处理 ---
+  const handleVolumeChange = (type: 'bgm' | 'sfx' | 'voice' | 'movie', value: number) => {
+      if (type === 'bgm') setBgmVolume(value);
+      if (type === 'sfx') setSfxVolume(value);
+      if (type === 'movie') setMovieVolume(value);
+      if (type === 'voice') {
+          eventBus.emit(GameEvents.SET_VOICE_VOLUME, value);
+      }
+
+      userSystem.updateSettings({
+          volume: {
+              ...userSystem.settings.volume,
+              [type]: value
+          }
+      });
+  };
 
   // --- 状态流转控制器 (The Chain of Command) ---
 
@@ -36,43 +72,62 @@ export default function App() {
   const handleTitleStart = () => {
       stopBgm();
       stopMovie();
-      setLoadingTarget('lobby'); // 设定目标为大厅
       setAppState('system_loading');
   };
 
   // 2. [SystemLoading -> Target]
   const handleSystemLoadingComplete = () => {
-      // 根据之前设定的目标跳转
-      setAppState(loadingTarget);
+      playBgm('default');
+
+      // [修正] 检查是否有挂起的目标状态
+      if (pendingAppState) {
+          setAppState(pendingAppState);
+          setPendingAppState(null);
+          // [关键] 如果去备战，不要播放大厅视频，保持 isVisible=false (透明)
+      } else {
+          playHallMovie(); // [关键] 只有去大厅才播放背景视频
+          setAppState('lobby');
+      }
   };
 
   // 3. [Lobby -> ModeSelect]
-  // 大厅点击 "BATTLE" 触发
+  // [恢复] 核心逻辑：从大厅进入模式选择
   const handleLobbyStartBattle = () => {
       setAppState('mode_select');
   };
 
-  // 4. [ModeSelect -> SystemLoading -> DeckBuilder]
-  // [修改] 现在点击 PvE 会先进入加载页
+  // [新增] 大厅 -> 抽卡 (Lobby -> Gacha)
+  const handleLobbyGacha = () => {
+      // 抽卡也算一种“场景切换”，可以走 Loading 也可以不走
+      // 为了流畅体验，这里直接切，因为 GachaScreen 加载很快
+    stopBgm();
+    setPendingAppState('gacha');
+    setAppState('system_loading');
+    stopMovie();
+  };
+
+  // 4. [ModeSelect -> DeckBuilder]
   const handlePvESelect = () => {
-    stopMovie(); // 停止大厅视频
-    stopBgm();   // 停止大厅音乐 (或者你想保留也可以，看设计)
-    setLoadingTarget('deck_builder'); // 设定目标为备战
-    setAppState('system_loading');    // 进入加载
+    stopMovie();
+    stopBgm();
+    // 注意：这里不需要 stopBgm，因为进入 system_loading 后，
+    // handleSystemLoadingComplete 会根据目标状态自动切歌
+    setPendingAppState('deck_builder');
+    setAppState('system_loading');
   };
 
   // --- [新增] 返回导航逻辑 ---
 
   // 备战页返回 -> 模式选择
   const handleBackToModeSelect = () => {
-      // 恢复播放大厅 BGM 和视频 (因为 ModeSelect 共享大厅资源)
       playBgm('default');
-      // 如果之前停止了视频，这里可能需要重新 playHallMovie，useEffect 会处理
+      playHallMovie(); // 重新播放大厅视频
       setAppState('mode_select');
   };
 
   // 模式选择返回 -> 大厅
   const handleBackToLobby = () => {
+      playHallMovie(); // 重新播放大厅视频
       setAppState('lobby');
   };
 
@@ -92,11 +147,13 @@ export default function App() {
 
   // 7. [Game -> Title] (Exit)
   const handleExitGame = () => {
-    setAppState('title');
-    // useEffect 会处理 BGM/Video 的重置
+    stopMovie();
+    stopBgm();
+    setPendingAppState('lobby');   // 告诉系统：加载完去大厅
+    setAppState('system_loading'); // 立即进入加载界面
   };
 
-  // 大厅切换视频逻辑
+  // 背景视频切换
   const handleSwitchLobbyVideo = () => {
       if (playHallMovie) {
           const nextIndex = lobbyVideoIndex + 1;
@@ -104,30 +161,61 @@ export default function App() {
           setLobbyVideoIndex(actualIndex);
       }
   };
+  // 全局 ESC 监听
+  useEffect(() => {
+      const handleGlobalKeyDown = (e: KeyboardEvent) => {
+          if (e.key === 'Escape' && !isSettingsOpen) {
+              eventBus.emit(GameEvents.UI_CLICK);
+              setIsSettingsOpen(true);
+          }
+      };
+      window.addEventListener('keydown', handleGlobalKeyDown);
+      return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [isSettingsOpen]);
+
 
   useEffect(() => {
+    console.log(`[App] State changed to: ${appState}`);
+
     if (appState === 'title') {
       playBgm('title');
       playTitleMovie();
     }
-    // [新增] 大厅状态的处理
     else if (appState === 'lobby') {
-      playBgm('default'); // 播放大厅/备战音乐
-      // 首次进入大厅，随机播放一个视频
+      // 大厅：播放默认 BGM
+      playBgm('default');
       const idx = playHallMovie();
       setLobbyVideoIndex(idx);
     }
-    // [修改] 模式选择状态：保持播放
+    else if (appState === 'gacha') {
+      // [新增] 抽卡界面：播放抽卡 BGM，背景沿用大厅视频
+      playBgm('gacha');
+      // 确保视频继续播放（如果在播放的话）
+      if (!isVisible) playHallMovie();
+    }
     else if (appState === 'mode_select') {
-       // 确保 BGM 是 default
        playBgm('default');
-       // 如果视频断了（比如从构筑退回来），恢复播放当前的大厅视频
        if (!isVisible) {
            playHallMovie(lobbyVideoIndex);
        }
     }
+    else if (appState === 'deck_builder') {
+        // [新增] 备战界面：播放备战 BGM
+        playBgm('deck_builder');
+        stopMovie(); // 备战界面通常不需要视频背景，或者看您设计
+    }
+    else if (appState === 'game') {
+        // 游戏内：BGM 由 GameSession 内部触发 playBgm('battle')，这里不干涉
+        // 这样每次进入 GameSession 都会触发它的 useEffect，从而重新随机
+        // [新增] 进入游戏时，再次广播一下当前的语音音量，确保 GameSession 里的 useVoice 能收到
+        if (userSystem.isReady && userSystem.settings) {
+            setTimeout(() => {
+                eventBus.emit(GameEvents.SET_VOICE_VOLUME, userSystem.settings.volume.voice);
+            }, 500);
+        }
+    }
     else {
-      // 其他状态 (system_loading 会自己处理，这里只管离开 lobby/title 体系的)
+      // system_loading 等其他状态
       if (appState !== 'system_loading') {
           stopMovie();
       }
@@ -163,7 +251,8 @@ export default function App() {
 
   return (
     <div className="relative w-full h-screen bg-slate-950 overflow-hidden">
-      <FullScreenToggle />
+    <FullScreenToggle />
+
 
       {/* 1. 标题体系 */}
       {(appState === 'title' || appState === 'mode_select') && (
@@ -187,11 +276,20 @@ export default function App() {
 
       {/* 3. 游戏大厅 */}
       {appState === 'lobby' && (
-          <GameLobby
+              <GameLobby
+                  userSystem={userSystem}
+                  onStartBattle={handleLobbyStartBattle}
+                  onSwitchVideo={handleSwitchLobbyVideo}
+                  onGachaClick={handleLobbyGacha}
+                  onOpenSettings={() => setIsSettingsOpen(true)}
+              />
+      )}
+
+      {/* [新增] 抽卡界面 */}
+      {appState === 'gacha' && (
+          <GachaScreen
               userSystem={userSystem}
-              onStartBattle={handleLobbyStartBattle} // [Link 3]
-              onSwitchVideo={handleSwitchLobbyVideo}
-              onOpenSettings={() => console.log("Open Settings")}
+              onBack={handleBackToLobby}
           />
       )}
 
@@ -222,18 +320,27 @@ export default function App() {
             playBgm={playBgm}
             playLevelUpMovie={playLevelUpMovie}
             playVictoryMovie={playVictoryMovie}
+            stopMovie={stopMovie}
             deskIndex={userSystem.settings.customization.currentDeskIndex}
             cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
         />
       )}
+      {/* 全局设置面板 */}
+          <SettingsModal
+              isOpen={isSettingsOpen}
+              onClose={() => setIsSettingsOpen(false)}
+              volumes={userSystem.settings.volume}
+              onVolumeChange={handleVolumeChange}
+          />
+
 
       <VideoPlayer
           src={currentMovie}
+          // 简化 isVisible 逻辑：只要 useMovie 说是 true，就是 true
           isVisible={isVisible}
           isLoop={isLooping}
           onEnded={handleVideoEnded}
-          zIndex={(appState === 'title' || appState === 'lobby' || appState === 'mode_select') ? 0 : 500}
-          muted={appState === 'title' || appState === 'lobby' || appState === 'mode_select'}
+          zIndex={(appState === 'title' || appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') ? 0 : 500}
           noFade={isImmediate}
       />
     </div>

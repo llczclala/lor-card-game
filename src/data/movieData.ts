@@ -7,9 +7,8 @@ import hall_bg_2 from '../movie/hall/hall2.mp4';
 import lyfe_levelup from '../movie/level up/里芙_level up.mp4';
 import lyfe_win from '../movie/win/里芙_win.mp4';
 
-// 导入芬妮的视频 (假设未来会有)
-// import fenny_levelup from '../movie/level up/芬妮_level up.mp4';
-// import fenny_win from '../movie/win/芬妮_win.mp4';
+import fenny_levelup from '../movie/level up/芬妮_level up.mp4';
+import fenny_win from '../movie/win/芬妮_win.mp4';
 
 // 定义视频类型
 export type MovieType = 'title' | 'levelup' | 'win';
@@ -18,19 +17,19 @@ export type MovieType = 'title' | 'levelup' | 'win';
 export const MOVIE_DB = {
     title: [title_bg_1],
 
-    // [新增] 大厅视频列表
+    // 大厅视频列表
     hall: [hall_bg_1, hall_bg_2],
 
-    // 升级动画映射 (Key: 英雄ID)
+    // 升级动画映射 (Key: 英雄ID -> 对应 cards.ts 中的 key)
     levelup: {
         lyfe: lyfe_levelup,
-        // fenny: fenny_levelup
+        fenny: fenny_levelup // [修正] 注册芬妮升级视频
     } as Record<string, string>,
 
-    // 胜利动画映射 (Key: 英雄ID)
+    // 胜利动画映射 (Key: 英雄ID -> 视频数组)
     win: {
         lyfe: [lyfe_win],
-        // fenny: [fenny_win]
+        fenny: [fenny_win]   // [修正] 注册芬妮胜利视频
     } as Record<string, string[]>
 };
 
@@ -53,20 +52,17 @@ export const getLevelUpMovie = (heroKey: string): string | null => {
  * 辅助函数：根据在场英雄列表获取随机胜利视频
  */
 export const getVictoryMovie = (heroKeys: string[]): string | null => {
-    // 1. 找出所有有胜利动画的在场英雄
-    const candidates: string[] = [];
-    heroKeys.forEach(key => {
-        const movies = MOVIE_DB.win[key];
-        if (movies && movies.length > 0) {
-            candidates.push(...movies);
-        }
-    });
+    // 1. 筛选出有胜利动画的英雄
+    const availableHeroes = heroKeys.filter(key => MOVIE_DB.win[key] && MOVIE_DB.win[key].length > 0);
 
-    // 2. 如果没有找到，返回 null
-    if (candidates.length === 0) return null;
+    if (availableHeroes.length === 0) return null;
 
-    // 3. 随机选一个
-    return candidates[Math.floor(Math.random() * candidates.length)];
+    // 2. 随机选一个英雄
+    const randomHero = availableHeroes[Math.floor(Math.random() * availableHeroes.length)];
+    const movies = MOVIE_DB.win[randomHero];
+
+    // 3. 随机选该英雄的一个视频
+    return movies[Math.floor(Math.random() * movies.length)];
 };
 
 

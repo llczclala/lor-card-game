@@ -8,6 +8,11 @@ export const useMovie = () => {
     const [isImmediate, setIsImmediate] = useState(false);
     const [onComplete, setOnComplete] = useState<(() => void) | undefined>(undefined);
 
+    const [movieVolume, setMovieVolumeState] = useState(1.0);
+
+    const setMovieVolume = useCallback((vol: number) => {
+        setMovieVolumeState(Math.max(0, Math.min(1, vol)));
+    }, []);
     // 播放标题循环视频
     const playTitleMovie = useCallback(() => {
         const movie = getRandomTitleMovie();
@@ -20,8 +25,6 @@ export const useMovie = () => {
     }, []);
 
     // [新增] 播放大厅视频
-    // 参数 index: 指定播放第几个视频。如果不传，则随机播放。
-    // 返回值: 当前播放视频的索引
     const playHallMovie = useCallback((index?: number) => {
         const movies = getHallMovies();
         if (movies.length === 0) return 0;
@@ -84,9 +87,6 @@ export const useMovie = () => {
             setIsVisible(false);
             // 执行外部回调
             if (onComplete) {
-                // 稍微延迟一下回调，让淡出动画能被看到一点（或者立即回调，看需求）
-                // 你的需求是：影片透明度0->100(淡出画面?其实是遮罩淡入)..这里逻辑由 Overlays 控制更佳
-                // 这里我们简单执行回调
                 onComplete();
             }
         }
@@ -102,6 +102,8 @@ export const useMovie = () => {
         playHallMovie, // [新增] 导出
         stopMovie,
         isImmediate,
-        handleVideoEnded
+        handleVideoEnded,
+        movieVolume,
+        setMovieVolume
     };
 };

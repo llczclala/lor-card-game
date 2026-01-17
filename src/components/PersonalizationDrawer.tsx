@@ -6,6 +6,8 @@ import { StyleSelector } from './StyleSelector';
 interface PersonalizationDrawerProps {
     currentCardBackIndex: number;
     currentDeskIndex: number;
+    unlockedCardBacks: number[];
+    unlockedDesks: number[];
     onSetCardBack: (index: number) => void;
     onSetDesk: (index: number) => void;
 }
@@ -13,6 +15,8 @@ interface PersonalizationDrawerProps {
 export const PersonalizationDrawer: React.FC<PersonalizationDrawerProps> = ({
     currentCardBackIndex,
     currentDeskIndex,
+    unlockedCardBacks, // [新增]
+    unlockedDesks,
     onSetCardBack,
     onSetDesk
 }) => {
@@ -104,6 +108,10 @@ export const PersonalizationDrawer: React.FC<PersonalizationDrawerProps> = ({
                 <StyleSelector
                     type={selectorType}
                     currentSelected={selectorType === 'cardBack' ? currentCardBackIndex : currentDeskIndex}
+
+                    // [核心修复] 根据类型传递对应的解锁列表
+                    unlockedIndices={selectorType === 'cardBack' ? unlockedCardBacks : unlockedDesks}
+
                     onSelect={(idx) => {
                         if (selectorType === 'cardBack') onSetCardBack(idx);
                         else onSetDesk(idx);

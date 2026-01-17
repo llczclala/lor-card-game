@@ -140,7 +140,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-600 opacity-80 group-hover:opacity-100 transition-opacity"></div>
                         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-30"></div>
                         <span className="relative z-10 text-xl font-black tracking-[0.3em] flex items-center gap-4">
-                            <Sword className="fill-white" /> START GAME
+                            <Sword className="fill-white" /> 开始游戏
                         </span>
                     </button>
 
@@ -153,7 +153,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 <div className="w-full h-full flex flex-col items-center justify-center animate-fade-in z-20 relative">
 
                     <h2 className="absolute top-12 text-4xl font-black tracking-tighter italic text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 drop-shadow-lg">
-                        SELECT OPERATION
+                        模式选择
                     </h2>
 
                     {/* [核心布局] 3x3 网格布局实现环绕效果 */}
@@ -171,8 +171,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                             >
                                 <Sword size={40} className="text-blue-400 group-hover:text-white transition-colors" />
                                 <div className="text-center">
-                                    <h3 className="text-xl font-black tracking-widest text-blue-100 group-hover:text-white">PvE</h3>
-                                    <p className="text-[10px] font-mono text-blue-300/60">SIMULATION</p>
+                                    <h3 className="text-xl font-black tracking-widest text-blue-100 group-hover:text-white">地下清理</h3>
+                                    <p className="text-[10px] font-mono text-blue-300/60">开始一场人机对局</p>
                                 </div>
                                 {/* 装饰角标 */}
                                 <div className="absolute top-0 left-0 w-full h-1 bg-blue-500/50 transform origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
@@ -184,8 +184,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                             <div className="w-64 h-40 group relative bg-slate-800/40 border border-white/5 rounded-2xl overflow-hidden grayscale opacity-60 cursor-not-allowed flex flex-col items-center justify-center gap-2 hover:opacity-80 transition-opacity">
                                 <Dices size={40} className="text-purple-400" />
                                 <div className="text-center">
-                                    <h3 className="text-xl font-black tracking-widest text-gray-400">ROGUE</h3>
-                                    <p className="text-[10px] font-mono text-gray-600">LABYRINTH</p>
+                                    <h3 className="text-xl font-black tracking-widest text-gray-400">悖论迷宫</h3>
+                                    <p className="text-[10px] font-mono text-gray-600">点击开启推演</p>
                                 </div>
                                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                                     <span className="text-xs font-mono font-bold text-white/80">LOCKED</span>
@@ -199,11 +199,11 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(220,38,38,0.2),transparent)] opacity-50 group-hover:opacity-100 animate-pulse-slow"></div>
                                 <Swords size={80} className="text-red-500 drop-shadow-[0_0_10px_rgba(220,38,38,0.8)]" />
                                 <div className="text-center z-10">
-                                    <h3 className="text-4xl font-black tracking-tighter text-red-100 drop-shadow-md">PvP</h3>
-                                    <p className="text-xs font-mono text-red-400/80 tracking-[0.5em] mt-2">ARENA</p>
+                                    <h3 className="text-4xl font-black tracking-tighter text-red-100 drop-shadow-md">超元链接</h3>
+                                    <p className="text-xs font-mono text-red-400/80 tracking-[0.5em] mt-2">开始一场真人对局</p>
                                 </div>
                                 <div className="absolute bottom-12 px-4 py-1 bg-black/60 rounded-full border border-white/10 text-[10px] text-gray-400 font-mono">
-                                    COMING SOON
+                                    绝赞开发中。。。
                                 </div>
                             </div>
                         </div>
@@ -213,8 +213,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                             <div className="w-64 h-40 group relative bg-slate-800/40 border border-white/5 rounded-2xl overflow-hidden grayscale opacity-60 cursor-not-allowed flex flex-col items-center justify-center gap-2 hover:opacity-80 transition-opacity">
                                 <Skull size={40} className="text-red-400" />
                                 <div className="text-center">
-                                    <h3 className="text-xl font-black tracking-widest text-gray-400">BOSS</h3>
-                                    <p className="text-[10px] font-mono text-gray-600">CHALLENGE</p>
+                                    <h3 className="text-xl font-black tracking-widest text-gray-400">精神拟境</h3>
+                                    <p className="text-[10px] font-mono text-gray-600">紧张刺激的BOSS战</p>
                                 </div>
                                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                                     <span className="text-xs font-mono font-bold text-white/80">LOCKED</span>
@@ -227,8 +227,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                             <div className="w-64 h-40 group relative bg-slate-800/40 border border-white/5 rounded-2xl overflow-hidden grayscale opacity-60 cursor-not-allowed flex flex-col items-center justify-center gap-2 hover:opacity-80 transition-opacity">
                                 <BookOpen size={40} className="text-yellow-400" />
                                 <div className="text-center">
-                                    <h3 className="text-xl font-black tracking-widest text-gray-400">TUTORIAL</h3>
-                                    <p className="text-[10px] font-mono text-gray-600">ACADEMY</p>
+                                    <h3 className="text-xl font-black tracking-widest text-gray-400">战术考核</h3>
+                                    <p className="text-[10px] font-mono text-gray-600">学习各种操作战术技巧</p>
                                 </div>
                                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                                     <span className="text-xs font-mono font-bold text-white/80">LOCKED</span>
@@ -246,7 +246,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         }}
                         className="absolute bottom-12 text-gray-500 hover:text-white transition-colors font-mono text-sm border-b border-transparent hover:border-white/50"
                     >
-                        BACK TO LOBBY
+                        返回大厅
                     </button>
                 </div>
             )}

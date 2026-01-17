@@ -9,6 +9,7 @@ import {
     STARTER_DECK_LYFE
 } from '../data/initialUserData';
 import type { UserProfile, UserSettings, UserCollection, SavedDeck, UserSummary } from '../types';
+import type { GachaResult } from '../logic/gachaLogic';
 
 export interface UserSystemState {
     userId: string;
@@ -34,7 +35,7 @@ export const useUserSystem = () => {
     const [userList, setUserList] = useState<UserSummary[]>([]);
 
     // --- 2. 初始化 / 切换用户逻辑 ---
-    const loadUserData = useCallback((targetUid: string, mode: 'full' | 'starter' = 'starter') => {
+    const loadUserData = useCallback((targetUid: string, mode: 'full' | 'starter' = 'starter', forceRefresh = false) => {
         setIsReady(false);
 
         // 1. 档案 (Profile)
@@ -66,10 +67,35 @@ export const useUserSystem = () => {
         const collectionKey = `${STORAGE_KEYS.USER_ASSETS}_${targetUid}`;
         let userCollection = StorageUtils.load<UserCollection | null>(collectionKey, null);
 
-        if (!userCollection) {
-            userCollection = mode === 'full' ? FULL_COLLECTION : STARTER_COLLECTION;
+        if (mode === 'full' || forceRefresh) {
+            // 获取最新的全卡数据
+            const fullData = FULL_COLLECTION;
+
+            // 如果已有数据，我们做合并（保留原有货币，但覆盖卡牌列表）
+            if (userCollection) {
+                userCollection = {
+                    ...userCollection,
+                    // 强制覆盖卡牌列表，确保新卡加入
+                    ownedCards: { ...fullData.ownedCards },
+                    // 资源取最大值（防止测试用的钱被花光后回不去）
+                    resources: {
+                        silverCoin: Math.max(userCollection.resources.silverCoin, fullData.resources.silverCoin),
+                        dataGold: Math.max(userCollection.resources.dataGold, fullData.resources.dataGold),
+                        bitGold: Math.max(userCollection.resources.bitGold, fullData.resources.bitGold),
+                    }
+                };
+            } else {
+                userCollection = fullData;
+            }
+            // 立即保存更新后的全卡数据
             StorageUtils.save(collectionKey, userCollection);
         }
+        // 普通新手模式初始化
+        else if (!userCollection) {
+            userCollection = STARTER_COLLECTION;
+            StorageUtils.save(collectionKey, userCollection);
+        }
+
         setCollection(userCollection);
 
         // 4. 卡组 (Decks)
@@ -208,6 +234,14 @@ export const useUserSystem = () => {
             if (newSettings.volume) {
                 merged.volume = { ...prev.volume, ...newSettings.volume };
             }
+            // 处理解锁数组的合并
+            if (newSettings.unlockedCardBacks) {
+                merged.unlockedCardBacks = newSettings.unlockedCardBacks;
+            }
+            if (newSettings.unlockedDesks) {
+                merged.unlockedDesks = newSettings.unlockedDesks;
+            }
+
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, merged);
             return merged;
         });
@@ -224,6 +258,103 @@ export const useUserSystem = () => {
         // 强制刷新页面以应用
         window.location.reload();
     };
+
+    // [新增] 购买卡牌逻辑
+    const purchaseCard = (cardKey: string, count: number, totalCost: number): boolean => {
+        if (!collection) return false;
+
+        // 1. 检查余额
+        if (collection.resources.silverCoin < totalCost) {
+            alert("通用银不足！(Insufficient Silver Coins)");
+            return false;
+        }
+
+        // 2. 更新状态
+        setCollection(prev => {
+            if (!prev) return null;
+            const newResources = {
+                ...prev.resources,
+                silverCoin: prev.resources.silverCoin - totalCost
+            };
+            const newOwned = {
+                ...prev.ownedCards,
+                [cardKey]: (prev.ownedCards[cardKey] || 0) + count
+            };
+
+            const newCollection = { ...prev, resources: newResources, ownedCards: newOwned };
+
+            // 3. 持久化保存
+            // 确保 userId 是当前的有效 ID (这里使用闭包中的 userId)
+            const assetsKey = `${STORAGE_KEYS.USER_ASSETS}_${userId}`;
+            StorageUtils.save(assetsKey, newCollection);
+
+            return newCollection;
+        });
+
+        return true;
+    };
+
+    // --- [核心新增] 执行抽卡交易 (发货逻辑) ---
+    const performGacha = useCallback((totalCost: number, results: GachaResult[], newPity: number) => {
+        if (!collection || !profile || !settings) return;
+
+        // 深拷贝现有状态，准备修改
+        const newCollection = { ...collection };
+        const newProfile = { ...profile, pityCounter: newPity };
+        const newSettings = { ...settings };
+
+        // 1. 扣除数据金
+        newCollection.resources.dataGold -= totalCost;
+
+        // 2. 发放奖励
+        results.forEach(res => {
+            if (res.convertedCurrency) {
+                // 如果是重复转化
+                if (res.convertedCurrency.type === 'silverCoin') {
+                    newCollection.resources.silverCoin += res.convertedCurrency.amount;
+                } else {
+                    newCollection.resources.bitGold += res.convertedCurrency.amount;
+                }
+            } else {
+                // 如果是新物品
+                if (res.type === 'card') {
+                    const key = res.key as string;
+                    newCollection.ownedCards[key] = (newCollection.ownedCards[key] || 0) + 1;
+                } else if (res.type === 'cardBack') {
+                    // 解锁卡背
+                    const idx = res.key as number;
+                    if (!newSettings.unlockedCardBacks.includes(idx)) {
+                        newSettings.unlockedCardBacks = [...newSettings.unlockedCardBacks, idx];
+                    }
+                } else if (res.type === 'desk') {
+                    // 解锁牌桌
+                    const idx = res.key as number;
+                    if (!newSettings.unlockedDesks.includes(idx)) {
+                        newSettings.unlockedDesks = [...newSettings.unlockedDesks, idx];
+                    }
+                }
+            }
+        });
+
+        // 3. 统一更新状态并持久化
+        setCollection(newCollection);
+        setProfile(newProfile);
+        setSettings(newSettings);
+
+        StorageUtils.save(`${STORAGE_KEYS.USER_ASSETS}_${userId}`, newCollection);
+        StorageUtils.save(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, newProfile);
+        StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+
+    }, [collection, profile, settings, userId]);
+
+    // --- [核心新增] 设置抽卡定轨 ---
+    const setGachaTarget = useCallback((target: string) => {
+        if (!profile) return;
+        const newProfile = { ...profile, gachaTarget: target };
+        setProfile(newProfile);
+        StorageUtils.save(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, newProfile);
+    }, [profile, userId]);
+
 
 
     // 暴露给全局以便调试
@@ -250,11 +381,16 @@ export const useUserSystem = () => {
         selectDeck,
         updateSettings,
 
+        purchaseCard,
         switchUserMode, // [新增] 导出切换函数
         createNewUser,
         deleteUser,
         switchUser,
         debugSwitchUser,
+
+        // Gacha Actions
+        performGacha,   // [新增]
+        setGachaTarget, // [新增]
 
         // Helpers
         setCardBack: (index: number) => updateSettings({ customization: { ...settings.customization, currentCardBackIndex: index } }),

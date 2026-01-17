@@ -1,9 +1,14 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef} from 'react';
 import { eventBus, GameEvents } from '../utils/eventBus';
-// 确保使用了 type 导入
 import { VOICE_DB } from '../data/voiceData';
 import type { VoiceEventType } from '../data/voiceData';
 import type { CardData } from '../types';
+
+interface VoiceTask {
+    card: CardData;
+    type: VoiceEventType;
+    priority: number;
+}
 
 // [关键修复] 补全缺失的优先级定义
 const PRIORITY_MAP: Record<VoiceEventType, number> = {
@@ -17,123 +22,117 @@ const PRIORITY_MAP: Record<VoiceEventType, number> = {
     spell_ultimate: 1
 };
 
-export const useVoice = () => {
+export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
     const [speakingCardId, setSpeakingCardId] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
-    // 计时器引用
-    const debounceTimer = useRef<number | null>(null);
-
-// [新增] 冷却记录 Map: key = "cardId_eventType", value = timestamp
     const cooldownMap = useRef<Map<string, number>>(new Map());
-    // 播放语音的核心函数 (新版：防抖 + 择优播放)
-    const playVoice = (card: CardData, type: VoiceEventType, cooldown: number = 3000) => {
-        const heroVoiceConfig = VOICE_DB[card.key];
-        if (!heroVoiceConfig) return;
-        let src = '';
-        if (type === 'attack_block') {
-            // 随机选一个
-            const list = heroVoiceConfig.attack_block || [];
-            if (list.length > 0) src = list[Math.floor(Math.random() * list.length)];
-        } else if (type === 'kill') {
-            // 随机选一个
-            const list = heroVoiceConfig.kill || [];
-            if (list.length > 0) src = list[Math.floor(Math.random() * list.length)];
-        } else if (type === 'enemy_spawn') {
-            const list = heroVoiceConfig.enemy_spawn || [];
-             if (list.length > 0) src = list[Math.floor(Math.random() * list.length)];
-        } else {
-            src = (heroVoiceConfig as any)[type];
-        }
+    const queue = useRef<VoiceTask[]>([]);
+    const isPlayingRef = useRef(false);
 
-        if (!src) return;
+    // [新增] 语音音量 Ref (默认 0.8)
+    const volumeRef = useRef(0.8);
 
-        // [新增] 冷却检查：同一张卡牌的同类型语音，2秒内只触发一次
-        const cooldownKey = `${card.id}_${type}`;
-        const now = Date.now();
-        const lastTime = cooldownMap.current.get(cooldownKey) || 0;
-        if (now - lastTime < cooldown) {
-            return; // 冷却中，跳过
-        }
-                // 3. 检查优先级 (Priority Check)
-        // 规则：只有比当前正在播放的语音优先级更高，才能打断
-        // 或者当前没有在播放
-        const newPriority = PRIORITY_MAP[type];
-        const currentPriority = audioRef.current && !audioRef.current.paused
-            ? (audioRef.current as any)._priority || 0
-            : 0;
-
-        if (newPriority < currentPriority) {
-            return; // 优先级不够，忽略
-        }
-
-        if (debounceTimer.current) {
-            clearTimeout(debounceTimer.current);
-        }
-
-        debounceTimer.current = window.setTimeout(() => {
+    useEffect(() => {
+        const handleVolumeUpdate = (vol: number) => {
+            const newVol = Math.max(0, Math.min(1, vol));
+            volumeRef.current = newVol;
+            // 如果当前正好有语音在播放，直接调整它的音量
             if (audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current.currentTime = 0;
+                audioRef.current.volume = newVol;
             }
+        };
 
-            const audio = new Audio(src);
-            audio.volume = 1.0; // 语音音量
-            (audio as any)._priority = newPriority; // 挂载优先级属性 hack
+        // 监听自定义事件 'SET_VOICE_VOLUME'
+        eventBus.on(GameEvents.SET_VOICE_VOLUME, handleVolumeUpdate);
+        return () => {
+            eventBus.off(GameEvents.SET_VOICE_VOLUME, handleVolumeUpdate);
+        };
+    }, []);
 
-            // UI 联动：显示气泡
-            setSpeakingCardId(card.id);
 
-            audio.onended = () => {
-                setSpeakingCardId(null);
-                audioRef.current = null;
-            };
+    // [新增] 队列处理器
+    const processQueue = () => {
+        if (isPlayingRef.current || queue.current.length === 0) return;
 
-            audio.play().catch(e => console.warn("Voice play failed", e));
-            audioRef.current = audio;
+        // 取出优先级最高的任务 (或者简单的先进先出，这里用先进先出 + 插入排序维护优先级)
+        // 简单起见，我们用先进先出 (FIFO)，但在入队时如果优先级极高(die)，可以插队
+        const task = queue.current.shift();
+        if (!task) return;
 
-            // 更新冷却
-            cooldownMap.current.set(cooldownKey, now);
+        isPlayingRef.current = true;
+        playAudioFile(task);
+    };
 
-        }, 50);
+    // [新增] 核心播放执行器
+    const playAudioFile = (task: VoiceTask) => {
+        const heroVoiceConfig = VOICE_DB[task.card.key];
+        if (!heroVoiceConfig || !heroVoiceConfig[task.type]) {
+            isPlayingRef.current = false;
+            processQueue(); // 跳过，处理下一个
+            return;
+        }
+
+        const voices = heroVoiceConfig[task.type];
+        const src = voices[Math.floor(Math.random() * voices.length)];
+
+        setSpeakingCardId(task.card.id);
+
+        const audio = new Audio(src);
+        audioRef.current = audio;
+        audio.volume = volumeRef.current;
+
+        // 播放结束回调
+        audio.onended = () => {
+            setSpeakingCardId(null);
+            isPlayingRef.current = false;
+            // 稍微停顿一下再放下一句，更自然
+            setTimeout(processQueue, 300);
+        };
+
+        audio.onerror = () => {
+            console.warn("Voice load failed:", src);
+            setSpeakingCardId(null);
+            isPlayingRef.current = false;
+            processQueue();
+        };
+
+        audio.play().catch(() => {
+            isPlayingRef.current = false;
+        });
+    };
+
+    const playVoice = (card: CardData, type: VoiceEventType, cooldown: number = 3000) => {
+        const priority = PRIORITY_MAP[type] || 1;
+        const now = Date.now();
+        const cdKey = `${card.key}_${type}`;
+        const lastTime = cooldownMap.current.get(cdKey) || 0;
+
+        // 冷却检查 (死亡语音无视冷却)
+        if (type !== 'die' && now - lastTime < cooldown) return;
+
+        // 死亡语音插队逻辑：清空低优先级队列，置于队首
+        if (type === 'die') {
+            queue.current = queue.current.filter(t => t.priority >= 4); // 清除普通语音
+            if (audioRef.current && isPlayingRef.current) {
+                audioRef.current.pause(); // 打断当前
+                isPlayingRef.current = false;
+            }
+            queue.current.unshift({ card, type, priority });
+        } else {
+            // 普通语音：追加到队尾
+            queue.current.push({ card, type, priority });
+        }
+
+        cooldownMap.current.set(cdKey, now);
+        processQueue(); // 尝试启动
     };
 
 
     useEffect(() => {
-        // --- 事件监听处理 ---
-
-        // 1. 回合开始 (不再需要重置 allyDiedThisRound)
-        const handleRoundStart = () => {};
-
-        // 2. 单位阵亡
-        const handleUnitDie = (unit: CardData) => {
-            if (unit.isChampion) {
-                // [修复] 传递 cooldown 参数
-                playVoice(unit, 'die', 0); // 死亡语音无冷却
-            }
-        };
-
-        // 3. 打出卡牌 (登场) - [修改] 统一为普通登场
-        const handlePlayCard = (card: CardData) => {
-            if (card.isChampion) {
-                playVoice(card, 'play');
-            }
-        };
-
-        // [新增] 英雄首次进攻/格挡
-        const handleHeroFirstAction = (hero: CardData) => {
-            // [修复] 传递 cooldown 参数
-            playVoice(hero, 'attack_block', 5000);
-        };
-
-
-        // 5. 击杀敌人
-        const handleKill = (hero: CardData) => {
-             // 击杀语音优先级较高
-             playVoice(hero, 'kill');
-        };
-
-
-        // 7. 技能抉择
+        const handlePlayCard = (card: CardData) => playVoice(card, 'play');
+        const handleUnitDie = (card: CardData) => playVoice(card, 'die');
+        const handleHeroFirstAction = (card: CardData) => playVoice(card, 'attack_block');
+        const handleKill = (card: CardData) => playVoice(card, 'kill');
         const handleSpellChoice = (payload: { hero: CardData, choice: 'small' | 'ultimate' }) => {
             if (payload.choice === 'ultimate') {
                 playVoice(payload.hero, 'spell_ultimate');
@@ -142,36 +141,54 @@ export const useVoice = () => {
             }
         };
 
-        // 8. 胜利
-        const handleVictory = (survivingHeroes: CardData[]) => {
-            if (survivingHeroes.length > 0) {
-                // 让第一个活着的英雄说话
-                // [修复] 传递 cooldown 参数
-                playVoice(survivingHeroes[0], 'victory', 1000);
+        // [修改] 互动语音：随机选取一名我方英雄回应
+        const handleEnemySpawn = () => {
+            // 从 playerBench 中筛选出英雄
+            const myHeroes = playerBench.filter(c => c.isChampion);
+            if (myHeroes.length === 0) return;
+
+            // 随机选一个
+            const randomHero = myHeroes[Math.floor(Math.random() * myHeroes.length)];
+            playVoice(randomHero, 'enemy_spawn');
+        };
+
+        // [修改] 胜利语音：不再自动播放，改为接收 MVP 指定播放
+        const handleVictory = (payload: any) => {
+            // payload 可能是数组(旧逻辑) 或 单个英雄对象(新逻辑)
+            // 这里我们兼容新逻辑：GameSession 会发来 { hero: mvp }
+            const hero = Array.isArray(payload) ? payload[0] : payload?.hero;
+            if (hero) {
+                // 清空队列，确保胜利感言不被前面的废话阻塞
+                queue.current = [];
+                if (audioRef.current) audioRef.current.pause();
+                isPlayingRef.current = false;
+
+                playVoice(hero, 'victory', 0);
             }
         };
 
         // --- 注册 ---
-        eventBus.on(GameEvents.ROUND_START, handleRoundStart);
+        eventBus.on(GameEvents.PLAY_CARD_VOICE, handlePlayCard);
+        eventBus.on(GameEvents.ENEMY_SPAWN, handleEnemySpawn); // 绑定互动
+        eventBus.on(GameEvents.GAME_VICTORY, handleVictory);
         eventBus.on(GameEvents.HERO_FIRST_ACTION, handleHeroFirstAction);
         eventBus.on(GameEvents.UNIT_DIE, handleUnitDie);
-        eventBus.on(GameEvents.PLAY_CARD_VOICE, handlePlayCard); // 注意：我们需要区分 UI点击音效 和 语音触发
         eventBus.on(GameEvents.UNIT_KILL, handleKill);
         eventBus.on(GameEvents.SPELL_CHOICE, handleSpellChoice);
-        eventBus.on(GameEvents.GAME_VICTORY, handleVictory);
 
         return () => {
-            eventBus.off(GameEvents.ROUND_START, handleRoundStart);
+            eventBus.off(GameEvents.PLAY_CARD_VOICE, handlePlayCard);
+            eventBus.off(GameEvents.ENEMY_SPAWN, handleEnemySpawn);
+            eventBus.off(GameEvents.GAME_VICTORY, handleVictory);
             eventBus.off(GameEvents.HERO_FIRST_ACTION, handleHeroFirstAction);
             eventBus.off(GameEvents.UNIT_DIE, handleUnitDie);
-            eventBus.off(GameEvents.PLAY_CARD_VOICE, handlePlayCard);
             eventBus.off(GameEvents.UNIT_KILL, handleKill);
             eventBus.off(GameEvents.SPELL_CHOICE, handleSpellChoice);
-            eventBus.off(GameEvents.GAME_VICTORY, handleVictory);
-
-            if (debounceTimer.current) clearTimeout(debounceTimer.current);
         };
-    }, []);
+    }, [playerBench]);
 
-    return { speakingCardId };
+    return {
+        speakingCardId,
+        setVoiceVolume: (vol: number) => eventBus.emit(GameEvents.SET_VOICE_VOLUME, vol)
+    };
 };

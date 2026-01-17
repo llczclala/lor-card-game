@@ -20,10 +20,8 @@ interface PlayerHandProps {
 export const PlayerHand: React.FC<PlayerHandProps> = ({
     hand, onCardClick, onHover, onViewArt, game, cardBackUrl
 }) => {
-    const { isNewCard } = useDrawingQueue(hand);
-
-    // [新增] 预先计算每张新卡的"出场顺位"
-    // 这样我们可以给它们设置递增的延迟
+    const validHand = hand.filter(c => c && c.key && c.type);
+    const { isNewCard } = useDrawingQueue(validHand);
     let newCardCounter = 0;
     const newCardDelays = hand.map(c => {
         if (isNewCard(c.id)) {
@@ -33,8 +31,9 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
     });
 
     return (
-        <div className="absolute left-0 bottom-0 w-full h-48 z-40 pointer-events-none flex justify-center items-end pb-2 overflow-visible">
-            <div className="flex -space-x-2 px-4">
+        <div
+            className="absolute left-0 bottom-0 w-full h-48 z-40 pointer-events-none flex justify-center items-end pb-2 overflow-visible">
+               <div className="flex -space-x-2 px-4 pointer-events-auto">
                 {hand.map((c, index) => {
                     const isNew = isNewCard(c.id);
                     const rotation = (index - (hand.length - 1) / 2) * 4;

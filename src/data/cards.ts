@@ -16,19 +16,19 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // 里芙
   lyfe_spell: {
     key: 'lyfe_spell', name: '里芙的决意', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
-    description: '抉择：奔袭(小技能) 或 先登(大招)', type: 'spell-burst', keywords: [],
+    description: '抉择：无尽霜刃(小技能) 或 吞噬神座(大招)', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.lyfe_spell,
     associatedChampionKey: 'lyfe',
     isLevel2Choice: true
   },
   lyfe_rush: {
-    key: 'lyfe_rush', name: '奔袭', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
+    key: 'lyfe_rush', name: '无尽霜刃', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
     description: '极速：本回合给予里芙 +1/+1。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.lyfe_rush,
     effects: ['effect_lyfe_rush']
   },
   lyfe_ultimate: {
-    key: 'lyfe_ultimate', name: '先登', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
+    key: 'lyfe_ultimate', name: '吞噬神座', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
     description: '快速：获得进攻标识。', type: 'spell-fast', keywords: [],
     imageUrl: SPELL_IMAGES.lyfe_ultimate,
     effects: ['effect_lyfe_ultimate']
@@ -45,19 +45,19 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // 芬妮的技能卡
   fenny_spell: {
     key: 'fenny_spell', name: '芬妮的狂热', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
-    description: '抉择：强袭(小技能) 或 斩将(大招)', type: 'spell-burst', keywords: [],
+    description: '抉择：星光之途(小技能) 或 绝对主角(大招)', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.fenny_spell,
     associatedChampionKey: 'fenny',
     isLevel2Choice: true
   },
   fenny_strike: {
-    key: 'fenny_strike', name: '强袭', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
+    key: 'fenny_strike', name: '星光之途', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
     description: '极速：本回合给予芬妮 +2/+0。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.fenny_strike,
     effects: ['effect_fenny_strike']
   },
   fenny_ultimate: {
-    key: 'fenny_ultimate', name: '斩将', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
+    key: 'fenny_ultimate', name: '绝对主角', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
     description: '快速：芬妮以碾压打击一个敌方单位。', type: 'spell-fast', keywords: [],
     imageUrl: SPELL_IMAGES.fenny_ultimate,
     effects: ['effect_fenny_ultimate']
@@ -172,6 +172,118 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     keywords: ['Regeneration', 'Overwhelm'],
     description: '',
     imageUrl: UNIT_IMAGES.flamme,
+    effects: []
+  },
+
+  // --- “明夷”小队 (Mingyi Squad) ---
+
+  // 1. 赭毫 (Zhe Hao)
+  'Mingyi_Squad_Zhe_hao': {
+    key: 'Mingyi_Squad_Zhe_hao',
+    name: '“明夷”\n赭毫',
+    region: 'Logistics',
+    cost: 1,
+    power: 1,
+    health: 1,
+    maxHealth: 1,
+    isChampion: false,
+    level: 0,
+    type: 'unit',
+    keywords: ['SpellShield'], // 魔免：优秀的 1 费赖场单位
+    description: '',
+    imageUrl: UNIT_IMAGES.zhe_hao,
+    effects: []
+  },
+
+  // 2. 朱鹤 (Zhu He)
+  'Mingyi_Squad_Zhu_He': {
+    key: 'Mingyi_Squad_Zhu_He',
+    name: '“明夷”\n朱鹤',
+    region: 'Logistics',
+    cost: 3,
+    power: 1,
+    health: 5,
+    maxHealth: 5,
+    isChampion: false,
+    level: 0,
+    type: 'unit',
+    keywords: ['SpellShield'], // 高血量+魔免，非常难解的肉盾
+    description: '',
+    imageUrl: UNIT_IMAGES.zhu_he,
+    effects: []
+  },
+
+  // 3. 金琅 (Jin Lang)
+  'Mingyi_Squad_Jin_Lang': {
+    key: 'Mingyi_Squad_Jin_Lang',
+    name: '“明夷”\n金琅',
+    region: 'Logistics',
+    cost: 4,
+    power: 2,
+    health: 6,
+    maxHealth: 6,
+    isChampion: false,
+    level: 0,
+    type: 'unit',
+    keywords: ['SpellShield'], // 极其稳固的防线
+    description: '',
+    imageUrl: UNIT_IMAGES.jin_lang,
+    effects: []
+  },
+
+  // --- “星朗”小队 (Star Bright Squad) ---
+
+  // 4. 朵薇尔 (Doveil)
+  'Star_Bright_Squad_Doveil': {
+    key: 'Star_Bright_Squad_Doveil',
+    name: '“星朗”\n朵薇尔',
+    region: 'Logistics',
+    cost: 4,
+    power: 2,
+    health: 6,
+    maxHealth: 6,
+    isChampion: false,
+    level: 0,
+    type: 'unit',
+    keywords: ['Channel'], // 充能：每回合回复法术法力
+    description: '',
+    imageUrl: UNIT_IMAGES.doveil,
+    effects: []
+  },
+
+  // 5. 爱莉薇娅 (Alivy)
+  'Star_Bright_Squad_Alivy': {
+    key: 'Star_Bright_Squad_Alivy',
+    name: '“星朗”\n爱莉薇娅',
+    region: 'Logistics',
+    cost: 4,
+    power: 2,
+    health: 6,
+    maxHealth: 6,
+    isChampion: false,
+    level: 0,
+    type: 'unit',
+    keywords: ['Channel'],
+    description: '',
+    imageUrl: UNIT_IMAGES.alivy,
+    effects: []
+  },
+
+  // 6. 妲柯丝 (Dakors)
+  'Star_Bright_Squad_Dakors': {
+    key: 'Star_Bright_Squad_Dakors',
+    name: '“星朗”\n妲柯丝',
+    region: 'Logistics',
+    cost: 4,
+    power: 2,
+    health: 6,
+    maxHealth: 6,
+    isChampion: false,
+    level: 0,
+    type: 'unit',
+    keywords: ['Channel'],
+    description: '',
+    imageUrl: UNIT_IMAGES.dakors,
     effects: []
   },
 
@@ -458,7 +570,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 1. Overwhelm (碾压) ---
   test_overwhelm: {
-    key: 'test_overwhelm', name: '测试：碾压', cost: 1, power: 6, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'TEST',
+    key: 'test_overwhelm', name: '测试：碾压', cost: 1, power: 3, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'TEST',
     description: '攻击时溢出伤害打击水晶。', type: 'unit', keywords: ['Overwhelm'],
     imageUrl: TEST_IMAGES.overwhelm
   },

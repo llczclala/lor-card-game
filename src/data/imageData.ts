@@ -3,6 +3,14 @@ const loadingImagesModules = import.meta.glob('../image/loading/*.png', { eager:
 // 转换为图片路径数组
 export const LOADING_SCREEN_IMAGES = Object.values(loadingImagesModules).map((mod: any) => mod.default);
 
+// [新增] 货币图标导入
+import icon_silver from '../image/icon/silverCoin.png';
+import icon_data from '../image/icon/dataGold.png';
+import icon_bit from '../image/icon/bitGold.png';
+
+import icon_levelup from '../image/icon/levelup.png';
+import icon_leveldown from '../image/icon/leveldown.png';
+
 import border_hero from '../image/cardborder/cardborder_hero.png';
 import border_spell from '../image/cardborder/cardborder_spell.png';
 import border_unit from '../image/cardborder/cardborder_unit.png';
@@ -25,13 +33,13 @@ import spell_06 from '../image/spells/06.png'; // 破坏
 
 // 芬妮专属法术
 import fenny_spell_base from '../image/spells/fenny_spell.png';   // 芬妮的狂热
-import fenny_spell_01 from '../image/spells/fenny_spell01.png';  // 强袭
-import fenny_spell_02 from '../image/spells/fenny_spell02.png';  // 斩将
+import fenny_spell_01 from '../image/spells/fenny_spell01.png';  // 星光之途
+import fenny_spell_02 from '../image/spells/fenny_spell02.png';  // 绝对主角
 
 // 里芙专属法术
 import lyfe_spell_base from '../image/spells/lyfe_spell.png';    // 里芙的决意
-import lyfe_spell_01 from '../image/spells/lyfe_spell01.png';   // 奔袭
-import lyfe_spell_02 from '../image/spells/lyfe_spell02.png';   // 先登
+import lyfe_spell_01 from '../image/spells/lyfe_spell01.png';   // 无尽霜刃
+import lyfe_spell_02 from '../image/spells/lyfe_spell02.png';   // 吞噬神座
 // --- 测试单位原画 (0_01 ~ 0_36) ---
 // 1-10
 import t_01 from '../image/attendants/0_01.png';
@@ -122,6 +130,7 @@ import cb_02 from '../image/card_back/02.png';
 import cb_03 from '../image/card_back/03.png';
 import cb_04 from '../image/card_back/04.png';
 import cb_05 from '../image/card_back/05.png';
+import cb_06 from '../image/card_back/06.png';
 
 // [新增] 批量引入牌桌 (01-05)
 import desk_01 from '../image/desk/01.png';
@@ -161,11 +170,19 @@ import unit_pigeon from '../image/units/Argo_Squad_Pigeon.png';
 import unit_musician from '../image/units/Argo_Squad_Musician.png';
 import unit_arrowhead from '../image/units/Argo_Squad_Arrowhead.png';
 
+// [新增] 明夷小队 (Mingyi Squad)
+import unit_zhe_hao from '../image/units/Mingyi_Squad_Zhe_hao.png';
+import unit_zhu_he from '../image/units/Mingyi_Squad_Zhu_He.png';
+import unit_jin_lang from '../image/units/Mingyi_Squad_Jin_Lang.png';
 
-export const PERSONALIZATION_ASSETS = {
-    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_05],
-    desks: [desk_01, desk_02, desk_03, desk_04, desk_05]
-};
+// [新增] 星朗小队 (Star Bright Squad)
+import unit_doveil from '../image/units/Star_Bright_Squad_Doveil.png';
+import unit_alivy from '../image/units/Star_Bright_Squad_Alivy.png';
+import unit_dakors from '../image/units/Star_Bright_Squad_Dakors.png';
+
+import PGgachaDeskImg from '../image/gacha/PermanentGachaPool/desk.png';
+import PGgachaBtnImg from '../image/gacha/PermanentGachaPool/button.png';
+
 
 
 // 定义英雄图片资源结构
@@ -173,6 +190,16 @@ export interface HeroImages {
     base: string;   // 1级卡面
     level2: string; // 2级卡面
 }
+
+export const PERSONALIZATION_ASSETS = {
+    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_05,cb_06],
+    desks: [desk_01, desk_02, desk_03, desk_04, desk_05]
+};
+
+export const gacha_icon = {
+    PGgachaDeskImg,   // 1级卡面
+    PGgachaBtnImg // 2级卡面
+};
 
 // 导出英雄图库常量
 export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
@@ -209,6 +236,16 @@ export const UNIT_IMAGES = {
     pigeon: unit_pigeon,
     musician: unit_musician,
     arrowhead: unit_arrowhead,
+
+    // [新增] 明夷小队
+    zhe_hao: unit_zhe_hao,
+    zhu_he: unit_zhu_he,
+    jin_lang: unit_jin_lang,
+
+    // [新增] 星朗小队
+    doveil: unit_doveil,
+    alivy: unit_alivy,
+    dakors: unit_dakors,
 
 };
 
@@ -296,9 +333,19 @@ export const UI_IMAGES = {
     titleLogo: title_logo // [新增] 注册 Logo
 };
 
+export const UI_ICONS = {
+    levelup: icon_levelup,
+    leveldown: icon_leveldown
+};
 // [新增] 导出卡牌边框集合
 export const CARD_BORDERS = {
     hero: border_hero,   // 金色 (英雄)
     spell: border_spell, // 蓝色 (法术)
     unit: border_unit    // 银色 (普通单位)
+};
+// [新增] 导出货币图标集合
+export const CURRENCY_ICONS = {
+    silverCoin: icon_silver,
+    dataGold: icon_data,
+    bitGold: icon_bit
 };

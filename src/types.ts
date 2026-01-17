@@ -54,6 +54,17 @@ export interface SpellStackItem {
 
 export type AttackTokenType = 'normal' | 'rally' | null;
 
+// [新增] 战斗统计数据接口
+export interface GameStats {
+  nexusDamage: number;   // 对敌方水晶造成的伤害
+  unitsPlayed: number;   // 我方打出的单位
+  heroesPlayed: number;  // 我方打出的英雄
+  spellsPlayed: number;  // 我方打出的法术
+  unitsKilled: number;   // 我方击杀的单位
+  heroesKilled: number;  // 我方击杀的英雄
+  heroLevelUps: number;  // 我方英雄升级次数
+}
+
 export interface GameState {
   playerMana: number;
   playerMaxMana: number;
@@ -68,7 +79,7 @@ export interface GameState {
     player: AttackTokenType;
     enemy: AttackTokenType;
   };
-  phase: 'main' | 'attack_declare' | 'block_declare' | 'resolution' | 'animating';
+  phase: 'main' | 'attack_declare' | 'block_declare' | 'resolution' | 'animating' | 'mulligan';
   turnOwner: 'player' | 'enemy';
   consecutivePasses: number;
 
@@ -91,6 +102,7 @@ export interface GameState {
   selectedBlockerId: string | null;
   selectedChallengerId: string | null;
   fullArtCard: CardData | null;
+  stats: GameStats;
 }
 // --- [新增] 用户系统相关接口 ---
 
@@ -126,15 +138,20 @@ export interface UserSettings {
   unlockedDesks: number[];        // 已解锁的牌桌列表
 }
 
+export interface UserResources {
+    silverCoin: number; // [新增] 通用银 (基础货币)
+    dataGold: number;   // 数据金 (免费/活跃货币)
+    bitGold: number;    // 比特金 (付费/稀有货币)
+}
+
+
 export interface UserCollection {
   // Key = 卡牌ID, Value = 拥有数量
   ownedCards: Record<string, number>;
-
-  resources: {
-    dataGold: number;    // 数据金 (抽卡)
-    bitGold: number;     // 比特金 (购买)
-  };
+  resources: UserResources;
 }
+
+
 
 export interface SavedDeck {
   id: string;            // 卡组唯一ID (UUID)

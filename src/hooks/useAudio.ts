@@ -1,24 +1,24 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { AUDIO_ASSETS } from '../data/audio';
 
 export const useAudio = () => {
     const bgmRef = useRef<HTMLAudioElement | null>(null);
     const currentTrackRef = useRef<string | null>(null);
+    const volumeRef = useRef(0.5);
 
     // 初始化
     useEffect(() => {
         const audio = new Audio();
         audio.loop = true;
-        audio.volume = 0.4;
+        // [修改] 使用 Ref 中的音量初始化
+        audio.volume = volumeRef.current;
         bgmRef.current = audio;
 
-        // 全局点击监听：解决浏览器自动播放限制
-        // 只要用户点了一下页面，就尝试恢复播放
+        // 全局点击监听
         const unlockAudio = () => {
             if (audio.paused && currentTrackRef.current) {
                 audio.play().catch(e => console.log("等待交互以播放音频...", e));
             }
-            // 注意：这里不移除监听，以防后续因长时间后台挂起导致再次被暂停
         };
         document.addEventListener('click', unlockAudio);
 
@@ -29,14 +29,31 @@ export const useAudio = () => {
         };
     }, []);
 
-    const playBgm = (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat') => {
+    // [新增] 设置 BGM 音量
+    const setBgmVolume = useCallback((vol: number) => {
+        // 1. 限制范围 0-1
+        const newVol = Math.max(0, Math.min(1, vol));
+        // 2. 更新 Ref (用于切歌时保持音量)
+        volumeRef.current = newVol;
+        // 3. 实时更新当前播放器
+        if (bgmRef.current) {
+            bgmRef.current.volume = newVol;
+        }
+    }, []);
+
+    // [修改] 扩展类型定义，加入 'gacha' 和 'deck_builder'
+    const playBgm = (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat' | 'gacha' | 'deck_builder') => {
         if (!bgmRef.current) return;
 
         let src = '';
         if (type === 'battle') {
             const tracks = AUDIO_ASSETS.bgm.battle;
-            src = tracks[Math.floor(Math.random() * tracks.length)];
+            // 随机选择逻辑
+            const randomIndex = Math.floor(Math.random() * tracks.length);
+            src = tracks[randomIndex];
+            console.log(`[Audio] Random Battle BGM selected: Index ${randomIndex}`);
         } else {
+            // [修正] 类型断言，确保 TypeScript 知道这些 key 是存在的
             src = AUDIO_ASSETS.bgm[type] as string;
         }
 
@@ -47,32 +64,36 @@ export const useAudio = () => {
 
         console.log(`[Audio] Switching BGM to: ${type}`);
 
-        // 核心修复：切歌逻辑
+        // 切歌逻辑
         try {
-            bgmRef.current.pause();          // 1. 先暂停
-            bgmRef.current.currentTime = 0;  // 2. 进度归零
-            bgmRef.current.src = src;        // 3. 换碟
+            bgmRef.current.pause();
+            bgmRef.current.currentTime = 0;
+            bgmRef.current.src = src;
+            // [关键] 切歌时重新应用当前音量
+            bgmRef.current.volume = volumeRef.current;
 
-            // 4. 尝试播放
             const playPromise = bgmRef.current.play();
             if (playPromise !== undefined) {
                 playPromise.catch(error => {
                     console.warn("自动播放被阻止，等待用户交互:", error);
-                    // 这里的错误是可以接受的，全局 click 监听器会补救
                 });
             }
             currentTrackRef.current = src;
-        } catch (e) {
-            console.error("BGM 播放出错:", e);
-        }
-    };
-// [新增] 停止播放 BGM
-    const stopBgm = () => {
-        if (bgmRef.current) {
-            bgmRef.current.pause();
-            currentTrackRef.current = null; // 清除当前轨道记录，以便下次能重新播放同名音乐
+        } catch (err) {
+            console.error("BGM Playback Error:", err);
         }
     };
 
-    return { playBgm, stopBgm };
+    const stopBgm = () => {
+        if (bgmRef.current) {
+            bgmRef.current.pause();
+            currentTrackRef.current = null;
+        }
+    };
+
+    return {
+        playBgm,
+        stopBgm,
+        setBgmVolume // [导出]
+    };
 };

@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import type { CardData, GameState, SpellStackItem } from '../types';
 import { createCard, CARD_DB } from '../data/cards';
-import {  calculateNewMana,getLeveledUpCard } from '../utils/gameRules';
+import {  calculateNewMana, getLeveledUpCard} from '../utils/gameRules';
 import { executeSpellEffect } from '../logic/spells';
-import { resolveSingleCombat } from '../logic/combat';
-import { calculateRoundStart } from '../logic/core';
+import { resolveSingleCombat} from '../logic/combat';
+import { calculateRoundStart, canAfford } from '../logic/core';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { applyRoundStartKeywords } from '../logic/keywords'; // [新增]
 import { processEffect } from '../logic/effectProcessor';
@@ -26,8 +26,21 @@ const createFullCard = (key: string): CardData => {
     } as CardData;
 };
 
+// [修正] 定义 shuffleDeck 函数 (解决 TS2552, TS2304)
+const shuffleDeck = <T>(array: T[]): T[] => {
+    const newArray = [...array];
+    for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+    }
+    return newArray;
+};
+
 // 1. 接收 initialDeck 参数，默认为空数组
-export const useGameState = (initialDeck: string[] = []) => {
+export const useGameState = (
+    initialPlayerDeck: string[],
+    initialEnemyDeck: string[] = []
+) => {
     // --- 1. 状态定义 ---
     const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
 
@@ -37,7 +50,7 @@ export const useGameState = (initialDeck: string[] = []) => {
         playerNexus: 20, enemyNexus: 20,
         round: 0,
         attackToken: { player: null, enemy: null },
-        phase: 'main',
+        phase: 'mulligan',
         turnOwner: 'player',
         consecutivePasses: 0,
         spellCasting: null,
@@ -51,7 +64,16 @@ export const useGameState = (initialDeck: string[] = []) => {
         gameResult: null,
         screenShake: false,
         nexusDamage: undefined,
-        leveledChampions: []
+        leveledChampions: [],
+        stats: {
+            nexusDamage: 0,
+            unitsPlayed: 0,
+            heroesPlayed: 0,
+            spellsPlayed: 0,
+            unitsKilled: 0,
+            heroesKilled: 0,
+            heroLevelUps: 0
+        }
     });
 // 新增：牌库状态 (Deck)
     const [playerDeck, setPlayerDeck] = useState<CardData[]>([]);
@@ -72,6 +94,7 @@ export const useGameState = (initialDeck: string[] = []) => {
     const stateRefs = useRef({ game, playerBench, enemyBench, combatField, playerHand, enemyHand });
     const heroActionHistory = useRef<Set<string>>(new Set());
     const initializedRef = useRef(false);
+    const enemyUnitsPlayedRef = useRef(0);
 
     // [新增] State Ref: 用于在异步循环中获取最新状态 (加入 Deck 状态)
     const stateRef = useRef({ game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck });
@@ -88,33 +111,30 @@ export const useGameState = (initialDeck: string[] = []) => {
     }, [game, playerBench, enemyBench, combatField, playerHand, enemyHand]);
 
     useEffect(() => {
-        if (!initializedRef.current) {
-            setPlayerHand([]);
-            setEnemyHand([]);
+        // 1. 创建完整卡牌对象
+        const validPlayerDeck = initialPlayerDeck.filter(key => CARD_DB[key]);
+        const validEnemyDeck = initialEnemyDeck.filter(key => CARD_DB[key]);
 
-            let pDeck: CardData[] = [];
-            if (initialDeck.length > 0) {
-                pDeck = initialDeck.map(key => createFullCard(key)); // 使用 createFullCard
-            } else {
-                pDeck = [createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('lyfe'), createFullCard('test_unit_01'), createFullCard('test_unit_01')];
-            }
-            pDeck = pDeck.sort(() => Math.random() - 0.5);
+        const pDeck = validPlayerDeck.map(createFullCard);
+        const eDeck = validEnemyDeck.map(createFullCard);
 
-            let eDeck = Array(40).fill(null).map(() => createFullCard(Math.random() > 0.5 ? 'fenny' : 'Dream_Guardians_Squad-Martina')); // 使用 createFullCard
+        // 2. 洗牌
+        const shuffledP = shuffleDeck(pDeck);
+        const shuffledE = shuffleDeck(eDeck);
 
-            const pHand = pDeck.splice(0, 4);
+        // 3. 玩家发牌 (前4张进手牌，剩下进牌库)
+        const startHandP = shuffledP.slice(0, 4);
+        const remainDeckP = shuffledP.slice(4);
 
-            setTimeout(() => {
-                setPlayerHand(pHand);
-                setPlayerDeck(pDeck);
-                setEnemyHand([]);
-                setEnemyDeck(eDeck);
-                // 启动第一回合逻辑移交给了 useEffect(game.round)
-            }, 500);
+        setPlayerDeck(remainDeckP);
+        setPlayerHand(startHandP);
 
-            initializedRef.current = true;
-        }
-    }, []);
+        // 4. 敌方只洗牌，暂不发手牌 (等到 Mulligan 结束游戏正式开始时再发)
+        // 这避免了 Round 0 时 AI 逻辑读取 enemyHand 报错
+        setEnemyDeck(shuffledE);
+        setEnemyHand([]);
+
+    }, [initialPlayerDeck, initialEnemyDeck]);
 
     useEffect(() => {
         // 只有当回合数变化时才检查
@@ -316,7 +336,7 @@ export const useGameState = (initialDeck: string[] = []) => {
             if (currentDeck.length === 0) {
                 if (owner === 'player') setMessage("牌库已空！");
                  else {
-                    const token = createFullCard('soldier');
+                    const token = createFullCard('Dream_Guardians_Squad-Martina');
                     setEnemyHand(prev => [...prev, token]);
                 }
                 if (i < count - 1) await wait(800);
@@ -337,6 +357,7 @@ export const useGameState = (initialDeck: string[] = []) => {
 
 const startRound = () => {
         heroActionHistory.current.clear();
+        enemyUnitsPlayedRef.current = 0;
         eventBus.emit(GameEvents.ROUND_START);
         const currentGameState = stateRef.current.game;
         const nextRoundBase = calculateRoundStart(currentGameState);
@@ -359,45 +380,6 @@ const startRound = () => {
         setPlayerBench(nextPlayerBench);
         setEnemyBench(nextEnemyBench);
     };
-//         let tempPBench = [...nextPlayerBench];
-//         let tempEBench = [...nextEnemyBench];
-//         let hasEffectTriggered = false;
-//         const scanAndApply = (units: CardData[], owner: 'player' | 'enemy') => {
-//             units.forEach(unit => {
-//                 if (unit.effects) {
-//                     unit.effects.forEach(effId => {
-//                         const def = EFFECT_DB[effId];
-//                         if (def && def.timing === 'ROUND_START') {
-//                             const ctx: EffectContext = {
-//                                 game: tempGame, // 传入最新的临时状态
-//                                 playerBench: tempPBench,
-//                                 enemyBench: tempEBench,
-//                                 playerHand: stateRef.current.playerHand,
-//                                 enemyHand: stateRef.current.enemyHand,
-//                                 owner
-//                             };
-//
-//                             const targets: any[] = [];
-//                             if (def.targetRequirements.some(r => r.type.includes('NEXUS'))) {
-//                                 targets.push({ type: owner === 'player' ? 'player_nexus' : 'enemy_nexus' });
-//                             }
-//
-//                             const res = processEffect(effId, targets, ctx);
-//
-//                             // 累加状态变更
-//                             tempGame = res.game;
-//                             tempPBench = res.playerBench;
-//                             tempEBench = res.enemyBench;
-//                             hasEffectTriggered = true;
-//
-//                             if (res.events.some(e => e.type === 'gain_token')) {
-//                                 setMessage(`${unit.name} 发动：获得进攻机会！`);
-//                             }
-//                         }
-//                     });
-//                 }
-//             });
-
     const resetGame = () => window.location.reload();
 
     // --- 4. 战斗系统 ---
@@ -456,8 +438,39 @@ const startRound = () => {
             const gameSnapshot = stateRef.current.game;
             const result = resolveSingleCombat(currentFight, gameSnapshot);
 
-            // 1. 广播死亡事件
-            result.killedUnits.forEach(unit => eventBus.emit(GameEvents.UNIT_DIE, unit));
+            // 1. 广播死亡事件 & [新增] 击杀事件
+            result.killedUnits.forEach(deadUnit => {
+                // A. 广播死亡 (受害者)
+                eventBus.emit(GameEvents.UNIT_DIE, deadUnit);
+
+                // B. 寻找凶手并广播击杀
+                // 逻辑：如果死者是进攻者，凶手就是格挡者；如果死者是格挡者，凶手就是进攻者
+                let killer: CardData | null = null;
+                if (deadUnit.id === currentFight.attacker.id && currentFight.blocker) {
+                    killer = currentFight.blocker;
+                } else if (currentFight.blocker && deadUnit.id === currentFight.blocker.id) {
+                    killer = currentFight.attacker;
+                }
+
+                if (killer) {
+                    // C. 判定凶手是否为我方单位 (只有我方单位击杀时才播放语音)
+                    // 逻辑：
+                    // - 如果攻击是 player 发起的：Attacker 是 Player, Blocker 是 Enemy
+                    // - 如果攻击是 enemy 发起的：Attacker 是 Enemy, Blocker 是 Player
+                    const isAttackerPlayer = currentFight.owner === 'player';
+                    const isKillerAttacker = killer.id === currentFight.attacker.id;
+
+                    // 这里的逻辑是：(我是进攻方且凶手是进攻者) 或 (我是防守方且凶手是防守者) => 凶手是我
+                    const isPlayerKiller = (isAttackerPlayer && isKillerAttacker) || (!isAttackerPlayer && !isKillerAttacker);
+
+                    if (isPlayerKiller) {
+                        // 稍微延迟 0.1秒，避免和死亡语音完全重叠，体验更好
+                        setTimeout(() => {
+                            eventBus.emit(GameEvents.UNIT_KILL, killer);
+                        }, 100);
+                    }
+                }
+            });
 
             // 2. 更新全局 State
             // 更新战场卡牌状态
@@ -467,8 +480,62 @@ const startRound = () => {
                 return n;
             });
 
-            // 更新水晶血量
-            if (result.nexusDamage) {
+            // [新增] 计算本轮战斗的统计增量
+            let statsDelta = { nexus: 0, uKilled: 0, hKilled: 0, hLevel: 0 };
+
+            // 1. 水晶伤害
+            if (result.nexusDamage && result.nexusDamage.target === 'enemy') {
+                statsDelta.nexus = result.nexusDamage.amount;
+            }
+
+            // 2. 击杀统计 (需判断死者归属)
+            result.killedUnits.forEach(deadUnit => {
+                // 在当前战场快照中查找死者的拥有者
+                // 逻辑：如果是 'player' 发起的战斗，blocker 是 enemy；如果是 'enemy' 发起的，attacker 是 enemy
+                const fight = stateRef.current.combatField.find(f => f.attacker.id === deadUnit.id || f.blocker?.id === deadUnit.id);
+                if (fight) {
+                    const isDeadUnitEnemy = fight.attacker.id === deadUnit.id
+                        ? fight.owner === 'enemy'
+                        : fight.owner === 'player'; // 如果死的是 blocker 且战斗是 player 发起的，那 blocker 就是 enemy
+
+                    if (isDeadUnitEnemy) {
+                        if (deadUnit.isChampion) statsDelta.hKilled++;
+                        else statsDelta.uKilled++;
+                    }
+                }
+            });
+
+            // 3. 升级统计
+            if (result.levelUpUpdate) {
+                const card = result.levelUpUpdate;
+                // 简单判断：如果当前触发升级的卡牌在战场上归属于 player (进攻或防守)
+                const fight = stateRef.current.combatField.find(f => f.attacker.id === card.id || f.blocker?.id === card.id);
+                const isPlayerCard = fight && (fight.attacker.id === card.id ? fight.owner === 'player' : fight.owner === 'enemy');
+
+                if (isPlayerCard) {
+                    statsDelta.hLevel++;
+                }
+            }
+
+            // 更新水晶血量 & [新增] 更新统计数据
+            if (result.nexusDamage || statsDelta.uKilled > 0 || statsDelta.hKilled > 0 || statsDelta.hLevel > 0) {
+                const { target, amount } = result.nexusDamage || { target: 'none', amount: 0 };
+                setGame(prev => ({
+                    ...prev,
+                    playerNexus: target === 'player' ? prev.playerNexus - amount : prev.playerNexus,
+                    enemyNexus: target === 'enemy' ? prev.enemyNexus - amount : prev.enemyNexus,
+                    nexusDamage: result.nexusDamage,
+                    // [新增] 合并统计数据
+                    stats: {
+                        ...prev.stats,
+                        nexusDamage: prev.stats.nexusDamage + statsDelta.nexus,
+                        unitsKilled: prev.stats.unitsKilled + statsDelta.uKilled,
+                        heroesKilled: prev.stats.heroesKilled + statsDelta.hKilled,
+                        heroLevelUps: prev.stats.heroLevelUps + statsDelta.hLevel
+                    }
+                }));
+            } else if (result.nexusDamage)
+            {
                 const { target, amount } = result.nexusDamage;
                 setGame(prev => ({
                     ...prev,
@@ -542,7 +609,6 @@ const startRound = () => {
         const newGameResult = pNexus <= 0 ? 'defeat' : (eNexus <= 0 ? 'victory' : null);
 
         if (newGameResult === 'victory') {
-            eventBus.emit(GameEvents.GAME_VICTORY, survivorsP);
             const heroes = survivorsP.filter(c => c.isChampion).map(c => c.key);
             setWinningHeroKeys(heroes);
         }
@@ -626,6 +692,15 @@ const startRound = () => {
     };
 
     const playCard = (card: CardData, owner: 'player' | 'enemy', targets: any[] = []) => {
+
+        if (owner === 'player') {
+            const { playerMana, playerSpellMana } = stateRef.current.game;
+            if (!canAfford(card, playerMana, playerSpellMana)) {
+                setMessage("法力不足！");
+                return;
+            }
+        }
+
         if (owner === 'player' && card.isLevel2Choice && card.associatedChampionKey) {
             const champKey = card.associatedChampionKey;
             const hasLv2 = playerBench.some(c => c.key === champKey && c.level === 2);
@@ -653,7 +728,24 @@ const startRound = () => {
         // [新增] 触发语音事件
         // 1. 播放登场语音 (PLAY_CARD_VOICE)
         if (card.type.includes('unit')) {
+            // 1. 播放自身登场语音
             eventBus.emit(GameEvents.PLAY_CARD_VOICE, card);
+
+            // 2. 敌人出现判定 (ENEMY_SPAWN)
+            // 条件：敌方打出 + 本回合第一张单位 + 我方备战席有英雄
+            if (owner === 'enemy') {
+                enemyUnitsPlayedRef.current += 1;
+
+                if (enemyUnitsPlayedRef.current === 1) {
+                    const hasPlayerHero = stateRef.current.playerBench.some(c => c.isChampion);
+                    if (hasPlayerHero) {
+                        // 稍微延迟一点触发，让它排在登场语音之后进入队列
+                        setTimeout(() => {
+                            eventBus.emit(GameEvents.ENEMY_SPAWN, card);
+                        }, 200);
+                    }
+                }
+            }
         }
 
         // 2. 敌人出现判定 (ENEMY_SPAWN)
@@ -687,7 +779,27 @@ const startRound = () => {
         else setEnemyHand(prev => prev.filter(c => c.id !== card.id));
 
         // --- 播放出牌动画 ---
-        setGame(prev => ({ ...prev, phase: 'animating', activeCard: card }));
+        setGame(prev => {
+            const newStats = { ...prev.stats };
+
+            // 仅统计我方 (Player) 的出牌行为
+            if (owner === 'player') {
+                if (card.isChampion) {
+                    newStats.heroesPlayed += 1;
+                } else if (card.type.includes('unit')) {
+                    newStats.unitsPlayed += 1;
+                } else {
+                    newStats.spellsPlayed += 1;
+                }
+            }
+
+            return {
+                ...prev,
+                stats: newStats,
+                phase: 'animating',
+                activeCard: card
+            };
+        });
 
         setTimeout(() => {
             setGame(prev => ({ ...prev, activeCard: null }));
@@ -887,7 +999,7 @@ const startRound = () => {
         if (!initializedRef.current) startRound();
     }, []);
 
-    // [新增] 开局换牌逻辑
+
     const replaceOpeningHand = async (indicesToReplace: number[]) => {
         if (indicesToReplace.length === 0) return;
 
@@ -904,14 +1016,6 @@ const startRound = () => {
         const newCards = newDeck.slice(0, numToDraw);
         const remainingDeck = newDeck.slice(numToDraw);
 
-        // 5. 更新状态
-        // 为了保持手牌顺序（原位替换），我们需要把新卡插回原来的索引位置
-        // 但简单起见，通常 TCG 换牌后顺序不重要，直接追加即可。
-        // 如果要实现“飞回原位”的视觉效果，CardAnimations 组件会处理位置，
-        // 数据层只需要保证 finalHand 的内容正确即可。
-        // 这里我们采用“保留卡在前，新卡在后”的逻辑，或者按索引重组。
-
-        // 采用按索引重组（保持手牌位置不变，符合视觉直觉）
         const finalHand = [...playerHand];
         let newCardIdx = 0;
         indicesToReplace.forEach(handIndex => {
@@ -923,6 +1027,59 @@ const startRound = () => {
 
         setPlayerDeck(remainingDeck);
         setPlayerHand(finalHand);
+    };
+
+    const performMulligan = async (indicesToReplace: number[]) => {
+        const currentHand = [...playerHand];
+        const currentDeck = [...playerDeck];
+
+        // 1. 处理玩家换牌逻辑
+        if (indicesToReplace.length > 0) {
+            const cardsToReplace = indicesToReplace.map(i => currentHand[i]);
+            // 从牌库顶抽新牌
+            const newCards = currentDeck.splice(0, indicesToReplace.length);
+            // 旧牌洗回牌库
+            const newDeck = shuffleDeck([...currentDeck, ...cardsToReplace]);
+
+            // 替换手牌中的对应位置
+            let newCardIdx = 0;
+            indicesToReplace.forEach(i => {
+                currentHand[i] = newCards[newCardIdx++];
+            });
+
+            setPlayerDeck(newDeck);
+            setPlayerHand(currentHand);
+        }
+
+        // 2. [关键] 给敌方发牌 (此时才发，确保安全)
+        const currentEnemyDeck = [...stateRef.current.enemyDeck];
+        const enemyStartingHand = currentEnemyDeck.splice(0, 4);
+        setEnemyDeck(currentEnemyDeck);
+        setEnemyHand(enemyStartingHand);
+
+        // 3. 模拟动画延迟
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        // 4. [核心修复] 强制设置 Round 1 状态
+        // 不依赖 startRound()，而是直接写入第一回合的正确状态
+        // 这样可以确保 Mana, AttackToken 等资源一步到位
+        setGame(prev => ({
+            ...prev,
+            round: 1,               // 第1回合
+            phase: 'main',          // 进入主阶段
+            turnOwner: 'player',    // 奇数回合玩家先手
+            playerMana: 1,          // 玩家1费
+            playerMaxMana: 1,
+            playerSpellMana: 0,
+            enemyMana: 1,           // 敌方1费
+            enemyMaxMana: 1,
+            enemySpellMana: 0,
+            attackToken: { player: 'normal', enemy: null }, // 玩家获得进攻币
+            consecutivePasses: 0
+        }));
+
+        eventBus.emit(GameEvents.ROUND_START, { round: 1 });
+        setMessage("ROUND 1 START");
     };
 
     const requeueHandToDeck = () => {
@@ -962,8 +1119,9 @@ const startRound = () => {
             resolveChoice,
             selectChallenger, // [关键] 导出新增的函数
             challengeEnemy,    // [关键] 导出新增的函数
-            replaceOpeningHand, // [新增] 导出换牌函数
-            requeueHandToDeck // [新增]
+            replaceOpeningHand,
+            performMulligan, // [新增]
+            requeueHandToDeck
         }
     };
 };

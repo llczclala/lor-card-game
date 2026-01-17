@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Eye, Hexagon, Triangle, Sparkles, ChevronDown} from 'lucide-react';
+import { Eye, Hexagon, Triangle, Sparkles, ChevronDown, ShoppingCart } from 'lucide-react';
 // [新增] 引入 Framer Motion
 import { motion } from 'framer-motion';
 import type { CardData, Keyword } from '../types';
@@ -13,7 +13,7 @@ import { CARD_BORDERS } from '../data/imageData';
 
 interface CardProps {
   data: CardData;
-  location: 'hand' | 'bench' | 'combat' | 'enemy_bench' | 'spell_stack' | 'preview' | 'deck-builder';
+  location: 'hand' | 'bench' | 'combat' | 'enemy_bench' | 'spell_stack' | 'preview' | 'deck-builder' | 'gacha';
   onClick?: () => void;
   isBlocker?: boolean;
   isSelected?: boolean;
@@ -36,6 +36,8 @@ interface CardProps {
   isTargetable?: boolean;
   isTargeted?: boolean;
   isBlocking?: boolean;
+  ownedCount?: number;
+  showShopIcon?: boolean;
 }
 
 // 关键词图标映射组件
@@ -83,11 +85,82 @@ export const Card: React.FC<CardProps> = ({
     isNew = false,
     isTargetable = false,
     isTargeted = false,
-    isBlocking = false
+    isBlocking = false,
+    ownedCount = 0,
+    showShopIcon = false
 
 }) => {
     // 顶级防御
-    if (!data) return null;
+    if (!data) {
+        console.warn(`[Card Component] Prevented crash: 'data' is undefined at location: ${location}`);
+        return null;
+    }
+
+    // [升级版] 全能数值反馈系统 (Health & Power)
+    // 分别记录两个属性的变化量
+    const [healthDelta, setHealthDelta] = useState<number | null>(null);
+    const [powerDelta, setPowerDelta] = useState<number | null>(null);
+
+    // 控制震动 (受伤/削弱时触发)
+    const [localShake, setLocalShake] = useState(false);
+    // 控制高亮闪烁 (获得Buff/回血时触发)
+    const [localFlash, setLocalFlash] = useState(false);
+
+    // 计算当前的最终面板数值
+    const currentFinalHealth = (data.health || 0) + (data.buffs?.health || 0) - (data.damageTaken || 0);
+    const currentFinalPower = (data.power || 0) + (data.buffs?.power || 0);
+
+    // 使用 Ref 记录上一帧的数值
+    const prevHealthRef = useRef(currentFinalHealth);
+    const prevPowerRef = useRef(currentFinalPower);
+
+    useEffect(() => {
+        const prevHealth = prevHealthRef.current;
+        const prevPower = prevPowerRef.current;
+
+        // --- 1. 检测生命值变化 ---
+        if (currentFinalHealth !== prevHealth) {
+            const diff = currentFinalHealth - prevHealth;
+            setHealthDelta(diff); // 记录差值 (例如 -3 或 +2)
+
+            if (diff < 0) {
+                setLocalShake(true); // 扣血 -> 震动
+            } else {
+                setLocalFlash(true); // 回血 -> 闪光
+            }
+
+            // 动画结束后清理
+            setTimeout(() => {
+                setHealthDelta(null);
+                setLocalShake(false);
+                setLocalFlash(false);
+            }, 1200);
+
+            prevHealthRef.current = currentFinalHealth;
+        }
+
+        // --- 2. 检测攻击力变化 ---
+        if (currentFinalPower !== prevPower) {
+            const diff = currentFinalPower - prevPower;
+            setPowerDelta(diff);
+
+            if (diff < 0) {
+                setLocalShake(true); // 减攻 -> 震动
+            } else {
+                setLocalFlash(true); // 加攻 -> 闪光
+            }
+
+            setTimeout(() => {
+                setPowerDelta(null);
+                setLocalShake(false);
+                setLocalFlash(false);
+            }, 1200);
+
+            prevPowerRef.current = currentFinalPower;
+        }
+
+    }, [currentFinalHealth, currentFinalPower]);
+
 
     const [showEye, setShowEye] = useState(false);
     const shouldAnimateDraw = isNew && location === 'hand';
@@ -115,7 +188,7 @@ export const Card: React.FC<CardProps> = ({
 
     const [displayHealth, isHealthTicking] = useNumberTicker(
         safeHealth,
-        isRegenerating ? 500 : 1000
+        isRegenerating ? 500 : 400 // [修改] 加快滚动速度，更有打击感
     );
     const [displayPower] = useNumberTicker(safePower, 1000);
 
@@ -137,9 +210,9 @@ export const Card: React.FC<CardProps> = ({
     const isOnBoard = location === 'bench' || location === 'combat' || location === 'enemy_bench';
     const isPreview = location === 'preview';
 
-    const baseCard = CARD_DB[data.key];
-    let basePower = baseCard.power;
-    let baseHealth = baseCard.health;
+    const baseCard = CARD_DB[data.key] || data || { power: 0, health: 0, maxHealth: 0 };
+    let basePower = baseCard.power ?? 0;
+    let baseHealth = baseCard.health ?? 0;
 
     if (data.level === 2) {
         if (data.key === 'fenny') {
@@ -179,7 +252,12 @@ export const Card: React.FC<CardProps> = ({
     if (isPreview) {
         scale = 1;
         containerClass = "w-72 h-[28rem] z-[100] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)]";
-    } else if (location === 'deck-builder') {
+    }
+    else if (location === 'gacha') {
+        scale = 0.7;
+        containerClass = "w-full h-full rounded-xl";
+    }
+    else if (location === 'deck-builder') {
         scale = 0.6;
         containerClass = "w-[172px] h-[268px] rounded-xl shadow-lg";
     } else if (location === 'hand') {
@@ -199,19 +277,19 @@ export const Card: React.FC<CardProps> = ({
     let borderImg = CARD_BORDERS.unit;
     if (data.isChampion) {
         borderImg = CARD_BORDERS.hero;
-    } else if (data.type.includes('spell')) {
+    } else if (data.type && data.type.includes('spell')) { // 新增安全检查
         borderImg = CARD_BORDERS.spell;
     }
 
     if (location === 'spell_stack') {
         return (
-            <div className={`relative w-20 h-20 rounded-full border-2 ${data.id.includes('enemy') ? 'border-red-500' : 'border-blue-500'} bg-gray-900 overflow-hidden shadow-lg hover:scale-110 transition-transform cursor-help group z-30`}>
+            <div className={`relative w-20 h-20 rounded-full border-2 ${data.id && data.id.includes('enemy') ? 'border-red-500' : 'border-blue-500'} bg-gray-900 overflow-hidden shadow-lg hover:scale-110 transition-transform cursor-help group z-30`}>
                 <img src={data.imageUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100" />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <Sparkles size={24} className="text-white drop-shadow-md" />
                 </div>
                 <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/80 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                    {data.name}
+                    {data.name || 'Spell'} {/* 兜底：name 为空时显示默认值 */}
                 </div>
             </div>
         );
@@ -219,7 +297,7 @@ export const Card: React.FC<CardProps> = ({
 
     let animClass = '';
     if (data.animState === 'attacking') {
-        const hasQuickAttack = !isBlocker && data.keywords.includes('QuickAttack');
+        const hasQuickAttack = !isBlocker && data.keywords && data.keywords.includes('QuickAttack');
 
         if (isEnemyCombatant) {
             if (hasQuickAttack) {
@@ -243,10 +321,15 @@ export const Card: React.FC<CardProps> = ({
             }
         }
     }
-    if (data.animState === 'hit') animClass = 'animate-shake';
+    // [修改] 整合震动(Shake)与闪光(Pulse)效果
+    if (data.animState === 'hit' || localShake) {
+        animClass = 'animate-shake';
+    } else if (localFlash) {
+        animClass = 'animate-pulse ring-4 ring-yellow-400 brightness-110'; // 强化时亮一下
+    }
     if (data.animState === 'dying') animClass = 'animate-shatter z-50';
 
-    const hasCantBlock = data.keywords.includes('CantBlock');
+    const hasCantBlock = data.keywords && data.keywords.includes('CantBlock'); // 新增安全检查
     const showAvailabilityGlow = !isPreview && (
         isPlayable ||
         (location === 'bench' && highlightTarget && !hasCantBlock) // <-- 增加 !hasCantBlock
@@ -261,7 +344,7 @@ export const Card: React.FC<CardProps> = ({
 
     const renderFrontFace = () => {
 
-        if (data.type.includes('spell') && !isCombat) {
+        if (data.type && data.type.includes('spell') && !isCombat) { // 新增安全检查
             return (
                 <div
                     style={{
@@ -308,7 +391,7 @@ export const Card: React.FC<CardProps> = ({
                         {displayPower}
                     </div>
                     <div className="relative z-10 flex flex-col items-center justify-center h-full pt-4">
-                        {data.keywords.length > 0 && (
+                        {data.keywords && data.keywords.length > 0 && (
                             <div className="flex gap-1 mt-1">
                                 {data.keywords.slice(0, 3).map(k => (
                                     <div key={k} className="scale-90 shadow-md">
@@ -360,7 +443,7 @@ export const Card: React.FC<CardProps> = ({
                              <>
                                 {/*名字渲染区 */}
                             <div className="flex flex-col items-center justify-center mb-2">
-                                {data.name.includes('\n') ? (
+                                {data.name && data.name.includes('\n') ? ( // 新增 data.name 检查
                                     <>
                                         <span className="text-white/80 font-bold text-[25px] tracking-widest uppercase drop-shadow-md leading-none mb-1">
                                             {data.name.split('\n')[0]}
@@ -371,11 +454,11 @@ export const Card: React.FC<CardProps> = ({
                                     </>
                                 ) : (
                                     <div className="text-center font-black text-3xl text-transparent bg-clip-text bg-gradient-to-r from-yellow-100 to-yellow-500 drop-shadow-sm tracking-wide">
-                                        {data.name}
+                                        {data.name || 'Unknown Card'} {/* 兜底：name 为空时显示默认值 */}
                                     </div>
                                 )}
                             </div>
-                                {data.keywords.length > 0 && (
+                                {data.keywords && data.keywords.length > 0 && (
                                     <div className="flex justify-center gap-2 mb-2 scale-125">
                                         {data.keywords.map(k => <KeywordIcon key={k} keyword={k} />)}
                                     </div>
@@ -386,14 +469,14 @@ export const Card: React.FC<CardProps> = ({
                              </>
                          )}
 
-                         {isBench && data.keywords.length > 0 && (
+                         {isBench && data.keywords && data.keywords.length > 0 && (
                              <div className="flex justify-center gap-3 mb-6 scale-[1.8]">
                                 {data.keywords.map(k => <KeywordIcon key={k} keyword={k} />)}
                              </div>
                          )}
 
 
-                         {data.type.includes('unit') ? (
+                         {data.type && data.type.includes('unit') ? ( // 新增安全检查
                             <div className="flex justify-between items-center px-2 pt-2 border-t border-white/20">
                                 <div className={`font-black text-yellow-500 drop-shadow-md ${powerColor} ${isBench ? 'text-7xl' : 'text-4xl'}`}>
                                     {displayPower}
@@ -430,10 +513,21 @@ export const Card: React.FC<CardProps> = ({
                 isBlocking={isBlocking}
             />
 
-            {/* Damage Text (伤害飘字) */}
-            {!isPreview && data.damageTaken !== undefined && data.damageTaken > 0 && (
-                <div className="absolute -right-4 bottom-4 text-4xl font-black text-red-500 animate-float-damage z-[100] whitespace-nowrap drop-shadow-md pointer-events-none">
-                    -{data.damageTaken}
+            {/* [升级版] 左下角：攻击力飘字 (Power Floater) */}
+            {!isPreview && powerDelta !== null && (
+                <div className={`absolute left-2 bottom-12 text-5xl font-black animate-float-damage z-[100] whitespace-nowrap drop-shadow-md stroke-black
+                    ${powerDelta > 0 ? 'text-yellow-400' : 'text-blue-400'}`}
+                >
+                    {powerDelta > 0 ? `+${powerDelta}` : powerDelta}
+                </div>
+            )}
+
+            {/* [升级版] 右下角：生命值飘字 (Health Floater) */}
+            {!isPreview && healthDelta !== null && (
+                <div className={`absolute right-2 bottom-12 text-5xl font-black animate-float-damage z-[100] whitespace-nowrap drop-shadow-md stroke-black
+                    ${healthDelta > 0 ? 'text-green-400' : 'text-red-500'}`}
+                >
+                    {healthDelta > 0 ? `+${healthDelta}` : healthDelta}
                 </div>
             )}
 
@@ -469,7 +563,30 @@ export const Card: React.FC<CardProps> = ({
         </div>
     );
 
+// [新增] 渲染左上角购物车图标
+    const renderShopIcon = () => {
+        if (!showShopIcon || location === 'preview') return null;
 
+        // 如果已满 3 张且不是测试卡，不显示购买图标
+        if (ownedCount >= 3 && data.region !== 'TEST') return null;
+
+        const isNewCard = ownedCount === 0;
+        // 绿色=解锁，蓝色=加购
+        const colorClass = isNewCard ? 'bg-green-500 hover:bg-green-400' : 'bg-blue-500 hover:bg-blue-400';
+
+        return (
+            <div
+                className={`absolute -top-3 -left-3 z-[60] w-8 h-8 rounded-full ${colorClass} flex items-center justify-center shadow-[0_0_10px_rgba(0,0,0,0.5)] border-2 border-white transition-transform hover:scale-110`}
+                title={isNewCard ? "Unlock Card" : "Buy More"}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    if (onViewArt) onViewArt(data); // 点击图标进入详情页进行购买
+                }}
+            >
+                <ShoppingCart size={14} className="text-white" />
+            </div>
+        );
+    };
 
     // --- [核心修改] Framer Motion 根容器 ---
     return (
@@ -497,6 +614,8 @@ export const Card: React.FC<CardProps> = ({
             } : {}}
         >
             {visualFaceUp ? renderFrontFace() : renderBackFace()}
+            {/* [新增] 挂载购物车图标 */}
+            {renderShopIcon()}
         </motion.div>
     );
 };

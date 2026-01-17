@@ -70,7 +70,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     // 奔袭 (Lyfe Rush) - 自动目标 (里芙)
     'effect_lyfe_rush': {
         id: 'effect_lyfe_rush',
-        name: '奔袭',
+        name: '无尽霜刃',
         description: '给予里芙 +1/+1。',
         class: 'GRANT',
         timing: 'ON_PLAY',
@@ -82,7 +82,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     },
     'effect_lyfe_ultimate': {
         id: 'effect_lyfe_ultimate',
-        name: '先登',
+        name: '吞噬神座',
         description: '快速：备战。',
         class: 'RALLY', // [修正] 改为 RALLY
         timing: 'ON_PLAY',
@@ -93,7 +93,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     // 强袭 (Fenny Strike) - 自动目标 (芬妮)
     'effect_fenny_strike': {
         id: 'effect_fenny_strike',
-        name: '强袭',
+        name: '星光之途',
         description: '给予芬妮 +2/+0。',
         class: 'GRANT',
         timing: 'ON_PLAY',
@@ -105,7 +105,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     },
     'effect_fenny_ultimate': {
         id: 'effect_fenny_ultimate',
-        name: '斩将',
+        name: '绝对主角',
         description: '芬妮打击一个敌方单位（附带碾压）。',
         class: 'STRIKE',
         timing: 'ON_PLAY',

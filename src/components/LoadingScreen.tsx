@@ -130,13 +130,13 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
         return (
             <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center bg-black/60 backdrop-blur-md animate-fade-in text-white font-mono">
                 <div className="text-2xl font-bold tracking-widest mb-4 animate-pulse">
-                    {phase === 'matching' ? 'MATCHING...' : 'MATCH FOUND!'}
+                    {phase === 'matching' ? '匹配中...' : '匹配成功!'}
                 </div>
                 <div className="text-4xl font-black text-blue-400">
                     {matchTimer.toFixed(1)}s
                 </div>
                 <div className="mt-8 text-xs text-gray-400">
-                    Estimated Time: 00:01
+                    匹配时间: 00:01
                 </div>
             </div>
         );

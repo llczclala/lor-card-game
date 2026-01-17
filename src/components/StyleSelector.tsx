@@ -1,10 +1,11 @@
 import React, {useState} from 'react';
-import { X, Check } from 'lucide-react';
+import { X, Check, Lock } from 'lucide-react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 
 interface StyleSelectorProps {
     type: 'cardBack' | 'desk'; // 当前选择的是卡背还是牌桌
     currentSelected: number;   // 当前生效的索引 (0-4)
+    unlockedIndices: number[];
     onSelect: (index: number) => void; // 确认选择回调
     onClose: () => void;       // 关闭回调
 }
@@ -12,6 +13,7 @@ interface StyleSelectorProps {
 export const StyleSelector: React.FC<StyleSelectorProps> = ({
     type,
     currentSelected,
+    unlockedIndices,
     onSelect,
     onClose
 }) => {
@@ -31,6 +33,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
             setPreviewIndex(prev => (prev - 1 + assets.length) % assets.length);
         }
     };
+    const isPreviewUnlocked = unlockedIndices.includes(previewIndex);
 
     return (
         <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/95 backdrop-blur-xl animate-fade-in text-white">
@@ -46,29 +49,46 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
 
                 {/* --- 左侧：缩略图列表 --- */}
                 <div className="w-64 flex flex-col gap-6 overflow-y-auto custom-scrollbar py-4 pr-4">
-                    {assets.map((img, idx) => (
-                        <div
-                            key={idx}
-                            onClick={() => setPreviewIndex(idx)}
-                            className={`
-                                relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300 group
-                                ${previewIndex === idx ? 'border-orange-500 scale-105 shadow-[0_0_20px_orange]' : 'border-white/10 hover:border-white/50 opacity-60 hover:opacity-100'}
-                                ${type === 'cardBack' ? 'aspect-[2/3]' : 'aspect-video'}
-                            `}
-                        >
-                            <img src={img} className="w-full h-full object-cover" alt={`Style ${idx}`} />
+                    {assets.map((img, idx) => {
+                        // 判断每一项是否解锁
+                        const isUnlocked = unlockedIndices.includes(idx);
 
-                            {/* 当前生效标记 */}
-                            {currentSelected === idx && (
-                                <div className="absolute top-2 right-2 bg-green-500 text-black p-1 rounded-full shadow-lg">
-                                    <Check size={12} strokeWidth={4} />
-                                </div>
-                            )}
+                        return (
+                            <div
+                                key={idx}
+                                onClick={() => setPreviewIndex(idx)}
+                                className={`
+                                    relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300 group
+                                    ${previewIndex === idx ? 'border-orange-500 scale-105 shadow-[0_0_20px_orange]' : 'border-white/10 hover:border-white/50 opacity-60 hover:opacity-100'}
+                                    ${type === 'cardBack' ? 'aspect-[2/3]' : 'aspect-video'}
+                                `}
+                            >
+                                <img
+                                    src={img}
+                                    className={`w-full h-full object-cover ${!isUnlocked ? 'grayscale' : ''}`} // 未解锁变灰
+                                    alt={`Style ${idx}`}
+                                />
 
-                            <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors"></div>
-                        </div>
-                    ))}
+                                {/* 当前生效标记 */}
+                                {currentSelected === idx && (
+                                    <div className="absolute top-2 right-2 bg-green-500 text-black p-1 rounded-full shadow-lg z-10">
+                                        <Check size={12} strokeWidth={4} />
+                                    </div>
+                                )}
+
+                                {/* [新增] 未解锁标记 (锁图标) */}
+                                {!isUnlocked && (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                                        <Lock size={24} className="text-white/80" />
+                                    </div>
+                                )}
+
+                                <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors"></div>
+                            </div>
+                        );
+                    })}
                 </div>
+
 
                 {/* --- 右侧：大图预览与确认 --- */}
                 <div className="flex-1 flex flex-col items-center justify-center relative">
@@ -91,11 +111,22 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                             alt="Preview"
                         />
 
+                        {/* [新增] 未解锁时的全屏遮罩/提示 */}
+                        {!isPreviewUnlocked && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/20 backdrop-blur-[2px]">
+                                <Lock size={64} className="text-white/50 mb-4" />
+                                <span className="text-2xl font-black tracking-widest text-white/50 border-2 border-white/50 px-6 py-2 rounded">
+                                    LOCKED
+                                </span>
+                            </div>
+                        )}
+
                         {/* 滚轮提示 */}
                         <div className="absolute bottom-4 right-4 text-xs font-mono text-white/40 bg-black/50 px-2 py-1 rounded border border-white/10">
                             SCROLL TO SWITCH
                         </div>
                     </div>
+
 
                     {/* 底部操作栏 */}
                     <div className="mt-12 flex gap-8 items-center">
@@ -103,24 +134,34 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                             STYLE {String(previewIndex + 1).padStart(2, '0')} / {String(assets.length).padStart(2, '0')}
                         </div>
 
+
                         <button
                             onClick={() => {
-                                onSelect(previewIndex);
-                                // 不自动关闭，允许用户继续看其他的，或者用户手动关
+                                if (isPreviewUnlocked) {
+                                    onSelect(previewIndex);
+                                }
                             }}
-                            disabled={currentSelected === previewIndex}
+                            // 禁用条件：已经是当前选择 OR 未解锁
+                            disabled={currentSelected === previewIndex || !isPreviewUnlocked}
                             className={`
                                 px-12 py-4 rounded-full font-black tracking-widest text-lg transition-all
                                 flex items-center gap-3
-                                ${currentSelected === previewIndex
-                                    ? 'bg-green-600/20 text-green-500 border border-green-500/50 cursor-default'
-                                    : 'bg-orange-600 hover:bg-orange-500 text-white shadow-[0_0_30px_rgba(234,88,12,0.4)] hover:scale-105'}
+                                ${!isPreviewUnlocked
+                                    ? 'bg-gray-800 text-gray-500 border border-gray-700 cursor-not-allowed' // 锁定样式
+                                    : (currentSelected === previewIndex
+                                        ? 'bg-green-600/20 text-green-500 border border-green-500/50 cursor-default' // 已选中样式
+                                        : 'bg-orange-600 hover:bg-orange-500 text-white shadow-[0_0_30px_rgba(234,88,12,0.4)] hover:scale-105') // 可选样式
+                                }
                             `}
                         >
-                            {currentSelected === previewIndex ? (
-                                <><Check /> EQUIPPED</>
+                            {!isPreviewUnlocked ? (
+                                <><Lock size={20} /> LOCKED</>
                             ) : (
-                                'SELECT STYLE'
+                                currentSelected === previewIndex ? (
+                                    <><Check /> EQUIPPED</>
+                                ) : (
+                                    'SELECT STYLE'
+                                )
                             )}
                         </button>
                     </div>

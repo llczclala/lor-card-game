@@ -3,6 +3,7 @@ import { User, Plus, Trash2, Check, X } from 'lucide-react';
 // [修正] 改为从 cards 导入数据，避免直接引用 imageData 可能导致的路径问题
 import { CARD_DB } from '../data/cards';
 import type { UserSummary } from '../utils/storageUtils';
+import { eventBus, GameEvents } from '../utils/eventBus';
 
 interface AccountSelectionModalProps {
     currentUserUid: string;
@@ -27,6 +28,7 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
 
     const handleCreate = () => {
         if (!newUserName.trim()) return;
+        eventBus.emit(GameEvents.UI_CLICK);
         onCreateUser(newUserName);
         setIsCreating(false);
         setNewUserName('');
@@ -43,8 +45,13 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                     <h2 className="text-xl font-black tracking-widest text-white flex items-center gap-3">
                         <User className="text-blue-400" /> SELECT ACCOUNT
                     </h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
-                        <X size={24} />
+                    <button onClick={() => {
+                        eventBus.emit(GameEvents.UI_BACK); // [新增] 音效
+                        onClose();
+                    }}
+                     className="text-gray-400 hover:text-white transition-colors"
+                     >
+                     <X size={24} />
                     </button>
                 </div>
 
@@ -61,7 +68,10 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                         return (
                             <div
                                 key={user.uid}
-                                onClick={() => setSelectedUid(user.uid)}
+                                onClick={() => {
+                                eventBus.emit(GameEvents.UI_CLICK); // [新增] 音效
+                                setSelectedUid(user.uid);
+                                }}
                                 className={`
                                     relative flex items-center gap-4 p-3 rounded-xl border-2 cursor-pointer transition-all
                                     ${isSelected
@@ -111,7 +121,10 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                                 OK
                             </button>
                             <button
-                                onClick={() => setIsCreating(false)}
+                                onClick={() => {
+                                eventBus.emit(GameEvents.UI_BACK); // [新增] 音效
+                                setIsCreating(false);
+                                }}
                                 className="bg-gray-700 hover:bg-gray-600 text-white px-3 rounded-lg transition-colors"
                             >
                                 <X size={16} />
@@ -119,7 +132,10 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                         </div>
                     ) : (
                         <button
-                            onClick={() => setIsCreating(true)}
+                            onClick={() => {
+                                eventBus.emit(GameEvents.UI_CLICK); // [新增] 音效
+                                setIsCreating(true);
+                            }}
                             className="w-full py-3 border-2 border-dashed border-white/10 hover:border-white/30 rounded-xl flex items-center justify-center gap-2 text-gray-400 hover:text-white transition-all hover:bg-white/5"
                         >
                             <Plus size={16} /> CREATE NEW ACCOUNT
@@ -130,7 +146,10 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                 {/* 底部按钮栏 */}
                 <div className="p-6 border-t border-white/10 bg-slate-800/50 flex justify-between items-center gap-4">
                     <button
-                        onClick={() => onDeleteUser(selectedUid)}
+                        onClick={() => {
+                            eventBus.emit(GameEvents.UI_BACK); // [新增] 删除=撤回音效
+                            onDeleteUser(selectedUid);
+                        }}
                         disabled={selectedUid === currentUserUid} // 禁止删除当前登录的账号
                         className={`
                             px-6 py-3 rounded-lg font-bold flex items-center gap-2 transition-all
@@ -143,7 +162,10 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                     </button>
 
                     <button
-                        onClick={() => onConfirmSwitch(selectedUid)}
+                        onClick={() => {
+                            eventBus.emit(GameEvents.UI_CLICK); // [新增] 音效
+                            onConfirmSwitch(selectedUid);
+                        }}
                         disabled={selectedUid === currentUserUid} // 如果选的是自己，禁用确定按钮
                         className={`
                             flex-1 py-3 rounded-lg font-black tracking-widest text-lg transition-all shadow-lg

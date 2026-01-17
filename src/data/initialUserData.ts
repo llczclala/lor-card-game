@@ -35,24 +35,41 @@ export const FULL_COLLECTION = {
     }, {} as Record<string, number>),
 
     resources: {
-        dataGold: 99999, // 数据金 (Data Gold) - 用于抽卡
-        bitGold: 99999   // 比特金 (Bit Gold) - 用于直购
+        silverCoin: 99999, // [新增] 无限银币
+        dataGold: 99999,
+        bitGold: 99999
     }
 };
 
 // 方案 B: 新手初始收藏 (正式上线模式)
 // 仅给予英雄和部分基础单位
 const STARTER_KEYS = [
-    // 英雄
+    // --- 英雄 ---
     'lyfe', 'fenny',
-    // 基础法术
-    'single_combat', 'prayer', 'hidden_arrow', 'inspire',
-    // 基础后勤单位 (每个小队给一点)
-    'Messenger_Squad_Ah_Hua', 'Messenger_Squad_Gena',
-    'Ghost_Squad_Antina', 'Ghost_Squad_Vez',
-    'Argo_Squad_Pigeon', 'Argo_Squad_Musician',
-    'Typhoon_Squad_Flameheart',
-    'test_unit_01'
+
+    // --- 基础法术 (Lyfe) ---
+    'single_combat', 'prayer', 'focus',
+    // --- 基础法术 (Fenny) ---
+    'hidden_arrow', 'inspire', 'destruction',
+
+    // --- 1费 基础单位 ---
+    'Messenger_Squad_Ah_Hua',   // 信使-阿花
+    'Ghost_Squad_Antina',       // 鬼怪-安提娜
+    'Argo_Squad_Pigeon',        // 阿尔戈-鸽子
+    'Typhoon_Squad_Flameheart', // 堤丰-焰心
+    'Ulster_Squad_Koni',        // [新增] 阿尔斯特-科尼 (再生)
+    'Mingyi_Squad_Zhe_hao',     // [新增] 明夷-赭毫 (魔免)
+
+    // --- 2-3费 中坚力量 ---
+    'Messenger_Squad_Gena',     // 信使-格娜
+    'Ghost_Squad_Vez',          // 鬼怪-薇兹
+    'Argo_Squad_Musician',      // 阿尔戈-乐手
+    'Dream_Guardians_Squad_Martina', // [新增] 守梦人-玛蒂娜 (坚韧)
+
+    // --- 4+费 大哥单位 ---
+    'Typhoon_Squad_Dornier',    // [新增] 堤丰-多尼尔 (反伤+再生)
+    'Ghost_Squad_Valen',        // [新增] 鬼怪-瓦莲 (凶恶大哥)
+    'Mingyi_Squad_Jin_Lang'     // [新增] 明夷-金琅 (强力盾牌)
 ];
 
 export const STARTER_COLLECTION = {
@@ -65,7 +82,8 @@ export const STARTER_COLLECTION = {
     }, {} as Record<string, number>),
 
     resources: {
-        dataGold: 1000, // 初始送 1000 (够抽 10 连)
+        silverCoin: 500000, // [新增] 初始给予 5000 通用银，方便前期合成
+        dataGold: 160000,
         bitGold: 0
     }
 };
@@ -87,7 +105,6 @@ export const STARTER_DECK_LYFE = {
         'Argo_Squad_Pigeon': 3,
         'Argo_Squad_Musician': 2,
         // 填充一些测试卡保证数量
-        'test_unit_01': 3,
         'test_challenger': 3
     },
     createdAt: Date.now(),
@@ -123,10 +140,14 @@ export const INITIAL_USER_DECKS = [
 // --- 4. 用户档案生成器 ---
 export const createInitialProfile = (userId: string) => ({
     uid: userId,
-    displayName: `分析员#${userId.slice(-4).toUpperCase()}`, // 默认昵称
+    displayName: `分析员#${userId.slice(-4).toUpperCase()}`,
     level: 1,
     exp: 0,
-    avatarId: 'lyfe', // 默认头像
+    avatarId: 'lyfe',
     createdAt: Date.now(),
-    lastLoginAt: Date.now()
+    lastLoginAt: Date.now(),
+
+    // [新增] 抽卡核心数据字段
+    pityCounter: 0,      // 当前垫了多少抽
+    gachaTarget: null    // 当前定轨目标 (例如 "hero:lyfe")
 });

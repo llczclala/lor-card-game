@@ -30,14 +30,6 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
     cardBackUrl
 }) => {
     return (
-        // [修正] 添加 pb-[60px] (Padding Bottom)
-        // 作用：在容器底部增加 60px 的空白填充。
-        // 结果：由于 flex 布局试图在剩余空间中居中内容，这会把视觉中心向上推，
-        // 从而拉开"战场卡牌"与"备战席"的距离。
-
-        // [微调参数]
-        // 想要抬得更高？ -> 改大数值 (如 pb-[80px])
-        // 想要低一点？ -> 改小数值 (如 pb-[40px])
         <div className="flex-1 w-full h-full flex justify-center items-end gap-1 relative bg-transparent pb-[80px]">
             {/* 这里的 Sword 只需要在这里导入... */}
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect} from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, Home } from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
@@ -20,7 +20,6 @@ import { PlayerHand, OpeningMulligan } from './CardAnimations';
 import { GameAnnouncement } from './GameAnnouncement';
 import { useGameAnnouncer } from '../hooks/useGameAnnouncer';
 import { useSpellSystem } from '../hooks/useSpellSystem'; // [新增]
-
 
 
 // [修正] 专用的 Mana 计数动画 Hook (Drain -> Fill 模式)
@@ -82,16 +81,139 @@ interface GameSessionProps {
     playBgm: (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat') => void;
     playLevelUpMovie: (heroKey: string, onEnd?: () => void) => void;
     playVictoryMovie: (heroKeys: string[], onEnd?: () => void) => void;
+    stopMovie: (immediate?: boolean) => void;
     // [新增] 接收样式索引
     deskIndex: number;
     cardBackIndex?: number;
 }
+// --- [新增] 工具 Hook: 数值滚动 ---
+const useNumberTicker = (targetValue: number, duration: number = 1000) => {
+    const [displayValue, setDisplayValue] = useState(targetValue);
+
+    useEffect(() => {
+        if (displayValue === targetValue) return;
+        const diff = Math.abs(targetValue - displayValue);
+        // 动态步长：差值越大跑得越快，最小 10ms 一跳
+        const stepTime = Math.max(10, duration / (diff * 2));
+        const step = displayValue < targetValue ? 1 : -1;
+
+        const timer = setTimeout(() => {
+            setDisplayValue(prev => prev + step);
+        }, stepTime);
+
+        return () => clearTimeout(timer);
+    }, [targetValue, displayValue, duration]);
+
+    return displayValue;
+};
+
+// --- [新增] 组件: 智能水晶 (SmartNexus) ---
+// 负责：数值滚动、伤害飘字、受击震动
+const SmartNexus = ({
+    health,
+    maxHealth,
+    isEnemy,
+    onClick,
+    highlight
+}: {
+    health: number,
+    maxHealth: number,
+    isEnemy: boolean,
+    onClick?: () => void,
+    highlight?: boolean
+}) => {
+    // 1. 数值滚动 (滚动时间 800ms)
+    const displayHealth = useNumberTicker(health, 800);
+
+    // 2. 状态监听 (飘字与震动)
+    const [delta, setDelta] = useState<number | null>(null);
+    const [shake, setShake] = useState(false);
+    const prevHealthRef = useRef(health);
+
+    useEffect(() => {
+        const diff = health - prevHealthRef.current;
+        if (diff !== 0) {
+            setDelta(diff); // 记录变化量 (如 -5)
+
+            // 只有扣血才震动，回血不震动
+            if (diff < 0) setShake(true);
+
+            // 1.2秒后清理状态
+            const timer = setTimeout(() => {
+                setDelta(null);
+                setShake(false);
+            }, 1200);
+
+            prevHealthRef.current = health;
+            return () => clearTimeout(timer);
+        }
+    }, [health]);
+
+    // 计算颜色：回血绿色，扣血红色
+    const floatColor = (delta || 0) > 0 ? 'text-green-400' : 'text-red-500';
+    const floatAnim = (delta || 0) > 0 ? 'animate-float-up' : 'animate-float-damage';
+    const sign = (delta || 0) > 0 ? '+' : '';
+
+    return (
+        <div
+            className={`relative transition-all duration-200 ${shake ? 'animate-shake' : ''} ${highlight ? 'scale-110 brightness-110' : ''}`}
+            onClick={onClick}
+        >
+            {/* 伤害/治疗 飘字层 */}
+            {delta !== null && (
+                <div className={`absolute left-1/2 -translate-x-1/2 -top-16 text-6xl font-black z-[100] whitespace-nowrap drop-shadow-[0_4px_4px_rgba(0,0,0,1)] stroke-white ${floatColor} ${floatAnim}`}>
+                    {sign}{delta}
+                </div>
+            )}
+
+            {/* 原始显示组件 (透传动态数值) */}
+            <NexusDisplay
+                health={displayHealth} // 使用滚动后的数值
+                isEnemy={isEnemy}
+                // 既然我们在外面处理了飘字，这里可以传 undefined 避免旧的红色闪烁冲突，
+                // 或者保留它作为双重反馈 (推荐先保留，看看效果)
+                damageTaken={undefined}
+            />
+        </div>
+    );
+};
 
 export const GameSession: React.FC<GameSessionProps> = ({
     deck, onExit, playBgm,
-    playLevelUpMovie, playVictoryMovie,
+    playLevelUpMovie, playVictoryMovie,stopMovie,
     deskIndex, cardBackIndex = 0 // [新增]
 }) => {
+
+    const enemyDeckConfig = React.useMemo(() => {
+        // [修正] 动态构筑敌方卡组：3张芬妮 + 随机后勤卡牌填充至40张
+        // 解决因引用已删除的"幽灵卡牌"导致 data 为 undefined 引发的崩溃问题
+
+        // 1. 核心英雄：固定 3 张芬妮
+        // (注意：请确保 'fenny' 这个 key 在 cards.ts 中真实存在)
+        const deck: string[] = ['fenny', 'fenny', 'fenny'];
+
+        // 2. 获取所有合法的后勤 (Logistics) 阵营卡牌 (排除英雄)
+        // 这样可以确保不管我们删了多少测试卡，这里取到的都是现存有效的卡
+        const logisticsPool = Object.values(CARD_DB)
+            .filter(c => c.region === 'Logistics' && !c.isChampion)
+            .map(c => c.key);
+
+        // 3. 随机填充直到 40 张
+        // 如果后勤卡不够(比如还没做)，这可能会导致死循环，所以加个 logisticsPool.length 检查
+        if (logisticsPool.length > 0) {
+            while (deck.length < 40) {
+                const randomKey = logisticsPool[Math.floor(Math.random() * logisticsPool.length)];
+                deck.push(randomKey);
+            }
+        } else {
+            // 极端兜底：如果连后勤卡都没有，就全填芬妮，防止游戏无法启动
+            while (deck.length < 40) deck.push('fenny');
+        }
+
+        // 4. 洗牌 (虽然 useGameState 也会洗，但这里打乱更保险)
+        return deck.sort(() => Math.random() - 0.5);
+    }, []);
+
     const {
         game, setGame,
         playerHand,setPlayerHand,enemyHand, setEnemyHand,
@@ -99,9 +221,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
         enemyBench, setEnemyBench,
         combatField, setCombatField,
         actions,
-        message, setMessage,
-        winningHeroKeys
-    } = useGameState(deck);
+        message, setMessage,winningHeroKeys
+    } = useGameState(deck, enemyDeckConfig);
 
     // [新增] 悬停卡牌状态与法力预览计算
     const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
@@ -130,14 +251,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
     }, [isMulliganPhase, mulliganTimeLeft, mulliganConfirmed]);
 
-
-
-    useEffect(() => {
-        // 1.5秒后显示换牌界面 (对应 GameStart 播报时长)
-        const timer = setTimeout(() => setShowMulliganUI(true), 1500);
-        return () => clearTimeout(timer);
-    }, []);
-
     // [新增] 移动到这里：控制开局动画显示时机
     const [showMulliganUI, setShowMulliganUI] = useState(false);
 
@@ -155,21 +268,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
         },
         isMulliganPhase // 关键参数
     });
-
-    // [新增] 挂载施法系统 Hook
-    // 负责管理法术的目标选择状态机
     const spellSystem = useSpellSystem({
         onComplete: (card, targets) => {
             // 当目标选择完成后，调用游戏状态的 finalizeSpell
             actions.finalizeSpell(card, 'player', targets);
         }
     });
-    // [新增] 换牌阶段控制
-    // 默认为 true (开局即进入换牌流程)，或者由 useGameAnnouncer 控制
-    // 根据您的描述，"游戏开始" -> "抽卡动画(Mulligan UI)" -> "换牌" -> "第一回合"
-    // 所以初始状态应该是 true
-    // 如果施法系统有指令 (instruction)，则显示在播报层
-    // 这里我们做一个简单的合并：如果有施法指令，就覆盖当前的 announcement
     const finalAnnouncement = spellSystem.isCasting && spellSystem.instruction
         ? { id: 'spell-hint', mainText: spellSystem.instruction, type: 'phase_hint' as const }
         : announcement;
@@ -208,16 +312,56 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     // 获取当前选中的卡背图片
     const currentCardBack = PERSONALIZATION_ASSETS.cardBacks[cardBackIndex];
-    const { speakingCardId } = useVoice();
+    const { speakingCardId } = useVoice({ playerBench });
 
     useEffect(() => {
         playBgm('battle');
     }, []);
 
+
     useEffect(() => {
-        if (game.gameResult === 'victory') playBgm('victory');
-        else if (game.gameResult === 'defeat') playBgm('defeat');
-    }, [game.gameResult]);
+        if (game.gameResult === 'victory') {
+            playBgm('victory');
+        } else if (game.gameResult === 'defeat') {
+            playBgm('defeat');
+        }
+    }, [game.gameResult, playBgm]);
+
+    const handleVictorySequence = useCallback((onEnd: () => void) => {
+        // 1. 挑选 MVP (保持原逻辑：用于语音互动)
+        const survivingHeroes = playerBench.filter(c => c.isChampion);
+        const mvp = survivingHeroes.length > 0
+            ? survivingHeroes[Math.floor(Math.random() * survivingHeroes.length)]
+            : playerBench[0];
+
+        if (mvp) {
+            // 触发 MVP 语音 (小兵也可以说话)
+            eventBus.emit(GameEvents.GAME_VICTORY, { hero: mvp });
+        }
+
+        // [修复] 2. 视频播放逻辑 (Fix: 解决 MVP 是小兵导致没视频播的问题)
+        // 我们构建一个候选列表，只要列表里任何一个 key 有视频，就能播放
+        const videoCandidates: string[] = [];
+
+        // 优先级 A: MVP 本人 (如果是英雄)
+        if (mvp && mvp.isChampion) {
+            videoCandidates.push(mvp.key);
+        }
+
+        // 优先级 B: 系统计算的获胜英雄 (原始成功逻辑的核心)
+        if (winningHeroKeys && winningHeroKeys.length > 0) {
+            videoCandidates.push(...winningHeroKeys);
+        }
+
+        // 优先级 C: 整个卡组 (兜底，movieData 会自动筛选有视频的卡)
+        // 这样即使场上只有小兵，只要你带了里芙，就能放里芙的视频
+        videoCandidates.push(...deck);
+
+        // 3. 播放视频
+        playVictoryMovie(videoCandidates, onEnd);
+
+    }, [playerBench, winningHeroKeys, deck, playVictoryMovie]);
+
 
     // [修改] 主回合倒计时逻辑
     const [timeLeft, setTimeLeft] = useState(99);
@@ -440,7 +584,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
             {/* 2. 退出按钮 */}
             <div className="absolute top-4 left-4 z-[100]">
                  <button onClick={() => {
-                     playBgm('title');
+                     eventBus.emit(GameEvents.UI_BACK);
                      onExit();
                  }} className="p-2 bg-slate-800/80 rounded-full hover:bg-slate-700 text-gray-400 hover:text-white transition-colors">
                     <Home size={20} />
@@ -458,6 +602,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         cardBackUrl={currentCardBackUrl}
                         selectedIndices={mulliganSelected}
                         onToggleIndex={(index) => {
+                            eventBus.emit(GameEvents.UI_CLICK);
                             setMulliganSelected(prev => {
                                 const next = new Set(prev);
                                 if (next.has(index)) next.delete(index);
@@ -470,11 +615,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             await actions.replaceOpeningHand(Array.from(mulliganSelected));
                         }}
                         onComplete={() => {
-                            // 1. 动画结束，视觉上手牌已飞回牌库
-                            // 2. 逻辑上，将手牌放回牌库顶，并清空当前手牌
                             actions.requeueHandToDeck();
-
-                            // 3. 结束换牌阶段，GameAnnouncement 将接管并触发 drawCards(4)
                             setIsMulliganPhase(false);
                         }}
                     />
@@ -495,8 +636,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
             {game.gameResult && (
                 <GameOverScreen
                     result={game.gameResult}
-                    onRestart={actions.resetGame}
-                    onPlayMovie={(cb) => playVictoryMovie(winningHeroKeys, cb)}
+                    stats={game.stats}
+                    onExit={onExit}
+                    onPlayMovie={handleVictorySequence}
                 />
             )}
             {game.levelUpCard && (
@@ -504,7 +646,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     card={game.levelUpCard}
                     onClose={actions.closeLevelUp}
                     onPlayMovie={playLevelUpMovie}
-                    onStopMovie={() => {}}
+                    onStopMovie={stopMovie}
                 />
             )}
             {(viewCard || game.fullArtCard) && <FullArtOverlay card={viewCard || game.fullArtCard!} onClose={() => setViewCard(null)} />}
@@ -526,7 +668,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         <div className="flex gap-16 md:gap-24 items-center">
                             <div className="group relative cursor-pointer transition-all duration-300 hover:scale-110 hover:-translate-y-4" onClick={(e) => { e.stopPropagation(); actions.resolveChoice('left'); }}>
                                 <div className="absolute -top-16 left-1/2 -translate-x-1/2 text-2xl font-bold text-cyan-300 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-4 group-hover:translate-y-0 whitespace-nowrap">
-                                    {game.activeCard.associatedChampionKey === 'lyfe' ? '奔袭 (Rush)' : '强袭 (Strike)'}
+                                    {game.activeCard.associatedChampionKey === 'lyfe' ? '无尽霜刃 (Rush)' : '星光之途 (Strike)'}
                                 </div>
                                 <div className="ring-4 ring-transparent group-hover:ring-cyan-400 rounded-xl transition-all shadow-[0_0_50px_rgba(34,211,238,0.4)]">
                                     <Card data={{...CARD_DB[game.activeCard.associatedChampionKey === 'lyfe' ? 'lyfe_rush' : 'fenny_strike'], id: 'choice-left', strikeCount: 0, keywords: []} as any} location="preview" />
@@ -535,7 +677,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             <div className="w-px h-32 bg-white/20"></div>
                             <div className="group relative cursor-pointer transition-all duration-300 hover:scale-110 hover:-translate-y-4" onClick={(e) => { e.stopPropagation(); actions.resolveChoice('right'); }}>
                                 <div className="absolute -top-16 left-1/2 -translate-x-1/2 text-2xl font-bold text-red-500 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-4 group-hover:translate-y-0 whitespace-nowrap">
-                                    {game.activeCard.associatedChampionKey === 'lyfe' ? '先登 (Ultimate)' : '斩将 (Decimate)'}
+                                    {game.activeCard.associatedChampionKey === 'lyfe' ? '吞噬神座 (Ultimate)' : '绝对主角 (Decimate)'}
                                 </div>
                                 <div className="ring-4 ring-transparent group-hover:ring-red-500 rounded-xl transition-all shadow-[0_0_50px_rgba(239,68,68,0.4)]">
                                     <Card data={{...CARD_DB[game.activeCard.associatedChampionKey === 'lyfe' ? 'lyfe_ultimate' : 'fenny_ultimate'], id: 'choice-right', strikeCount: 0, keywords: []} as any} location="preview" />
@@ -569,16 +711,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
             <div className={`w-full h-full relative ${game.screenShake ? 'animate-shake' : ''}`}>
 
                 {/* --- A. 左侧 UI 层 (绝对定位) --- */}
-                <div
-                    className={`absolute top-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all
-                        ${spellSystem.checkIsTargetable('nexus', 'enemy') ? 'ring-4 ring-red-500 cursor-pointer animate-pulse' : ''}
-                    `}
-                    onClick={() => spellSystem.isCasting && spellSystem.handleTargetClick('nexus', 'enemy')}
-                >
-                    <NexusDisplay
+                <div className={`absolute top-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all`}>
+                    <SmartNexus
                         health={game.enemyNexus}
+                        maxHealth={game.enemyMaxMana} // 借用一下 MaxMana 或者写死 20，这里主要用于展示
                         isEnemy={true}
-                        damageTaken={game.nexusDamage?.target === 'enemy' ? game.nexusDamage.amount : undefined}
+                        highlight={spellSystem.checkIsTargetable('nexus', 'enemy')}
+                        onClick={() => spellSystem.isCasting && spellSystem.handleTargetClick('nexus', 'enemy')}
                     />
                 </div>
                 {/* 2. 敌方牌库 (左上偏右) */}
@@ -597,16 +736,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 >
                     <Deck isEnemy={true} cardBackIndex={cardBackIndex} />
                 </div>
-                <div
-                    className={`absolute bottom-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all
-                         ${spellSystem.checkIsTargetable('nexus', 'player') ? 'ring-4 ring-blue-500 cursor-pointer animate-pulse' : ''}
-                    `}
-                    onClick={() => spellSystem.isCasting && spellSystem.handleTargetClick('nexus', 'player')}
-                >
-                    <NexusDisplay
+                <div className={`absolute bottom-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all`}>
+                    <SmartNexus
                         health={game.playerNexus}
+                        maxHealth={game.playerMaxMana}
                         isEnemy={false}
-                        damageTaken={game.nexusDamage?.target === 'player' ? game.nexusDamage.amount : undefined}
+                        highlight={spellSystem.checkIsTargetable('nexus', 'player')}
+                        onClick={() => spellSystem.isCasting && spellSystem.handleTargetClick('nexus', 'player')}
                     />
                 </div>
                 {/* 4. 我方牌库 (左下偏右) */}
