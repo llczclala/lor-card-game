@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence,type Variants } from 'framer-motion';
-// 引入必要的图
-import { Check, RefreshCw} from 'lucide-react';
+import React, { useState, useEffect} from 'react';
+import { motion, AnimatePresence, type Variants } from 'framer-motion'; // [加回] AnimatePresence
+import { Check, RefreshCw } from 'lucide-react'; // [加回] 图标
 import type { CardData } from '../types';
 import { Card } from './Card';
 import { canAffordCard } from '../utils/gameRules';
@@ -119,33 +118,35 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
 
 // --- 组件 2: 开局换牌阶段 (Opening Mulligan) ---
 interface OpeningMulliganProps {
-    initialHand: CardData[];
-    onComplete: () => void;
+    hand: CardData[];
     cardBackUrl: string;
-    // 状态受控
+    // [修改] 状态由父组件(Hook)控制
     selectedIndices: Set<number>;
-    onToggleIndex: (index: number) => void;
     isConfirmed: boolean;
-    onReplaceLogic: () => Promise<void>;
+    onToggleIndex: (index: number) => void;
+    // [新增] 当动画播放到"该真正换数据了"的时候通知父组件
+    onAnimationStep: (step: 'ready_to_replace' | 'finished') => void;
 }
 
-// --- 组件 2: OpeningMulligan ---
 export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
-    initialHand,onComplete, cardBackUrl,
-    selectedIndices, onToggleIndex, isConfirmed, onReplaceLogic
+    hand,
+    cardBackUrl,
+    selectedIndices,
+    isConfirmed,
+    onToggleIndex,   // <--- 这里必须接收 onToggleIndex
+    onAnimationStep  // <--- 这里必须接收 onAnimationStep
 }) => {
-    const [phase, setPhase] = useState<'enter' | 'select' | 'discard' | 'draw' | 'exit'>('enter');
+    // --- 1. 内部状态管理 (从 GameSession 移入) ---
+    const [animPhase, setAnimPhase] = useState<'enter' | 'select' | 'discard' | 'draw' | 'exit'>('enter');
     const [displayHand, setDisplayHand] = useState<CardData[]>([]);
     const [cardFaces, setCardFaces] = useState<boolean[]>([false, false, false, false, false]);
 
-    // [新增] 引用 Ref：用于记录“旧手牌”，以便检测数据层何时完成更新
-    const prevHandRef = React.useRef(initialHand);
-
-    // [配置] 统一动画时长常量，避免硬编码不一致
+    const prevHandRef = React.useRef(hand);
     const DURATION = 0.8;
-    const FLIP_DELAY = 400; // DURATION * 0.5 * 1000
+    const FLIP_DELAY = 400;
 
-    // [辅助函数] 翻转指定索引的卡牌
+
+    // --- 4. 辅助函数 ---
     const flipCards = (indices: number[], toFaceUp: boolean, delay: number) => {
         setTimeout(() => {
             setCardFaces(prev => {
@@ -156,7 +157,6 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
         }, delay);
     };
 
-    // [动态计算] 归位轨迹
     const getDeckTrajectory = (index: number) => {
         const DECK_X = -42;
         const DECK_Y = 45;
@@ -169,90 +169,77 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
         };
     };
 
-    // 1. Init: 入场动画 (背面 -> 翻面 -> 正面)
-    useEffect(() => {
-        // 只要数据来了，就开始显示
-        if (initialHand.length > 0 && displayHand.length === 0) {
-            setDisplayHand(initialHand);
-            // [新增] 同步基准数据，告诉组件“这是我们的初始旧手牌”
-            prevHandRef.current = initialHand;
 
-            // 动画时长 0.8s，在 400ms 处翻面为正面
+    // --- 5. 动画序列 (Effect Hooks) ---
+
+    // Init: 入场
+    useEffect(() => {
+        if (hand.length > 0 && displayHand.length === 0) {
+            setDisplayHand(hand);
+            prevHandRef.current = hand;
             flipCards([0, 1, 2, 3, 4], true, FLIP_DELAY);
-
-            // 留出足够的时间展示入场 (1.2s)
-            const timer = setTimeout(() => setPhase('select'), 1200);
+            const timer = setTimeout(() => setAnimPhase('select'), 1200);
             return () => clearTimeout(timer);
         }
-    }, [initialHand]);
+    }, [hand]);
 
-    // 2. Confirm -> Discard: 弃牌动画 (正面 -> 翻面 -> 背面 -> 飞回牌库)
+    // Confirm -> Discard
     useEffect(() => {
-        // [关键修复] 添加 phase 依赖！
-        // 确保即使在 enter 阶段就点了确定，等到进入 select 阶段时也能立即触发逻辑
-        if (isConfirmed && phase === 'select') {
-            const runSequence = async () => {
-                if (selectedIndices.size > 0) {
-                    setPhase('discard');
+    // 当父组件通知 isConfirmed 为 true 时，且当前处于选择阶段
+    if (isConfirmed && animPhase === 'select') {
+        const runDiscard = async () => {
+            if (selectedIndices.size > 0) {
+                setAnimPhase('discard');
+                // 翻背面
+                const indices = Array.from(selectedIndices);
+                setTimeout(() => {
+                    setCardFaces(prev => {
+                        const next = [...prev];
+                        indices.forEach(i => next[i] = false);
+                        return next;
+                    });
+                }, FLIP_DELAY);
 
-                    // 翻回背面
-                    flipCards(Array.from(selectedIndices), false, FLIP_DELAY);
+                await new Promise(r => setTimeout(r, DURATION * 1000));
+                // [关键] 动画播完了，通知父组件去换数据
+                onAnimationStep('ready_to_replace');
+            } else {
+                setAnimPhase('exit');
+            }
+        };
+        runDiscard();
+    }
+}, [isConfirmed, animPhase, selectedIndices]);
 
-                    // 等待动画完成 (0.8s)
-                    await new Promise(r => setTimeout(r, DURATION * 1000));
-
-                    // 执行后端换牌
-                    await onReplaceLogic();
-                } else {
-                    // 没选牌，直接进入退出流程
-                    setPhase('exit');
-                }
-            };
-            runSequence();
-        }
-    }, [isConfirmed, phase]); // <--- 修复点在这里
-
-    // 3. Data Update -> Draw: 新卡入场 (背面 -> 翻面 -> 正面)
+    // Data Update -> Draw
     useEffect(() => {
-        // [核心修复] 增加条件：initialHand !== prevHandRef.current
-        // 只有当手牌数据真正发生变化（即逻辑层洗牌完成）时，才进入 Draw 阶段
-        if (phase === 'discard' && initialHand.length > 0 && initialHand !== prevHandRef.current) {
-            setDisplayHand(initialHand); // 更新显示数据为新卡
-            setPhase('draw');
-
-            // 翻为正面
+        if (animPhase === 'discard' && hand.length > 0 && hand !== prevHandRef.current) {
+            setDisplayHand(hand);
+            setAnimPhase('draw');
             flipCards(Array.from(selectedIndices), true, FLIP_DELAY);
-
-            // 更新 Ref 为新手牌，防止重复触发
-            prevHandRef.current = initialHand;
-
-            // 动画结束后 (0.8s + 缓冲) 进入退出流程
-            setTimeout(() => setPhase('exit'), 1000);
+            prevHandRef.current = hand;
+            setTimeout(() => setAnimPhase('exit'), 1000);
         }
-    }, [initialHand, phase]);
+    }, [hand, animPhase]);
 
-    // 4. Exit: 收牌回库 (正面 -> 翻面 -> 背面 -> 飞回牌库)
+    // Exit
     useEffect(() => {
-        if (phase === 'exit') {
-            // 全员翻回背面
+        if (animPhase === 'exit') {
             flipCards([0, 1, 2, 3, 4], false, FLIP_DELAY);
-
-            // 等待动画结束后通知父组件
-            const timer = setTimeout(onComplete, 1200);
+            const timer = setTimeout(() => {
+                // [关键] 通知父组件彻底结束
+                onAnimationStep('finished');
+            }, 1200);
             return () => clearTimeout(timer);
         }
-    }, [phase]);
+    }, [animPhase]);
 
-    // 处理卡牌点击
-    const handleCardClick = (index: number) => {
-        if (phase !== 'select') return;
-        onToggleIndex(index);
-    };
 
+    // --- 6. 渲染 ---
     return (
         <div className="fixed inset-0 z-[60] pointer-events-none flex flex-col items-center justify-center">
             {/* 提示文字 */}
-            {phase === 'select' && (
+            {animPhase === 'select' && (
                 <motion.div
                     initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
                     className="absolute top-[15%] left-0 right-[20vw] w-full text-center pointer-events-auto"
@@ -262,6 +249,7 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                 </motion.div>
             )}
 
+            {/* 卡牌区域 */}
             <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '5vh' }}>
                 <div className="flex gap-5">
                     {displayHand.map((c, index) => {
@@ -271,73 +259,31 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                         const isFaceUp = cardFaces[index];
 
                         const variants: Variants = {
-                            // [Enter]: 从牌库飞出 (背面 -> 正面)
                             enter: (i: number) => ({
-                                x: 0, y: 0, scale: 0.8, rotate: 0, opacity: 1,
-                                scaleX: [1, 0, 1],
-                                transition: {
-                                    delay: i * 0.08,
-                                    duration: DURATION, // 0.8s
-                                    type: 'spring', damping: 20,
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1] }
-                                }
+                                x: 0, y: 0, scale: 0.8, rotate: 0, opacity: 1, scaleX: [1, 0, 1],
+                                transition: { delay: i * 0.08, duration: DURATION, type: 'spring', damping: 20, scaleX: { duration: DURATION, times: [0, 0.5, 1] } }
                             }),
-
-                            // [Select]: 悬停交互
                             select: {
-                                x: 0,
-                                y: isSelected ? -40 : 0,
-                                scale: isSelected ? 0.9 : 0.8,
-                                scaleX: 1,
+                                x: 0, y: isSelected ? -40 : 0, scale: isSelected ? 0.9 : 0.8, scaleX: 1,
                                 transition: { type: 'spring', stiffness: 300 }
                             },
-
-                            // [Discard]: 选中的飞回牌库 (正面 -> 背面)
                             discard: {
-                                x: isSelected ? trajectory.x : 0,
-                                y: isSelected ? trajectory.y : 0,
-                                scale: isSelected ? 0.2 : 0.8,
-                                opacity: isSelected ? 0 : 1,
-                                scaleX: isSelected ? [1, 0, 1] : 1,
-                                transition: {
-                                    duration: DURATION, // 0.8s
-                                    ease: "easeInOut",
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1] }
-                                }
+                                x: isSelected ? trajectory.x : 0, y: isSelected ? trajectory.y : 0, scale: isSelected ? 0.2 : 0.8, opacity: isSelected ? 0 : 1, scaleX: isSelected ? [1, 0, 1] : 1,
+                                transition: { duration: DURATION, ease: "easeInOut", scaleX: { duration: DURATION, times: [0, 0.5, 1] } }
                             },
-
-                            // [Draw]: 新卡从牌库飞出 (背面 -> 正面)
                             draw: {
-                                x: 0, y: 0, scale: 0.8, opacity: 1,
-                                scaleX: isSelected ? [1, 0, 1] : 1,
-                                transition: {
-                                    duration: DURATION, // 0.8s
-                                    ease: "backOut",
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1] }
-                                }
+                                x: 0, y: 0, scale: 0.8, opacity: 1, scaleX: isSelected ? [1, 0, 1] : 1,
+                                transition: { duration: DURATION, ease: "backOut", scaleX: { duration: DURATION, times: [0, 0.5, 1] } }
                             },
-
-                            // [Exit]: 全体飞回牌库 (正面 -> 背面)
                             exit: {
-                                x: trajectory.x, y: trajectory.y, scale: 0.2, opacity: 0,
-                                scaleX: [1, 0, 1],
-                                transition: {
-                                    duration: DURATION, // 0.8s
-                                    ease: "easeInOut",
-                                    delay: index * 0.05,
-                                    scaleX: { duration: DURATION, times: [0, 0.5, 1], delay: index * 0.05 }
-                                }
+                                x: trajectory.x, y: trajectory.y, scale: 0.2, opacity: 0, scaleX: [1, 0, 1],
+                                transition: { duration: DURATION, ease: "easeInOut", delay: index * 0.05, scaleX: { duration: DURATION, times: [0, 0.5, 1], delay: index * 0.05 } }
                             }
                         };
 
-                        // [初始状态] 动态计算
                         const getInitial = () => {
-                            if (phase === 'draw' && isSelected) {
-                                return { x: trajectory.x, y: trajectory.y, scale: 0.2, opacity: 0, scaleX: 1 };
-                            }
-                            if (phase === 'enter') {
-                                return { x: trajectory.x, y: trajectory.y, scale: 0.2, rotate: 90, opacity: 0, scaleX: 1 };
-                            }
+                            if (animPhase === 'draw' && isSelected) return { x: trajectory.x, y: trajectory.y, scale: 0.2, opacity: 0, scaleX: 1 };
+                            if (animPhase === 'enter') return { x: trajectory.x, y: trajectory.y, scale: 0.2, rotate: 90, opacity: 0, scaleX: 1 };
                             return false;
                         };
 
@@ -345,35 +291,33 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                             <div key={`${c.id}-${index}`} className="relative flex flex-col items-center">
                                 <motion.div
                                     className="relative cursor-pointer"
-                                    onClick={() => handleCardClick(index)}
+                                    onClick={() => { if (animPhase === 'select') onToggleIndex(index); }}
                                     custom={index}
                                     variants={variants}
                                     initial={getInitial()}
-                                    animate={phase}
+                                    animate={animPhase}
                                 >
-                                    {/* 选中高亮框 */}
-                                    {isSelected && phase === 'select' && (
+                                    {isSelected && animPhase === 'select' && (
                                         <motion.div layoutId="selection-glow" className="absolute -inset-2 rounded-xl border-4 border-blue-400 shadow-[0_0_20px_#3b82f6] z-0" />
                                     )}
                                     <div className="relative z-10">
                                         <Card data={c} location="preview" cardBackUrl={cardBackUrl} isFaceUp={isFaceUp} />
                                     </div>
+                                    <AnimatePresence>
+                                        {animPhase === 'select' && (
+                                            <motion.button
+                                                initial={{ opacity: 0, y: -10 }}
+                                                animate={{ opacity: 1, y: 20 }}
+                                                exit={{ opacity: 0 }}
+                                                // 阻止冒泡，避免触发卡牌点击，直接调用 props 传来的 onToggleIndex
+                                                onClick={(e) => { e.stopPropagation(); onToggleIndex(index); }}
+                                                className={`absolute bottom-[-60px] left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm shadow-xl transition-colors duration-200 whitespace-nowrap ${isSelected ? 'bg-red-600 text-white ring-2 ring-red-400 hover:bg-red-500' : 'bg-slate-700 text-gray-300 border border-slate-500 hover:bg-slate-600 hover:text-white'}`}
+                                            >
+                                                {isSelected ? <><RefreshCw size={14} /> 更换</> : <><Check size={14} /> 保留</>}
+                                            </motion.button>
+                                        )}
+                                    </AnimatePresence>
                                 </motion.div>
-
-                                {/* 按钮 UI */}
-                                <AnimatePresence>
-                                    {phase === 'select' && (
-                                        <motion.button
-                                            initial={{ opacity: 0, y: -10 }}
-                                            animate={{ opacity: 1, y: 20 }}
-                                            exit={{ opacity: 0 }}
-                                            onClick={(e) => { e.stopPropagation(); onToggleIndex(index); }}
-                                            className={`absolute bottom-[-60px] z-20 flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm shadow-xl transition-colors duration-200 ${isSelected ? 'bg-red-600 text-white ring-2 ring-red-400 hover:bg-red-500' : 'bg-slate-700 text-gray-300 border border-slate-500 hover:bg-slate-600 hover:text-white'}`}
-                                        >
-                                            {isSelected ? <><RefreshCw size={14} /> 更换</> : <><Check size={14} /> 保留</>}
-                                        </motion.button>
-                                    )}
-                                </AnimatePresence>
                             </div>
                         );
                     })}

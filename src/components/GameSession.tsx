@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback} from 'react';
 import { Clock, Home } from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
-import { NexusDisplay, Deck } from './GameUI';
+import { SmartNexus, Deck } from './GameUI';
 import { FullArtOverlay, LevelUpOverlay, GameOverScreen } from './Overlays';
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
@@ -20,7 +20,8 @@ import { PlayerHand, OpeningMulligan } from './CardAnimations';
 import { GameAnnouncement } from './GameAnnouncement';
 import { useGameAnnouncer } from '../hooks/useGameAnnouncer';
 import { useSpellSystem } from '../hooks/useSpellSystem'; // [新增]
-
+import { useGameButton } from '../hooks/useGameButton'; // [新增]
+import { useMulligan } from '../hooks/useMulligan';
 
 // [修正] 专用的 Mana 计数动画 Hook (Drain -> Fill 模式)
 const useManaTicker = (target: number, round: number) => {
@@ -86,97 +87,6 @@ interface GameSessionProps {
     deskIndex: number;
     cardBackIndex?: number;
 }
-// --- [新增] 工具 Hook: 数值滚动 ---
-const useNumberTicker = (targetValue: number, duration: number = 1000) => {
-    const [displayValue, setDisplayValue] = useState(targetValue);
-
-    useEffect(() => {
-        if (displayValue === targetValue) return;
-        const diff = Math.abs(targetValue - displayValue);
-        // 动态步长：差值越大跑得越快，最小 10ms 一跳
-        const stepTime = Math.max(10, duration / (diff * 2));
-        const step = displayValue < targetValue ? 1 : -1;
-
-        const timer = setTimeout(() => {
-            setDisplayValue(prev => prev + step);
-        }, stepTime);
-
-        return () => clearTimeout(timer);
-    }, [targetValue, displayValue, duration]);
-
-    return displayValue;
-};
-
-// --- [新增] 组件: 智能水晶 (SmartNexus) ---
-// 负责：数值滚动、伤害飘字、受击震动
-const SmartNexus = ({
-    health,
-    maxHealth,
-    isEnemy,
-    onClick,
-    highlight
-}: {
-    health: number,
-    maxHealth: number,
-    isEnemy: boolean,
-    onClick?: () => void,
-    highlight?: boolean
-}) => {
-    // 1. 数值滚动 (滚动时间 800ms)
-    const displayHealth = useNumberTicker(health, 800);
-
-    // 2. 状态监听 (飘字与震动)
-    const [delta, setDelta] = useState<number | null>(null);
-    const [shake, setShake] = useState(false);
-    const prevHealthRef = useRef(health);
-
-    useEffect(() => {
-        const diff = health - prevHealthRef.current;
-        if (diff !== 0) {
-            setDelta(diff); // 记录变化量 (如 -5)
-
-            // 只有扣血才震动，回血不震动
-            if (diff < 0) setShake(true);
-
-            // 1.2秒后清理状态
-            const timer = setTimeout(() => {
-                setDelta(null);
-                setShake(false);
-            }, 1200);
-
-            prevHealthRef.current = health;
-            return () => clearTimeout(timer);
-        }
-    }, [health]);
-
-    // 计算颜色：回血绿色，扣血红色
-    const floatColor = (delta || 0) > 0 ? 'text-green-400' : 'text-red-500';
-    const floatAnim = (delta || 0) > 0 ? 'animate-float-up' : 'animate-float-damage';
-    const sign = (delta || 0) > 0 ? '+' : '';
-
-    return (
-        <div
-            className={`relative transition-all duration-200 ${shake ? 'animate-shake' : ''} ${highlight ? 'scale-110 brightness-110' : ''}`}
-            onClick={onClick}
-        >
-            {/* 伤害/治疗 飘字层 */}
-            {delta !== null && (
-                <div className={`absolute left-1/2 -translate-x-1/2 -top-16 text-6xl font-black z-[100] whitespace-nowrap drop-shadow-[0_4px_4px_rgba(0,0,0,1)] stroke-white ${floatColor} ${floatAnim}`}>
-                    {sign}{delta}
-                </div>
-            )}
-
-            {/* 原始显示组件 (透传动态数值) */}
-            <NexusDisplay
-                health={displayHealth} // 使用滚动后的数值
-                isEnemy={isEnemy}
-                // 既然我们在外面处理了飘字，这里可以传 undefined 避免旧的红色闪烁冲突，
-                // 或者保留它作为双重反馈 (推荐先保留，看看效果)
-                damageTaken={undefined}
-            />
-        </div>
-    );
-};
 
 export const GameSession: React.FC<GameSessionProps> = ({
     deck, onExit, playBgm,
@@ -224,32 +134,24 @@ export const GameSession: React.FC<GameSessionProps> = ({
         message, setMessage,winningHeroKeys
     } = useGameState(deck, enemyDeckConfig);
 
+    // [新增] 使用 Mulligan Hook 接管换牌逻辑
+    const mulligan = useMulligan({
+        initialHand: playerHand,
+        onReplace: async (indices) => {
+            await actions.replaceOpeningHand(indices);
+        },
+        onComplete: () => {
+            actions.requeueHandToDeck();
+            // 注意：这里不需要手动 setIsMulliganPhase(false)，依靠 mulligan.isActive 即可
+            // 或者保留 setIsMulliganPhase(false) 作为双重保险，视你的逻辑而定
+        }
+    });
+
     // [新增] 悬停卡牌状态与法力预览计算
     const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
     const currentCardBackUrl = getCardBackUrl(cardBackIndex);
-    // [新增] 换牌阶段状态控制
-    const [isMulliganPhase, setIsMulliganPhase] = useState(true);
-    // [新增] 换牌选择状态 (Set<手牌索引>)
-    const [mulliganSelected, setMulliganSelected] = useState<Set<number>>(new Set());
-    // [新增] 确认换牌信号 (用于触发 OpeningMulligan 的退出动画)
-    const [mulliganConfirmed, setMulliganConfirmed] = useState(false);
 
-    // [新增] 换牌独立倒计时 (20秒)
-    const [mulliganTimeLeft, setMulliganTimeLeft] = useState(99);
-
-    // [新增] 换牌倒计时逻辑
-    useEffect(() => {
-        if (isMulliganPhase && !mulliganConfirmed) {
-            if (mulliganTimeLeft <= 0) {
-                // 超时处理：视为不更换 (清空选择并确认)
-                setMulliganSelected(new Set());
-                setMulliganConfirmed(true);
-                return;
-            }
-            const timer = setTimeout(() => setMulliganTimeLeft(p => p - 1), 1000);
-            return () => clearTimeout(timer);
-        }
-    }, [isMulliganPhase, mulliganTimeLeft, mulliganConfirmed]);
+    const isMulliganPhase = mulligan.isActive;
 
     // [新增] 移动到这里：控制开局动画显示时机
     const [showMulliganUI, setShowMulliganUI] = useState(false);
@@ -497,73 +399,37 @@ export const GameSession: React.FC<GameSessionProps> = ({
         eventBus.emit(GameEvents.RECALL_UNIT);
     };
 
-    const getBtnConfig = () => {
-        const baseStyle = "w-36 h-36 rounded-full border-4 shadow-lg flex flex-col items-center justify-center transition-all active:scale-95 z-20 cursor-pointer relative";
+    const btnConfig = useGameButton({
+        phase: game.phase,
+        turnOwner: game.turnOwner,
 
-        // [新增] 换牌阶段专用按钮逻辑
-        if (isMulliganPhase) {
-            // 如果已经在执行换牌动画中，禁用按钮
-            if (mulliganConfirmed) return { style: `${baseStyle} bg-gray-700 border-gray-600 cursor-not-allowed`, text: "..." };
+        // [修改] 告诉 Hook 是否处于换牌阶段 (由 Mulligan Hook 决定)
+        isMulliganPhase: mulligan.isActive,
 
-            const count = mulliganSelected.size;
+        // [修改] 将 Mulligan Hook 的状态透传给按钮配置
+        mulliganState: {
+            selectedCount: mulligan.selectedCount,
+            isConfirmed: mulligan.isConfirmed
+        },
 
-            if (count > 0) {
-                // 红色：确认更换
-                return {
-                    style: `${baseStyle} bg-red-600 hover:bg-red-500 border-red-400 shadow-[0_0_30px_rgba(239,68,68,0.5)]`,
-                    text: "更换",
-                    action: () => setMulliganConfirmed(true) // 触发动画
-                };
-            } else {
-                // 蓝色：确定 (不换)
-                return {
-                    style: `${baseStyle} bg-blue-600 hover:bg-blue-500 border-blue-400`,
-                    text: "确定",
-                    action: () => setMulliganConfirmed(true) // 触发退出
-                };
-            }
+        combatState: {
+            hasAttackers: combatField.some(f => f.owner === 'player'),
+            spellStackLength: game.spellStack.length,
+            canInitiateAttack: canInitiateAttack
+        },
+
+        actions: {
+            onPass: actions.passTurn,
+            onAttack: actions.commitAttack,
+            onBlock: actions.resolveCombatAnimation,
+            onResolveStack: actions.resolveStack,
+            onCancelAttack: handleCancelAttack,
+            // [修改] 绑定 Mulligan Hook 的动作
+            onMulliganReplace: mulligan.confirmMulligan,
+            onMulliganConfirm: mulligan.confirmMulligan
         }
+    });
 
-        if (game.turnOwner !== 'player') return { style: `${baseStyle} bg-gray-700 border-gray-600 cursor-not-allowed`, text: "等待" };
-
-        if (game.phase === 'main') {
-            if (game.spellStack.length > 0) return { style: `${baseStyle} bg-blue-600 border-blue-400`, text: "确定", action: actions.resolveStack }; // 假设 resolveStack 存在，或者之前的逻辑
-
-            // [修改] 如果可以发起进攻，返回 null，指示 JSX 渲染分裂按钮
-            if (canInitiateAttack) return null;
-
-            if (game.consecutivePasses > 0) return { style: `${baseStyle} bg-blue-600 border-blue-400`, text: "结束回合", action: actions.passTurn };
-            return { style: `${baseStyle} bg-blue-600 border-blue-400`, text: "过", action: actions.passTurn };
-        }
-
-        // [修改] 进攻宣言阶段：动态判断是"进攻"还是"撤回"
-        if (game.phase === 'attack_declare') {
-            const hasAttackers = combatField.some(f => f.owner === 'player');
-
-            if (hasAttackers) {
-                // 有单位 -> 红色进攻
-                return {
-                    style: `${baseStyle} bg-gradient-to-b from-orange-500 to-red-600 border-orange-300 shadow-[0_0_30px_rgba(234,88,12,0.6)]`,
-                    text: "进攻",
-                    showFlow: true,
-                    action: actions.commitAttack
-                };
-            } else {
-                // 无单位 -> 蓝色撤回
-                return {
-                    style: `${baseStyle} bg-blue-600 border-blue-400`,
-                    text: "撤回",
-                    action: handleCancelAttack // 调用刚刚写的撤回函数
-                };
-            }
-        }
-
-        if (game.phase === 'block_declare') return { style: `${baseStyle} bg-blue-500 border-blue-300`, text: "格挡", action: actions.resolveCombatAnimation };
-
-        return { style: `${baseStyle} bg-gray-800 border-gray-600 text-gray-400`, text: "..." };
-    };
-
-    const btnConfig = getBtnConfig();
     const [viewCard, setViewCard] = useState<CardData | null>(null);
 
 
@@ -595,41 +461,27 @@ export const GameSession: React.FC<GameSessionProps> = ({
             <GameAnnouncement data={announcement} />
 
             {/* 换牌 UI */}
-            {isMulliganPhase && showMulliganUI && (
-                <>
-                    <OpeningMulligan
-                        initialHand={playerHand}
-                        cardBackUrl={currentCardBackUrl}
-                        selectedIndices={mulliganSelected}
-                        onToggleIndex={(index) => {
-                            eventBus.emit(GameEvents.UI_CLICK);
-                            setMulliganSelected(prev => {
-                                const next = new Set(prev);
-                                if (next.has(index)) next.delete(index);
-                                else next.add(index);
-                                return next;
-                            });
-                        }}
-                        isConfirmed={mulliganConfirmed}
-                        onReplaceLogic={async () => {
-                            await actions.replaceOpeningHand(Array.from(mulliganSelected));
-                        }}
-                        onComplete={() => {
-                            actions.requeueHandToDeck();
-                            setIsMulliganPhase(false);
-                        }}
-                    />
+            {mulligan.isActive && showMulliganUI && (
+                <OpeningMulligan
+                    hand={playerHand}
+                    cardBackUrl={currentCardBackUrl}
 
-                    {/* 换牌倒计时 UI */}
-                    <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center">
-                        <div className="text-xl font-bold text-yellow-400 tracking-widest mb-1">
-                            确认倒计时
-                        </div>
-                        <div className={`text-4xl font-mono font-black ${mulliganTimeLeft <= 5 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
-                            {mulliganTimeLeft}
-                        </div>
-                    </div>
-                </>
+                    // [修改] 状态透传 (受控组件)
+                    selectedIndices={mulligan.selectedIndices}
+                    isConfirmed={mulligan.isConfirmed}
+                    onToggleIndex={mulligan.toggleIndex}
+
+                    // [修改] 动画回调
+                    onAnimationStep={(step) => {
+                        if (step === 'ready_to_replace') {
+                            // 1. 动画盖牌了，请求后端换数据
+                            mulligan.handleDataReplace();
+                        } else if (step === 'finished') {
+                            // 2. 动画全播完了(包括新牌翻开、退出)，通知 Hook 关闭状态
+                            mulligan.finishMulligan();
+                        }
+                    }}
+                />
             )}
 
             {/* 3. 弹窗层 */}
@@ -953,7 +805,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     <div className="absolute top-[47.5%] right-[7.5%] -translate-y-1/2 pointer-events-auto z-10 flex flex-col items-center gap-2">
                         {/* 倒计时 */}
                         <div className={`font-mono text-xl font-bold flex items-center gap-2 bg-black/60 px-3 py-1 rounded-full border border-white/10 ${timeLeft <= 5 ? 'text-red-500 animate-pulse' : 'text-blue-300'}`}>
-                            <Clock size={16} /> {String(timeLeft).padStart(2, '0')}
+                            <Clock size={16} />
+                            {String(mulligan.isActive ? mulligan.timeLeft : timeLeft).padStart(2, '0')}
                         </div>
 
                         {/* [核心修改] 根据配置决定渲染 分裂按钮 还是 标准按钮 */}
@@ -990,29 +843,20 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             // --- 标准按钮状态 (Standard Button) ---
                             <button
                                 onClick={() => {
-                                    // 优先执行配置中的 action，如果没有则走老逻辑(主要是 spellStack 处理)
-                                    if ((btnConfig as any).action) {
-                                        if (btnConfig.text !== '等待') eventBus.emit(GameEvents.UI_CLICK);
-                                        (btnConfig as any).action();
-                                    } else {
-                                        // 兜底：处理 spellStack (之前 Main Phase 的逻辑)
-                                        if (game.spellStack.length > 0) {
-                                            eventBus.emit(GameEvents.UI_CLICK);
-                                            actions.resolveStack(); // 假设有这个 action
-                                        }
-                                    }
+                                    // [修改] 直接调用 Hook 返回的 action，逻辑已在内部封装
+                                    if (btnConfig?.action) btnConfig.action();
                                 }}
-                                disabled={game.turnOwner !== 'player' || game.phase === 'animating'}
-                                className={btnConfig.style}
+                                disabled={btnConfig?.disabled || game.phase === 'animating'}
+                                className={btnConfig?.style}
                             >
-                                {(btnConfig as any).showFlow && (
+                                {btnConfig?.showFlow && (
                                     <div className="absolute inset-[-10px] rounded-full pointer-events-none overflow-visible z-0">
                                         <svg className="w-full h-full overflow-visible">
                                             <circle cx="50%" cy="50%" r="46%" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeDasharray="80 250" className="animate-beam-move drop-shadow-[0_0_10px_white] opacity-80" />
                                         </svg>
                                     </div>
                                 )}
-                                <span className="text-xl font-black text-white drop-shadow-md z-10 relative">{btnConfig.text}</span>
+                                <span className="text-xl font-black text-white drop-shadow-md z-10 relative">{btnConfig?.text}</span>
                             </button>
                         )}
 

@@ -1,14 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 
 const useNumberTicker = (targetValue: number, duration: number = 1000) => {
-    // ... (保持不变)
     const [displayValue, setDisplayValue] = useState(targetValue);
     useEffect(() => {
         if (displayValue === targetValue) return;
         const diff = Math.abs(targetValue - displayValue);
-        if (diff === 0) return;
-        const stepTime = Math.max(10, duration / diff);
+        // 动态步长：差值越大跑得越快，最小 10ms 一跳
+        const stepTime = Math.max(10, duration / (diff * 2));
         const step = displayValue < targetValue ? 1 : -1;
         const timer = setTimeout(() => setDisplayValue(prev => prev + step), stepTime);
         return () => clearTimeout(timer);
@@ -38,6 +37,71 @@ export const ManaDisplay = ({ current, max, spellMana, label, align }: { current
         </div>
     </div>
 );
+
+// --- [移入] 智能水晶组件 (SmartNexus) ---
+export const SmartNexus = ({
+    health,
+//     maxHealth, // 虽然暂时没用到，保留接口兼容性
+    isEnemy,
+    onClick,
+    highlight
+}: {
+    health: number,
+    maxHealth?: number,
+    isEnemy: boolean,
+    onClick?: () => void,
+    highlight?: boolean
+}) => {
+    // 1. 数值滚动
+    const displayHealth = useNumberTicker(health, 800);
+
+    // 2. 状态监听 (飘字与震动)
+    const [delta, setDelta] = useState<number | null>(null);
+    const [shake, setShake] = useState(false);
+    const prevHealthRef = useRef(health);
+
+    useEffect(() => {
+        const diff = health - prevHealthRef.current;
+        if (diff !== 0) {
+            setDelta(diff);
+            if (diff < 0) setShake(true); // 仅扣血震动
+
+            const timer = setTimeout(() => {
+                setDelta(null);
+                setShake(false);
+            }, 1200);
+
+            prevHealthRef.current = health;
+            return () => clearTimeout(timer);
+        }
+    }, [health]);
+
+    // 计算颜色
+    const floatColor = (delta || 0) > 0 ? 'text-green-400' : 'text-red-500';
+    const floatAnim = (delta || 0) > 0 ? 'animate-float-up' : 'animate-float-damage';
+    const sign = (delta || 0) > 0 ? '+' : '';
+
+    return (
+        <div
+            className={`relative transition-all duration-200 ${shake ? 'animate-shake' : ''} ${highlight ? 'scale-110 brightness-110' : ''}`}
+            onClick={onClick}
+        >
+            {/* 飘字层 */}
+            {delta !== null && (
+                <div className={`absolute left-1/2 -translate-x-1/2 -top-16 text-6xl font-black z-[100] whitespace-nowrap drop-shadow-[0_4px_4px_rgba(0,0,0,1)] stroke-white ${floatColor} ${floatAnim}`}>
+                    {sign}{delta}
+                </div>
+            )}
+
+            {/* 复用现有的 NexusDisplay 进行基础渲染 */}
+            <NexusDisplay
+                health={displayHealth}
+                isEnemy={isEnemy}
+                damageTaken={undefined} // 飘字已由 SmartNexus 接管
+            />
+        </div>
+    );
+};
 
 export const NexusDisplay = ({
                               health,
