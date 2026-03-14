@@ -434,7 +434,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
 
     return (
-        <div className="w-full h-screen bg-black text-white overflow-hidden relative font-sans select-none">
+        <div className="w-full h-full bg-black text-white overflow-hidden relative font-sans select-none">
 
             {/* 1. 背景层 */}
             <div className="absolute inset-0 pointer-events-none z-0">

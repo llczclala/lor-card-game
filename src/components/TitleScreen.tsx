@@ -52,7 +52,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
     };
 
     return (
-        <div className="w-full h-screen bg-transparent text-white flex flex-col items-center justify-end pb-12 relative overflow-hidden font-sans select-none z-10">
+        <div className="w-full h-full bg-transparent text-white flex flex-col items-center justify-end pb-12 relative overflow-hidden font-sans select-none z-10">
 
             {mode === 'title' ? (
                 <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] pointer-events-none animate-pulse-slow"></div>

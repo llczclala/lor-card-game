@@ -15,6 +15,7 @@ import { GameLobby } from './components/GameLobby';
 import { GachaScreen } from './components/GachaScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { eventBus, GameEvents } from './utils/eventBus';
+import { ScaleWrapper } from './components/ScaleWrapper'; // [新增]
 
 type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha';
 
@@ -245,12 +246,13 @@ export default function App() {
 
   // [新增] 如果用户数据还没加载好，显示简单的加载中
   if (!userSystem.isReady) {
-      return <div className="w-full h-screen bg-black flex items-center justify-center text-white font-mono">LOADING PROFILE...</div>;
+      return <div className="w-full h-full bg-black flex items-center justify-center text-white font-mono">LOADING PROFILE...</div>;
   }
 
 
   return (
-    <div className="relative w-full h-screen bg-slate-950 overflow-hidden">
+  <ScaleWrapper>
+    <div className="relative w-full h-full bg-slate-950 overflow-hidden">
     <FullScreenToggle />
 
 
@@ -335,14 +337,14 @@ export default function App() {
 
 
       <VideoPlayer
-          src={currentMovie}
-          // 简化 isVisible 逻辑：只要 useMovie 说是 true，就是 true
-          isVisible={isVisible}
-          isLoop={isLooping}
-          onEnded={handleVideoEnded}
-          zIndex={(appState === 'title' || appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') ? 0 : 500}
-          noFade={isImmediate}
-      />
-    </div>
+                src={currentMovie}
+                isVisible={isVisible}
+                isLoop={isLooping}
+                onEnded={handleVideoEnded}
+                zIndex={(appState === 'title' || appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') ? 0 : 500}
+                noFade={isImmediate}
+            />
+        </div>
+    </ScaleWrapper>
   );
 }

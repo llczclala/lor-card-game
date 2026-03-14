@@ -2,13 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
+html, body {
   margin: 0;
-  background-color: #0f172a;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #000000;
   overflow: hidden;
   user-select: none;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* =================================================================
+   【终极视口中和剂】
+   解决 "宽度被裁剪到 1715px" 的核心：
+
+   1. w-screen -> 100% (之前加了)
+   2. h-screen -> 100% (之前加了)
+   3. [新增] max-w-screen -> none !important (关键！解锁最大宽度限制)
+   4. [新增] max-w-[100vw] -> none !important (防止任意写法限制)
+   ================================================================= */
+
+/* 强制宽度/高度跟随父容器 (2560x1600) */
+#game-scale-container .w-screen { width: 100% !important; }
+#game-scale-container .h-screen { height: 100% !important; }
+#game-scale-container .min-h-screen { min-height: 100% !important; }
+#game-scale-container .min-w-screen { min-width: 100% !important; }
+
+/* [核心修复] 解除最大宽度锁 */
+/* 只要有这个限制，内容永远无法宽于浏览器窗口 (1715px)，必须杀掉 */
+#game-scale-container .max-w-screen { max-width: none !important; }
+#game-scale-container .max-h-screen { max-height: none !important; }
+
+/* 针对 Tailwind 任意值写法 max-w-[100vw] 的暴力覆盖 */
+#game-scale-container [class*="max-w-"] {
+    max-width: none !important;
+}
+
+/* 修复 fixed 层级 */
+#game-scale-container {
+  transform-style: preserve-3d;
+}
+
 
 /* --- 抽卡动画 --- */
 @keyframes draw-card-player {

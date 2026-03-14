@@ -345,7 +345,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     };
 
     return (
-        <div className="w-full h-screen flex bg-[#0f172a] text-white overflow-hidden font-sans">
+        <div className="w-full h-full flex bg-[#0f172a] text-white overflow-hidden font-sans">
              {/* [新增] 右上角返回按钮 (绝对定位，位于最上层) */}
              <AnimatePresence>
                 {confirmModal && (

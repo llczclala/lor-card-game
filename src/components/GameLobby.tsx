@@ -38,7 +38,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
 
     return (
-        <div className="relative w-full h-screen font-sans select-none overflow-hidden">
+        <div className="relative w-full h-full font-sans select-none overflow-hidden">
             {/* 1. 左上角：用户信息栏 */}
             <AnimatePresence>
                 {showUI && (
