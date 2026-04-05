@@ -41,7 +41,6 @@ export const ManaDisplay = ({ current, max, spellMana, label, align }: { current
 // --- [移入] 智能水晶组件 (SmartNexus) ---
 export const SmartNexus = ({
     health,
-//     maxHealth, // 虽然暂时没用到，保留接口兼容性
     isEnemy,
     onClick,
     highlight
@@ -83,7 +82,13 @@ export const SmartNexus = ({
 
     return (
         <div
-            className={`relative transition-all duration-200 ${shake ? 'animate-shake' : ''} ${highlight ? 'scale-110 brightness-110' : ''}`}
+            // [新增] 添加水晶实体 ID 标记
+            data-entity-id={isEnemy ? 'enemy_nexus' : 'player_nexus'}
+
+            className={`
+                relative w-32 h-32 flex items-center justify-center transition-transform duration-100
+                ${shake ? 'animate-shake' : ''}
+            `}
             onClick={onClick}
         >
             {/* 飘字层 */}

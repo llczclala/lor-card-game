@@ -100,11 +100,6 @@ html, body {
 @keyframes bump-down { 0% { transform: translateY(0); } 50% { transform: translateY(120px) scale(1.1); } 100% { transform: translateY(0); } }
 @keyframes bump-up-long { 0% { transform: translateY(0); } 40% { transform: translateY(-320px) scale(1.2); } 100% { transform: translateY(0); } }
 @keyframes bump-down-long { 0% { transform: translateY(0); } 40% { transform: translateY(320px) scale(1.2); } 100% { transform: translateY(0); } }
-@keyframes shatter {
-  0% { transform: scale(1); filter: grayscale(0) brightness(1); }
-  30% { transform: scale(1.1) rotate(5deg); filter: sepia(1) hue-rotate(-50deg) saturate(5) brightness(1.5); }
-  100% { transform: scale(0) rotate(-10deg); opacity: 0; }
-}
 @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -115,7 +110,6 @@ html, body {
 .animate-bump-down { animation: bump-down 0.3s ease-in-out; }
 .animate-bump-up-long { animation: bump-up-long 0.4s ease-in-out; }
 .animate-bump-down-long { animation: bump-down-long 0.4s ease-in-out; }
-.animate-shatter { animation: shatter 0.6s ease-in-out forwards; }
 .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
 .animate-scale-in { animation: scale-in 0.5s ease-out forwards; }
 .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }

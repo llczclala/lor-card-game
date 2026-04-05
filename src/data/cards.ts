@@ -95,7 +95,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isChampion: false,
     level: 0,
     type: 'unit',
-    keywords: ['Tough', 'Elusive'],
+    keywords: ['Tough', 'Elusive','QuickAttack','Overwhelm','Challenger','Barrier'],
     description: '',
     imageUrl: UNIT_IMAGES.saikui,
     effects: []

@@ -30,14 +30,21 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
     cardBackUrl
 }) => {
     return (
-        <div className="flex-1 w-full h-full flex justify-center items-end gap-1 relative bg-transparent pb-[80px]">
-            {/* 这里的 Sword 只需要在这里导入... */}
+        // [修改] 增加 max-w-[1080px] 以锚定最大宽度，增加 gap-2 让排列更透气
+        <div className="flex-1 w-full max-w-[1080px] mx-auto h-full flex justify-center items-end gap-2 relative bg-transparent pb-[80px]">
 
-            {combatField.map((fight, i) => (
-                <div key={i} className="flex flex-col gap-12 items-center group relative">
-                    {/* 敌方槽位 - 适配横向卡牌 (w-64 h-40) */}
+            {combatField.map((fight, i) => {
+                // [新增] 弹性宽度算法核心：最少按 3 列划分，超过 3 列则按实际列数平分
+                const columnsCount = Math.max(3, combatField.length);
+                const dynamicWidth = `calc(${100 / columnsCount}% - 8px)`;
+
+                return (
+                // [新增] style 注入动态宽度，开启 width 的过渡动画
+                <div key={i} className="flex flex-col gap-12 items-center group relative transition-all duration-500 ease-out" style={{ width: dynamicWidth }}>
+
+                    {/* 敌方槽位 - [修改] 宽度改为 w-full 填满弹性容器，高度统一为备战席的 162px */}
                     <div
-                        className="w-[180px] h-[230px] border-2 border-dashed border-white/10 rounded-xl flex justify-center items-center bg-transparent transition-colors hover:bg-red-500/10 cursor-pointer"
+                        className="w-full h-[162px] border-2 border-dashed border-white/10 rounded-xl flex justify-center items-center bg-transparent transition-colors hover:bg-red-500/10 cursor-pointer"
                         onClick={() => onCombatClick(i)}
                     >
                          {fight.owner === 'enemy' ?
@@ -48,7 +55,11 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                                 isSelected={selectedBlockerId !== null}
                                 attackType={fight.blocker ? 'clash' : 'direct'}
                                 onViewArt={onViewArt}
-                                isSpeaking={fight.attacker.id === speakingCardId} // <--- 新增
+                                isSpeaking={fight.attacker.id === speakingCardId}
+                                // [新增] 为敌方攻击者绑定点击事件与挑战者事件，确保沙盒中"扮演敌方"时能够正常操作！
+                                onClick={() => onCardClick(fight.attacker, 'combat', 'enemy')}
+                                onChallengerClick={!fight.blocker ? () => onChallengerClick(fight.attacker.id) : undefined}
+                                isChallengerActive={fight.attacker.id === selectedChallengerId}
                             /> :
                          fight.blocker ?
                             <Card
@@ -72,8 +83,8 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                         <Sword size={20} className="text-red-500/50" />
                     </div>
 
-                    {/* 我方槽位 - 适配横向卡牌 (w-64 h-40) */}
-                    <div className="w-[180px] h-[230px] border-2 border-dashed border-white/10 rounded-xl flex justify-center items-center bg-transparent transition-colors hover:bg-blue-500/10">
+                    {/* 我方槽位 - [修改] 宽度改为 w-full 填满弹性容器，高度统一为 162px */}
+                    <div className="w-full h-[162px] border-2 border-dashed border-white/10 rounded-xl flex justify-center items-center bg-transparent transition-colors hover:bg-blue-500/10">
                          {fight.owner === 'player' ?
                             <Card
                                 data={fight.attacker}
@@ -103,7 +114,8 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                          <span className="text-xs text-red-500/50 font-bold animate-pulse">直接打击</span>}
                     </div>
                 </div>
-            ))}
+                );
+            })}
 
             {combatField.length === 0 && (
                 <div className="text-white/5 text-5xl font-black tracking-[0.5em] select-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">

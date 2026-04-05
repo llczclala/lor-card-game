@@ -22,6 +22,10 @@ import { useGameAnnouncer } from '../hooks/useGameAnnouncer';
 import { useSpellSystem } from '../hooks/useSpellSystem'; // [新增]
 import { useGameButton } from '../hooks/useGameButton'; // [新增]
 import { useMulligan } from '../hooks/useMulligan';
+import { EFFECT_DB } from '../data/effectRegistry';
+import { VFXLayer } from './VFXLayer'; // [新增]
+import { AnimatePresence, motion } from 'framer-motion'; // [新增] 确保引入了 framer-motion 用于施法UI动画
+import type { EnemyHeroConfig } from '../types/gameModeTypes'; // [新增] 引入类型
 
 // [修正] 专用的 Mana 计数动画 Hook (Drain -> Fill 模式)
 const useManaTicker = (target: number, round: number) => {
@@ -83,56 +87,33 @@ interface GameSessionProps {
     playLevelUpMovie: (heroKey: string, onEnd?: () => void) => void;
     playVictoryMovie: (heroKeys: string[], onEnd?: () => void) => void;
     stopMovie: (immediate?: boolean) => void;
-    // [新增] 接收样式索引
     deskIndex: number;
     cardBackIndex?: number;
+    enemyDeck: string[];
+    enemyHeroConfig?: EnemyHeroConfig;
+    onVictory?: () => void;
+    onDefeat?: () => void;
 }
 
 export const GameSession: React.FC<GameSessionProps> = ({
     deck, onExit, playBgm,
-    playLevelUpMovie, playVictoryMovie,stopMovie,
-    deskIndex, cardBackIndex = 0 // [新增]
+    playLevelUpMovie, playVictoryMovie, stopMovie,
+    deskIndex, cardBackIndex = 0,
+    enemyDeck,
+    enemyHeroConfig,
+    onVictory,
+    onDefeat
 }) => {
-
-    const enemyDeckConfig = React.useMemo(() => {
-        // [修正] 动态构筑敌方卡组：3张芬妮 + 随机后勤卡牌填充至40张
-        // 解决因引用已删除的"幽灵卡牌"导致 data 为 undefined 引发的崩溃问题
-
-        // 1. 核心英雄：固定 3 张芬妮
-        // (注意：请确保 'fenny' 这个 key 在 cards.ts 中真实存在)
-        const deck: string[] = ['fenny', 'fenny', 'fenny'];
-
-        // 2. 获取所有合法的后勤 (Logistics) 阵营卡牌 (排除英雄)
-        // 这样可以确保不管我们删了多少测试卡，这里取到的都是现存有效的卡
-        const logisticsPool = Object.values(CARD_DB)
-            .filter(c => c.region === 'Logistics' && !c.isChampion)
-            .map(c => c.key);
-
-        // 3. 随机填充直到 40 张
-        // 如果后勤卡不够(比如还没做)，这可能会导致死循环，所以加个 logisticsPool.length 检查
-        if (logisticsPool.length > 0) {
-            while (deck.length < 40) {
-                const randomKey = logisticsPool[Math.floor(Math.random() * logisticsPool.length)];
-                deck.push(randomKey);
-            }
-        } else {
-            // 极端兜底：如果连后勤卡都没有，就全填芬妮，防止游戏无法启动
-            while (deck.length < 40) deck.push('fenny');
-        }
-
-        // 4. 洗牌 (虽然 useGameState 也会洗，但这里打乱更保险)
-        return deck.sort(() => Math.random() - 0.5);
-    }, []);
 
     const {
         game, setGame,
-        playerHand,setPlayerHand,enemyHand, setEnemyHand,
+        playerHand, setPlayerHand, enemyHand, setEnemyHand,
         playerBench, setPlayerBench,
         enemyBench, setEnemyBench,
         combatField, setCombatField,
         actions,
-        message, setMessage,winningHeroKeys
-    } = useGameState(deck, enemyDeckConfig);
+        message, setMessage, winningHeroKeys
+    } = useGameState(deck, enemyDeck);
 
     // [新增] 使用 Mulligan Hook 接管换牌逻辑
     const mulligan = useMulligan({
@@ -176,9 +157,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
             actions.finalizeSpell(card, 'player', targets);
         }
     });
-    const finalAnnouncement = spellSystem.isCasting && spellSystem.instruction
-        ? { id: 'spell-hint', mainText: spellSystem.instruction, type: 'phase_hint' as const }
-        : announcement;
+    const finalAnnouncement = announcement;
 
     let previewManaCost = 0;
     let previewSpellManaCost = 0;
@@ -260,9 +239,16 @@ export const GameSession: React.FC<GameSessionProps> = ({
         videoCandidates.push(...deck);
 
         // 3. 播放视频
-        playVictoryMovie(videoCandidates, onEnd);
+        playVictoryMovie(videoCandidates, () => {
+            if (onVictory) {
+                onVictory();
+            } else {
+                onExit();
+            }
+            if (onEnd) onEnd();
+        });
 
-    }, [playerBench, winningHeroKeys, deck, playVictoryMovie]);
+    }, [playerBench, winningHeroKeys, deck, playVictoryMovie, onVictory, onExit]);
 
 
     // [修改] 主回合倒计时逻辑
@@ -286,82 +272,54 @@ export const GameSession: React.FC<GameSessionProps> = ({
         return () => clearTimeout(timer);
     }, [timeLeft, game.phase, game.gameResult, game.spellCasting, isMulliganPhase]); // 添加 isMulliganPhase 依赖
 
-    const handleCardClick = (card: CardData, location: string, owner: string) => {
-        if (game.phase === 'animating' || game.gameResult) return;
-        // [新增] 1. 优先检查施法系统状态
-        // 如果正在施法 (选择目标中)，则将点击事件委托给 spellSystem
+    const handleCardClick = (card: CardData, location: string, owner: string): boolean => {
+        if (game.phase === 'animating' || game.gameResult) return false;
+
         if (spellSystem.isCasting) {
             spellSystem.handleTargetClick(card, owner as 'player' | 'enemy');
-            return;
+            return false;
         }
 
-
-        if (game.spellCasting) {
-            const step = game.spellCasting.step;
-            if (step === 'select_ally' && owner === 'player' && location === 'bench') {
-                if (game.spellCasting.cardId.includes('single_combat') || card.name.includes('单挑')) {
-                    actions.updateSpellCasting({ ...game.spellCasting, step: 'select_enemy', allyId: card.id, targets: [{type:'ally', id: card.id}] });
-                    setMessage("请选择敌方单位");
-                } else {
-                    const spellCard = game.activeCard!;
-                    if (spellCard) actions.finalizeSpell(spellCard, 'player', [{type:'ally', id: card.id}]);
-                }
-            }
-            else if (step === 'select_enemy' && owner === 'enemy') {
-                const spellCard = game.activeCard!;
-                if (spellCard) {
-                    const targets = [...game.spellCasting.targets, {type: 'enemy', id: card.id}];
-                    actions.finalizeSpell(spellCard, 'player', targets);
-                }
-            }
-            return;
-        }
-
-
-        // [保留] 3. 手牌出牌逻辑
         if (location === 'hand') {
-            // 只能操作自己的手牌
-            if (owner !== 'player') return;
+            if (owner !== 'player') return false;
+            if (game.turnOwner !== 'player') return false;
 
-            // 1. 基础检查：必须轮到我方行动
-            if (game.turnOwner !== 'player') return;
-
-            // 2. 阶段检查：允许 主阶段 或 战斗阶段
             const isMainPhase = game.phase === 'main';
             const isCombatPhase = game.phase === 'attack_declare' || game.phase === 'block_declare';
 
-            if (!isMainPhase && !isCombatPhase) return;
+            if (!isMainPhase && !isCombatPhase) return false;
 
-            // 3. 战斗阶段限制：只能打出 快速(Fast) 或 极速(Burst) 法术
             if (isCombatPhase) {
                 if (card.type === 'unit' || card.type === 'spell-slow') {
                     setMessage("战斗中只能使用快速或极速法术！");
-                    return;
+                    return false;
                 }
             }
-            if (!canAffordCard(card, game.playerMana, game.playerSpellMana)) { setMessage("法力值不足！"); return; }
+            if (!canAffordCard(card, game.playerMana, game.playerSpellMana)) { setMessage("法力值不足！"); return false; }
 
             eventBus.emit(GameEvents.PLAY_CARD);
 
             if (card.type.includes('unit')) {
-                if (playerBench.length >= 6) { setMessage("备战区已满"); return; }
+                if (playerBench.length >= 6) { setMessage("备战区已满"); return false; }
                 actions.playCard(card, 'player');
+                return true; // [关键] 判定：单位出牌成功！
             } else {
-                // 法术卡：调用 useSpellSystem 启动施法流程
-                if (['single_combat', 'prayer', 'hidden_arrow', 'fenny_ultimate'].includes(card.key)) {
-                    // 需要目标的法术 -> 启动施法状态机
+                const effectId = card.effects && card.effects.length > 0 ? card.effects[0] : null;
+                const effectDef = effectId ? EFFECT_DB[effectId] : null;
+                const needsTarget = effectDef && effectDef.targetRequirements.length > 0;
+
+                if (needsTarget) {
                     spellSystem.startCasting(card);
-                    // 同时设置 game.activeCard 以便显示在屏幕中间 (兼容旧 UI)
                     actions.startSpellCasting(card);
+                    return true; // [关键] 判定：法术出牌成功并进入选目标阶段！
                 } else {
-                    // 不需要目标的法术 / 抉择卡 -> 走旧逻辑
-                    // 抉择卡会在 playCard 内部被拦截进入 choose_mode
                     actions.playCard(card, 'player');
+                    return true; // [关键] 判定：直接法术出牌成功！
                 }
             }
-            return;
         }
 
+        // --- 以下针对非手牌区的点击操作，由于目前暂不涉及拖拽，默认返回 false 即可 ---
         if (game.phase === 'attack_declare') {
             if (location === 'bench') {
                 eventBus.emit(GameEvents.UI_CLICK);
@@ -376,6 +334,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
             eventBus.emit(GameEvents.UI_CLICK);
             actions.selectBlocker(card.id);
         }
+
+        return false; // 兜底返回
     };
 
 
@@ -432,6 +392,21 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     const [viewCard, setViewCard] = useState<CardData | null>(null);
 
+    // [新增] 控制打出卡牌时的通用放大动画
+    const [showPlayAnimation, setShowPlayAnimation] = useState(false);
+
+    // [新增] 监听 activeCard 变化，触发短时间的放大展示
+    useEffect(() => {
+        if (game.activeCard) {
+            setShowPlayAnimation(true);
+            // 800ms 后结束放大动画，如果是法术则会自动无缝切换到 Ritual UI
+            const timer = setTimeout(() => setShowPlayAnimation(false), 800);
+            return () => clearTimeout(timer);
+        } else {
+            setShowPlayAnimation(false);
+        }
+    }, [game.activeCard]);
+
 
     return (
         <div className="w-full h-full bg-black text-white overflow-hidden relative font-sans select-none">
@@ -446,6 +421,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 />
                 <div className="absolute inset-0 bg-black/20"></div>
             </div>
+
+            {/* ================= [新增] Step 3: 特效指引层 ================= */}
+            {/* 放置在背景之上，Z轴层级需低于 UI 但高于棋盘背景 */}
+            <VFXLayer
+                isCasting={spellSystem.isCasting}
+                selectedTargets={spellSystem.selectedTargets}
+            />
+            {/* ========================================================== */}
+
 
             {/* 2. 退出按钮 */}
             <div className="absolute top-4 left-4 z-[100]">
@@ -489,7 +473,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 <GameOverScreen
                     result={game.gameResult}
                     stats={game.stats}
-                    onExit={onExit}
+                    // [修改] 区分胜利和失败的退出逻辑
+                    onExit={() => {
+                        if (game.gameResult === 'victory') {
+                            if (onVictory) onVictory(); else onExit();
+                        } else {
+                            if (onDefeat) onDefeat(); else onExit();
+                        }
+                    }}
                     onPlayMovie={handleVictorySequence}
                 />
             )}
@@ -507,8 +498,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
 
             {/* 4. 命运抉择层 */}
-            {game.activeCard && (
-                game.spellCasting?.step === 'choose_mode' ? (
+            {game.activeCard && game.spellCasting?.step === 'choose_mode' && (
                     <div
                         className="fixed inset-0 z-[500] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
                         onClick={() => {
@@ -538,27 +528,89 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         </div>
                         <div className="mt-16 text-white/40 text-sm font-mono tracking-widest animate-pulse">点击空白处取消 (CLICK BACKGROUND TO CANCEL)</div>
                     </div>
-                ) : (
-                    <div className="fixed inset-0 z-[500] flex items-center justify-center pointer-events-none">
-                        <div className={`pointer-events-auto ${game.spellCasting ? 'scale-[2.0]' : 'animate-play-card'}`}>
-                            <Card data={game.activeCard} location={game.spellCasting ? 'spell_stack' : 'preview'} onViewArt={()=>{}} />
-                            <div
-                                className="mt-8 text-center pointer-events-auto cursor-pointer text-gray-400 hover:text-white bg-black/50 px-4 py-1 rounded-full transition-colors"
-                                onClick={() => {
-                                    spellSystem.cancelCasting();
-                                    // 同时清理 useGameState 的状态
-                                    eventBus.emit(GameEvents.CANCEL_SPELL);
-                                    actions.updateSpellCasting(null);
-                                    // 这里的逻辑可能需要 useGameState 暴露 cancelSpell 方法，或者手动重置
-                                    setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
-                                    setPlayerHand((prev: CardData[]) => [...prev, game.activeCard!]); // 卡牌回手
-                                }}
-                            >
-                        </div>
-                        </div>
-                    </div>
-                )
             )}
+
+            {/* ================= [还原] 通用打出动画 (Big Card) ================= */}
+            {/* 逻辑：只要有 activeCard 且处于动画时间内，就显示这张大卡牌 */}
+            {/* 这对 单位卡 和 法术卡 都生效，填补了视觉空缺 */}
+            {game.activeCard && showPlayAnimation && game.spellCasting?.step !== 'choose_mode' && (
+                <div className="fixed inset-0 z-[500] flex items-center justify-center pointer-events-none">
+                    {/* 复用原本的 CSS 类 animate-play-card 实现放大效果 */}
+                    <div className="pointer-events-auto animate-play-card">
+                        <Card
+                            data={game.activeCard}
+                            location="preview" // 使用 preview 尺寸
+                            onViewArt={() => {}}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* ================= [新增] Step 4: 沉浸式施法 UI (The Ritual) ================= */}
+            <AnimatePresence>
+                {spellSystem.isCasting && spellSystem.activeCard && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
+
+                        {/* 1. 全屏半透明压暗 (聚焦视线) */}
+                        <motion.div
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            className="absolute inset-0 bg-radial-gradient(circle, transparent 60%, rgba(0,0,0,0.6) 100%)"
+                        />
+
+                        {/* 2. 中央施法核心 (可点击撤销) */}
+                        <motion.div
+                            initial={{ scale: 0, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0, opacity: 0 }}
+                            className="relative pointer-events-auto cursor-pointer group"
+                            onClick={() => {
+                                eventBus.emit(GameEvents.UI_BACK);
+
+                                // 1. 将卡牌加回手牌
+                                if (spellSystem.activeCard) {
+                                    setPlayerHand(prev => [...prev, spellSystem.activeCard!]);
+                                }
+
+                                // 2. 清理全局状态
+                                setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
+                                spellSystem.cancelCasting();
+                            }}
+                        >
+
+                            <div className="fixed left-[15%] top-1/2 -translate-y-1/2 z-[101] pointer-events-none">
+                                <h2
+                                    className="text-5xl font-black italic tracking-tighter text-black opacity-100"
+                                    style={{
+                                        WebkitTextStroke: '2px white', // [关键] 添加白色描边，模仿播报系统的黑色字体风格
+                                        textShadow: '0 4px 0 rgba(255, 255, 255, 0.5)' // 增加一点立体感
+                                    }}
+                                >
+                                    {spellSystem.instruction || "SELECT TARGET"}
+                                </h2>
+                            </div>
+
+                            {/* B. 圆形法术图标 */}
+                            <div className="w-32 h-32 rounded-full border-4 border-blue-400/80 shadow-[0_0_50px_rgba(59,130,246,0.6)] overflow-hidden relative z-10 transition-transform duration-300 group-hover:scale-110 group-hover:border-red-400">
+                                <img
+                                    src={spellSystem.activeCard.imageUrl}
+                                    alt="Casting"
+                                    className="w-full h-full object-cover animate-pulse-slow"
+                                />
+                                {/* 撤销提示 (Hover 出现) */}
+                                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                    <span className="text-red-300 font-black tracking-widest text-xs">CLICK TO</span>
+                                    <span className="text-white font-black tracking-widest text-sm">CANCEL</span>
+                                </div>
+                            </div>
+
+                            {/* C. 能量波纹特效 */}
+                            <div className="absolute inset-0 rounded-full border border-blue-400 opacity-0 animate-ping-slow"></div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+            {/* ========================================================================= */}
+
             {/* 5. 游戏主界面 */}
             <div className={`w-full h-full relative ${game.screenShake ? 'animate-shake' : ''}`}>
 
@@ -779,23 +831,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     </div>
 
 
-                    {/* 5. 我方手牌 (修正：只负责渲染正式游戏手牌) */}
+                    {/* 5. 底部占位 (为抽出的全屏手牌预留空间) */}
                     <div className="h-32 w-full flex-shrink-0"></div>
-                    <div className="absolute left-0 bottom-0 w-full h-48 z-40 pointer-events-none flex justify-center items-end pb-4 overflow-visible">
-                        <div className="flex -space-x-4 px-4 items-end">
-                            {/* 只有在非换牌阶段，才渲染正式手牌 */}
-                            {!isMulliganPhase && (
-                                <PlayerHand
-                                    hand={playerHand}
-                                    game={game}
-                                    cardBackUrl={currentCardBackUrl}
-                                    onCardClick={(c) => handleCardClick(c, 'hand', 'player')}
-                                    onHover={setHoveredCard}
-                                    onViewArt={setViewCard}
-                                />
-                            )}
-                        </div>
-                    </div>
                 </div>
 
                 {/* --- C. 右侧 UI 层 (水晶控制台版) --- */}
@@ -964,6 +1001,23 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         <span className="text-white font-black text-2xl drop-shadow-md font-mono">{displayPlayerSpellMana}</span>
                     </div>
 
+                </div>
+
+                {/* --- D. 全屏手牌层 (彻底突破层叠结界) --- */}
+                {/* 提权：脱离了中间战场的 z-10 牢笼，作为独立的根级覆盖层，获得与水晶盘同场竞技的资格 */}
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[65%] h-48 z-40 pointer-events-none flex justify-center items-end pb-4 overflow-visible">
+                    <div className="flex -space-x-4 px-4 items-end w-full">
+                        {!isMulliganPhase && (
+                            <PlayerHand
+                                hand={playerHand}
+                                game={game}
+                                cardBackUrl={currentCardBackUrl}
+                                onCardClick={(c) => handleCardClick(c, 'hand', 'player')}
+                                onHover={setHoveredCard}
+                                onViewArt={setViewCard}
+                            />
+                        )}
+                    </div>
                 </div>
 
             </div>

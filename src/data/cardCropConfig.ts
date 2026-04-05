@@ -1,0 +1,35 @@
+import type { CardCropData } from '../types';
+
+/**
+ * GM 开发者工作室：卡面坐标静态覆写字典
+ * * 只有在 Art Studio 中被修改过且导出的卡牌，才会被记录在这里。
+ * 如果某张卡/某个模态在这里找不到记录，系统将自动使用默认居中 (scale: 1, offsetX: 0, offsetY: 0)。
+ */
+export const CARD_CROP_CONFIG: Record<string, any> = {
+    'Mingyi_Squad_Zhu_He': {bench:{scale:2.1,offsetX:15.2,offsetY:49.21},combat:{scale:1,offsetX:-0.42,offsetY:22.22}},
+    'lyfe': {hand:{scale:1.1,offsetX:-0.06,offsetY:-0.46},bench:{scale:2.25,offsetX:-4.57,offsetY:80.94},combat:{scale:1.35,offsetX:-3.09,offsetY:50.15},combat_lv2:{scale:1.25,offsetX:-9.93,offsetY:36.89},bench_lv2:{scale:2.2,offsetX:-22.86,offsetY:62.18},hand_lv2:{scale:1.05,offsetX:-1.48,offsetY:2.12}},
+    'fenny': {bench:{scale:2.25,offsetX:-20.93,offsetY:77.05},hand:{scale:1.05,offsetX:0.89,offsetY:1.36},combat:{scale:1,offsetX:-1.67,offsetY:33.33},bench_lv2:{scale:1.7,offsetX:-9.8,offsetY:49.38},hand_lv2:{scale:1.05,offsetX:-2.17,offsetY:1.07},combat_lv2:{scale:1,offsetX:-1.67,offsetY:30.86}},
+    'Dream_Guardians_Squad_Martina': {hand:{scale:0.95,offsetX:0.06,offsetY:-3.9},bench:{scale:1.65,offsetX:11.01,offsetY:39.69},combat:{scale:1.2,offsetX:9.37,offsetY:34.05}},
+    'Dream_Guardians_Squad_Saikui': {hand:{scale:0.9,offsetX:0,offsetY:-1.88},bench:{scale:1.95,offsetX:-3.68,offsetY:61.22},combat:{scale:1,offsetX:0.48,offsetY:32.56}},
+    'Dream_Guardians_Squad_Haifa': {hand:{scale:0.95,offsetX:-0.37,offsetY:-4.93},bench:{scale:1.45,offsetX:0,offsetY:31.93},combat:{scale:1,offsetX:-0.13,offsetY:25.51}},
+    'Ulster_Squad_Koni': {combat:{scale:1,offsetX:0,offsetY:29.01},bench:{scale:1.9,offsetX:-2.63,offsetY:55.1},hand:{scale:0.95,offsetX:0,offsetY:-2.35}},
+    'Ulster_Squad_Maeve': {hand:{scale:0.95,offsetX:-0.77,offsetY:-2.23},bench:{scale:1.55,offsetX:20.87,offsetY:38.57},combat:{scale:1.35,offsetX:17.7,offsetY:40.48}},
+    'Ulster_Squad_Flamme': {combat:{scale:1,offsetX:0.83,offsetY:26.54},bench:{scale:1.6,offsetX:9.9,offsetY:37.81},hand:{scale:0.95,offsetX:-0.73,offsetY:-4.46}},
+    'Mingyi_Squad_Zhe_hao': {hand:{scale:0.95,offsetX:0.39,offsetY:-3.35},bench:{scale:1.65,offsetX:2.53,offsetY:36.29},combat:{scale:1,offsetX:-1.67,offsetY:23.46}},
+    'Mingyi_Squad_Jin_Lang': {combat:{scale:1,offsetX:-1.25,offsetY:19.14},bench:{scale:1.7,offsetX:-30.63,offsetY:30.51},hand:{scale:0.95,offsetX:-0.37,offsetY:-3.29}},
+    'Star_Bright_Squad_Doveil': {hand:{scale:0.95,offsetX:-0.37,offsetY:-4.46},bench:{scale:1.6,offsetX:-2.6,offsetY:43.6},combat:{scale:1,offsetX:0.32,offsetY:29.11}},
+    'Star_Bright_Squad_Alivy': {combat:{scale:1,offsetX:0,offsetY:29.01},bench:{scale:1.4,offsetX:6.55,offsetY:34.39},hand:{scale:0.95,offsetX:0,offsetY:-3.52}},
+    'Star_Bright_Squad_Dakors': {hand:{scale:0.95,offsetX:0,offsetY:-3.05},bench:{scale:1.45,offsetX:2.79,offsetY:33.11},combat:{scale:1,offsetX:0.83,offsetY:26.54}},
+    'Argo_Squad_Pigeon': {combat:{scale:1,offsetX:1.25,offsetY:28.4},bench:{scale:1.45,offsetX:5.69,offsetY:37.51},hand:{scale:0.95,offsetX:-0.73,offsetY:-1.41}},
+    'Argo_Squad_Musician': {hand:{scale:0.95,offsetX:0,offsetY:-2.11},bench:{scale:1.8,offsetX:-25.52,offsetY:30.44},combat:{scale:1.2,offsetX:-8.74,offsetY:23.49}},
+    'Argo_Squad_Arrowhead': {combat:{scale:1,offsetX:-2.08,offsetY:31.48},bench:{scale:1.5,offsetX:1.11,offsetY:42.59},hand:{scale:0.95,offsetX:0,offsetY:0}},
+    'Typhoon_Squad_Flameheart': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.5,offsetX:-17.07,offsetY:27.76},combat:{scale:1.1,offsetX:-5.81,offsetY:24.86}},
+    'Typhoon_Squad_Dornier': {combat:{scale:1,offsetX:-2.08,offsetY:24.07},bench:{scale:1.5,offsetX:0,offsetY:26.75},hand:{scale:0.95,offsetX:0,offsetY:0}},
+    'Typhoon_Squad_613': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.6,offsetX:16.29,offsetY:42.48},combat:{scale:1,offsetX:-1.25,offsetY:29.63}},
+    'Messenger_Squad_Ah_Hua': {combat:{scale:1,offsetX:0.42,offsetY:29.01},bench:{scale:1.4,offsetX:-10.71,offsetY:32.19},hand:{scale:0.95,offsetX:0,offsetY:0}},
+    'Messenger_Squad_Gena': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.25,offsetX:4,offsetY:25.56},combat:{scale:1,offsetX:0.42,offsetY:25.93}},
+    'Messenger_Squad_WALL_E': {combat:{scale:1.25,offsetX:-13.56,offsetY:34.43},bench:{scale:1.4,offsetX:-8.33,offsetY:33.07},hand:{scale:0.95,offsetX:0,offsetY:0}},
+    'Ghost_Squad_Antina': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.35,offsetX:-1.85,offsetY:7.77},combat:{scale:1,offsetX:1.25,offsetY:11.11}},
+    'Ghost_Squad_Vez': {combat:{scale:1,offsetX:1.25,offsetY:21.6},bench:{scale:1.25,offsetX:0.83,offsetY:20.86},hand:{scale:0.95,offsetX:0,offsetY:0}},
+    'Ghost_Squad_Valen': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.45,offsetX:-14.37,offsetY:39.17},combat:{scale:1,offsetX:-1.25,offsetY:32.72}}
+};

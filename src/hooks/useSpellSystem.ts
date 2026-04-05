@@ -117,6 +117,8 @@ export const useSpellSystem = ({ onComplete }: SpellSystemProps) => {
         isCasting: !!castingCard,
         activeCard: castingCard, // 当前正在施放的卡
 
+        selectedTargets,
+
         // 当前步骤的提示文字 (用于 GameAnnouncement)
         instruction: currentRequirement?.label,
 

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect,useRef } from 'react';
 import { TitleScreen } from './components/TitleScreen';
+import { ModeSelectScreen } from './components/ModeSelectScreen'; // [新增]
 import { DeckBuilder } from './components/DeckBuilder';
-import { GameSession } from './components/GameSession';
 import { useAudio } from './hooks/useAudio';
 import { useSfx } from './hooks/useSfx';
 import { useMovie } from './hooks/useMovie';
@@ -16,18 +16,51 @@ import { GachaScreen } from './components/GachaScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { eventBus, GameEvents } from './utils/eventBus';
 import { ScaleWrapper } from './components/ScaleWrapper'; // [新增]
+import { StandardGameWrapper } from './components/modes/StandardGameWrapper';
+import type { BgConfig } from './components/GameLobby'; // [修复] 加入 type 关键字，解决纯类型导入报错
+import { motion, AnimatePresence } from 'framer-motion';
 
 type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha';
-
 export default function App() {
   const [appState, setAppState] = useState<AppState>('title');
   const [pendingAppState, setPendingAppState] = useState<AppState | null>(null);
   const [lobbyVideoIndex, setLobbyVideoIndex] = useState(0);
   const userSystem = useUserSystem();
   const [gameId, setGameId] = useState(0);
+  const [deckBuilderSource, setDeckBuilderSource] = useState<'lobby' | 'mode_select'>('mode_select');
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // --- [新增] 全局自定义背景状态 (方案A 核心) ---
+  const [customBg, setCustomBg] = useState<BgConfig | null>(null);
+  const customBgRef = useRef<BgConfig | null>(null); // 使用 ref 以免在 useEffect 中引起闭包过时或重复触发
+
+  useEffect(() => {
+      const saved = localStorage.getItem('sbr_lobby_bg');
+      if (saved) {
+          try {
+              const parsed = JSON.parse(saved);
+              setCustomBg(parsed);
+              customBgRef.current = parsed;
+          } catch (e) { console.error("Failed to parse saved bg", e); }
+      }
+  }, []);
+
+  // 暴露给 GameLobby 的更新回调
+  const handleUpdateCustomBg = (bg: BgConfig | null) => {
+      setCustomBg(bg);
+      customBgRef.current = bg;
+      if (bg) {
+          localStorage.setItem('sbr_lobby_bg', JSON.stringify(bg));
+          stopMovie(); // [性能优化] 如果设置了自定义背景，彻底停用底层默认视频解码
+      } else {
+          localStorage.removeItem('sbr_lobby_bg');
+          if (appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') {
+              playHallMovie(lobbyVideoIndex); // 恢复底层播放
+          }
+      }
+  };
+  // ------------------------------------
 
   const { playBgm, stopBgm, setBgmVolume } = useAudio();
   const { setSfxVolume } = useSfx();
@@ -80,27 +113,22 @@ export default function App() {
   const handleSystemLoadingComplete = () => {
       playBgm('default');
 
-      // [修正] 检查是否有挂起的目标状态
       if (pendingAppState) {
           setAppState(pendingAppState);
           setPendingAppState(null);
-          // [关键] 如果去备战，不要播放大厅视频，保持 isVisible=false (透明)
       } else {
-          playHallMovie(); // [关键] 只有去大厅才播放背景视频
+          if (!customBgRef.current) playHallMovie(); // [修改] 仅当无自定义背景时，才播放底层视频
           setAppState('lobby');
       }
   };
 
   // 3. [Lobby -> ModeSelect]
-  // [恢复] 核心逻辑：从大厅进入模式选择
   const handleLobbyStartBattle = () => {
       setAppState('mode_select');
   };
 
   // [新增] 大厅 -> 抽卡 (Lobby -> Gacha)
   const handleLobbyGacha = () => {
-      // 抽卡也算一种“场景切换”，可以走 Loading 也可以不走
-      // 为了流畅体验，这里直接切，因为 GachaScreen 加载很快
     stopBgm();
     setPendingAppState('gacha');
     setAppState('system_loading');
@@ -111,24 +139,39 @@ export default function App() {
   const handlePvESelect = () => {
     stopMovie();
     stopBgm();
-    // 注意：这里不需要 stopBgm，因为进入 system_loading 后，
-    // handleSystemLoadingComplete 会根据目标状态自动切歌
+    setDeckBuilderSource('mode_select');
     setPendingAppState('deck_builder');
     setAppState('system_loading');
   };
 
-  // --- [新增] 返回导航逻辑 ---
+  // [新增] 大厅 -> 备战 (Lobby -> DeckBuilder)
+  const handleLobbyOpenDeck = () => {
+    stopMovie();
+    stopBgm();
+    setDeckBuilderSource('lobby');
+    setPendingAppState('deck_builder');
+    setAppState('system_loading');
+  };
+
+  // --- [修改] 返回导航逻辑 ---
+  const handleBackFromDeckBuilder = () => {
+      if (deckBuilderSource === 'lobby') {
+          handleBackToLobby();
+      } else {
+          handleBackToModeSelect();
+      }
+  };
 
   // 备战页返回 -> 模式选择
   const handleBackToModeSelect = () => {
       playBgm('default');
-      playHallMovie(); // 重新播放大厅视频
+      if (!customBgRef.current) playHallMovie(); // [修改] 仅无自定义背景时播放
       setAppState('mode_select');
   };
 
   // 模式选择返回 -> 大厅
   const handleBackToLobby = () => {
-      playHallMovie(); // 重新播放大厅视频
+      if (!customBgRef.current) playHallMovie(); // [修改] 仅无自定义背景时播放
       setAppState('lobby');
   };
 
@@ -183,20 +226,19 @@ export default function App() {
       playTitleMovie();
     }
     else if (appState === 'lobby') {
-      // 大厅：播放默认 BGM
       playBgm('default');
-      const idx = playHallMovie();
-      setLobbyVideoIndex(idx);
+      if (!customBgRef.current) { // [修改] 如果存在自定义背景，阻止无用解码
+          const idx = playHallMovie();
+          setLobbyVideoIndex(idx);
+      }
     }
     else if (appState === 'gacha') {
-      // [新增] 抽卡界面：播放抽卡 BGM，背景沿用大厅视频
       playBgm('gacha');
-      // 确保视频继续播放（如果在播放的话）
-      if (!isVisible) playHallMovie();
+      if (!customBgRef.current && !isVisible) playHallMovie(); // [修改]
     }
     else if (appState === 'mode_select') {
        playBgm('default');
-       if (!isVisible) {
+       if (!customBgRef.current && !isVisible) { // [修改]
            playHallMovie(lobbyVideoIndex);
        }
     }
@@ -252,20 +294,24 @@ export default function App() {
 
   return (
   <ScaleWrapper>
+  <FullScreenToggle />
     <div className="relative w-full h-full bg-slate-950 overflow-hidden">
-    <FullScreenToggle />
 
 
-      {/* 1. 标题体系 */}
-      {(appState === 'title' || appState === 'mode_select') && (
+
+      {/* 1. 标题界面 (纯净版) */}
+      {appState === 'title' && (
         <TitleScreen
-            // [修复] 使用新定义的函数名
             onTitleStartClick={handleTitleStart}
-            mode={appState === 'title' ? 'title' : 'mode_select'}
-            onPvESelect={handlePvESelect}
-            onEnterModeSelect={handlePvESelect}
-            onBack={handleBackToLobby}
             userSystem={userSystem}
+        />
+      )}
+
+      {/* 1.5 模式选择界面 (独立版) */}
+      {appState === 'mode_select' && (
+        <ModeSelectScreen
+            onPvESelect={handlePvESelect}
+            onBack={handleBackToLobby}
         />
       )}
 
@@ -284,6 +330,9 @@ export default function App() {
                   onSwitchVideo={handleSwitchLobbyVideo}
                   onGachaClick={handleLobbyGacha}
                   onOpenSettings={() => setIsSettingsOpen(true)}
+                  onOpenDeck={handleLobbyOpenDeck}
+                  customBg={customBg}                     // [新增] 传入全局自定义背景
+                  onUpdateCustomBg={handleUpdateCustomBg} // [新增] 更新全局背景的回调
               />
       )}
 
@@ -298,9 +347,11 @@ export default function App() {
       {/* 4. 备战 */}
       {appState === 'deck_builder' && (
         <DeckBuilder
-            onStartGame={handleStartGame} // [Link 5]
+            onStartGame={handleStartGame}
             userSystem={userSystem}
-            onBack={handleBackToModeSelect}
+            onBack={handleBackFromDeckBuilder}
+            // [新增] 将来源传递给组件
+            fromSource={deckBuilderSource}
         />
       )}
 
@@ -315,18 +366,21 @@ export default function App() {
 
       {/* 6. 战斗 */}
       {appState === 'game' && (
-        <GameSession
-            key={gameId}
-            deck={currentPlayerDeckList}
-            onExit={handleExitGame} // [Link 7]
-            playBgm={playBgm}
-            playLevelUpMovie={playLevelUpMovie}
-            playVictoryMovie={playVictoryMovie}
-            stopMovie={stopMovie}
-            deskIndex={userSystem.settings.customization.currentDeskIndex}
-            cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
-        />
-      )}
+            <StandardGameWrapper
+                key={gameId}
+                deck={currentPlayerDeckList}
+                // [注意] 接口变化：Wrapper 使用 onExitGame 接收退出回调
+                onExitGame={handleExitGame}
+
+                // 下面的基础 UI 配置透传给 GameSession
+                playBgm={playBgm}
+                playLevelUpMovie={playLevelUpMovie}
+                playVictoryMovie={playVictoryMovie}
+                stopMovie={stopMovie}
+                deskIndex={userSystem.settings.customization.currentDeskIndex}
+                cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
+            />
+       )}
       {/* 全局设置面板 */}
           <SettingsModal
               isOpen={isSettingsOpen}
@@ -334,6 +388,21 @@ export default function App() {
               volumes={userSystem.settings.volume}
               onVolumeChange={handleVolumeChange}
           />
+
+          <AnimatePresence>
+          {customBg && (appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') && (
+              <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  className="absolute inset-0 z-[1] bg-black pointer-events-none"
+              >
+                  {customBg.type === 'pic' ? (
+                      <img src={customBg.url} className="w-full h-full object-cover" alt="Custom BG" />
+                  ) : (
+                      <video src={customBg.url} autoPlay loop muted className="w-full h-full object-cover" />
+                  )}
+              </motion.div>
+          )}
+      </AnimatePresence>
 
 
       <VideoPlayer

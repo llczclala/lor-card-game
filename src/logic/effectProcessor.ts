@@ -15,7 +15,11 @@ export interface EffectContext {
 
 export interface EffectParams {
     value?: number;
-    relatedCardKey?: string; // 新增该属性，匹配代码中的使用
+    power?: number;   // [新增]
+    health?: number;  // [新增]
+    strikeMode?: 'MUTUAL' | 'ONE_WAY'; // [新增]
+    duration?: 'ROUND' | 'PERMANENT'; // [新增]
+    relatedCardKey?: string;
 }
 
 /**
@@ -106,6 +110,11 @@ export const processEffect = (
         });
     }
 
+    if (effect.targetRequirements.some(req => req.type === 'ALL_ALLIES')) {
+        const bench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+        bench.forEach(c => finalTargets.push({ type: 'ally', id: c.id }));
+    }
+
     // --- 根据效能类型 (Class) 分发逻辑 ---
 
     switch (effect.class) {
@@ -169,10 +178,57 @@ export const processEffect = (
                         nextPlayerBench = updateCardInList(nextPlayerBench, defenderId, c => applyDamage(c, damageToDef));
                         nextEnemyBench = updateCardInList(nextEnemyBench, defenderId, c => applyDamage(c, damageToDef));
 
+                        // [修改] 2. 防御者反击 (仅在互殴模式下发生)
+                        // 获取打击模式，默认为 'MUTUAL' (单挑是互殴，芬妮大招是单方面)
+                        const mode = effect.params.strikeMode || 'MUTUAL';
+
+                        if (mode === 'MUTUAL') {
+                            // 只有互殴时，攻击者才承受伤害 (damageToAtk)
+                            nextPlayerBench = updateCardInList(nextPlayerBench, attackerId, c => applyDamage(c, damageToAtk));
+                            nextEnemyBench = updateCardInList(nextEnemyBench, attackerId, c => applyDamage(c, damageToAtk));
+                        }
+
                         events.push({ type: 'sfx_strike', payload: null });
                     }
                 }
             }
+            break;
+        }
+        // [新增] BUFF 处理器 (处理 GRANT 类型效果)
+        case 'BUFF': {
+            // 解构参数，设置默认值
+            const power = effect.params.power || 0;
+            const health = effect.params.health || 0;
+            const keywords = effect.params.keywords || [];
+
+            finalTargets.forEach(target => {
+                if (!target.id) return; // BUFF 只能给单位，不能给水晶
+
+                const applyBuff = (c: CardData) => {
+                    // 合并关键词并去重
+                    const newKeywords = Array.from(new Set([...c.keywords, ...keywords]));
+
+                    return {
+                        ...c,
+                        // 更新面板数值
+                        power: c.power + power,
+                        health: c.health + health,
+                        maxHealth: c.maxHealth + health,
+                        keywords: newKeywords,
+                        // 记录 Buff 来源 (方便后续做净化逻辑，目前先累加)
+                        buffs: {
+                            power: (c.buffs?.power || 0) + power,
+                            health: (c.buffs?.health || 0) + health
+                        },
+                        animState: 'buff' as const // 触发发光动画
+                    };
+                };
+
+                nextPlayerBench = updateCardInList(nextPlayerBench, target.id, applyBuff);
+                nextEnemyBench = updateCardInList(nextEnemyBench, target.id, applyBuff);
+            });
+
+            events.push({ type: 'sfx_buff', payload: null }); // 触发音效
             break;
         }
 

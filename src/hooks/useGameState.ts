@@ -37,10 +37,9 @@ const shuffleDeck = <T>(array: T[]): T[] => {
 };
 
 // 1. 接收 initialDeck 参数，默认为空数组
-export const useGameState = (
-    initialPlayerDeck: string[],
-    initialEnemyDeck: string[] = []
-) => {
+export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false) => {
+    const deckSignature = Array.isArray(deck) ? deck.join(',') : '';
+    const enemyDeckSignature = Array.isArray(enemyDeck) ? enemyDeck.join(',') : '';
     // --- 1. 状态定义 ---
     const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
 
@@ -77,7 +76,7 @@ export const useGameState = (
     });
 // 新增：牌库状态 (Deck)
     const [playerDeck, setPlayerDeck] = useState<CardData[]>([]);
-    const [enemyDeck, setEnemyDeck] = useState<CardData[]>([]);
+    const [enemyDeckState, setEnemyDeckState] = useState<CardData[]>([]);
     // [新增] 将当前手牌全部放回牌库顶端 (用于换牌结束后的衔接)
 
     const [playerHand, setPlayerHand] = useState<CardData[]>([]);
@@ -97,11 +96,11 @@ export const useGameState = (
     const enemyUnitsPlayedRef = useRef(0);
 
     // [新增] State Ref: 用于在异步循环中获取最新状态 (加入 Deck 状态)
-    const stateRef = useRef({ game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck });
+    const stateRef = useRef({ game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck: enemyDeckState });
 
     useEffect(() => {
-        stateRef.current = { game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck };
-    }, [game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck]);
+        stateRef.current = { game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck: enemyDeckState };
+    }, [game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeckState]);
 
     // 辅助函数：异步等待
     const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -111,30 +110,46 @@ export const useGameState = (
     }, [game, playerBench, enemyBench, combatField, playerHand, enemyHand]);
 
     useEffect(() => {
+        // [新增] 沙盒模式拦截：不自动发牌，不洗牌，直接进入主阶段，给足 99 费用
+        if (isSandbox) {
+            setGame(prev => ({
+                ...prev,
+                round: 1,
+                phase: 'main',
+                turnOwner: 'player',
+                playerMana: 10, playerMaxMana: 10, playerSpellMana: 3,
+                enemyMana: 10, enemyMaxMana: 10, enemySpellMana: 3,
+                attackToken: { player: 'normal', enemy: null },
+                consecutivePasses: 0
+            }));
+            return;
+        }
+
         // 1. 创建完整卡牌对象
-        const validPlayerDeck = initialPlayerDeck.filter(key => CARD_DB[key]);
-        const validEnemyDeck = initialEnemyDeck.filter(key => CARD_DB[key]);
+        const validPlayerDeck = deck.filter(key => CARD_DB[key]);
+        const validEnemyDeck = enemyDeck.filter(key => CARD_DB[key]);
 
         const pDeck = validPlayerDeck.map(createFullCard);
         const eDeck = validEnemyDeck.map(createFullCard);
 
         // 2. 洗牌
-        const shuffledP = shuffleDeck(pDeck);
-        const shuffledE = shuffleDeck(eDeck);
+        // 注意：请确保您有 shuffleDeck 函数，或者用 .sort(() => Math.random() - 0.5) 替代
+        const shuffledP = pDeck.sort(() => Math.random() - 0.5);
+        const shuffledE = eDeck.sort(() => Math.random() - 0.5);
 
-        // 3. 玩家发牌 (前4张进手牌，剩下进牌库)
+        // 3. 玩家发牌
         const startHandP = shuffledP.slice(0, 4);
         const remainDeckP = shuffledP.slice(4);
 
         setPlayerDeck(remainDeckP);
         setPlayerHand(startHandP);
 
-        // 4. 敌方只洗牌，暂不发手牌 (等到 Mulligan 结束游戏正式开始时再发)
-        // 这避免了 Round 0 时 AI 逻辑读取 enemyHand 报错
-        setEnemyDeck(shuffledE);
+        // 4. 敌方设置
+        // [注意] 这里要用我们刚才改名后的 enemyDeckState
+        setEnemyDeckState(shuffledE);
         setEnemyHand([]);
 
-    }, [initialPlayerDeck, initialEnemyDeck]);
+    }, [deck, enemyDeck]); // ✅ 修正：依赖项改为 deck 和 enemyDeck
 
     useEffect(() => {
         // 只有当回合数变化时才检查
@@ -280,46 +295,52 @@ export const useGameState = (
 
     }, [playerBench, enemyBench, combatField, playerHand, enemyHand]); // [关键] 依赖列表包含双方状态
 
-        // [新增] 全局死亡监测 (Death Check System)
-    // 监听 playerBench 和 enemyBench，一旦发现有单位生命值归零，立即处理死亡逻辑
-    // 这解决了"法术伤害无法杀死备战席单位"的问题
+       // [升级版] 全局死亡监测 (Death Check System) - 黄金 1.1 秒法则
+    // 监听备战席单位，赋予法术/技能击杀充足的特效播放时间
     useEffect(() => {
         const processDeaths = (
             bench: CardData[],
             setBench: React.Dispatch<React.SetStateAction<CardData[]>>,
         ) => {
-            const deadUnits: CardData[] = [];
-            const livingUnits: CardData[] = [];
-            let hasDeath = false;
+            let needsUpdate = false;
+            const deadUnitsToBroadcast: CardData[] = [];
 
-            bench.forEach(unit => {
-                // 计算当前实际生命值
+            const newBench = bench.map(unit => {
                 const currentHealth = (unit.health) + (unit.buffs?.health || 0) - (unit.damageTaken || 0);
 
-                if (currentHealth <= 0) {
-                    deadUnits.push(unit);
-                    hasDeath = true;
-                } else {
-                    livingUnits.push(unit);
+                // 核心改动：如果血量归零，且还未标记为 dying（防重复触发）
+                if (currentHealth <= 0 && unit.animState !== 'dying') {
+                    needsUpdate = true;
+                    deadUnitsToBroadcast.push(unit);
+                    // 缓刑：不直接删除，只挂载死亡标记下发给视图层播放特效
+                    return { ...unit, animState: 'dying' as const };
                 }
+                return unit;
             });
 
-            if (hasDeath) {
-                // 1. 更新备战席，移除死者
-                setBench(livingUnits);
+            if (needsUpdate) {
+                // 1. 下发 dying 状态，通知 Card.tsx 触发金蝉脱壳与粒子爆炸
+                setBench(newBench);
 
-                // 2. 广播死亡事件 (触发语音、亡语等)
-                deadUnits.forEach(u => {
-                    console.log(`[DeathCheck] ${u.name} died in bench.`);
+                // 2. 广播死亡事件 (触发语音、统计等)
+                deadUnitsToBroadcast.forEach(u => {
+                    console.log(`[DeathCheck] ${u.name} died in bench. Initiating shatter VFX.`);
                     eventBus.emit(GameEvents.UNIT_DIE, u);
                 });
+
+                // 3. [关键时间轴] 黄金 1.1 秒倒计时后收尸
+                // 彻底异步非阻塞，完美避开陈旧闭包 Bug
+                setTimeout(() => {
+                    setBench(prev => prev.filter(u => u.animState !== 'dying'));
+                }, 1100);
             }
         };
 
         if (playerBench.length > 0) processDeaths(playerBench, setPlayerBench);
         if (enemyBench.length > 0) processDeaths(enemyBench, setEnemyBench);
 
-    }, [playerBench, enemyBench]); // 依赖于备战席变化
+    }, [playerBench, enemyBench]);
+
 
     // --- 3. 基础操作 ---
 
@@ -348,14 +369,14 @@ export const useGameState = (
                 setPlayerDeck(newDeck);
                 setPlayerHand(prev => [...prev, cardToDraw]);
             } else {
-                setEnemyDeck(newDeck);
+                setEnemyDeckState(newDeck);
                 setEnemyHand(prev => [...prev, cardToDraw]);
             }
             if (i < count - 1) await wait(2250);
         }
     };
 
-const startRound = () => {
+    const startRound = () => {
         heroActionHistory.current.clear();
         enemyUnitsPlayedRef.current = 0;
         eventBus.emit(GameEvents.ROUND_START);
@@ -380,7 +401,60 @@ const startRound = () => {
         setPlayerBench(nextPlayerBench);
         setEnemyBench(nextEnemyBench);
     };
-    const resetGame = () => window.location.reload();
+    const resetGame = () => {
+        const pDeck = initDeck(deck);
+        const eDeck = initDeck(enemyDeck);
+
+        // 洗牌并抽初始手牌 (各4张)
+        const pHand = pDeck.splice(0, 4);
+        const eHand = eDeck.splice(0, 4);
+
+        setPlayerDeck(pDeck);
+        setEnemyDeckState(eDeck);
+        setPlayerHand(pHand);
+        setEnemyHand(eHand);
+        setPlayerBench([]);
+        setEnemyBench([]);
+        setCombatField([]);
+
+        setGame({
+            playerMana: 1,
+            playerMaxMana: 1,
+            playerSpellMana: 0,
+            enemyMana: 1,
+            enemyMaxMana: 1,
+            enemySpellMana: 0,
+            round: 1,
+            phase: 'main',
+            turnOwner: 'player',
+            playerNexus: 20,
+            enemyNexus: 20,
+            playerMaxManaCap: 10,
+            enemyMaxManaCap: 10,
+            spellStack: [],
+            activeCard: null,
+            attackToken: { player: 'normal', enemy: null },
+            consecutivePasses: 0,
+            winner: null,
+            gameResult: null,
+            levelUpCard: null,
+            fullArtCard: null,
+            stats: {
+                roundsPlayed: 0,
+                damageDealt: 0,
+                unitsKilled: 0,
+                spellsCast: 0,
+                longestStreak: 0,
+                heroesLeveled: 0,
+                nexusHealthRestored: 0
+            },
+            screenShake: false,
+            spellCasting: null
+        });
+
+        eventBus.emit(GameEvents.ROUND_START, { round: 1 });
+        setMessage("GAME START");
+    };
 
     // --- 4. 战斗系统 ---
 
@@ -996,8 +1070,9 @@ const startRound = () => {
     };
 
     useEffect(() => {
-        if (!initializedRef.current) startRound();
-    }, []);
+        // [修改] 沙盒模式下，阻止自动调用 startRound (因为我们在上面的 hook 里已经手动设好第一回合状态了)
+        if (!initializedRef.current && !isSandbox) startRound();
+    }, [isSandbox]);
 
 
     const replaceOpeningHand = async (indicesToReplace: number[]) => {

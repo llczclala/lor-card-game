@@ -190,6 +190,30 @@ export const useUserSystem = () => {
         loadUserData(newId, mode); // 全卡档强制刷新资产
     };
 
+    // --- [新增] 更新玩家基础档案 (昵称/头像) ---
+    const updateProfile = useCallback((newProfileData: Partial<UserProfile>) => {
+        if (!userId) return;
+        setProfile(prev => {
+            if (!prev) return null;
+            const merged = { ...prev, ...newProfileData };
+            StorageUtils.save(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, merged);
+
+            // [同步] 如果修改了名字，需要同步更新全局列表索引
+            if (newProfileData.displayName) {
+                const list = StorageUtils.getUserIndex();
+                const userIndex = list.find(u => u.uid === userId);
+                StorageUtils.updateUserIndex({
+                    uid: userId,
+                    displayName: merged.displayName,
+                    avatarId: merged.avatarId,
+                    lastLoginAt: merged.lastLoginAt,
+                    type: userIndex?.type || 'starter'
+                });
+                setUserList(StorageUtils.getUserIndex());
+            }
+            return merged;
+        });
+    }, [userId]);
 
     // --- 4. 业务操作方法 ---
     const saveDeck = (deckToSave: SavedDeck) => {
@@ -380,6 +404,7 @@ export const useUserSystem = () => {
         deleteDeck,
         selectDeck,
         updateSettings,
+        updateProfile, // [新增] 暴露更新名片的方法
 
         purchaseCard,
         switchUserMode, // [新增] 导出切换函数

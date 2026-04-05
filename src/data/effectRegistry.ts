@@ -3,7 +3,7 @@
  */
 
 export type EffectClass =
-    | 'STRIKE' | 'SUMMON' | 'GRANT' | 'FATES_CHOICE' | 'RALLY' | 'DAMAGE';
+    | 'STRIKE' | 'SUMMON' | 'BUFF' | 'FATES_CHOICE' | 'RALLY';
 
 export type EffectTiming =
     | 'ON_PLAY' | 'ON_ATTACK' | 'ON_BLOCK' | 'ROUND_START' | 'ON_SEEN';
@@ -19,7 +19,9 @@ export type TargetType =
     | 'PLAYER_NEXUS'    // 我方水晶
     | 'ENEMY_NEXUS'     // 敌方水晶
     | 'ANY_TARGET'      // 任意可被指定的单位或水晶
-    | 'ALLY_CHAMPION';  // 我方特定英雄 (用于芬妮斩将)
+    | 'ALLY_CHAMPION'   // 我方特定英雄
+    | 'ALL_ALLIES'
+    | 'SELF';
 
 export interface TargetRequirement {
     type: TargetType;
@@ -28,16 +30,15 @@ export interface TargetRequirement {
     filterKey?: string; // 额外过滤器，例如仅限 key='fenny'
 }
 
+// [修改] 扁平化参数结构，移除 buffs 嵌套，与 Processor 对齐
 export interface EffectParams {
-    value?: number;
-    buffs?: {
-        power?: number;
-        health?: number;
-        keywords?: string[];
-        duration?: 'round' | 'permanent';
-    };
+    value?: number;          // 伤害数值
+    power?: number;          // Buff 攻击
+    health?: number;         // Buff 血量
+    keywords?: string[];     // Buff 词条
+    duration?: 'ROUND' | 'PERMANENT';
+    strikeMode?: 'MUTUAL' | 'ONE_WAY'; // [新增] 打击模式
     condition?: string;
-    // 移除 grantAttackToken，因为 RALLY 类型自带逻辑
 }
 
 export interface EffectDefinition {
@@ -65,21 +66,25 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
             { type: 'ALLY_UNIT', count: 1, label: '选择一个我方单位' },
             { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
         ],
-        params: {}
+        params: { strikeMode: 'MUTUAL' } // [新增] 互殴模式
     },
     // 奔袭 (Lyfe Rush) - 自动目标 (里芙)
     'effect_lyfe_rush': {
         id: 'effect_lyfe_rush',
         name: '无尽霜刃',
         description: '给予里芙 +1/+1。',
-        class: 'GRANT',
+        class: 'BUFF', // [修正] GRANT -> BUFF
         timing: 'ON_PLAY',
         speed: 'BURST',
-        targetRequirements: [], // 空数组表示自动执行，无需玩家点击
+        targetRequirements: [
+             // 暂时允许选任意友军，保证体验
+            { type: 'ALLY_UNIT', count: 1, label: '选择目标' }
+        ],
         params: {
-            buffs: { power: 1, health: 1, duration: 'round' }
+            power: 1, health: 1, duration: 'ROUND' // [修正] 扁平化
         }
     },
+
     'effect_lyfe_ultimate': {
         id: 'effect_lyfe_ultimate',
         name: '吞噬神座',
@@ -95,44 +100,47 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         id: 'effect_fenny_strike',
         name: '星光之途',
         description: '给予芬妮 +2/+0。',
-        class: 'GRANT',
+        class: 'BUFF', // [修正] GRANT -> BUFF
         timing: 'ON_PLAY',
         speed: 'BURST',
-        targetRequirements: [],
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择目标' }
+        ],
         params: {
-            buffs: { power: 2, health: 0, duration: 'round' }
+            power: 2, health: 0, duration: 'ROUND' // [修正] 扁平化
         }
     },
+
     'effect_fenny_ultimate': {
         id: 'effect_fenny_ultimate',
         name: '绝对主角',
-        description: '芬妮打击一个敌方单位（附带碾压）。',
+        description: '芬妮打击一个敌方单位。', // 碾压由英雄自带能力提供
         class: 'STRIKE',
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            // 特殊需求：必须是芬妮
             { type: 'ALLY_CHAMPION', count: 1, label: '选择我方芬妮', filterKey: 'fenny' },
             { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
         ],
         params: {
-            buffs: { keywords: ['Overwhelm'] } // 临时赋予碾压
+            strikeMode: 'ONE_WAY' // [新增] 单方面打击
         }
     },
+
     // --- 2. 祈愿 (Prayer) ---
     // 逻辑：选择我方 -> +1/+1
     'effect_prayer': {
         id: 'effect_prayer',
         name: '祈愿',
         description: '给予一个友军 +1/+1。',
-        class: 'GRANT',
+        class: 'BUFF', // [修正] GRANT -> BUFF
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
             { type: 'ALLY_UNIT', count: 1, label: '选择一个我方单位' }
         ],
         params: {
-            buffs: { power: 1, health: 1, duration: 'permanent' }
+            power: 1, health: 1, duration: 'PERMANENT' // [修正] 扁平化
         }
     },
     'effect_lyfe_rally_passive': {
@@ -161,7 +169,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         id: 'effect_hidden_arrow',
         name: '暗箭',
         description: '对一个单位或水晶造成 1 点伤害。',
-        class: 'DAMAGE', // 使用 DAMAGE 类型
+        class: 'STRIKE', // [修正] DAMAGE -> STRIKE
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
@@ -170,15 +178,27 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         params: { value: 1 }
     },
     'effect_inspire': {
-        id: 'effect_inspire', name: '振奋', description: '全体 +3/+3',
-        class: 'GRANT', timing: 'ON_PLAY', speed: 'FAST',
-        targetRequirements: [], // 全体效果通常不需要指定
-        params: { buffs: { power: 3, health: 3 } }
+        id: 'effect_inspire',
+        name: '振奋',
+        description: '全体 +3/+3',
+        class: 'BUFF', // [修正] GRANT -> BUFF
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALL_ALLIES', count: 0, label: '全体友军' } // [修正] 使用自动目标
+        ],
+        params: { power: 3, health: 3, duration: 'PERMANENT' } // [修正] 扁平化
     },
     'effect_destruction': {
-        id: 'effect_destruction', name: '破坏', description: '打水晶 4',
-        class: 'DAMAGE', timing: 'ON_PLAY', speed: 'SLOW',
-        targetRequirements: [{type: 'ENEMY_NEXUS', count: 1, label: '自动目标'}], // 也可以做成自动
+        id: 'effect_destruction',
+        name: '破坏',
+        description: '打水晶 4',
+        class: 'STRIKE', // [修正] DAMAGE -> STRIKE
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [
+            { type: 'ENEMY_NEXUS', count: 1, label: '敌方水晶' }
+        ],
         params: { value: 4 }
     }
 };

@@ -1,7 +1,8 @@
 import React, { useState, useMemo,useEffect} from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Zap, Shield, LayoutGrid, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ChevronDown, ShoppingCart, Eraser, AlertTriangle } from 'lucide-react';
+import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ShoppingCart, Eraser, AlertTriangle, Filter, X, User } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
+import { HERO_IMAGES } from '../data/imageData';
 import { Card } from './Card';
 import type { CardData } from '../types';
 import { eventBus, GameEvents } from '../utils/eventBus';
@@ -10,13 +11,18 @@ import { PersonalizationDrawer } from './PersonalizationDrawer';
 import type { useUserSystem } from '../hooks/useUserSystem';
 import { ArrowLeft } from 'lucide-react'; // [新增]
 
+
+
 interface DeckBuilderProps {
     onStartGame: (deck: string[]) => void;
     userSystem: ReturnType<typeof useUserSystem>;
-    onBack?: () => void; // [新增] 返回回调
+    onBack?: () => void;
+    // [新增] 接收来源属性
+    fromSource: 'lobby' | 'mode_select';
 }
 
-type FilterRegion = 'ALL' | 'LYFE' | 'FENNY' | 'LOGISTICS' | 'TEST';
+// [修改] 废弃旧的 FilterRegion，引入现代复合类型
+type CategoryFilter = 'ALL' | 'HERO' | 'SPELL' | 'UNIT';
 
 const toFullCardData = (staticData: any): CardData => ({
     ...staticData,
@@ -27,10 +33,62 @@ const toFullCardData = (staticData: any): CardData => ({
     buffs: { power: 0, health: 0 }
 });
 
+// --- [新增] 封面计算工具函数 ---
+const getDeckCover = (cards: Record<string, number>): string => {
+    const cardKeys = Object.keys(cards);
+    if (cardKeys.length === 0) return HERO_IMAGES.lyfe.base; // 空卡组默认图
+
+    // 排序逻辑: 英雄 > 单位 > 数量多 > 数量少
+    const sorted = cardKeys.sort((a, b) => {
+        const cardA = CARD_DB[a];
+        const cardB = CARD_DB[b];
+        if (!cardA || !cardB) return 0;
+
+        // 1. 英雄优先
+        if (cardA.isChampion !== cardB.isChampion) {
+            return cardA.isChampion ? -1 : 1;
+        }
+        // 2. 数量多的优先
+        const countA = cards[a];
+        const countB = cards[b];
+        if (countA !== countB) {
+            return countB - countA;
+        }
+        // 3. 单位优先于法术
+        const isUnitA = cardA.type.includes('unit');
+        const isUnitB = cardB.type.includes('unit');
+        if (isUnitA !== isUnitB) {
+            return isUnitA ? -1 : 1;
+        }
+        return 0; // 保持默认顺序
+    });
+
+    // 返回排在第一位的图片，如果是法术或者没图，兜底回默认
+    return CARD_DB[sorted[0]]?.imageUrl || HERO_IMAGES?.lyfe?.base || "";
+};
+
+// [新增] 智能命名工具函数
+const getUniqueDeckName = (existingDecks: { name: string }[]) => {
+    let base = "New Deck";
+    let name = base;
+    let counter = 1;
+
+    // 创建一个名字集合用于快速查找
+    const names = new Set(existingDecks.map(d => d.name));
+
+    // 如果名字已存在，尝试加数字直到不重复
+    while (names.has(name)) {
+        name = `${base} ${counter}`;
+        counter++;
+    }
+    return name;
+};
+
 export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     onStartGame,
     userSystem,
-    onBack
+    onBack,
+    fromSource // [新增] 解构
 }) => {
 
     const [localDeck, setLocalDeck] = useState<Record<string, number>>({});
@@ -38,11 +96,68 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const [isDirty, setIsDirty] = useState(false); // 标记是否有未保存的修改
 
     const [viewCard, setViewCard] = useState<CardData | null>(null);
-    const [filterRegion, setFilterRegion] = useState<FilterRegion>('ALL');
+    // [修改] 引入现代复合状态集
     const [searchTerm, setSearchTerm] = useState('');
-    const [showDeckList, setShowDeckList] = useState(false); // 控制卡组列表下拉框
+    const [category, setCategory] = useState<CategoryFilter>('ALL');
+    const [costFilter, setCostFilter] = useState<string>('ALL');
+    const [regionFilter, setRegionFilter] = useState<string>('ALL');
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
+
+
     const [hoveredCardKey, setHoveredCardKey] = useState<string | null>(null);
+
+    // [新增] 一键重置逻辑
+    const isFilterActive = category !== 'ALL' || costFilter !== 'ALL' || regionFilter !== 'ALL' || searchTerm !== '';
+    const resetFilters = () => {
+        setSearchTerm(''); setCategory('ALL'); setCostFilter('ALL'); setRegionFilter('ALL');
+    };
     const hoverTimerRef = React.useRef<number | null>(null);
+    const [viewMode, setViewMode] = useState<'SELECTION' | 'EDITOR'>('SELECTION');
+
+    // [新增] 进入特定卡组的编辑模式
+    const handleEnterDeck = (deckId: string) => {
+        eventBus.emit(GameEvents.UI_CLICK);
+        userSystem.selectDeck(deckId);
+        setViewMode('EDITOR');
+    };
+
+    // [修复] 智能新建逻辑
+    const handleCreateAndEdit = () => {
+        eventBus.emit(GameEvents.UI_CLICK);
+
+        // 1. 先触发系统的“取消选中”，这会触发 useEffect 把状态重置为默认
+        userSystem.selectDeck('');
+
+        // 2. 使用 setTimeout 确保在 useEffect 之后执行我们的初始化
+        // 这样可以覆盖掉 useEffect 里的默认 "New Deck" 和 isDirty: false
+        setTimeout(() => {
+            setLocalDeck({}); // 确保清空画板
+
+            // 生成不重复的默认名
+            const newName = getUniqueDeckName(userSystem.decks);
+            setDeckName(newName);
+
+            setIsDirty(true); // 标记为脏数据（草稿状态）
+            setViewMode('EDITOR');
+        }, 0);
+    };
+
+    // [修改] 统一的返回逻辑
+    const handleGlobalBack = () => {
+        if (viewMode === 'EDITOR') {
+            // 如果在编辑器，返回选择界面
+            eventBus.emit(GameEvents.UI_BACK);
+            // 自动保存当前进度 (可选，视需求而定，这里建议保留原有的保存逻辑或触发一次保存)
+            if (isDirty) handleSaveDeck();
+            setViewMode('SELECTION');
+        } else {
+            // 如果在选择界面，执行外部传入的 onBack (回大厅)
+            if (onBack) {
+                eventBus.emit(GameEvents.UI_BACK);
+                onBack();
+            }
+        }
+    };
     // 鼠标进入列表项
     const handleDeckItemEnter = (key: string) => {
         if (hoverTimerRef.current) {
@@ -235,20 +350,6 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         setIsDirty(false);
     };
 
-    const handleCreateNew = () => {
-        eventBus.emit(GameEvents.UI_CLICK);
-        const newId = `deck_${Date.now()}`;
-        userSystem.saveDeck({
-            id: newId,
-            name: "New Deck",
-            hero: 'lyfe',
-            cards: {},
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-        });
-        userSystem.selectDeck(newId); // 切换过去
-    };
-
     const handleDeleteDeck = (id: string) => {
         // 使用自定义弹窗替代 window.confirm
         setConfirmModal({
@@ -269,13 +370,19 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
         const matchingKeys = Object.keys(CARD_DB).filter(key => {
             const card = CARD_DB[key];
-            if (card.isChampion) return false;
+            if (card.isChampion) return false; // 自动填充依然排除英雄
             if (getOwnedCount(key) <= 0) return false;
+
+            // [修改] 让自动填充也遵循玩家当前的高级筛选！
             if (searchTerm && !card.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-            if (filterRegion === 'LYFE' && card.region !== 'Lyfe') return false;
-            if (filterRegion === 'FENNY' && card.region !== 'Fenny') return false;
-            if (filterRegion === 'LOGISTICS' && card.region !== 'Logistics') return false;
-            if (filterRegion === 'TEST' && card.region !== 'TEST') return false;
+            if (category === 'SPELL' && !card.type.includes('spell')) return false;
+            if (category === 'UNIT' && card.type.includes('spell')) return false;
+
+            if (regionFilter !== 'ALL' && card.region !== regionFilter) return false;
+            if (costFilter !== 'ALL') {
+                if (costFilter === '10+' && card.cost < 10) return false;
+                if (costFilter !== '10+' && card.cost.toString() !== costFilter) return false;
+            }
             return true;
         });
 
@@ -312,23 +419,26 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
     const visibleCards = useMemo(() => {
         return Object.values(CARD_DB).filter(c => {
-            // 1. 基础过滤
+            // 1. 基础搜索
             if (searchTerm && !c.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
 
-            // 2. 阵营过滤
-            if (filterRegion === 'LYFE' && c.region !== 'Lyfe') return false;
-            if (filterRegion === 'FENNY' && c.region !== 'Fenny') return false;
-            if (filterRegion === 'LOGISTICS' && c.region !== 'Logistics') return false;
-            if (filterRegion === 'TEST' && c.region !== 'TEST') return false;
+            // 2. 类型过滤
+            if (category === 'HERO' && !c.isChampion) return false;
+            if (category === 'SPELL' && !c.type.includes('spell')) return false;
+            if (category === 'UNIT' && (c.isChampion || c.type.includes('spell'))) return false;
 
-            // 3. [新增] 收集模式过滤：如果不拥有该卡，是否显示？
-            // 策略：显示，但置灰/带锁。这里我们先全部显示，在渲染时处理样式。
-            // 如果您希望完全隐藏未拥有的卡，可以取消注释下面这行：
-            // if (getOwnedCount(c.key) <= 0) return false;
+            // 3. 阵营过滤
+            if (regionFilter !== 'ALL' && c.region !== regionFilter) return false;
+
+            // 4. 费用过滤
+            if (costFilter !== 'ALL') {
+                if (costFilter === '10+' && c.cost < 10) return false;
+                if (costFilter !== '10+' && c.cost.toString() !== costFilter) return false;
+            }
 
             return true;
         });
-    }, [searchTerm, filterRegion, userSystem.collection]); // 依赖 collection
+    }, [searchTerm, category, costFilter, regionFilter, userSystem.collection]); // 依赖全套新状态
 
     const handleStart = () => {
         if (stats.total !== 40) return;
@@ -343,6 +453,140 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         );
         onStartGame(finalDeck);
     };
+
+    // 如果处于“选择模式”，直接渲染选择界面并返回，不执行下方的编辑器渲染
+    if (viewMode === 'SELECTION') {
+        return (
+            <div className="w-full h-full bg-[#0f172a] text-white flex flex-col items-center relative overflow-hidden font-sans">
+                {/* 背景装饰 (保持在最底层) */}
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none z-0"></div>
+
+                {/* ================= [新增] 固定顶部的黑色头部容器 ================= */}
+                {/* 1. absolute top-0 left-0 w-full: 绝对定位占满顶部
+                    2. h-28: 设定固定高度 (与下方 grid 的 pt-28 对应)
+                    3. bg-black: 纯黑背景托底
+                    4. z-40: 确保层级高于滚动的网格内容
+                    5. flex items-center justify-center: 让标题在容器内居中
+                    6. border-b border-white/10 shadow-xl: 增加一点底部边界感和阴影，提升层次
+                */}
+                <div className="absolute top-0 left-0 w-full h-28 bg-black z-40 flex items-end pb-6 justify-center border-b border-white/10 shadow-xl">
+                    {/* 标题 (移入容器内，移除自身的 absolute 和 top-8) */}
+                    <h1 className="text-4xl font-black italic tracking-tighter drop-shadow-lg">
+                        DECK SELECTION
+                    </h1>
+                </div>
+                {/* [修改] 卡组网格容器：
+                    1. pt-28: 给顶部标题留出空间
+                    2. h-full: 撑满高度
+                    3. max-w-full px-12: 增加横向宽度利用率
+                    4. grid-cols-6: 改为 6 列
+                    5. content-start: 确保内容紧贴顶部
+                */}
+                {/* [修复] 将确认弹窗移植到选择界面，否则弹窗无法显示 */}
+                <AnimatePresence>
+                    {confirmModal && (
+                        <div
+                            className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in"
+                            onClick={() => setConfirmModal(null)}
+                        >
+                            <motion.div
+                                initial={{ scale: 0.9, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                exit={{ scale: 0.9, opacity: 0 }}
+                                className="bg-slate-900 border border-red-500/30 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center relative overflow-hidden"
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-500 to-transparent"></div>
+                                <div className="flex flex-col items-center gap-4 mb-6">
+                                    <div className="p-4 bg-red-500/10 rounded-full">
+                                        <AlertTriangle size={32} className="text-red-500" />
+                                    </div>
+                                    <h3 className="text-2xl font-black text-white tracking-widest">{confirmModal.title}</h3>
+                                    <p className="text-gray-300 whitespace-pre-line leading-relaxed">{confirmModal.message}</p>
+                                </div>
+                                <div className="flex gap-4 justify-center">
+                                    <button onClick={() => setConfirmModal(null)} className="flex-1 py-3 rounded-lg border border-white/10 hover:bg-white/5 text-gray-300 font-bold transition-colors">CANCEL</button>
+                                    <button onClick={confirmModal.onConfirm} className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all hover:scale-105">CONFIRM</button>
+                                </div>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
+
+                {/* 返回按钮 */}
+                <button
+                    onClick={handleGlobalBack}
+                    className="absolute top-8 right-8 z-50 p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group"
+                >
+                    <ArrowLeft size={24} className="text-gray-400 group-hover:text-white" />
+                </button>
+
+                <div className="grid grid-cols-6 gap-6 w-full max-w-[95%] h-full overflow-y-auto pt-28 pb-12 px-8 z-0 content-start custom-scrollbar">
+
+                    {/* 1. 新建卡组按钮 (样式微调，适应 grid-cols-6) */}
+                    <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={handleCreateAndEdit}
+                        className="group relative w-full aspect-[3/4] rounded-xl border-4 border-dashed border-gray-600 hover:border-blue-400 hover:bg-blue-900/10 flex flex-col items-center justify-center transition-all cursor-pointer bg-slate-800/50"
+                    >
+                        {/* 稍微缩小图标 */}
+                        <Plus size={32} className="text-gray-600 group-hover:text-blue-400 transition-colors mb-2" />
+                        <span className="text-xs text-gray-500 font-bold tracking-widest group-hover:text-blue-300">NEW DECK</span>
+                    </motion.button>
+
+                    {/* 2. 现有卡组列表 */}
+                    {userSystem.decks.map(deck => {
+                        const coverUrl = getDeckCover(deck.cards);
+                        const cardCount = Object.values(deck.cards).reduce((a, b) => a + b, 0);
+
+                        return (
+                            <motion.div
+                                key={deck.id}
+                                layoutId={deck.id}
+                                onClick={() => handleEnterDeck(deck.id)}
+                                whileHover={{ y: -5 }} // 稍微减小悬浮位移
+                                className="relative w-full aspect-[3/4] group cursor-pointer perspective-1000"
+                            >
+                                {/* ... 内部 3D 样式保持不变 ... */}
+                                {/* 3D 堆叠效果 */}
+                                <div className="absolute top-1.5 left-1.5 w-full h-full bg-gray-800 rounded-xl border border-gray-700 shadow-xl z-0"></div>
+                                <div className="absolute top-0.5 left-0.5 w-full h-full bg-gray-700 rounded-xl border border-gray-600 z-10"></div>
+
+                                {/* 顶层封面 */}
+                                <div className="absolute inset-0 bg-gray-900 rounded-xl border-2 border-gray-600 group-hover:border-blue-500 overflow-hidden z-20 shadow-lg transition-colors">
+                                    <img src={coverUrl} alt="Cover" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity duration-500 group-hover:scale-110" />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
+
+                                    {/* 信息文字 (字体调小一点适配小卡片) */}
+                                    <div className="absolute bottom-0 left-0 w-full p-3">
+                                        <h3 className="font-bold text-sm truncate text-white drop-shadow-md">{deck.name}</h3>
+                                        <div className="flex justify-between items-center mt-1">
+                                            <span className="text-[10px] font-mono text-gray-400">{new Date(deck.updatedAt).toLocaleDateString()}</span>
+                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cardCount === 40 ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'}`}>
+                                                {cardCount}/40
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteDeck(deck.id);
+                                        }}
+                                        className="absolute top-1 right-1 p-1.5 bg-black/60 hover:bg-red-600 rounded-full opacity-0 group-hover:opacity-100 transition-all z-30"
+                                    >
+                                        <Trash2 size={12} className="text-white" />
+                                    </button>
+                                </div>
+                            </motion.div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
+
 
     return (
         <div className="w-full h-full flex bg-[#0f172a] text-white overflow-hidden font-sans">
@@ -396,10 +640,11 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 <button
                     onClick={() => {
                         eventBus.emit(GameEvents.UI_BACK);
-                        onBack();
+                        handleGlobalBack(); // <--- 改为这个
                     }}
-                    className="absolute top-6 right-[340px] z-50 p-3 bg-[#1e293b] border border-gray-600 rounded-full hover:bg-slate-700 hover:border-white/50 transition-all shadow-lg group"
-                    title="Back to Mode Select"
+                    // [修复] 将 right-[340px] 改为 right-8，移至屏幕最右上角，彻底避开筛选栏
+                    className="absolute top-6 right-8 z-50 p-3 bg-[#1e293b] border border-gray-600 rounded-full hover:bg-slate-700 hover:border-white/50 transition-all shadow-lg group"
+                    title="Back"
                 >
                     <ArrowLeft size={20} className="text-gray-400 group-hover:text-white" />
                 </button>
@@ -440,66 +685,87 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     </motion.div>
                 )}
             </AnimatePresence>
-            {/* Right Sidebar - Current Deck & Customization */}
-            <div className="w-80 bg-[#1e293b] border-l border-gray-700 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.3)]">
-                <h2 className="text-3xl font-black mb-8 tracking-tighter italic">备战环节</h2>
 
-                {/* Search */}
-                <div className="relative mb-8">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                    <input
-                        type="text"
-                        placeholder="搜索卡牌..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full bg-[#334155] rounded-full py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                    />
-                </div>
+            {/* --- [重构] 中间主内容区 (包含顶部筛选台与卡牌网格) --- */}
+            {/* 注意：我们彻底删除了原先的左侧 80px 宽的旧筛选边栏，为网格腾出了巨大空间！ */}
+            <div className="flex-1 flex flex-col min-w-0 bg-[#0f172a] relative">
 
-                {/* Region Filters (保持不变) */}
-                <div className="space-y-4 mb-8">
-                    <h3 className="text-gray-500 font-mono text-sm tracking-widest pl-1">阵营</h3>
-                    <div className="flex flex-col gap-2">
-                        <button onClick={() => setFilterRegion('ALL')} className={`text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all ${filterRegion === 'ALL' ? 'bg-white text-black font-bold' : 'text-gray-400 hover:bg-white/10'}`}>
-                            <LayoutGrid size={18} /> 全部
-                        </button>
-                        <button onClick={() => setFilterRegion('LYFE')} className={`text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all ${filterRegion === 'LYFE' ? 'bg-blue-600 text-white font-bold shadow-[0_0_20px_#2563eb]' : 'text-gray-400 hover:bg-blue-900/30'}`}>
-                            <Shield size={18} /> 里芙
-                        </button>
-                        <button onClick={() => setFilterRegion('FENNY')} className={`text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all ${filterRegion === 'FENNY' ? 'bg-yellow-500 text-black font-bold shadow-[0_0_20px_#eab308]' : 'text-gray-400 hover:bg-yellow-900/30'}`}>
-                            <Zap size={18} /> 芬妮
-                        </button>
-                        <button onClick={() => setFilterRegion('LOGISTICS')} className={`text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all ${filterRegion === 'LOGISTICS' ? 'bg-orange-600 text-white font-bold shadow-[0_0_20px_#ea580c]' : 'text-gray-400 hover:bg-orange-900/30'}`}>
-                            <Box size={18} /> 后勤
-                        </button>
-                        <button onClick={() => setFilterRegion('TEST')} className={`text-left px-4 py-3 rounded-lg flex items-center gap-3 transition-all ${filterRegion === 'TEST' ? 'bg-orange-600 text-white font-bold shadow-[0_0_20px_#ea580c]' : 'text-gray-400 hover:bg-orange-900/30'}`}>
-                            <Box size={18} /> 测试
-                        </button>
-                    </div>
-                </div>
-
-                <div className="mt-auto">
-                    {/* ... Stats UI 保持不变 ... */}
-                    <div className="bg-[#0f172a] rounded-xl p-4 border border-gray-700">
-                        <div className="flex justify-between mb-2">
-                            <span className="text-gray-400">卡牌</span>
-                            <span className={`font-bold ${stats.total === 40 ? 'text-green-400' : 'text-white'}`}>{stats.total} / 40</span>
+                {/* 顶部现代复合筛选台 (移植自 ArtStudio) */}
+                <div className="p-4 border-b border-white/10 bg-slate-900 shadow-md z-10 shrink-0">
+                    <div className="flex items-center justify-between gap-4 px-4">
+                        <div className="flex items-center gap-4 flex-1">
+                            {/* Search */}
+                            <div className="relative w-64">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                <input
+                                    type="text" placeholder="搜索卡牌..." value={searchTerm} onChange={(e)=>setSearchTerm(e.target.value)}
+                                    className="w-full bg-slate-800 rounded-md py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                                />
+                            </div>
+                            {/* Category Buttons */}
+                            <div className="flex gap-1 bg-slate-800 p-1 rounded-md">
+                                <button onClick={()=>setCategory('HERO')} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='HERO'?'bg-yellow-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><User size={14}/> 英雄</button>
+                                <button onClick={()=>setCategory('SPELL')} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='SPELL'?'bg-blue-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Zap size={14}/> 法术</button>
+                                <button onClick={()=>setCategory('UNIT')} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='UNIT'?'bg-orange-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Box size={14}/> 单位</button>
+                            </div>
                         </div>
-                        <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${(stats.total / 40) * 100}%` }}></div>
-                        </div>
-                        <div className="flex justify-between mt-4 text-xs text-gray-500 font-mono">
-                            <span>天启者: {stats.champions}/6</span>
-                            <span>发饰: {stats.spells}</span>
-                            <span>单位: {stats.units}</span>
+
+                        <div className="flex items-center gap-2">
+                            {/* Advanced Filters */}
+                            <button
+                                onClick={() => setIsFilterOpen(!isFilterOpen)}
+                                className={`py-2 px-4 flex items-center justify-center gap-2 text-sm font-bold rounded-md transition-colors ${isFilterOpen ? 'bg-blue-600 text-white' : 'bg-slate-800 text-gray-300 hover:bg-slate-700'}`}
+                            >
+                                <Filter size={16} /> 高级筛选
+                            </button>
+                            {/* Reset */}
+                            <button
+                                onClick={resetFilters} disabled={!isFilterActive}
+                                className={`p-2 rounded-md transition-colors ${isFilterActive ? 'bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
+                                title="清空筛选"
+                            >
+                                <X size={18} />
+                            </button>
                         </div>
                     </div>
-                </div>
-            </div>
 
-            {/* Main Content - Card Grid */}
-            <div className="flex-1 p-8 overflow-y-auto">
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 pb-32">
+                    {/* Advanced Filters Dropdown */}
+                    <AnimatePresence>
+                        {isFilterOpen && (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden w-full px-4">
+                                <div className="p-4 bg-slate-800 rounded-md mt-3 flex gap-8 border border-white/5 shadow-inner">
+                                    {/* Cost */}
+                                    <div>
+                                        <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">费用 (COST)</span>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {['ALL', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '10+'].map(c => (
+                                                <button key={c} onClick={()=>setCostFilter(c)} className={`w-8 h-8 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${costFilter===c ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                    {c}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    {/* Region */}
+                                    <div>
+                                        <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">阵营 (REGION)</span>
+                                        <div className="flex flex-wrap gap-2">
+                                            {['ALL', 'Lyfe', 'Fenny', 'Logistics', 'TEST'].map(r => (
+                                                <button key={r} onClick={()=>setRegionFilter(r)} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${regionFilter===r ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                    {r === 'Lyfe' ? '里芙' : r === 'Fenny' ? '芬妮' : r === 'Logistics' ? '后勤' : r === 'TEST' ? '测试' : '全部'}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
+
+                {/* 卡牌网格区域 */}
+                <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
+                    {/* [修改] 移除了左侧边栏后空间大增，增加列数到 5~6 列 (lg:grid-cols-5 xl:grid-cols-6) */}
+                    <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 pb-32">
                     {visibleCards.map(card => {
                         const ownedCount = getOwnedCount(card.key);
                         const inDeckCount = localDeck[card.key] || 0;
@@ -587,6 +853,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     })}
                 </div>
             </div>
+            </div>
 
             {/* Right Sidebar - Current Deck & Customization */}
             <div className="w-80 bg-[#1e293b] border-l border-gray-700 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.3)]">
@@ -621,55 +888,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             >
                                 <Eraser size={18} />
                             </button>
-
-                            <button onClick={() => setShowDeckList(!showDeckList)} className="p-1 hover:bg-white/10 rounded">
-                                <ChevronDown size={20} className={`transition-transform ${showDeckList ? 'rotate-180' : ''}`} />
-                            </button>
                         </div>
-
-                        {/* 下拉卡组列表 */}
-                        {showDeckList && (
-                            <div className="absolute top-full left-0 w-full bg-slate-800 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto mt-2">
-                                {userSystem.decks.map((d: {
-                                 id: string;
-                                 name: string;
-                                 hero: string;
-                                 cards: Record<string, number>;
-                                 createdAt: number;
-                                 updatedAt: number;
-                                })=> (
-                                    <div
-                                        key={d.id}
-                                        className="flex items-center justify-between p-3 hover:bg-slate-700 cursor-pointer border-b border-gray-700 last:border-0"
-                                        onClick={() => {
-                                            eventBus.emit(GameEvents.UI_CLICK);
-                                            userSystem.selectDeck(d.id);
-                                            setShowDeckList(false);
-                                        }}
-                                    >
-                                        <div className="flex flex-col">
-                                            <span className="font-bold text-sm">{d.name}</span>
-                                            <span className="text-xs text-gray-500">{new Date(d.updatedAt).toLocaleDateString()}</span>
-                                        </div>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); handleDeleteDeck(d.id); }}
-                                            className="text-gray-500 hover:text-red-500 p-1"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
-                                ))}
-                                <div
-                                    className="p-3 text-center text-blue-400 hover:bg-slate-700 cursor-pointer font-bold flex items-center justify-center gap-2"
-                                    onClick={() => {
-                                        handleCreateNew();
-                                        setShowDeckList(false);
-                                    }}
-                                >
-                                    <Plus size={16} /> 新增卡组
-                                </div>
-                            </div>
-                        )}
                     </div>
 
                     {/* 保存按钮 */}
@@ -680,6 +899,22 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     >
                         <Save size={16} /> {isDirty ? '保存修改' : '保存'}
                     </button>
+                </div>
+
+                {/* [移植] 统计面板 (Stats UI) 移至右侧，并做了现代化视觉升级 */}
+                <div className="px-6 py-4 border-b border-gray-700 bg-slate-800/50">
+                    <div className="flex justify-between mb-2">
+                        <span className="text-gray-400 text-sm font-bold tracking-widest">DECK SIZE</span>
+                        <span className={`font-black ${stats.total === 40 ? 'text-green-400' : 'text-white'}`}>{stats.total} / 40</span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-900 rounded-full overflow-hidden shadow-inner mb-3">
+                        <div className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 transition-all duration-300" style={{ width: `${(stats.total / 40) * 100}%` }}></div>
+                    </div>
+                    <div className="flex justify-between text-xs font-mono font-bold text-gray-400 bg-black/30 p-2 rounded-md border border-white/5">
+                        <span className={stats.champions > 6 ? 'text-red-400' : ''}>HERO: {stats.champions}/6</span>
+                        <span>SPELL: {stats.spells}</span>
+                        <span>UNIT: {stats.units}</span>
+                    </div>
                 </div>
 
                 {/* 卡牌列表 (保持不变) */}
@@ -740,21 +975,50 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         <Wand2 size={18} /> 快速选择
                     </button>
 
-                    <button
-                        onClick={() => {
-                            if (stats.total === 40) eventBus.emit(GameEvents.LOBBY_START_BATTLE);
-                            handleStart();
-                        }}
-                        disabled={stats.total !== 40}
-                        className={`
-                            w-full py-4 rounded-lg font-black text-lg tracking-widest flex items-center justify-center gap-2 shadow-lg transition-all
-                            ${stats.total === 40
-                                ? 'bg-gradient-to-r from-blue-600 to-cyan-500 hover:scale-105 text-white shadow-blue-500/30'
-                                : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'}
-                        `}
-                    >
-                        <Play fill="currentColor" /> {stats.total === 40 ? '开始游戏' : '等待构建卡组'}
-                    </button>
+                    {/* [核心修改] 根据 fromSource 渲染不同的按钮 */}
+                    {fromSource === 'lobby' ? (
+                        // === 场景 A: 从大厅进入 (编队模式) ===
+                        // [修复] 必须满40张卡才能点击完成构筑，防止保存空卡组
+                        <button
+                            onClick={() => {
+                                // 如果未满40张，点击无效 (虽然 disabled 已经处理了)
+                                if (stats.total !== 40) return;
+
+                                eventBus.emit(GameEvents.UI_CLICK);
+                                handleSaveDeck(); // 执行保存 (新建或更新)
+                                setViewMode('SELECTION'); // 返回
+                            }}
+                            disabled={stats.total !== 40} // [关键] 禁用条件
+                            className={`
+                                w-full py-4 rounded-lg font-black text-lg tracking-widest flex items-center justify-center gap-2 shadow-lg transition-all
+                                ${stats.total === 40
+                                    ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/30 hover:scale-105'
+                                    : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' // 禁用样式
+                                }
+                            `}
+                        >
+                            <Save fill="currentColor" size={20} />
+                            {stats.total === 40 ? '完成构筑' : `还需 ${40 - stats.total} 张`}
+                        </button>
+                    ) : (
+                        // === 场景 B: 从模式选择进入 (备战模式) ===
+                        // 逻辑：必须满编 -> 开始游戏
+                        <button
+                            onClick={() => {
+                                if (stats.total === 40) eventBus.emit(GameEvents.LOBBY_START_BATTLE);
+                                handleStart();
+                            }}
+                            disabled={stats.total !== 40}
+                            className={`
+                                w-full py-4 rounded-lg font-black text-lg tracking-widest flex items-center justify-center gap-2 shadow-lg transition-all
+                                ${stats.total === 40
+                                    ? 'bg-gradient-to-r from-blue-600 to-cyan-500 hover:scale-105 text-white shadow-blue-500/30'
+                                    : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'}
+                            `}
+                        >
+                            <Play fill="currentColor" /> {stats.total === 40 ? '开始游戏' : '等待构建卡组'}
+                        </button>
+                    )}
                 </div>
             </div>
             {viewCard && (

@@ -104,8 +104,6 @@ export const STARTER_DECK_LYFE = {
         'Messenger_Squad_Gena': 3,
         'Argo_Squad_Pigeon': 3,
         'Argo_Squad_Musician': 2,
-        // 填充一些测试卡保证数量
-        'test_challenger': 3
     },
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -124,8 +122,6 @@ export const STARTER_DECK_FENNY = {
         'Ghost_Squad_Antina': 3,
         'Ghost_Squad_Vez': 3,
         'Typhoon_Squad_Flameheart': 3,
-        'test_overwhelm': 3,
-        'test_quickattack': 3
     },
     createdAt: Date.now(),
     updatedAt: Date.now()

@@ -114,12 +114,22 @@ export interface UserSummary {
   type: 'full' | 'starter'; // 用户模式（全卡/初始卡）
 }
 
+// --- [新增] 头像裁剪配置结构 ---
+export interface AvatarConfig {
+    imageKey: string;
+    type: 'hero' | 'unit' | 'spell';
+    scale: number;
+    offsetX: number;
+    offsetY: number;
+}
+
 export interface UserProfile {
   uid: string;           // 用户唯一ID
   displayName: string;   // 显示昵称 (如 "分析员#1234")
   level: number;         // 玩家等级
   exp: number;           // 当前经验值
-  avatarId: string;      // 头像ID
+  avatarId: string;      // 头像ID (作为后备选项)
+  avatarConfig?: AvatarConfig; // [新增] 自定义裁剪头像配置
   createdAt: number;     // 注册时间戳
   lastLoginAt: number;   // 最后登录时间
 }
@@ -160,6 +170,23 @@ export interface SavedDeck {
   cards: Record<string, number>; // 卡牌构成 { 'lyfe': 3 ... }
   createdAt: number;
   updatedAt: number;
+}
+
+// 单个形态的坐标参数
+export interface CropConfig {
+    scale: number;       // 缩放比例 (默认 1)
+    offsetX: number;     // X轴百分比偏移 (默认 0)
+    offsetY: number;     // Y轴百分比偏移 (默认 0)
+}
+
+// 一张卡牌包含的三种模态坐标
+export interface CardCropData {
+    hand?: CropConfig;       // 手牌/竖向模式 (Lv1)
+    bench?: CropConfig;      // 备战席/战术棋子模式 (Lv1)
+    combat?: CropConfig;     // 战场/横向拉伸模式 (Lv1)
+    hand_lv2?: CropConfig;   // [新增] 2级手牌
+    bench_lv2?: CropConfig;  // [新增] 2级备战席
+    combat_lv2?: CropConfig; // [新增] 2级战场
 }
 
 export const GAME_VERSION = '1.4.0';

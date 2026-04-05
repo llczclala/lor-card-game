@@ -39,33 +39,23 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
 
     return (
         <>
-            {/* 1. Barrier (屏障) */}
-            {isOnBoard && data.keywords.includes('Barrier') && KEYWORD_DB['Barrier'] && (
+            {/* 1. Barrier (屏障) - [清理] 移除了挡脸的中心大图标，仅保留环境光效 */}
+            {isOnBoard && data.keywords.includes('Barrier') && (
                 <>
                     <div className="absolute inset-0 border-4 border-yellow-300 rounded-lg z-20 pointer-events-none box-border shadow-[0_0_20px_rgba(253,224,71,0.5)]"></div>
                     <svg className="absolute inset-0 w-full h-full z-20 pointer-events-none overflow-visible">
                         <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeDasharray="40% 160%" className="animate-beam-move opacity-80 filter drop-shadow-[0_0_5px_white]" />
                     </svg>
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 drop-shadow-[0_0_15px_rgba(253,224,71,1)]">
-                        <div className={`${isCombat ? 'w-24 h-24' : 'w-16 h-16'} flex items-center justify-center`}>
-                            <img src={KEYWORD_DB['Barrier'].icon} className="w-full h-full object-contain" />
-                        </div>
-                    </div>
                 </>
             )}
 
-            {/* 2. Elusive (隐秘) */}
-            {isOnBoard && data.keywords.includes('Elusive') && KEYWORD_DB['Elusive'] && (
+            {/* 2. Elusive (隐秘) - [清理] 移除了挡脸的中心大图标，仅保留环境光效 */}
+            {isOnBoard && data.keywords.includes('Elusive') && (
                 <>
                     <div className="absolute inset-0 border-4 border-orange-400/60 rounded-lg animate-pulse z-20 pointer-events-none shadow-[0_0_20px_rgba(251,146,60,0.3)] box-border"></div>
                     <svg className="absolute inset-0 w-full h-full z-20 pointer-events-none overflow-visible">
                         <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeDasharray="40% 160%" className="animate-beam-move opacity-60 filter drop-shadow-[0_0_3px_white]" />
                     </svg>
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 pointer-events-none animate-pulse">
-                        <div className={`flex items-center justify-center opacity-80 ${isCombat ? 'w-16 h-16' : 'w-12 h-12'}`}>
-                            <img src={KEYWORD_DB['Elusive'].icon} className="w-full h-full object-contain drop-shadow-[0_0_10px_rgba(249,115,22,0.8)]" />
-                        </div>
-                    </div>
                 </>
             )}
 
@@ -127,31 +117,17 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                         </svg>
                     </motion.div>
 
-                    {/* D. 中心图标 (保持不变) */}
-                    {KEYWORD_DB['Overwhelm'] && (
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 flex items-center justify-center">
-                             <motion.div
-                                animate={{ scale: [0.5, 1.8, 1.0, 0.5], opacity: [0, 1, 0, 0] }}
-                                transition={{ duration: 1.3, times: [0, 0.1, 0.6, 1], repeat: Infinity, ease: "easeOut" }}
-                                className="w-32 h-32 flex items-center justify-center"
-                             >
-                                 <img src={KEYWORD_DB['Overwhelm'].icon} className="w-full h-full object-contain drop-shadow-[0_0_20px_red] filter brightness-150" alt="Overwhelm VFX" />
-                             </motion.div>
-                        </div>
-                    )}
+                    {/* [清理] 移除了巨大且挡脸的中心图标，发光逻辑已下放至底部智能卡槽 */}
                 </div>
             )}
 
-            {/* 5. QuickAttack FX (先攻) */}
-            {isCombat && !isBlocker && data.keywords.includes('QuickAttack') && KEYWORD_DB['QuickAttack'] && (
+            {/* 5. QuickAttack FX (先攻) - [清理] 移除了中心大图标，保留闪电边框 */}
+            {isCombat && !isBlocker && data.keywords.includes('QuickAttack') && (
                 <div className="absolute inset-0 z-30 pointer-events-none">
                     <div className="absolute inset-0 border-4 border-blue-500 rounded-2xl shadow-[0_0_20px_#3b82f6] box-border"></div>
                     <svg className="absolute inset-0 w-full h-full overflow-visible">
                         <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="3" strokeDasharray="20% 180%" className="animate-quick-beam opacity-90" />
                     </svg>
-                    <div className="absolute top-1/2 left-1/2 w-20 h-20 animate-quick-flash">
-                        <img src={KEYWORD_DB['QuickAttack'].icon} className="w-full h-full object-contain filter drop-shadow-[0_0_10px_white]" />
-                    </div>
                 </div>
             )}
 
@@ -213,28 +189,7 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                         />
                     </svg>
 
-                    {/* C. 巨大中心图标 - [修改] 放大比例 */}
-                    <div className="absolute inset-0 flex items-center justify-center z-20">
-                         <motion.div
-                            className="w-full h-full p-4 flex items-center justify-center opacity-40" // p-8 -> p-4 (减小内边距，让图标更大)
-                            animate={{
-                                x: [0, 0, 3, -3, 2, -2, 0, 0],
-                                scale: [1.2, 1.2, 1.25, 1.15, 1.2] // [修改] 基础比例从 1.0 提升到 1.2
-                            }}
-                            transition={{
-                                duration: 2.5,
-                                times: [0, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 1],
-                                repeat: Infinity,
-                                ease: "linear"
-                            }}
-                         >
-                             <img
-                                src={KEYWORD_DB['CantBlock'].icon}
-                                className="w-full h-full object-contain filter grayscale brightness-150 drop-shadow-lg"
-                                alt="CantBlock VFX"
-                             />
-                         </motion.div>
-                    </div>
+                    {/* [清理] 移除了巨大的中心禁止图标，保留了银色锁链边框即可清楚表达无法格挡的意思 */}
                 </div>
             )}
 

@@ -1,26 +1,132 @@
 import React, { useState, useEffect} from 'react';
-import { motion, AnimatePresence, type Variants } from 'framer-motion'; // [加回] AnimatePresence
+import { motion, AnimatePresence, type Variants, useMotionValue, useVelocity, useTransform, useSpring } from 'framer-motion';
 import { Check, RefreshCw } from 'lucide-react'; // [加回] 图标
 import type { CardData } from '../types';
 import { Card } from './Card';
 import { canAffordCard } from '../utils/gameRules';
 import { useDrawingQueue } from '../hooks/useDrawingQueue';
-
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
     hand: CardData[];
-    onCardClick: (card: CardData) => void;
+    onCardClick: (card: CardData) => boolean | void; // 兼容 GameSession 的安检返回值
     onHover: (card: CardData | null) => void;
     onViewArt: (card: CardData) => void;
     game: any; // 传入 game state 以判断出牌条件
     cardBackUrl: string;
 }
+// [新增] 景深缩放配置常量，方便随时微调手感
+const HOVER_SCALE = 2.5;
+const DRAG_SCALE = 2.7;
+
+// ==========================================
+// [新增] 动态物理核组件 (AnimatedHandCard)
+// 只有将卡牌单独提取为组件，才能合法使用 useVelocity 等高级物理 Hook，进行 GPU 旁路渲染。
+// ==========================================
+const AnimatedHandCard = ({
+    c, isNew, myDelay, isHovered, isDragging,
+    translateY, translateX, baseScale, baseRotate, cardZIndex,
+    vw, vh,
+    onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
+    game, cardBackUrl, onViewArt
+}: any) => {
+    // 1. 挂载 X 和 Y 轴坐标监听器 (脱离 React 渲染流)
+    const x = useMotionValue(0);
+    const y = useMotionValue(0);
+
+    // 2. 实时侦测拖拽速度 (Pixels per second)
+    const xVelocity = useVelocity(x);
+    const yVelocity = useVelocity(y);
+
+    // 3. 将速度映射为目标翻转角度 (原始生硬数据)
+    // 向右拉(+x)产生右侧下沉(+RotateY)；向下拉(+y)产生下侧下沉(-RotateX)
+    const rawRotateY = useTransform(xVelocity, [-1500, 0, 1500], [-15, 0, 15]);
+    const rawRotateX = useTransform(yVelocity, [-1500, 0, 1500], [15, 0, -15]);
+
+    // 4. [终极核心] 加装物理弹簧减震器！
+    // 吸收手部的微小抖动，提供完美的“滞后空气阻力感”
+    const springConfig = { damping: 25, stiffness: 200, mass: 0.5 };
+    const smoothRotateY = useSpring(rawRotateY, springConfig);
+    const smoothRotateX = useSpring(rawRotateX, springConfig);
+
+    // 5. 动态计算伪 3D 阴影
+    let targetShadow = '0px 5px 10px rgba(0,0,0,0.3)';
+    if (isHovered) targetShadow = '0px 15px 20px rgba(0,0,0,0.4)';
+    if (isDragging) targetShadow = '0px 50px 30px rgba(0,0,0,0.5)';
+
+    return (
+        <motion.div
+            key={c.id}
+            style={{
+                margin: '0 -12px',
+                zIndex: cardZIndex,
+                x: x,
+                y: y, // 必须绑定 Y 轴以监听速度
+
+                // [新增] 开启 3D 摄像机视角，赋予卡牌迎风透视变形能力
+                transformPerspective: 1000,
+                rotateX: isDragging ? smoothRotateX : 0,
+                rotateY: isDragging ? smoothRotateY : 0,
+            }}
+            onPointerDown={onPointerDown}
+            onPointerUp={onPointerUp}
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
+            drag
+            dragSnapToOrigin={true}
+            dragElastic={0.2}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            className="pointer-events-auto relative cursor-pointer origin-bottom"
+
+            initial={isNew ? { x: -40 * vw, y: -10 * vh, scale: 1, rotate: 11, opacity: 1, boxShadow: '0px 0px 0px rgba(0,0,0,0)' } : false}
+            animate={isNew ? {
+                x: [-40 * vw, -10.5 * vw, -10.5 * vw, 0],
+                y: [-20 * vh, -27.5 * vh, -27.5 * vh, translateY],
+                scale: [1.25, 2.5, 2.5, baseScale],
+                rotate: [11, 0, 0, baseRotate],
+                opacity: 1,
+                boxShadow: ['0px 0px 0px rgba(0,0,0,0)', '0px 50px 30px rgba(0,0,0,0.4)', '0px 50px 30px rgba(0,0,0,0.4)', targetShadow]
+            } : {
+                x: isDragging ? undefined : translateX,
+                y: isDragging ? undefined : translateY,
+                // [核心修正] 拖拽时，2D 旋转强制归零，将姿态控制权完全交给 style 里的 3D rotateX/Y
+                rotate: isDragging ? 0 : baseRotate,
+                scale: baseScale,
+                boxShadow: targetShadow
+            }}
+            transition={isNew ? {
+                duration: 2.0,
+                delay: myDelay,
+                times: [0, 0.4, 0.65, 1],
+                ease: "easeInOut"
+            } : (isDragging
+                ? { duration: 0 }
+                : { type: 'spring', stiffness: 300, damping: 25 }
+            )}
+        >
+            <Card
+                data={c} location="hand" onViewArt={onViewArt}
+                isPlayable={game.phase === 'main' && game.turnOwner === 'player' && canAffordCard(c, game.playerMana, game.playerSpellMana)}
+                cardBackUrl={cardBackUrl} isNew={isNew} delay={myDelay} isDragging={isDragging}
+            />
+        </motion.div>
+    );
+};
 
 export const PlayerHand: React.FC<PlayerHandProps> = ({
     hand, onCardClick, onHover, onViewArt, game, cardBackUrl
 }) => {
     const validHand = hand.filter(c => c && c.key && c.type);
+
+    const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+    const [isAreaHover, setIsAreaHover] = useState(false);
+    const [draggingId, setDraggingId] = useState<string | null>(null);
+
+    // 手写指针探测器 (拦截幽灵点击)
+    const pointerPos = React.useRef({ x: 0, y: 0 });
+
     const { isNewCard } = useDrawingQueue(validHand);
+
     let newCardCounter = 0;
     const newCardDelays = hand.map(c => {
         if (isNewCard(c.id)) {
@@ -29,86 +135,81 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
         return 0;
     });
 
+    // [核心创举：视口单位的绝对像素化]
+    // 动态获取屏幕宽高，将原本的 vw/vh 转换为底层物理引擎最喜欢的纯数字 (Pixels)
+    const vw = typeof window !== 'undefined' ? window.innerWidth / 100 : 19.2;
+    const vh = typeof window !== 'undefined' ? window.innerHeight / 100 : 10.8;
+
     return (
         <div
-            className="absolute left-0 bottom-0 w-full h-48 z-40 pointer-events-none flex justify-center items-end pb-2 overflow-visible">
-               <div className="flex -space-x-2 px-4 pointer-events-auto">
+            // [新增] 动态容器层叠跃迁：平时乖乖呆在底层，拖拽时立刻升维至 999 统治全屏！
+            className={`absolute left-0 bottom-0 w-full h-[160px] pointer-events-none flex justify-center items-end pb-2 overflow-visible transition-colors duration-300 ${draggingId ? 'z-[999]' : 'z-40'}`}
+            onMouseEnter={() => setIsAreaHover(true)}
+            onMouseLeave={() => { setIsAreaHover(false); setHoverIndex(null); }}
+        >
+           <div className="flex -space-x-2 px-4">
                 {hand.map((c, index) => {
                     const isNew = isNewCard(c.id);
                     const rotation = (index - (hand.length - 1) / 2) * 4;
-
-                    // 获取当前卡的动画延迟 (每张卡间隔 1.5秒，实现"连着播放")
-                    // 如果间隔设为 2.0s 则完全不重叠；1.5s 则稍微重叠，节奏更紧凑
                     const myDelay = isNew ? newCardDelays[index] * 1.5 : 0;
 
-                    // --- 模式 A: 抽卡入场动画 ---
-                    if (isNew) {
-                        return (
-                            <motion.div
-                                key={c.id}
-                                className="pointer-events-auto relative cursor-pointer origin-bottom"
-                                style={{ margin: '0 -12px', zIndex: 100 + index }} // 确保后出的卡在上面
+                    const isHovered = hoverIndex === index;
+                    const isDragging = draggingId === c.id;
 
-                                // 初始透明度设为 0，防止在延迟期间看到卡牌堆在牌库
-                                initial={{ x: '-40vw', y: '-10vh', scale: 1, rotate: 11, opacity: 1 }}
+                    // [彻底纯数字化的 Y 轴逻辑] (假设卡牌高度约200px)
+                    // 170px 约等于 85% 下沉；20px 约等于 10% 上浮
+                    let translateY = 170;
+                    // [新增] 阵列待命：只要有牌被拖拽，手牌区强制保持上浮弹出状态
+                    if (isAreaHover || draggingId !== null) translateY = 20;
+                    if (isHovered || isDragging) translateY = 0;
 
-                                animate={{
-                                    x: ['-40vw', '-10.5vw', '-10.5vw', '0vw'],
-                                    y: ['-20vh', '-27.5vh', '-27.5vh', '85%'],
-                                    scale: [1.25, 2.5, 2.5, 1],
-                                    rotate: [11, 0, 0, rotation],
-                                    opacity: 1 // 动画开始后变不透明
-                                }}
-                                transition={{
-                                    duration: 2.0,
-                                    delay: myDelay, // [关键] 设置动画启动延迟
-                                    times: [0, 0.4, 0.65, 1],
-                                    ease: "easeInOut"
-                                }}
-                            >
-                                <Card
-                                    data={c}
-                                    location="hand"
-                                    isPlayable={false}
-                                    cardBackUrl={cardBackUrl}
-                                    isNew={true}
-                                    // [关键] 将延迟传递给 Card 组件，同步翻面时间
-                                    // 注意：您需要在 Card.tsx 的 interface 中添加 delay?: number
-                                    // 并修改 Card 内部 setTimeout 时间为: (delay * 1000) + 900
-                                    // 这里我们暂时通过 props 传过去，假设您已经修改了 Card.tsx
-                                    // 如果 CardProps 还没改，TypeScript 会报错，请务必先改 Card.tsx
-                                    // @ts-ignore (如果还没改类型定义暂时忽略)
-                                    delay={myDelay}
-                                />
-                            </motion.div>
-                        );
+                    let translateX = 0;
+                    if (hoverIndex !== null && !draggingId) {
+                        const pushDist = 125;
+                        if (index < hoverIndex) translateX = -pushDist;
+                        if (index > hoverIndex) translateX = pushDist;
                     }
 
-                    // --- 模式 B: 常态交互 (原生 CSS 接管) ---
-                    // 完全复刻您提供的原版代码，保证完美的检视手感
+                    const rotate = isHovered || isDragging ? 0 : rotation;
+                    const scale = isDragging ? DRAG_SCALE : (isHovered ? HOVER_SCALE : 1.0);
+                    const cardZIndex = isDragging ? 999 : (isHovered ? 100 : index);
+
+                    // 剥离原有的内联 motion.div，通过 props 将计算好的参数传递给独立的物理渲染核
                     return (
-                        <div
+                        <AnimatedHandCard
                             key={c.id}
-                            onMouseEnter={() => onHover(c)}
-                            onMouseLeave={() => onHover(null)}
-                            className="
-                                pointer-events-auto relative cursor-pointer origin-bottom
-                                transition-all duration-300 cubic-bezier(0.2, 0.8, 0.2, 1)
-                                transform translate-y-[85%]
-                                hover:translate-y-0 hover:scale-[2.2] hover:z-[100] hover:rotate-0
-                            "
-                            style={{ rotate: `${rotation}deg`, margin: '0 -12px' }}
-                        >
-                            <Card
-                                data={c}
-                                location="hand"
-                                onClick={() => onCardClick(c)}
-                                onViewArt={onViewArt}
-                                isPlayable={game.phase === 'main' && game.turnOwner === 'player' && canAffordCard(c, game.playerMana, game.playerSpellMana)}
-                                cardBackUrl={cardBackUrl}
-                                isNew={false}
-                            />
-                        </div>
+                            c={c}
+                            isNew={isNew}
+                            myDelay={myDelay}
+                            isHovered={isHovered}
+                            isDragging={isDragging}
+                            translateY={translateY}
+                            translateX={translateX}
+                            baseScale={scale}
+                            baseRotate={rotate}
+                            cardZIndex={cardZIndex}
+                            vw={vw}
+                            vh={vh}
+                            game={game}
+                            cardBackUrl={cardBackUrl}
+                            onViewArt={onViewArt}
+                            onPointerDown={(e: any) => { pointerPos.current = { x: e.clientX, y: e.clientY }; }}
+                            onPointerUp={(e: any) => {
+                                const dist = Math.hypot(e.clientX - pointerPos.current.x, e.clientY - pointerPos.current.y);
+                                if (dist < 5) onCardClick(c);
+                            }}
+                            onMouseEnter={() => { if (!draggingId) { setHoverIndex(index); onHover(c); } }}
+                            onMouseLeave={() => { if (!draggingId) onHover(null); }}
+                            onDragStart={() => { setDraggingId(c.id); setHoverIndex(index); }}
+                            onDragEnd={(e: any, info: any) => {
+                                setDraggingId(null);
+                                setHoverIndex(null);
+                                onHover(null);
+                                if (info.point.y < window.innerHeight * 0.7) {
+                                    onCardClick(c);
+                                }
+                            }}
+                        />
                     );
                 })}
             </div>

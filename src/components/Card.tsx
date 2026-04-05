@@ -9,7 +9,48 @@ import { SpeechBubble } from './SpeechBubble';
 import { SpellCard } from './SpellCard';
 import { KeywordEffects } from './KeywordEffects';
 import { CARD_BORDERS } from '../data/imageData';
+// [新增] 引入卡面坐标字典与类型
+import { CARD_CROP_CONFIG } from '../data/cardCropConfig';
+import type { CropConfig } from '../types';
+// [新增] 引入全新的智能卡槽模块
+import { KeywordTray } from './KeywordTray';
 
+// ==========================================
+// [新增] 碎片化爆破粒子引擎 (Shatter Effect)
+// 独立于卡面存在，负责在 1.1 秒内演出极其华丽的碎裂与消散
+// ==========================================
+const ShatterEffect = React.memo(({ isPlayerSide }: { isPlayerSide: boolean }) => {
+    const color = isPlayerSide ? '#3b82f6' : '#ef4444'; // 我方蓝色，敌方红色
+    const shards = React.useMemo(() => Array.from({ length: 20 }).map((_, i) => {
+        const angle = Math.random() * Math.PI * 2;
+        const velocity = 80 + Math.random() * 200; // 随机爆炸初速度
+        return {
+            id: i,
+            x: Math.cos(angle) * velocity,
+            y: Math.sin(angle) * velocity + 150, // +150 模拟重力下坠
+            rotate: Math.random() * 720 - 360,
+            size: 8 + Math.random() * 24
+        };
+    }), []);
+
+    return (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[200]">
+            {/* 爆破中心的高光闪烁 (一闪而过) */}
+            <motion.div className="absolute w-full h-full bg-white rounded-xl"
+                initial={{ opacity: 1, scale: 1 }} animate={{ opacity: 0, scale: 1.5 }} transition={{ duration: 0.3 }}
+            />
+            {/* 飞散的发光晶体碎片 */}
+            {shards.map(shard => (
+                <motion.div key={shard.id} className="absolute"
+                    style={{ width: shard.size, height: shard.size, backgroundColor: color, clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' }}
+                    initial={{ x: 0, y: 0, scale: 1, opacity: 1 }}
+                    animate={{ x: shard.x, y: shard.y, rotate: shard.rotate, scale: 0, opacity: 0 }}
+                    transition={{ duration: 1.0, ease: "easeOut" }}
+                />
+            ))}
+        </div>
+    );
+});
 
 interface CardProps {
   data: CardData;
@@ -33,27 +74,49 @@ interface CardProps {
   className?: string;
   isNew?: boolean;
   delay?: number;
-  isTargetable?: boolean;
+   isTargetable?: boolean;
   isTargeted?: boolean;
   isBlocking?: boolean;
   ownedCount?: number;
   showShopIcon?: boolean;
+  isDragging?: boolean; // [新增] 用于告诉 Card 现在正在被拖拽，屏蔽 Hover 动画
 }
+// [修复] 智能裁剪钩子：重构为“同步计算”以消除初次渲染的坐标闪烁与补间滑动
+const useCardCrop = (cardKey: string, location: string, level: number = 1): CropConfig => {
+    // 仅用于监听工作室的强制刷新事件
+    const [, setUpdateTick] = useState(0);
 
-// 关键词图标映射组件
-const KeywordIcon = ({ keyword }: { keyword: Keyword }) => {
-    const config = KEYWORD_DB[keyword];
-    if (!config) return null;
-    const iconSrc = (config as any).icon;
-    return (
-        <div className="w-10 h-10 flex items-center justify-center filter drop-shadow-md transition-transform duration-200 hover:scale-125 group cursor-help" title={`${config.label}: ${config.description}`}>
-            {iconSrc ? (
-                <img src={iconSrc} alt={config.label} className="w-full h-full object-contain group-hover:brightness-125 transition-all" />
-            ) : (
-                <span className={`text-xs font-bold text-${config.color}-400`}>{config.label.substring(0, 1)}</span>
-            )}
-        </div>
-    );
+    useEffect(() => {
+        const handleUpdate = () => setUpdateTick(t => t + 1);
+        window.addEventListener('CROP_UPDATED', handleUpdate);
+        return () => window.removeEventListener('CROP_UPDATED', handleUpdate);
+    }, []);
+
+    // 1. 同步计算基础形态
+    let baseMode: 'hand' | 'bench' | 'combat' = 'hand';
+    if (location === 'bench' || location === 'enemy_bench') baseMode = 'bench';
+    else if (location === 'combat') baseMode = 'combat';
+
+    const mode = level === 2 ? `${baseMode}_lv2` as keyof CardCropData : baseMode;
+
+    // 2. 同步读取优先级 1：热更新数据
+    try {
+        const localData = localStorage.getItem('dev_crop_overrides');
+        if (localData) {
+            const parsed = JSON.parse(localData);
+            if (parsed[cardKey] && parsed[cardKey][mode]) {
+                return parsed[cardKey][mode];
+            }
+        }
+    } catch (e) { /* ignore */ }
+
+    // 3. 同步读取优先级 2：静态字典
+    if (CARD_CROP_CONFIG[cardKey] && CARD_CROP_CONFIG[cardKey][mode]) {
+        return CARD_CROP_CONFIG[cardKey][mode]!;
+    }
+
+    // 4. Fallback 默认居中值
+    return { scale: 1, offsetX: 0, offsetY: 0 };
 };
 
 // 数值跳动钩子
@@ -87,14 +150,17 @@ export const Card: React.FC<CardProps> = ({
     isTargeted = false,
     isBlocking = false,
     ownedCount = 0,
-    showShopIcon = false
-
+    showShopIcon = false,
+    isDragging = false // [新增] 默认不处于拖拽状态
 }) => {
     // 顶级防御
     if (!data) {
         console.warn(`[Card Component] Prevented crash: 'data' is undefined at location: ${location}`);
         return null;
     }
+
+    // [修改] 获取当前卡牌形态的裁剪坐标，传入 data.level 从而智能区分原画
+    const crop = useCardCrop(data.key, location, data.level);
 
     // [升级版] 全能数值反馈系统 (Health & Power)
     // 分别记录两个属性的变化量
@@ -244,6 +310,9 @@ export const Card: React.FC<CardProps> = ({
     const isCombat = location === 'combat';
     const isBench = location === 'bench' || location === 'enemy_bench';
 
+    // [核心新增] 统一的战术棋子状态与阵营判定
+    const isTacticalMode = isBench || isCombat;
+    const isPlayerSide = location === 'bench' || (location === 'combat' && !isEnemyCombatant);
 
     // 3. 根据 location 计算外部容器尺寸与缩放
     let scale = 1;
@@ -259,16 +328,17 @@ export const Card: React.FC<CardProps> = ({
     }
     else if (location === 'deck-builder') {
         scale = 0.6;
-        containerClass = "w-[172px] h-[268px] rounded-xl shadow-lg";
+        containerClass = "w-[180px] h-[268px] rounded-xl shadow-lg";
     } else if (location === 'hand') {
         scale = 0.45;
         containerClass = "w-[130px] h-[202px] rounded-lg";
     } else if (isBench) {
-        scale = 0.35;
-        containerClass = "w-[105px] h-[162px] rounded-lg";
+        scale = 1;
+        containerClass = "w-[120px] h-[162px] rounded-md"; // 备战席保留原生尺寸
     } else if (isCombat) {
         scale = 1;
-        containerClass = "w-[180px] h-[230px] rounded-2xl shadow-2xl";
+        // [核心修改] 战场模式变为 w-full h-full，完全由 Battlefield 父组件控制宽长比
+        containerClass = "w-full h-full rounded-md shadow-2xl transition-all duration-500";
     } else {
         scale = 0.45;
         containerClass = "w-[130px] h-[202px] rounded-lg";
@@ -327,7 +397,8 @@ export const Card: React.FC<CardProps> = ({
     } else if (localFlash) {
         animClass = 'animate-pulse ring-4 ring-yellow-400 brightness-110'; // 强化时亮一下
     }
-    if (data.animState === 'dying') animClass = 'animate-shatter z-50';
+
+    // [删除] 废弃原有的 animate-shatter 类名。死亡视觉现在由下方的金蝉脱壳逻辑接管！
 
     const hasCantBlock = data.keywords && data.keywords.includes('CantBlock'); // 新增安全检查
     const showAvailabilityGlow = !isPreview && (
@@ -365,48 +436,96 @@ export const Card: React.FC<CardProps> = ({
         }
         return (
         <>
-        <div className={`w-full h-full absolute inset-0 bg-slate-900 overflow-hidden ${isCombat ? 'rounded-xl' : 'rounded-2xl'}`}>
-            {isCombat ? (
-                // --- A. 战场模式 (横向布局) ---
-                <div className="relative w-full h-full overflow-hidden bg-black flex items-center justify-between px-4 rounded-xl">
-                    {/* [新增] 边框层 (战场模式) - z-20 覆盖在原画之上 */}
-                            <div className="absolute inset-0 z-20 pointer-events-none">
-                                <img
-                                    src={borderImg}
-                                    alt="Border"
-                                    className="w-full h-full object-fill opacity-90 scale-[1.02]" // 略微放大以覆盖圆角缝隙
-                                />
-                            </div>
-                    <div className="absolute inset-0">
+        {/* [修改] 统一外层圆角 */}
+        <div className={`w-full h-full absolute inset-0 bg-slate-900 overflow-hidden ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'}`}>
+            {isTacticalMode ? (
+                // --- A & C 合并：战术棋子与战场弹性模式 (Tactical Token & Elastic Combat) ---
+                <div className="relative w-full h-full bg-black flex flex-col overflow-hidden rounded-md">
+                    {/* 原画层 - 底层 (接入坐标裁剪) */}
+                    <div className="absolute inset-0 z-0 overflow-hidden flex items-center justify-center">
                         <img
                             src={data.level === 2 && data.level2ImageUrl ? data.level2ImageUrl : data.imageUrl}
                             alt={data.name}
-                            className="w-full h-full object-cover opacity-90"
-                            style={{ objectPosition: '50% 15%' }}
+                            // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的“瞬切”
+                            className="max-w-none opacity-90 block"
+                            style={{
+                                width: data.type && data.type.includes('spell') ? 'auto' : '100%',
+                                height: data.type && data.type.includes('spell') ? '100%' : 'auto',
+                                transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
+                            }}
                         />
-                        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-black/80"></div>
-                        <div className="absolute bottom-0 w-full h-1/3 bg-gradient-to-t from-black/90 to-transparent"></div>
+                        <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/30 pointer-events-none"></div>
                     </div>
-                    <div className={`relative z-10 font-black text-5xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] ${powerColor}`}>
-                        {displayPower}
+
+                    {/* [微调 1] 动态内边框底座：使用 isPlayerSide 统一判断敌我 */}
+                    <div className={`absolute inset-[1.5px] z-10 pointer-events-none border-[2px] border-[#1a1d24] rounded-sm ${isPlayerSide ? 'border-b-[15px]' : 'border-t-[15px]'}`}></div>
+                    {/* 内边框高光辅助线 */}
+                    <div className={`absolute inset-[1.5px] z-10 pointer-events-none border border-white/10 rounded-sm ${isPlayerSide ? 'border-b-[15px] border-white/20' : 'border-t-[15px] border-white/20'}`}></div>
+
+                    {/* 恢复原版主题边框 */}
+                    <div className="absolute inset-0 z-20 pointer-events-none">
+                        <img src={borderImg} alt="Border" className="w-full h-full object-fill opacity-100 scale-[1.02]" />
                     </div>
-                    <div className="relative z-10 flex flex-col items-center justify-center h-full pt-4">
-                        {data.keywords && data.keywords.length > 0 && (
-                            <div className="flex gap-1 mt-1">
-                                {data.keywords.slice(0, 3).map(k => (
-                                    <div key={k} className="scale-90 shadow-md">
-                                        <KeywordIcon keyword={k} />
-                                    </div>
-                                ))}
+
+                    {/* --- 根据阵营决定镜像布局 --- */}
+                    {isPlayerSide ? (
+                        <>
+                            {/* [我方] 顶部：数值区 */}
+                            {/* [修复 2] 增加底部灰色金属描边，加高尺寸到 h-8，并增加中间分割线 */}
+                            <div className="relative z-30 flex w-full h-8 opacity-95 border-b-[2px] border-slate-400/80 shadow-[0_2px_5px_rgba(0,0,0,0.6)]">
+                                <div className="flex-1 bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center border-r-[2px] border-slate-400/80">
+                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${powerColor}`}>{displayPower}</span>
+                                </div>
+                                <div className="flex-1 bg-gradient-to-br from-red-600 to-red-800 flex items-center justify-center">
+                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${healthColor} ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>{displayHealth}</span>
+                                </div>
                             </div>
-                        )}
-                    </div>
-                    <div className={`relative z-10 font-black drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] transition-all duration-300 ease-out origin-center ${healthColor} ${(isRegenerating && isHealthTicking) ? 'scale-150 text-5xl' : 'scale-100 text-5xl'}`}>
-                        {displayHealth}
-                    </div>
+
+                            <div className="flex-1 z-10 relative pointer-events-none"></div>
+
+                            {/* [我方] 底部：动态折行黑水晶卡槽 */}
+                            {data.keywords && data.keywords.length > 0 && (
+                                <div className="relative z-30 w-full flex justify-center mt-auto pb-[2px]">
+                                    {/* [替换] 引入智能卡槽，下放进攻/防守状态，由图标自身负责发光与动画 */}
+                                    <KeywordTray
+                                        keywords={data.keywords}
+                                        isAttacking={isCombat && !isBlocker}
+                                        isDefending={isCombat && isBlocker}
+                                    />
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            {/* [敌方] 顶部：动态折行黑水晶卡槽 */}
+                            {data.keywords && data.keywords.length > 0 && (
+                                <div className="relative z-30 w-full flex justify-center mb-auto pt-[2px]">
+                                    {/* [替换] 引入智能卡槽 */}
+                                    <KeywordTray
+                                        keywords={data.keywords}
+                                        isAttacking={isCombat && !isBlocker}
+                                        isDefending={isCombat && isBlocker}
+                                    />
+                                </div>
+                            )}
+
+                            <div className="flex-1 z-10 relative pointer-events-none"></div>
+
+                            {/* [敌方] 底部：数值区 */}
+                            {/* 敌方数值区在底部，所以是上方增加灰色描边 border-t-[2px] */}
+                            <div className="relative z-30 flex w-full h-8 opacity-95 border-t-[2px] border-slate-400/80 shadow-[0_-2px_5px_rgba(0,0,0,0.6)] mt-auto">
+                                <div className="flex-1 bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center border-r-[2px] border-slate-400/80">
+                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${powerColor}`}>{displayPower}</span>
+                                </div>
+                                <div className="flex-1 bg-gradient-to-br from-red-600 to-red-800 flex items-center justify-center">
+                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${healthColor} ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>{displayHealth}</span>
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
             ) : (
-                // --- B. 竖向模式 (手牌/备战/预览/构筑) ---
+                // --- B. 竖向模式 (手牌/预览/构筑) ---
                 <div
                     style={{
                         width: `${BASE_WIDTH}px`,
@@ -426,15 +545,23 @@ export const Card: React.FC<CardProps> = ({
                                 />
                             </div>
 
-                    <div className="absolute inset-0 bg-black">
+                    {/* 竖向模式原画层 (接入坐标裁剪) */}
+                    <div className="absolute inset-0 bg-black overflow-hidden flex items-center justify-center">
                          <img
                             src={data.level === 2 && data.level2ImageUrl ? data.level2ImageUrl : data.imageUrl}
                             alt={data.name}
-                            className="w-full h-full object-cover"
+                            // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的“瞬切”
+                            className="max-w-none block"
+                            style={{
+                                width: data.type && data.type.includes('spell') ? 'auto' : '100%',
+                                height: data.type && data.type.includes('spell') ? '100%' : 'auto',
+                                transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
+                            }}
                         />
                     </div>
 
                     <div className={`absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/95 via-black/40 to-transparent px-4 ${isBench ? 'pb-2' : 'pb-4'}`}>
+
                          <div className={`absolute top-4 left-4 rounded-full bg-blue-600 border-2 border-yellow-400 flex items-center justify-center text-white font-black shadow-lg z-10 ${isBench ? 'w-16 h-16 text-4xl' : 'w-12 h-12 text-2xl'}`}>
                             {data.cost}
                          </div>
@@ -459,8 +586,9 @@ export const Card: React.FC<CardProps> = ({
                                 )}
                             </div>
                                 {data.keywords && data.keywords.length > 0 && (
-                                    <div className="flex justify-center gap-2 mb-2 scale-125">
-                                        {data.keywords.map(k => <KeywordIcon key={k} keyword={k} />)}
+                                    <div className="flex justify-center mb-2">
+                                        {/* [替换] 竖向手牌模式也统一使用智能卡槽，自带六边形黑底，视觉更加统一和规整 */}
+                                        <KeywordTray keywords={data.keywords} className="scale-125" />
                                     </div>
                                 )}
                                 <div className="text-center text-gray-200 text-lg leading-snug mb-5 font-medium drop-shadow-md px-2 min-h-[3rem] flex items-center justify-center">
@@ -470,8 +598,9 @@ export const Card: React.FC<CardProps> = ({
                          )}
 
                          {isBench && data.keywords && data.keywords.length > 0 && (
-                             <div className="flex justify-center gap-3 mb-6 scale-[1.8]">
-                                {data.keywords.map(k => <KeywordIcon key={k} keyword={k} />)}
+                             <div className="flex justify-center mb-6">
+                                {/* [替换] 竖向备战席模式使用智能卡槽 */}
+                                <KeywordTray keywords={data.keywords} className="scale-[1.8]" />
                              </div>
                          )}
 
@@ -513,18 +642,18 @@ export const Card: React.FC<CardProps> = ({
                 isBlocking={isBlocking}
             />
 
-            {/* [升级版] 左下角：攻击力飘字 (Power Floater) */}
+            {/* [升级版/修正] 攻击力飘字 (Power Floater) - 动态锚定数值区 */}
             {!isPreview && powerDelta !== null && (
-                <div className={`absolute left-2 bottom-12 text-5xl font-black animate-float-damage z-[100] whitespace-nowrap drop-shadow-md stroke-black
+                <div className={`absolute left-2 ${isPlayerSide ? 'top-10' : 'bottom-10'} ${isTacticalMode ? 'text-3xl' : 'text-5xl'} font-black animate-float-damage z-[100] whitespace-nowrap drop-shadow-md stroke-black
                     ${powerDelta > 0 ? 'text-yellow-400' : 'text-blue-400'}`}
                 >
                     {powerDelta > 0 ? `+${powerDelta}` : powerDelta}
                 </div>
             )}
 
-            {/* [升级版] 右下角：生命值飘字 (Health Floater) */}
+            {/* [升级版/修正] 生命值飘字 (Health Floater) - 动态锚定数值区 */}
             {!isPreview && healthDelta !== null && (
-                <div className={`absolute right-2 bottom-12 text-5xl font-black animate-float-damage z-[100] whitespace-nowrap drop-shadow-md stroke-black
+                <div className={`absolute right-2 ${isPlayerSide ? 'top-10' : 'bottom-10'} ${isTacticalMode ? 'text-3xl' : 'text-5xl'} font-black animate-float-damage z-[100] whitespace-nowrap drop-shadow-md stroke-black
                     ${healthDelta > 0 ? 'text-green-400' : 'text-red-500'}`}
                 >
                     {healthDelta > 0 ? `+${healthDelta}` : healthDelta}
@@ -591,13 +720,19 @@ export const Card: React.FC<CardProps> = ({
     // --- [核心修改] Framer Motion 根容器 ---
     return (
         <motion.div
-            onClick={onClick} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}
+            // [新增] 添加实体 ID 标记，用于 VFXLayer 获取坐标
+            data-entity-id={data.id}
+
+            onClick={onClick}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
             className={`
                 relative cursor-pointer select-none
                 ${containerClass}
                 ${className}
                 ${!isPreview && isBlocker ? 'scale-90 opacity-80' : ''}
-                ${!isPreview && isSelected ? 'ring-4 ring-blue-600 shadow-[0_0_30px_blue] z-50' : (!isPreview && !isFaceUp ? '' : (location!=='combat' && 'hover:scale-105'))}
+                {/* [修改] 增加 !isDragging 判断。如果正在拖拽，就绝对不触发 hover 放大，防止疯狂抖动 */}
+                ${!isPreview && isSelected ? 'ring-4 ring-blue-600 shadow-[0_0_30px_blue] z-50' : (!isPreview && !isFaceUp ? '' : (!isDragging && location !== 'combat' ? 'hover:scale-105' : ''))}
                 ${showAvailabilityGlow && !isSelected ? 'ring-4 ring-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.6)] animate-pulse-slow' : ''}
                 /* [新增] 动态应用施法目标样式 */
                 ${targetableClass}
@@ -613,9 +748,16 @@ export const Card: React.FC<CardProps> = ({
                 ease: "easeInOut"
             } : {}}
         >
-            {visualFaceUp ? renderFrontFace() : renderBackFace()}
-            {/* [新增] 挂载购物车图标 */}
-            {renderShopIcon()}
+            {/* [核心修改：金蝉脱壳] 如果处于 dying 状态，不再渲染原本的 DOM，而是直接展示粒子爆破！ */}
+            {data.animState === 'dying' ? (
+                <ShatterEffect isPlayerSide={isPlayerSide} />
+            ) : (
+                <>
+                    {visualFaceUp ? renderFrontFace() : renderBackFace()}
+                    {/* [新增] 挂载购物车图标 */}
+                    {renderShopIcon()}
+                </>
+            )}
         </motion.div>
     );
 };
