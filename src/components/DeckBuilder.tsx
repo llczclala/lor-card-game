@@ -538,7 +538,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     {/* 2. 现有卡组列表 */}
                     {userSystem.decks.map(deck => {
                         const coverUrl = getDeckCover(deck.cards);
-                        const cardCount = (Object.values(deck.cards) as number[]).reduce((a: number, b: number) => a + b, 0);
+                        const cardCount = Object.values(deck.cards).reduce((a, b) => a + b, 0);
 
                         return (
                             <motion.div

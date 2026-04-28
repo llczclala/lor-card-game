@@ -37,7 +37,7 @@ interface GameLobbyProps {
 const GlassButton = ({
     onClick, children, className = "", active = false, label, subLabel
 }: {
-    onClick?: () => void, children: React.ReactNode, className?: string, active?: boolean, label?: string, subLabel?: string
+    onClick?: () => void, children?: React.ReactNode, className?: string, active?: boolean, label?: string, subLabel?: string
 }) => (
     <motion.button
         whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.15)" }}
@@ -105,8 +105,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     const [successData, setSuccessData] = useState<{ icon: string; amount: number; color: string } | null>(null);
 
     // 3. 长按连续增减逻辑 (Refs)
-    const intervalRef = useRef<NodeJS.Timeout | null>(null);
-    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const intervalRef = useRef<number | null>(null);
+    const timeoutRef = useRef<number | null>(null);
 
     const stopPress = () => {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -197,7 +197,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     // 画廊与裁剪台状态
     const [isGalleryOpen, setIsGalleryOpen] = useState(false);
     const [isCropperOpen, setIsCropperOpen] = useState(false);
-    const [cropTarget, setCropTarget] = useState<{ imageKey: string; type: 'hero' | 'unit' | 'spell'; url: string } | null>(null);
+    const [cropTarget, setCropTarget] = useState<{ key: string; type: 'hero' | 'unit' | 'spell'; url: string } | null>(null);
     const [cropScale, setCropScale] = useState(1);
     const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 }); // 现已改为存储“百分比(%)”
 
