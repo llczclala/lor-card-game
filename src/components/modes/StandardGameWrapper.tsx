@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
 import { GameSession } from '../GameSession';
 import { buildStandardEncounter } from '../../logic/encounterBuilder';
-import type { GameSessionProps } from '../GameSession';
+
+// [修复] 动态提取 GameSession 的 Props 类型。这样就算原文件忘记 export，我们也能拿到它的类型定义！
+type GameSessionProps = React.ComponentProps<typeof GameSession>;
 
 // Wrapper 接收 App 传来的通用 Props (如音乐控制、退出回调、玩家卡组)
 // 但它负责拦截并注入"敌方配置"
@@ -37,7 +39,7 @@ export const StandardGameWrapper: React.FC<StandardGameWrapperProps> = (props) =
             enemyHeroConfig={encounter.heroConfig}
 
             // --- 规则配置 ---
-            aiType="standard"
+            // [修复] 移除底层组件未定义的预留属性 aiType
             disableMulligan={false} // 允许换牌
 
             // --- 回调注入 ---

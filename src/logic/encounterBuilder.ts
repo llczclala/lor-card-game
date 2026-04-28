@@ -79,7 +79,7 @@ export const buildStandardEncounter = (): EncounterData => {
 /**
  * [预留] 构建 [肉鸽模式] 的遭遇战
  */
-export const buildRoguelikeEncounter = (stage: number, difficulty: number): EncounterData => {
+export const buildRoguelikeEncounter = (_stage: number, _difficulty: number): EncounterData => {
     // TODO: 实现基于难度的动态构建逻辑
     // 比如：stage > 3 时 heroLevel = 2
     // 比如：带入 archetype.apocalypseTags
@@ -90,7 +90,7 @@ export const buildRoguelikeEncounter = (stage: number, difficulty: number): Enco
 /**
  * [预留] 构建 [教程模式] 的遭遇战
  */
-export const buildTutorialEncounter = (tutorialId: string): EncounterData => {
+export const buildTutorialEncounter = (_tutorialId: string): EncounterData => {
     // TODO: 返回固定的死数据
     return {
         deck: ['fenny', 'fenny', 'fenny'], // 仅作示例
