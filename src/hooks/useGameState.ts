@@ -38,8 +38,6 @@ const shuffleDeck = <T>(array: T[]): T[] => {
 
 // 1. 接收 initialDeck 参数，默认为空数组
 export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false) => {
-    const deckSignature = Array.isArray(deck) ? deck.join(',') : '';
-    const enemyDeckSignature = Array.isArray(enemyDeck) ? enemyDeck.join(',') : '';
     // --- 1. 状态定义 ---
     const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
 
@@ -402,8 +400,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         setEnemyBench(nextEnemyBench);
     };
     const resetGame = () => {
-        const pDeck = initDeck(deck);
-        const eDeck = initDeck(enemyDeck);
+        // [修复] 替换未定义的 initDeck 函数，使用正规的解析与洗牌流程
+        const pDeck = shuffleDeck(deck.filter(key => CARD_DB[key]).map(createFullCard));
+        const eDeck = shuffleDeck(enemyDeck.filter(key => CARD_DB[key]).map(createFullCard));
 
         // 洗牌并抽初始手牌 (各4张)
         const pHand = pDeck.splice(0, 4);
@@ -439,14 +438,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             gameResult: null,
             levelUpCard: null,
             fullArtCard: null,
+            // [修复] 对齐真实的 GameStats 接口定义，铲除不匹配的幻觉属性
             stats: {
-                roundsPlayed: 0,
-                damageDealt: 0,
+                nexusDamage: 0,
+                unitsPlayed: 0,
+                heroesPlayed: 0,
+                spellsPlayed: 0,
                 unitsKilled: 0,
-                spellsCast: 0,
-                longestStreak: 0,
-                heroesLeveled: 0,
-                nexusHealthRestored: 0
+                heroesKilled: 0,
+                heroLevelUps: 0
             },
             screenShake: false,
             spellCasting: null
@@ -1129,7 +1129,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 2. [关键] 给敌方发牌 (此时才发，确保安全)
         const currentEnemyDeck = [...stateRef.current.enemyDeck];
         const enemyStartingHand = currentEnemyDeck.splice(0, 4);
-        setEnemyDeck(currentEnemyDeck);
+        // [修复] 修正命名冲突导致的错误拼写，使用真实的状态更新器
+        setEnemyDeckState(currentEnemyDeck);
         setEnemyHand(enemyStartingHand);
 
         // 3. 模拟动画延迟

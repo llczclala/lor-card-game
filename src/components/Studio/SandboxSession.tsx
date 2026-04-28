@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion'; // [修复] 移除未使用的 AnimatePresence
 import {
-    X, Search, Filter, User, Zap, Box,
+    X, Search, User, Zap, Box,
     ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
-    Swords, ShieldAlert, Heart, PlusCircle, Play, FastForward, Skull, Target
-} from 'lucide-react';
+    Swords, PlusCircle, FastForward, Skull, Target
+} from 'lucide-react'; // [修复] 移除 Filter, ShieldAlert, Heart, Play
 import { useGameState } from '../../hooks/useGameState';
 import { useSpellSystem } from '../../hooks/useSpellSystem';
 import { CARD_DB } from '../../data/cards';
@@ -58,8 +58,9 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
     // === 兵工厂过滤状态 ===
     const [searchTerm, setSearchTerm] = useState('');
     const [category, setCategory] = useState<CategoryFilter>('ALL');
-    const [costFilter, setCostFilter] = useState<string>('ALL');
-    const [regionFilter, setRegionFilter] = useState<string>('ALL');
+    // [修复] 移除未使用的 setter，解决 TS6133 报错。如果您连变量都没用到，可以直接把这两行全删了
+    const [costFilter] = useState<string>('ALL');
+    const [regionFilter] = useState<string>('ALL');
 
     // --- 兵工厂逻辑 ---
     const filteredCards = useMemo(() => {
