@@ -201,7 +201,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             onMouseEnter={() => { if (!draggingId) { setHoverIndex(index); onHover(c); } }}
                             onMouseLeave={() => { if (!draggingId) onHover(null); }}
                             onDragStart={() => { setDraggingId(c.id); setHoverIndex(index); }}
-                            onDragEnd={(e: any, info: any) => {
+                            onDragEnd={(_e: any, info: any) => {
                                 setDraggingId(null);
                                 setHoverIndex(null);
                                 onHover(null);

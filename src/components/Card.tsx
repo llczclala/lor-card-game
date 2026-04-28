@@ -2,9 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Eye, Hexagon, Triangle, Sparkles, ChevronDown, ShoppingCart } from 'lucide-react';
 // [新增] 引入 Framer Motion
 import { motion } from 'framer-motion';
-import type { CardData, Keyword } from '../types';
+import type { CardData } from '../types';
 import { CARD_DB } from '../data/cards';
-import { KEYWORD_DB } from '../data/keywords';
 import { SpeechBubble } from './SpeechBubble';
 import { SpellCard } from './SpellCard';
 import { KeywordEffects } from './KeywordEffects';
@@ -97,7 +96,8 @@ const useCardCrop = (cardKey: string, location: string, level: number = 1): Crop
     if (location === 'bench' || location === 'enemy_bench') baseMode = 'bench';
     else if (location === 'combat') baseMode = 'combat';
 
-    const mode = level === 2 ? `${baseMode}_lv2` as keyof CardCropData : baseMode;
+    // 移除未引入的 CardCropData 类型，直接作为动态属性名读取
+    const mode = level === 2 ? `${baseMode}_lv2` as any : baseMode as any;
 
     // 2. 同步读取优先级 1：热更新数据
     try {
