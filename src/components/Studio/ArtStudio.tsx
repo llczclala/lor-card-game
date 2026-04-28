@@ -2,12 +2,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, Filter, X, Check, Layers, Shield, Sword,
-    ArrowUpCircle, ArrowDownCircle, Download, User, Zap, Box, AlertTriangle
+    ArrowUpCircle, ArrowDownCircle, Download, User, Box, AlertTriangle
 } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { CARD_CROP_CONFIG } from '../../data/cardCropConfig';
 import { Card } from '../Card';
-import type { CardData, CardCropData, CropConfig } from '../../types';
+import type { CardData, CardCropData } from '../../types';
 
 // ================= 类型定义 =================
 type EditMode = 'hand' | 'bench' | 'combat';

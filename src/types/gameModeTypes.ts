@@ -1,5 +1,3 @@
-import type { CardData } from './types';
-
 /**
  * 游戏模式枚举
  */
