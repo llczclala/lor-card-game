@@ -10,6 +10,8 @@ export interface SpellContext {
   setPlayerBench: React.Dispatch<React.SetStateAction<CardData[]>>;
   enemyBench: CardData[];
   setEnemyBench: React.Dispatch<React.SetStateAction<CardData[]>>;
+  combatField: any[]; // [新增] 交战区数据
+  setCombatField: React.Dispatch<React.SetStateAction<any[]>>; // [新增] 交战区更新器
   triggerShake: () => void;
   playerHand?: CardData[]; // 可选属性（避免修改所有传参）
   setPlayerHand?: React.Dispatch<React.SetStateAction<CardData[]>>;
@@ -20,7 +22,8 @@ export interface SpellContext {
 
 // [重构] 通用法术执行器
 export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', targets: any[], ctx: SpellContext) => {
-  const { game, playerBench, enemyBench, setGame, setPlayerBench, setEnemyBench, triggerShake, setMessage} = ctx;
+  // [修改] 解构新增的 combatField 和 setCombatField
+  const { game, playerBench, enemyBench, combatField, setGame, setPlayerBench, setEnemyBench, setCombatField, triggerShake, setMessage} = ctx;
 
   // 1. 获取卡牌定义 (包含 effects 列表)
   const cardDef = CARD_DB[cardKey];
@@ -38,7 +41,8 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
       game,
       playerBench,
       enemyBench,
-      playerHand: [], // 暂时留空，视需求传入
+      combatField, // [新增] 将交战区传入底层 effectProcessor
+      playerHand: [],
       enemyHand: [],
       owner
   };
@@ -53,6 +57,7 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
       setGame(result.game);
       setPlayerBench(result.playerBench);
       setEnemyBench(result.enemyBench);
+      if (result.combatField) setCombatField(result.combatField); // [新增] 更新交战区状态 (加个防呆判断)
 
       // 处理副作用事件 (Events)
       result.events.forEach(event => {

@@ -29,6 +29,12 @@ interface UseGameButtonProps {
         canInitiateAttack: boolean;
     };
 
+    // [新增] 施法与预提交状态
+    spellState?: {
+        isCasting: boolean;
+        hasPendingSpell: boolean;
+    };
+
     // 动作回调集合
     actions: {
         onPass: () => void;
@@ -38,6 +44,7 @@ interface UseGameButtonProps {
         onCancelAttack: () => void; // 撤回进攻
         onMulliganReplace?: () => void;
         onMulliganConfirm?: () => void;
+        onConfirmPendingSpell?: () => void; // [新增] 确认预提交
     };
 }
 
@@ -47,6 +54,7 @@ export const useGameButton = ({
     isMulliganPhase,
     mulliganState,
     combatState,
+    spellState, // [新增]
     actions
 }: UseGameButtonProps): ButtonConfig | null => {
 
@@ -72,6 +80,18 @@ export const useGameButton = ({
                     action: actions.onMulliganConfirm
                 };
             }
+        }
+
+        // --- 1.5 施法与预提交阶段 (Casting & Pending) --- [新增最高优先级]
+        if (spellState?.isCasting) {
+            return { style: `${baseStyle} bg-gray-700 border-gray-600 cursor-not-allowed`, text: "等待", disabled: true };
+        }
+        if (spellState?.hasPendingSpell) {
+            return {
+                style: `${baseStyle} bg-blue-600 hover:bg-blue-500 border-blue-400 shadow-[0_0_30px_rgba(37,99,235,0.6)]`,
+                text: "确定",
+                action: () => { eventBus.emit(GameEvents.UI_CLICK); actions.onConfirmPendingSpell?.(); }
+            };
         }
 
         // --- 2. 对手回合 (Waiting) ---
@@ -128,6 +148,40 @@ export const useGameButton = ({
                 style: `${baseStyle} bg-blue-500 border-blue-300`,
                 text: "格挡",
                 action: () => { eventBus.emit(GameEvents.UI_CLICK); actions.onBlock(); }
+            };
+        }
+
+        // [核心修复] --- 5.5. 格挡后响应阶段 (React to Block) ---
+        if (phase === 'react_to_block') {
+            // 如果优先权在敌方，按钮置灰等待
+            if (turnOwner === 'enemy') {
+                return {
+                    style: `${baseStyle} bg-slate-800/80 border-slate-600 text-slate-400 cursor-not-allowed`,
+                    text: "等待敌方...",
+                    disabled: true
+                };
+            }
+
+            // 如果玩家当前正在把一张法术牌拖拽悬停在目标上（预提交状态）
+            if (spellState?.hasPendingSpell) {
+                return {
+                    style: `${baseStyle} bg-purple-600 border-purple-300 shadow-[0_0_20px_rgba(168,85,247,0.6)]`,
+                    text: "施放",
+                    action: () => { eventBus.emit(GameEvents.UI_CLICK); actions.onPass(); }
+                };
+            }
+
+            // 智能侦测：如果堆叠区有法术，按钮显示“应对/结算”；如果是空堆叠，显示“确认打击”
+            const hasSpellsOnStack = combatState && combatState.spellStackLength > 0;
+            return {
+                style: `${baseStyle} ${
+                    hasSpellsOnStack
+                    ? 'bg-purple-600 border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.4)]'
+                    : 'bg-red-600 border-red-400 shadow-[0_0_20px_rgba(220,38,38,0.6)]'
+                }`,
+                text: hasSpellsOnStack ? "结算" : "确认决战",
+                // 统一调用改造后的 passTurn，由引擎去判断是结算堆叠、踢回优先权，还是直接发动物理碰撞
+                action: () => { eventBus.emit(GameEvents.UI_CLICK); actions.onPass(); }
             };
         }
 

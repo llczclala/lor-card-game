@@ -11,6 +11,8 @@ export interface CombatInteractionResult {
     // [新增] 标记是否消耗了屏障
     attackerBarrierPopped: boolean;
     blockerBarrierPopped: boolean;
+    // [新增] 标记攻击者是否因先攻+幻象特效而在反击前死亡
+    quickAttackEphemeralDeath: boolean;
 }
 
 /**
@@ -23,13 +25,13 @@ export const applyRoundStartKeywords = (cards: CardData[]): CardData[] => {
         // --- 1. Regeneration (再生) ---
         // 效果：回合开始回复满血
         if (card.keywords.includes('Regeneration')) {
-            // [逻辑优化] 只有当确实受过伤（当前血量 < 最大血量）时，才触发回复特效
-            const needsHeal = card.health < card.maxHealth;
+            // [核心修复] 判断是否受伤，唯一标准是看身上有没有“欠条” (damageTaken > 0)
+            const needsHeal = (card.damageTaken || 0) > 0;
 
             if (needsHeal) {
                 return {
                     ...card,
-                    health: card.maxHealth,
+                    // [致命 Bug 修复] 绝不去修改底层的 health，只负责把欠条清零！
                     damageTaken: 0,
                     // [新增] 标记为再生状态，触发前端特效
                     animState: 'regenerating'
@@ -49,6 +51,30 @@ export const applyRoundStartKeywords = (cards: CardData[]): CardData[] => {
  * @param attacker 进攻者
  * @param blocker 阻挡者 (可能为 null)
  */
+// [新增] 辅助函数：获取包含 Buff 和损血计算在内的“真实面板数值”
+const getPower = (c: CardData) => (c.power || 0) + (c.buffs?.power || 0);
+const getHealth = (c: CardData) => (c.health || 0) + (c.buffs?.health || 0) - (c.damageTaken || 0);
+
+/**
+ * 处理回合结束时的关键词效果 (如 Ephemeral)
+ * @param cards 备战席上的卡牌数组
+ * @returns 更新后的卡牌数组
+ */
+export const applyRoundEndKeywords = (cards: CardData[]): CardData[] => {
+    return cards.map(card => {
+        // --- Ephemeral (幻象) ---
+        // 效果：回合结束时自动死亡
+        if (card.keywords.includes('Ephemeral')) {
+            return {
+                ...card,
+                // 打上死亡标记，交由 useGameState 中的全局收尸系统 (黄金 1.1 秒法则) 处理特效和清理
+                animState: 'ephemeral_dying'
+            };
+        }
+        return card;
+    });
+};
+
 export const calculateCombatInteraction = (
     attacker: CardData,
     blocker: CardData | null
@@ -59,27 +85,36 @@ export const calculateCombatInteraction = (
     // [新增] 初始化屏障破碎标记
     let attackerBarrierPopped = false;
     let blockerBarrierPopped = false;
+    // [新增] 初始化幻象致死标记
+    let quickAttackEphemeralDeath = false;
+
+    // [核心修复] 战斗引擎重见光明：读取攻击者的真实战斗力！
+    const attackerRealPower = getPower(attacker);
 
     if (!blocker) {
         // --- 情况 A: 直接攻击 (Direct Attack) ---
         // 伤害全部打在水晶上
-        nexusDamage = attacker.power;
+        nexusDamage = attackerRealPower;
     } else {
         // --- 情况 B: 单位对抗 (Clash) ---
 
         // 基础伤害计算
-        let damageToBlocker = attacker.power;
+        let damageToBlocker = attackerRealPower;
+
+        // [核心修复] 读取防守者的真实血量和攻击力
+        const blockerRealHealth = getHealth(blocker);
+        const blockerRealPower = getPower(blocker);
 
         // --- 1. Overwhelm (贯通/碾压) ---
         // 效果：超出阻挡者生命值的伤害打击水晶
         if (attacker.keywords.includes('Overwhelm')) {
             // 计算溢出伤害
-            const overflow = Math.max(0, attacker.power - blocker.health);
+            const overflow = Math.max(0, attackerRealPower - blockerRealHealth);
             if (overflow > 0) {
                 nexusDamage = overflow;
             }
             // 注意：在大多数 TCG (如 LoR) 中，即使有贯通，阻挡者依然承受全额攻击力伤害
-            damageToBlocker = attacker.power;
+            damageToBlocker = attackerRealPower;
         }
 
         // 记录阻挡者受到的最终伤害
@@ -89,14 +124,25 @@ export const calculateCombatInteraction = (
         // 效果：若攻击者有先攻且能击杀阻挡者，则不受反击伤害
         const hasQuickAttack = attacker.keywords.includes('QuickAttack');
         // 预测阻挡者是否会在这次打击中死亡
-        const willBlockerDie = blocker.health <= damageToBlocker;
+        const willBlockerDie = blockerRealHealth <= damageToBlocker;
+        // [新增] 检查攻击者是否为幻象
+        const isAttackerEphemeral = attacker.keywords.includes('Ephemeral');
 
-        if (hasQuickAttack && willBlockerDie) {
-            // 先攻生效且击杀：无损
-            attackerDamage = 0;
+        if (hasQuickAttack) {
+            if (isAttackerEphemeral) {
+                // [幻象拦截] 先攻 + 幻象：打完先攻伤害后自己立刻蒸发，阻挡者（无论死活）都因失去目标而无法反击
+                attackerDamage = 0;
+                quickAttackEphemeralDeath = true; // 发送标记给外层执行处决
+            } else if (willBlockerDie) {
+                // 先攻生效且击杀：无损
+                attackerDamage = 0;
+            } else {
+                // 正常反击：承受阻挡者的真实攻击力
+                attackerDamage = blockerRealPower;
+            }
         } else {
-            // 正常反击：承受阻挡者的攻击力
-            attackerDamage = blocker.power;
+            // 没有先攻的正常反击：承受阻挡者的真实攻击力
+            attackerDamage = blockerRealPower;
         }
 
         // --- 3. Barrier (屏障) ---
@@ -111,5 +157,5 @@ export const calculateCombatInteraction = (
         }
     }
 
-    return { attackerDamage, blockerDamage, nexusDamage, attackerBarrierPopped, blockerBarrierPopped };
+    return { attackerDamage, blockerDamage, nexusDamage, attackerBarrierPopped, blockerBarrierPopped, quickAttackEphemeralDeath };
 };

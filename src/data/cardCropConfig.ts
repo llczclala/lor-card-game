@@ -1,10 +1,3 @@
-import type { CardCropData } from '../types';
-
-/**
- * GM 开发者工作室：卡面坐标静态覆写字典
- * * 只有在 Art Studio 中被修改过且导出的卡牌，才会被记录在这里。
- * 如果某张卡/某个模态在这里找不到记录，系统将自动使用默认居中 (scale: 1, offsetX: 0, offsetY: 0)。
- */
 export const CARD_CROP_CONFIG: Record<string, any> = {
     'Mingyi_Squad_Zhu_He': {bench:{scale:2.1,offsetX:15.2,offsetY:49.21},combat:{scale:1,offsetX:-0.42,offsetY:22.22}},
     'lyfe': {hand:{scale:1.1,offsetX:-0.06,offsetY:-0.46},bench:{scale:2.25,offsetX:-4.57,offsetY:80.94},combat:{scale:1.35,offsetX:-3.09,offsetY:50.15},combat_lv2:{scale:1.25,offsetX:-9.93,offsetY:36.89},bench_lv2:{scale:2.2,offsetX:-22.86,offsetY:62.18},hand_lv2:{scale:1.05,offsetX:-1.48,offsetY:2.12}},
@@ -31,5 +24,12 @@ export const CARD_CROP_CONFIG: Record<string, any> = {
     'Messenger_Squad_WALL_E': {combat:{scale:1.25,offsetX:-13.56,offsetY:34.43},bench:{scale:1.4,offsetX:-8.33,offsetY:33.07},hand:{scale:0.95,offsetX:0,offsetY:0}},
     'Ghost_Squad_Antina': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.35,offsetX:-1.85,offsetY:7.77},combat:{scale:1,offsetX:1.25,offsetY:11.11}},
     'Ghost_Squad_Vez': {combat:{scale:1,offsetX:1.25,offsetY:21.6},bench:{scale:1.25,offsetX:0.83,offsetY:20.86},hand:{scale:0.95,offsetX:0,offsetY:0}},
-    'Ghost_Squad_Valen': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.45,offsetX:-14.37,offsetY:39.17},combat:{scale:1,offsetX:-1.25,offsetY:32.72}}
+    'Ghost_Squad_Valen': {hand:{scale:0.95,offsetX:0,offsetY:0},bench:{scale:1.45,offsetX:-14.37,offsetY:39.17},combat:{scale:1,offsetX:-1.25,offsetY:32.72}},
+    'pupu_specular_soul': {bench:{scale:1.05,offsetX:0.44,offsetY:23.21},combat:{scale:1,offsetX:-1.67,offsetY:30.25},combat_lv2:{scale:1,offsetX:-2.5,offsetY:33.33},bench_lv2:{scale:1,offsetX:-1.67,offsetY:20.99}},
+    'Mirror': {hand:{scale:3.4,offsetX:-90.1,offsetY:115.97},bench:{scale:3.3,offsetX:-88.64,offsetY:135.43},combat:{scale:2.7,offsetX:-68.63,offsetY:120.36}},
+    'Mirror_pupu': {hand:{scale:1.1,offsetX:0.32,offsetY:5.28},bench:{scale:1.2,offsetX:2.64,offsetY:28.19},combat:{scale:1,offsetX:-2.5,offsetY:33.95}},
+    'Chongye_Squad_Mabel': {bench:{scale:1,offsetX:0,offsetY:12.96},combat:{scale:1.2,offsetX:-6.6,offsetY:21.4}},
+    'Chongye_Squad_Elice': {combat:{scale:1.25,offsetX:-2.21,offsetY:29.17},bench:{scale:1,offsetX:-0.83,offsetY:11.11}},
+    'Chongye_Squad_Golia': {bench:{scale:1.25,offsetX:-8.67,offsetY:30.49},combat:{scale:1.2,offsetX:-11.33,offsetY:37.51}},
+    'Elice_scope_robot': {hand:{scale:4,offsetX:121.96,offsetY:110.52},bench:{scale:3.7,offsetX:-104.16,offsetY:130.16},combat:{scale:2.75,offsetX:-76.8,offsetY:93.61}}
 };

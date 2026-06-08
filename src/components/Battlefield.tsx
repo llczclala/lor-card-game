@@ -30,8 +30,8 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
     cardBackUrl
 }) => {
     return (
-        // [修改] 增加 max-w-[1080px] 以锚定最大宽度，增加 gap-2 让排列更透气
-        <div className="flex-1 w-full max-w-[1080px] mx-auto h-full flex justify-center items-end gap-2 relative bg-transparent pb-[80px]">
+        // [微调点 1：全局居中对齐] 将 items-end 改为 items-center，将 pb-[80px] 改为 pb-0，让整个战场区域在画面中绝对垂直居中。
+        <div className="flex-1 w-full max-w-[1080px] mx-auto h-full flex justify-center items-center gap-2 relative bg-transparent pb-0">
 
             {combatField.map((fight, i) => {
                 // [新增] 弹性宽度算法核心：最少按 3 列划分，超过 3 列则按实际列数平分
@@ -39,8 +39,8 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                 const dynamicWidth = `calc(${100 / columnsCount}% - 8px)`;
 
                 return (
-                // [新增] style 注入动态宽度，开启 width 的过渡动画
-                <div key={i} className="flex flex-col gap-12 items-center group relative transition-all duration-500 ease-out" style={{ width: dynamicWidth }}>
+                // [微调点 2：上下两张卡的间距] 将 gap-12 增大。例如改为 gap-20, gap-24 或 gap-32。数值越大，上下两张卡就离得越远（越靠近各自的备战席）。
+                <div key={i} className="flex flex-col justify-between items-center h-full pt-40 pb-28 group relative transition-all duration-500 ease-out" style={{ width: dynamicWidth }}>
 
                     {/* 敌方槽位 - [修改] 宽度改为 w-full 填满弹性容器，高度统一为备战席的 162px */}
                     <div
@@ -111,6 +111,10 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                                 isFacingQuickAttack={fight.attacker.keywords.includes('QuickAttack')}
                                 isChallengedTarget={fight.isChallenged}
                             /> :
+                         fight.isGhostBlocked ? // [核心修复] 如果是空气墙，渲染半透明的灵体护盾占位！
+                            <div className="w-[120px] h-[162px] border-2 border-blue-400/50 bg-blue-400/20 rounded-md flex items-center justify-center backdrop-blur-sm animate-pulse shadow-[0_0_15px_rgba(96,165,250,0.5)]">
+                                <span className="text-blue-200 font-bold tracking-widest text-sm drop-shadow-md">灵体阻挡</span>
+                            </div> :
                          <span className="text-xs text-red-500/50 font-bold animate-pulse">直接打击</span>}
                     </div>
                 </div>

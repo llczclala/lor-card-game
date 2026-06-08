@@ -147,3 +147,14 @@ export const createInitialProfile = (userId: string) => ({
     pityCounter: 0,      // 当前垫了多少抽
     gachaTarget: null    // 当前定轨目标 (例如 "hero:lyfe")
 });
+
+// --- 5. 开发者/管理员专属标识 ---
+// 这是整个系统的最高权限通行证，认准这个 UID 即可发卡发资源
+export const DEV_ADMIN_UID = 'dev_full_admin';
+
+// 预设好管理员的名片模板，避免每次生成时还要再去覆写
+export const DEV_ADMIN_PROFILE = {
+    ...createInitialProfile(DEV_ADMIN_UID),
+    displayName: 'DEVELOPER (全卡测试)',
+    avatarId: 'lyfe',
+};

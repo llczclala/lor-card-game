@@ -96,20 +96,46 @@ html, body {
   20% { transform: translateY(-10px) scale(1.2); opacity: 1; }
   100% { transform: translateY(30px) scale(1); opacity: 0; }
 }
-@keyframes bump-up { 0% { transform: translateY(0); } 50% { transform: translateY(-120px) scale(1.1); } 100% { transform: translateY(0); } }
-@keyframes bump-down { 0% { transform: translateY(0); } 50% { transform: translateY(120px) scale(1.1); } 100% { transform: translateY(0); } }
-@keyframes bump-up-long { 0% { transform: translateY(0); } 40% { transform: translateY(-320px) scale(1.2); } 100% { transform: translateY(0); } }
-@keyframes bump-down-long { 0% { transform: translateY(0); } 40% { transform: translateY(320px) scale(1.2); } 100% { transform: translateY(0); } }
+/* --- A. 普通格挡碰撞 (向中心相撞) --- */
+@keyframes bump-up {
+  0% { transform: translateY(0); }
+  /* [微调点] 这里的 -200px 决定了我方卡牌向上飞多远。如果在中间没碰上，就改大(如 -250px) */
+  50% { transform: translateY(-200px) scale(1.1); }
+  100% { transform: translateY(0); }
+}
+@keyframes bump-down {
+  0% { transform: translateY(0); }
+  /* [微调点] 这里的 200px 决定了敌方卡牌向下飞多远。 */
+  50% { transform: translateY(200px) scale(1.1); }
+  100% { transform: translateY(0); }
+}
+/* [修改] 时长延长至 3s，方便观察碰撞点 */
+.animate-bump-up { animation: bump-up 0.3s ease-in-out; }
+.animate-bump-down { animation: bump-down 0.3s ease-in-out; }
+
+/* --- B. 无人格挡的长距离直击 (穿透战场) --- */
+@keyframes bump-up-long {
+  0% { transform: translateY(0); }
+  /* [微调点] -450px 决定了我方无阻挡时向上冲多远。如果没撞到敌方备战席边缘，继续增大 (如 -500px) */
+  40% { transform: translateY(-450px) scale(1.2); }
+  100% { transform: translateY(0); }
+}
+@keyframes bump-down-long {
+  0% { transform: translateY(0); }
+  /* [微调点] 450px 决定了敌方无阻挡时向下冲多远。 */
+  40% { transform: translateY(450px) scale(1.2); }
+  100% { transform: translateY(0); }
+}
+/* [修改] 时长延长至 3s */
+.animate-bump-up-long { animation: bump-up-long 0.3s ease-in-out; }
+.animate-bump-down-long { animation: bump-down-long 0.3s ease-in-out; }
+
 @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* 实用类 */
 .animate-play-card { animation: play-card 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
 .animate-float-damage { animation: damage-pop 1.2s ease-out forwards; }
-.animate-bump-up { animation: bump-up 0.3s ease-in-out; }
-.animate-bump-down { animation: bump-down 0.3s ease-in-out; }
-.animate-bump-up-long { animation: bump-up-long 0.4s ease-in-out; }
-.animate-bump-down-long { animation: bump-down-long 0.4s ease-in-out; }
 .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
 .animate-scale-in { animation: scale-in 0.5s ease-out forwards; }
 .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
@@ -231,56 +257,60 @@ html, body {
 }
 
 
-/* 我方快攻直击 (向下) */
+/* --- C. 快攻主动打击 --- */
+
+/* [新增] 1. 短距版：用于有格挡者时的单位互殴 (撞击点在中心 +/-200px) */
+@keyframes quick-dash-up {
+  0% { transform: translateY(0); }
+  20% { transform: translateY(50px) scale(0.9); } /* 快速后撤蓄力 */
+  40%, 60% { transform: translateY(-200px) scale(1.2); } /* 刺入战场中心 */
+  100% { transform: translateY(0); }
+}
+@keyframes quick-dash-down {
+  0% { transform: translateY(0); }
+  20% { transform: translateY(-50px) scale(0.9); }
+  40%, 60% { transform: translateY(200px) scale(1.2); }
+  100% { transform: translateY(0); }
+}
+
+/* 2. 长距版：用于无格挡者时直击水晶 (撞击点延伸至水晶附近 +/-450px) */
 @keyframes quick-dash-up-long {
   0% { transform: translateY(0); }
-  20% { transform: translateY(100px) scale(0.9); } /* 蓄力 */
-
-  /* [微调] 距离从 -180px 增加到 -320px，直达水晶 */
-  40% { transform: translateY(-240px) scale(1.2); }
-  60% { transform: translateY(-240px) scale(1.2); }
-
+  20% { transform: translateY(50px) scale(0.9); }
+  40%, 60% { transform: translateY(-450px) scale(1.2); } /* 修正：直击敌方水晶应为 -450px */
   100% { transform: translateY(0); }
 }
-
-/* 敌方快攻直击 (向下) */
 @keyframes quick-dash-down-long {
   0% { transform: translateY(0); }
-  20% { transform: translateY(-20px) scale(0.9); }
-
-  /* [微调] 距离从 180px 增加到 320px */
-  40% { transform: translateY(240px) scale(1.2); }
-  60% { transform: translateY(240px) scale(1.2); }
-
+  20% { transform: translateY(-50px) scale(0.9); }
+  40%, 60% { transform: translateY(450px) scale(1.2); } /* 修正：直击我方水晶应为 450px */
   100% { transform: translateY(0); }
 }
 
-/* 注册类名 */
-.animate-quick-dash-up-long {
-  animation: quick-dash-up-long 0.8s cubic-bezier(0.25, 1, 0.5, 1);
-}
-.animate-quick-dash-down-long {
-  animation: quick-dash-down-long 0.8s cubic-bezier(0.25, 1, 0.5, 1);
-}
+/* 绑定动画类名 (0.4s 的速度配合 bezier 曲线展现快攻的凌厉感) */
+.animate-quick-dash-up { animation: quick-dash-up 0.4s cubic-bezier(0.25, 1, 0.5, 1); }
+.animate-quick-dash-down { animation: quick-dash-down 0.4s cubic-bezier(0.25, 1, 0.5, 1); }
+.animate-quick-dash-up-long { animation: quick-dash-up-long 0.4s cubic-bezier(0.25, 1, 0.5, 1); }
+.animate-quick-dash-down-long { animation: quick-dash-down-long 0.4s cubic-bezier(0.25, 1, 0.5, 1); }
 
 
-/* B. 滞后反击动作 (被打后的反击) */
-/* 关键点：前 50% 时间不动(或震动)，等快攻者打完了，才冲出去 */
-/* 我方格挡者 (向上反击) */
+/* --- D. 快攻被击方的滞后反击 --- */
 @keyframes delayed-bump-up {
-  0%, 40% { transform: translateY(0); } /* 呆滞/挨打期 */
-  50% { transform: translateY(200px); } /* 终于开始撤步 */
-  70% { transform: translateY(-40px) scale(1.1); } /* 迟来的撞击 */
+  0%, 40% { transform: translateY(0); } /* 挨打期，原地不动 */
+  50% { transform: translateY(100px); } /* 撤步蓄力 */
+  /* [微调点] 这里的 -200px 是反击撞击点。应与 bump-up 保持一致，确保能在中间撞到对方 */
+  70% { transform: translateY(-200px) scale(1.1); }
   100% { transform: translateY(0); }
 }
-/* 敌方格挡者 (向下反击) */
 @keyframes delayed-bump-down {
   0%, 40% { transform: translateY(0); }
-  50% { transform: translateY(-200px); }
-  70% { transform: translateY(40px) scale(1.1); }
+  50% { transform: translateY(-100px); }
+  /* [微调点] 这里的 200px 是反击撞击点。应与 bump-down 保持一致 */
+  70% { transform: translateY(200px) scale(1.1); }
   100% { transform: translateY(0); }
 }
 
+/* [修改] 时长延长至 4s，以匹配主动方的动画节奏 */
 .animate-delayed-bump-up { animation: delayed-bump-up 1s ease-out; }
 .animate-delayed-bump-down { animation: delayed-bump-down 1s ease-out; }
 
@@ -379,6 +409,22 @@ html, body {
 .animate-title-slide-up {
   /* 1.5s 的缓动时间，使用 cubic-bezier 让结束时的减速更平滑，更有"巨大的物体浮上来"的厚重感 */
   animation: title-slide-up 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* =================================================================
+   【全息科技法典系统专属科幻特效】
+   ================================================================= */
+
+/* 1. 全息横向光栅/扫描线连续滚动效果 */
+@keyframes scanline-move {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+/* 2. 高科技选项卡边缘强光闪烁跑光效果 */
+@keyframes text-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 

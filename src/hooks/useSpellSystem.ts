@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { CardData } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry';
 import type { TargetType } from '../data/effectRegistry';
+// [新增] 引入事件总线
+import { eventBus, GameEvents } from '../utils/eventBus';
 
 interface SpellSystemProps {
     onComplete: (card: CardData, targets: any[]) => void; // 施法完成的回调
@@ -87,6 +89,9 @@ export const useSpellSystem = ({ onComplete }: SpellSystemProps) => {
 
         // 验证合法性
         if (isValidTarget(target, owner, requirement.type, requirement.filterKey)) {
+            // [新增] 目标合法，成功锁定！播放清脆的确认音
+            eventBus.emit(GameEvents.SFX_SELECT_UNIT);
+
             // 构建目标数据结构 (标准化)
             const targetObj = target === 'nexus'
                 ? { type: owner === 'player' ? 'player_nexus' : 'enemy_nexus' }

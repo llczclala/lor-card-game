@@ -369,10 +369,8 @@ export default function App() {
             <StandardGameWrapper
                 key={gameId}
                 deck={currentPlayerDeckList}
-                // [注意] 接口变化：Wrapper 使用 onExitGame 接收退出回调
                 onExitGame={handleExitGame}
-
-                // 下面的基础 UI 配置透传给 GameSession
+                onExit={handleExitGame}
                 playBgm={playBgm}
                 playLevelUpMovie={playLevelUpMovie}
                 playVictoryMovie={playVictoryMovie}

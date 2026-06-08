@@ -6,10 +6,11 @@ import { executeSpellEffect } from '../logic/spells';
 import { resolveSingleCombat} from '../logic/combat';
 import { calculateRoundStart, canAfford } from '../logic/core';
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { applyRoundStartKeywords } from '../logic/keywords'; // [新增]
+import { applyRoundStartKeywords, applyRoundEndKeywords } from '../logic/keywords'; // [新增] 引入回合结束扫荡
 import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
+import { checkCardLevelUp } from '../utils/gameRules';
 
 // [修复 A] 显式断言类型，并确保 createCard 返回的是 Partial CardData 或正确的基类
 const createFullCard = (key: string): CardData => {
@@ -22,7 +23,11 @@ const createFullCard = (key: string): CardData => {
         strikeCount: 0,
         animState: 'idle',
         damageTaken: 0,
-        buffs: { power: 0, health: 0 }
+        buffs: { power: 0, health: 0 },
+        roundBuffs: { power: 0, health: 0 }, // [新增] 初始化临时账本
+        roundStrikes: 0, // [新增] 初始化本回合打击数
+        // [核心修复] 初始充能写死在建卡瞬间！从牌库抽出来时就已经装好电池了
+        customProgress: key === 'Chongye_Squad_Elice' ? 1 : 0
     } as CardData;
 };
 
@@ -51,6 +56,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         turnOwner: 'player',
         consecutivePasses: 0,
         spellCasting: null,
+        pendingSpell: null,
         spellStack: [],
         activeCard: null,
         selectedBlockerId: null,
@@ -62,6 +68,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         screenShake: false,
         nexusDamage: undefined,
         leveledChampions: [],
+        pendingLevelUps: [], // [新增] 初始化待升级队列
         stats: {
             nexusDamage: 0,
             unitsPlayed: 0,
@@ -75,6 +82,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 // 新增：牌库状态 (Deck)
     const [playerDeck, setPlayerDeck] = useState<CardData[]>([]);
     const [enemyDeckState, setEnemyDeckState] = useState<CardData[]>([]);
+    const [playerInitialDeckInfo, setPlayerInitialDeckInfo] = useState<{ heroes: CardData[], regions: string[] }>({ heroes: [], regions: [] });
+    const [enemyInitialDeckInfo, setEnemyInitialDeckInfo] = useState<{ heroes: CardData[], regions: string[] }>({ heroes: [], regions: [] });
     // [新增] 将当前手牌全部放回牌库顶端 (用于换牌结束后的衔接)
 
     const [playerHand, setPlayerHand] = useState<CardData[]>([]);
@@ -92,10 +101,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const heroActionHistory = useRef<Set<string>>(new Set());
     const initializedRef = useRef(false);
     const enemyUnitsPlayedRef = useRef(0);
-
     // [新增] State Ref: 用于在异步循环中获取最新状态 (加入 Deck 状态)
     const stateRef = useRef({ game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck: enemyDeckState });
-
+    // 👇 [新增] 微队列缓冲区 (Micro-Queue Buffer)
+    const pendingActionsRef = useRef<{ type: string; payload?: any }[]>([]);
     useEffect(() => {
         stateRef.current = { game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck: enemyDeckState };
     }, [game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeckState]);
@@ -129,6 +138,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
         const pDeck = validPlayerDeck.map(createFullCard);
         const eDeck = validEnemyDeck.map(createFullCard);
+
+        const extractDeckInfo = (deckCards: CardData[]) => {
+            const heroes = deckCards.filter(c => c.isChampion);
+            // 根据 key 去重（同名英雄只展示一张）
+            const uniqueHeroes = heroes.filter((h, i, arr) => arr.findIndex(x => x.key === h.key) === i);
+            const regions = Array.from(new Set(deckCards.map(c => c.region)));
+            return { heroes: uniqueHeroes, regions };
+        };
+        setPlayerInitialDeckInfo(extractDeckInfo(pDeck));
+        setEnemyInitialDeckInfo(extractDeckInfo(eDeck));
 
         // 2. 洗牌
         // 注意：请确保您有 shuffleDeck 函数，或者用 .sort(() => Math.random() - 0.5) 替代
@@ -167,15 +186,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         if (unit.effects) {
                             unit.effects.forEach(effId => {
                                 const def = EFFECT_DB[effId];
-                                // 检查时机：ROUND_START
-                                if (def && def.timing === 'ROUND_START') {
+                                // [核心修复] 放宽匹配！允许识别 'ON_PLAY_AND_ROUND_START'
+                                if (def && def.timing.includes('ROUND_START')) {
                                     const ctx: EffectContext = {
                                         game: tempGame,
                                         playerBench: tempPBench,
                                         enemyBench: tempEBench,
                                         playerHand: [],
                                         enemyHand: [],
-                                        owner
+                                        owner,
+                                        sourceCard: unit
                                     };
 
                                     const targets: any[] = [];
@@ -306,8 +326,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const newBench = bench.map(unit => {
                 const currentHealth = (unit.health) + (unit.buffs?.health || 0) - (unit.damageTaken || 0);
 
-                // 核心改动：如果血量归零，且还未标记为 dying（防重复触发）
-                if (currentHealth <= 0 && unit.animState !== 'dying') {
+                // [核心修正] 防重复触发必须同时放过 dying 和 ephemeral_dying，绝不能用普通死亡覆盖瞬息死亡！
+                if (currentHealth <= 0 && unit.animState !== 'dying' && unit.animState !== 'ephemeral_dying') {
                     needsUpdate = true;
                     deadUnitsToBroadcast.push(unit);
                     // 缓刑：不直接删除，只挂载死亡标记下发给视图层播放特效
@@ -326,11 +346,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     eventBus.emit(GameEvents.UNIT_DIE, u);
                 });
 
-                // 3. [关键时间轴] 黄金 1.1 秒倒计时后收尸
+                // 3. [关键时间轴] 收尸法则延时至 1.8 秒，以便瞬息动画(ephemeral_dying)及常规死亡播完
                 // 彻底异步非阻塞，完美避开陈旧闭包 Bug
                 setTimeout(() => {
-                    setBench(prev => prev.filter(u => u.animState !== 'dying'));
-                }, 1100);
+                    setBench(prev => prev.filter(u => u.animState !== 'dying' && u.animState !== 'ephemeral_dying'));
+                }, 2500);
             }
         };
 
@@ -338,6 +358,108 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         if (enemyBench.length > 0) processDeaths(enemyBench, setEnemyBench);
 
     }, [playerBench, enemyBench]);
+
+    // ==========================================
+    // [重构] 场上目睹机制 (Local Witness System) - 微队列版
+    // 监听到广播后，不再直接修改状态，而是向微队列中推入一个待办动作
+    // ==========================================
+    useEffect(() => {
+        const handleNexusStrike = (payload: { target: 'player' | 'enemy', amount: number }) => {
+            // 卜卜只在乎敌方水晶是否挨打
+            if (payload.target === 'enemy') {
+                // 写一张条子，塞进微队列缓冲区
+                pendingActionsRef.current.push({ type: 'NEXUS_STRIKED', payload });
+            }
+        };
+
+        eventBus.on(GameEvents.NEXUS_STRIKED, handleNexusStrike);
+        return () => eventBus.off(GameEvents.NEXUS_STRIKED, handleNexusStrike);
+    }, []);
+
+    // ==========================================
+    // [新增] 高情商智能裁判 (State-Based Actions Check)
+    // 负责全局胜负判定，完美支持法术斩杀与战斗溢出伤害 (Overkill) 爽点
+    // ==========================================
+    useEffect(() => {
+        // 核心过滤：让子弹飞一会儿！
+        // 只要系统还在播动画 (animating)、换牌 (mulligan) 或已经结算，裁判就保持沉默
+        if (game.phase === 'animating' || game.phase === 'mulligan' || game.gameResult !== null) {
+            return;
+        }
+
+        // 只要回到静态等待阶段 (如 main)，立刻核查水晶血量
+        if (game.playerNexus <= 0 || game.enemyNexus <= 0) {
+            const finalResult = game.playerNexus <= 0 ? 'defeat' : 'victory';
+
+            // 收集胜利时的场上英雄，用于播放 MVP 动画
+            if (finalResult === 'victory') {
+                const heroes = playerBench.filter(c => c.isChampion).map(c => c.key);
+                setWinningHeroKeys(heroes);
+            }
+
+            setGame(prev => ({ ...prev, gameResult: finalResult }));
+        }
+    }, [game.playerNexus, game.enemyNexus, game.phase, game.gameResult, playerBench]);
+
+    // ==========================================
+    // [新增] 全局觉醒光环 (State-Based Level Up Aura)
+    // 监听水晶血量及场上人员变化。一旦满足条件（如芬妮的半血觉醒），立刻强制触发升级队列！
+    // ==========================================
+    useEffect(() => {
+        // 防止在结算动画或换牌期间乱入触发，造成 UI 撕裂
+        if (game.phase === 'animating' || game.phase === 'mulligan' || game.gameResult !== null) return;
+
+        let hasLeveledUp = false;
+        const leveledHeroes: CardData[] = [];
+
+        // 全场雷达扫描：检查场上是否有达到升级条件的 1 级英雄
+        const scanAndLevelUp = (bench: CardData[]) => {
+            bench.forEach(card => {
+                if (card.isChampion && card.level === 1 && !game.leveledChampions.includes(card.key)) {
+                    if (checkCardLevelUp(card, game.playerNexus, game.enemyNexus)) {
+                        hasLeveledUp = true;
+                        const leveled = { ...getLeveledUpCard(card), id: card.id };
+                        // 严防死守：死人禁止诈尸升级
+                        if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
+                            leveledHeroes.push(leveled);
+                        }
+                    }
+                }
+            });
+        };
+
+        scanAndLevelUp(playerBench);
+        scanAndLevelUp(enemyBench);
+
+        if (hasLeveledUp && leveledHeroes.length > 0) {
+            const newKeys = leveledHeroes.map(h => h.key);
+
+            // 1. 把英雄送进顶层升级调度队列，UI层将无条件接管屏幕播放动画
+            setGame(prev => ({
+                ...prev,
+                leveledChampions: [...new Set([...prev.leveledChampions, ...newKeys])],
+                pendingLevelUps: [...(prev.pendingLevelUps || []), ...leveledHeroes]
+            }));
+
+            // 2. 物理洗牌：把牌库、手牌、备战席里所有的同名 1 级英雄直接替换为 2 级
+            const upgradeList = (list: CardData[]) => {
+                return list.map(c => {
+                    if (newKeys.includes(c.key) && c.level === 1) {
+                        return { ...getLeveledUpCard(c), id: c.id };
+                    }
+                    return c;
+                });
+            };
+
+            setPlayerBench(prev => upgradeList(prev));
+            setEnemyBench(prev => upgradeList(prev));
+            setPlayerHand(prev => upgradeList(prev));
+            setEnemyHand(prev => upgradeList(prev));
+            setPlayerDeck(prev => upgradeList(prev));
+            setEnemyDeckState(prev => upgradeList(prev)); // 彻底贯彻全局觉醒
+        }
+    // [关键依赖] 水晶血量变化、备战席人员变化，都会唤醒这套扫描引擎！
+    }, [game.playerNexus, game.enemyNexus, playerBench, enemyBench, game.phase, game.gameResult]);
 
 
     // --- 3. 基础操作 ---
@@ -365,14 +487,82 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const newDeck = currentDeck.slice(1);
             if (owner === 'player') {
                 setPlayerDeck(newDeck);
-                setPlayerHand(prev => [...prev, cardToDraw]);
+                // [核心修复] 手牌上限 10 张严格拦截
+                if (stateRef.current.playerHand.length >= 10) {
+                    // TODO: 触发抽卡超限消失(Burn)动画接口，日后接入特效
+                    console.log(`【爆牌警报】我方手牌已满 10 张，${cardToDraw.name} 被送入虚空！`);
+                } else {
+                    setPlayerHand(prev => [...prev, cardToDraw]);
+                }
             } else {
                 setEnemyDeckState(newDeck);
-                setEnemyHand(prev => [...prev, cardToDraw]);
+                // [核心修复] 敌方同理
+                if (stateRef.current.enemyHand.length >= 10) {
+                    // TODO: 触发抽卡超限消失(Burn)动画接口，日后接入特效
+                    console.log(`【爆牌警报】敌方手牌已满 10 张，${cardToDraw.name} 被送入虚空！`);
+                } else {
+                    setEnemyHand(prev => [...prev, cardToDraw]);
+                }
             }
             if (i < count - 1) await wait(2250);
         }
     };
+    // [新增] 独立的回合结束清算序列 (处理幻象等回合末机制)
+    const executeRoundEndSequence = async () => {
+        // 1. 锁定游戏状态，防止玩家操作
+        setGame(prev => ({ ...prev, phase: 'animating' }));
+        setMessage("回合结束结算...");
+
+        // 2. 对备战席进行回合结束扫荡 (如幻象判定)
+        const nextPlayerBench = applyRoundEndKeywords(stateRef.current.playerBench);
+        const nextEnemyBench = applyRoundEndKeywords(stateRef.current.enemyBench);
+
+        // 安全兜底：如果交战区残留了幻象单位，也一并标记死亡
+        let hasCombatDeath = false;
+        const nextCombatField = stateRef.current.combatField.map(fight => {
+            const newFight = { ...fight };
+            if (newFight.attacker.keywords.includes('Ephemeral')) {
+                newFight.attacker = { ...newFight.attacker, animState: 'ephemeral_dying' };
+                hasCombatDeath = true;
+            }
+            if (newFight.blocker?.keywords.includes('Ephemeral')) {
+                newFight.blocker = { ...newFight.blocker, animState: 'ephemeral_dying' };
+                hasCombatDeath = true;
+            }
+            return newFight;
+        });
+
+        // 检查是否真的有阵亡单位
+        const hasEphemeralDeath =
+            nextPlayerBench.some(c => c.animState === 'dying' || c.animState === 'ephemeral_dying') ||
+            nextEnemyBench.some(c => c.animState === 'dying' || c.animState === 'ephemeral_dying') ||
+            hasCombatDeath;
+
+        // 触发状态更新。如果有 dying 状态，上面写过的全局死亡监测 useEffect 会自动接管特效并触发卡牌碎裂
+        setPlayerBench(nextPlayerBench);
+        setEnemyBench(nextEnemyBench);
+        if (hasCombatDeath) setCombatField(nextCombatField);
+
+        // 3. 如果有死亡发生，阻塞线程等待特效播完 (匹配 1.8秒的新版收尸法则)
+        if (hasEphemeralDeath) {
+            await wait(2500);
+
+            // 确保交战区的尸体也被清理干净
+            if (hasCombatDeath) {
+                setCombatField(prev => prev.filter(f =>
+                    f.attacker.animState !== 'dying' && f.attacker.animState !== 'ephemeral_dying' &&
+                    f.blocker?.animState !== 'dying' && f.blocker?.animState !== 'ephemeral_dying'
+                ));
+            }
+            // [核心修复] 不要过度依赖 useEffect 的异步收尸，在这里手动将备战席的尸体彻底扬了
+            setPlayerBench(prev => prev.filter(c => c.animState !== 'dying' && c.animState !== 'ephemeral_dying'));
+            setEnemyBench(prev => prev.filter(c => c.animState !== 'dying' && c.animState !== 'ephemeral_dying'));
+        }
+
+        // 4. 尸体清理完毕，真正进入下一回合
+        startRound();
+    };
+
 
     const startRound = () => {
         heroActionHistory.current.clear();
@@ -380,16 +570,44 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         eventBus.emit(GameEvents.ROUND_START);
         const currentGameState = stateRef.current.game;
         const nextRoundBase = calculateRoundStart(currentGameState);
-        const removeBarrier = (cards: CardData[]) => cards.map(c => ({
-            ...c,
-            keywords: c.keywords.filter(k => k !== 'Barrier')
-        }));
-        const nextPlayerBench = applyRoundStartKeywords(removeBarrier(stateRef.current.playerBench));
-        const nextEnemyBench = applyRoundStartKeywords(removeBarrier(stateRef.current.enemyBench));
+        // [核心修复] 回合结束，不仅移除屏障，还要扣除所有“单回合临时增益 (roundBuffs)”和“临时词条 (roundKeywords)”
+        const clearRoundBuffsAndBarrier = (cards: CardData[]) => cards.map(c => {
+            const nextCard = { ...c, keywords: c.keywords.filter(k => k !== 'Barrier') };
+
+            // 1. 扣除临时数值账本
+            if (nextCard.roundBuffs && (nextCard.roundBuffs.power > 0 || nextCard.roundBuffs.health > 0)) {
+                nextCard.buffs = {
+                    power: (nextCard.buffs?.power || 0) - nextCard.roundBuffs.power,
+                    health: (nextCard.buffs?.health || 0) - nextCard.roundBuffs.health
+                };
+                nextCard.roundBuffs = { power: 0, health: 0 };
+            }
+
+            // 2. [新增] 扣除临时词条账本
+            if (nextCard.roundKeywords && nextCard.roundKeywords.length > 0) {
+                // 将临时账本里记录的词条，从卡牌的主词条库中无情剔除
+                nextCard.keywords = nextCard.keywords.filter(k => !nextCard.roundKeywords!.includes(k));
+                // 彻底销毁词条账本
+                nextCard.roundKeywords = [];
+            }
+
+            // 3. [新增] 清空本回合打击数账本
+            nextCard.roundStrikes = 0;
+
+            return nextCard;
+        });
+
+        // [核心修复] 在应用新回合状态前，强制进行一次“尸体清扫”，彻底拦截因异步 Ref 导致的僵尸复活
+        const alivePlayerBench = stateRef.current.playerBench.filter(c => c.animState !== 'dying' && c.animState !== 'ephemeral_dying');
+        const aliveEnemyBench = stateRef.current.enemyBench.filter(c => c.animState !== 'dying' && c.animState !== 'ephemeral_dying');
+
+        const nextPlayerBench = applyRoundStartKeywords(clearRoundBuffsAndBarrier(alivePlayerBench));
+        const nextEnemyBench = applyRoundStartKeywords(clearRoundBuffsAndBarrier(aliveEnemyBench));
         let tempGame = {
             ...currentGameState,
             ...nextRoundBase,
             spellCasting: null,
+            pendingSpell: null,
             spellStack: [],
             selectedBlockerId: null,
             nexusDamage: undefined,
@@ -428,16 +646,24 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             turnOwner: 'player',
             playerNexus: 20,
             enemyNexus: 20,
-            playerMaxManaCap: 10,
-            enemyMaxManaCap: 10,
+            // [修复] 删除非法的 playerMaxManaCap 和 enemyMaxManaCap
             spellStack: [],
             activeCard: null,
             attackToken: { player: 'normal', enemy: null },
             consecutivePasses: 0,
-            winner: null,
+            // [修复] 删除废案属性 winner
             gameResult: null,
             levelUpCard: null,
             fullArtCard: null,
+
+            // ==========================================
+            // [新增] 补全 TypeScript 在第二道安检时查出的缺失必填项！
+            leveledChampions: [],              // 重置英雄升级记录
+            pendingLevelUps: [],               // [新增] 重置待升级队列
+            lastActionTimestamp: Date.now(),   // 重置最后操作时间
+            selectedBlockerId: null,           // 清空选中的格挡者
+            selectedChallengerId: null,        // 清空选中的挑战者
+            // ==========================================
             // [修复] 对齐真实的 GameStats 接口定义，铲除不匹配的幻觉属性
             stats: {
                 nexusDamage: 0,
@@ -466,15 +692,165 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     };
 
     const commitAttack = () => {
-        if (combatField.length === 0) {
+        const currentCombatField = stateRef.current.combatField; // 提取绝对新鲜的战场快照
+        if (currentCombatField.length === 0) {
             setGame(prev => ({ ...prev, phase: 'main', lastActionTimestamp: Date.now() }));
             return;
         }
 
-        setGame(prev => ({ ...prev, phase: 'block_declare', turnOwner: 'enemy', consecutivePasses: 0, lastActionTimestamp: Date.now() }));
+        // =====================================
+        // [核心重构] 空降交战区与攻击宣告拦截
+        // =====================================
+        let tempGame = { ...stateRef.current.game };
+        let tempPlayerBench = [...stateRef.current.playerBench];
+        let tempEnemyBench = [...stateRef.current.enemyBench];
+        let tempCombatField = [...currentCombatField];
+        let hasEffectTriggered = false;
+
+        // [关键] 仅遍历初始时的参战者，防止新空降的单位也带有攻击宣告从而导致死循环！
+        const initialFighters = [...tempCombatField];
+
+        initialFighters.forEach((fight) => {
+            if (fight.owner === 'player' && fight.attacker && fight.attacker.effects) {
+                fight.attacker.effects.forEach(effId => {
+                    const def = EFFECT_DB[effId];
+                    // [核心修复] 放宽匹配规则
+                    if (def && def.timing.includes('ON_ATTACK_DECLARE')) {
+                        const ctx: EffectContext = {
+                            game: tempGame,
+                            playerBench: tempPlayerBench,
+                            enemyBench: tempEnemyBench,
+                            playerHand: [...stateRef.current.playerHand],
+                            enemyHand: [...stateRef.current.enemyHand],
+                            combatField: tempCombatField, // 传递当前战况供处理器修改（包含空降与防爆机制）
+                            owner: 'player',
+                            sourceCard: fight.attacker // [新增] 把本体传给结算引擎，充当复印机的扫描源头！
+                        };
+
+                        // [核心] 调用正规效果处理器
+                        const res = processEffect(effId, [], ctx);
+
+                        // 接收返回的新鲜快照
+                        tempGame = res.game;
+                        tempPlayerBench = res.playerBench;
+                        tempEnemyBench = res.enemyBench;
+                        // 注意：processEffect 内部的 SUMMON 指令可能会直接向 combatField 推入空降兵
+                        if (res.combatField) tempCombatField = res.combatField;
+
+                        hasEffectTriggered = true;
+                    }
+                });
+            }
+        });
+
+        // 统一结算并下发给 React 渲染层
+        if (hasEffectTriggered) {
+            setPlayerBench(tempPlayerBench);
+            setEnemyBench(tempEnemyBench);
+            setCombatField(tempCombatField as any);
+            setGame({
+                ...tempGame,
+                phase: 'block_declare',
+                turnOwner: 'enemy',
+                consecutivePasses: 0,
+                lastActionTimestamp: Date.now()
+            });
+        } else {
+            // 如果没有触发任何宣告特效，走基础流程
+            setGame(prev => ({ ...prev, phase: 'block_declare', turnOwner: 'enemy', consecutivePasses: 0, lastActionTimestamp: Date.now() }));
+        }
+
         setMessage("等待格挡...");
     };
 
+    // [核心修复 1] 斩断直连结算！防守方确认格挡后，切入响应阶段，并把优先权踢回给进攻方
+    const confirmBlock = () => {
+        setGame(prev => ({
+            ...prev,
+            phase: 'react_to_block',
+            // 谁刚确认完格挡（通常是防守方），就把优先权交给对面（进攻方）开始打法术
+            turnOwner: prev.turnOwner === 'player' ? 'enemy' : 'player',
+            consecutivePasses: 0,
+            lastActionTimestamp: Date.now()
+        }));
+        setMessage("防线部署完毕，请进攻方进行战术响应");
+    };
+
+    // ==========================================
+    // [新增] 微队列清算中心 (Micro-Queue Flusher)
+    // 由主循环主动调用，读取 pendingActionsRef，并基于当前快照进行绝对同步的状态结算
+    // ==========================================
+    const flushMicroQueue = () => {
+        if (pendingActionsRef.current.length === 0) return false;
+
+        const actions = [...pendingActionsRef.current];
+        pendingActionsRef.current = []; // 取出后立刻清空缓冲区
+
+        let hasLeveledUp = false;
+        let leveledHeroes: CardData[] = [];
+
+        // 提取绝对新鲜的当前游戏快照
+        let nextPlayerBench = [...stateRef.current.playerBench];
+        let nextCombatField = [...stateRef.current.combatField];
+        let nextGame = { ...stateRef.current.game };
+
+        const updateCardProgress = (c: CardData) => {
+            if (c.key === 'pupu_specular_soul' && c.level === 1) {
+                const newProgress = (c.customProgress || 0) + 1;
+                const updatedCard = { ...c, customProgress: newProgress };
+
+                if (checkCardLevelUp(updatedCard, nextGame.playerNexus, nextGame.enemyNexus)) {
+                    hasLeveledUp = true;
+                    const leveled = { ...getLeveledUpCard(updatedCard), id: updatedCard.id };
+                    // [核心] 阵亡隔离锁：死者严禁入队升级！
+                    if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
+                        leveledHeroes.push(leveled);
+                    }
+                    return leveled;
+                }
+                return updatedCard;
+            }
+            // 2. [新增] 伊莉斯的记账逻辑：只要目睹打击，充能直接设为 1 (最大 1 层)
+            if (c.key === 'Chongye_Squad_Elice') { // 请确保 key 与 cards.ts 中伊莉斯的 key 一致
+                return { ...c, customProgress: 1 };
+            }
+            return c;
+        };
+
+        // 按顺序结算所有条子
+        actions.forEach(action => {
+            if (action.type === 'NEXUS_STRIKED') {
+                nextPlayerBench = nextPlayerBench.map(updateCardProgress);
+                nextCombatField = nextCombatField.map(fight => {
+                    const newFight = { ...fight };
+                    if (newFight.owner === 'player' && newFight.attacker) {
+                        newFight.attacker = updateCardProgress(newFight.attacker) as CardData;
+                    }
+                    if (newFight.owner === 'enemy' && newFight.blocker) {
+                        newFight.blocker = updateCardProgress(newFight.blocker) as CardData;
+                    }
+                    return newFight;
+                });
+            }
+        });
+
+        // 统一处理结算后的升级派单
+        if (hasLeveledUp && leveledHeroes.length > 0) {
+            nextGame.pendingLevelUps = [...(nextGame.pendingLevelUps || []), ...leveledHeroes];
+            leveledHeroes.forEach(hero => {
+                if (!nextGame.leveledChampions.includes(hero.key)) {
+                    nextGame.leveledChampions.push(hero.key);
+                }
+            });
+        }
+
+        // 将结算结果一次性拍板并写入 React 队列
+        setPlayerBench(nextPlayerBench);
+        setCombatField(nextCombatField as any);
+        setGame(nextGame as GameState);
+
+        return true; // 返回 true 告知调用者“我处理过数据了”
+    };
 
     const resolveCombatAnimation = async () => {
         setGame(prev => ({ ...prev, phase: 'animating' }));
@@ -482,18 +858,22 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         for (let i = 0; i < totalFights; i++) {
             let currentFight = stateRef.current.combatField[i];
             const { attacker, blocker } = currentFight;
+
+            // [核心修复 1] 将快攻情报判定提前，用于指导动画状态机分流
+            const hasQuickAttack = attacker.keywords.includes('QuickAttack');
+
             setCombatField(prev => {
                 const n = [...prev];
                 n[i] = {
                     ...n[i],
                     attacker: { ...n[i].attacker, animState: 'attacking' } as CardData,
-                    blocker: n[i].blocker ? { ...n[i].blocker, animState: 'attacking' } as CardData : null
+                    // [核心修复 2] 告诉格挡方：对面有快攻，你必须进入滞后反击状态！
+                    blocker: n[i].blocker ? { ...n[i].blocker, animState: (hasQuickAttack ? 'delayed_attacking' : 'attacking') as any } as CardData : null
                 };
                 return n;
             });
 
             // 音效与节奏控制
-            const hasQuickAttack = attacker.keywords.includes('QuickAttack');
             let impactDelay = 250;
 
             if (!blocker) {
@@ -547,12 +927,26 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             });
 
             // 2. 更新全局 State
+
+            // [新增] 记账：为参与本次交锋的存活/阵亡单位，无情记上一笔“本回合已打击”
+            if (result.updatedFight.attacker) {
+                result.updatedFight.attacker.roundStrikes = (result.updatedFight.attacker.roundStrikes || 0) + 1;
+            }
+            if (result.updatedFight.blocker) {
+                result.updatedFight.blocker.roundStrikes = (result.updatedFight.blocker.roundStrikes || 0) + 1;
+            }
+
             // 更新战场卡牌状态
             setCombatField(prev => {
                 const n = [...prev];
                 n[i] = result.updatedFight;
                 return n;
             });
+
+            // [核心修正] 战果已经排入 React 队列，现在安全发起广播！监听器将完美衔接在它之后！
+            if (result.nexusDamage) {
+                eventBus.emit(GameEvents.NEXUS_STRIKED, result.nexusDamage);
+            }
 
             // [新增] 计算本轮战斗的统计增量
             let statsDelta = { nexus: 0, uKilled: 0, hKilled: 0, hLevel: 0 };
@@ -623,18 +1017,19 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             if (result.levelUpUpdate) {
                 const leveledCard = result.levelUpUpdate;
                 const heroKey = leveledCard.key;
-                setGame(prev => {
-                    // 如果列表里还没有这个英雄，加进去
-                    const newLeveledList = prev.leveledChampions.includes(heroKey)
-                        ? prev.leveledChampions
-                        : [...prev.leveledChampions, heroKey];
 
-                    return {
-                        ...prev,
-                        levelUpCard: leveledCard,
-                        leveledChampions: newLeveledList
-                    };
-                });
+                // 1. 记录全场已升级英雄名单
+                setGame(prev => ({
+                    ...prev,
+                    leveledChampions: prev.leveledChampions.includes(heroKey)
+                        ? prev.leveledChampions
+                        : [...prev.leveledChampions, heroKey]
+                }));
+
+                // 2. [核心拔除] 彻底删除所有的硬编码 await 延时循环，改为派发“排队券”！
+                queueLevelUp(leveledCard);
+
+                // 3. 升级卡组和手牌中的同名卡
                 const upgradeList = (list: CardData[]) => {
                     return list.map(c => {
                         // 如果是该英雄且还没升级 (Level 1)
@@ -647,51 +1042,77 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 setPlayerDeck(prev => upgradeList(prev));
                 setPlayerHand(prev => upgradeList(prev));
                 setPlayerBench(prev => upgradeList(prev)); // 备战席的其他同名卡也一起升级
-                await wait(200);
-                while (stateRef.current.game.levelUpCard !== null) {
-                    await wait(200);
-                }
             }
             await wait(600);
             setGame(prev => ({ ...prev, nexusDamage: undefined }));
         }
 
         // 3. 战斗结束清理
-        await wait(500);
+        // [核心修正] 获取当前战场快照，动态计算清场等待时间，确保死亡动画能完整播完！
+        const fieldForDeathCheck = stateRef.current.combatField;
 
-        // 收集幸存者 (逻辑同前，从最终的 combatField 中筛选)
+        const hasEphemeralDeathInCombat = fieldForDeathCheck.some(f =>
+            f.attacker.animState === 'ephemeral_dying' || f.blocker?.animState === 'ephemeral_dying'
+        );
+        const hasNormalDeathInCombat = fieldForDeathCheck.some(f =>
+            f.attacker.animState === 'dying' || f.blocker?.animState === 'dying'
+        );
+
+        let cleanupWaitTime = 500;
+        if (hasEphemeralDeathInCombat) {
+            cleanupWaitTime = 2500;
+        } else if (hasNormalDeathInCombat) {
+            cleanupWaitTime = 1200;
+        }
+
+        await wait(cleanupWaitTime);
+
+        // 👇 [新增] 在踩下刹车之前，主循环亲自收网！清空微队列
+        const isQueueProcessed = flushMicroQueue();
+        if (isQueueProcessed) {
+            // 给 React 留下 50ms 的微小渲染窗口，确保 setGame 的结果能够同步到后面的 stateRef 中
+            await wait(50);
+        }
+
+        // ==========================================
+        // [核心修正：终极刹车片]
+        // 任何机制导致的升级，都会体现为 pendingLevelUps 队列中有号或 levelUpCard 正在播放。
+        // 主程序在此必须死锁挂起，绝对不准摧毁交战区 DOM，给足 UI 部门抓取物理卡牌演出的时间！
+        // ==========================================
+        while (
+            stateRef.current.game.levelUpCard !== null ||
+            (stateRef.current.game.pendingLevelUps && stateRef.current.game.pendingLevelUps.length > 0)
+        ) {
+            await wait(200);
+        }
+
+        // [极其关键] 动画可能播了很久，在此期间监听器（如卜卜）可能已经把 2 级卡牌替换到了 stateRef 中。
+        // 必须重新抓取最新鲜的战场快照，防止把旧的 1 级卡牌错误地移回备战席！
         const finalField = stateRef.current.combatField;
+
+        // 收集幸存者 (逻辑同前，从最新的 finalField 中筛选)
         const survivorsP: CardData[] = [];
         const survivorsE: CardData[] = [];
 
         finalField.forEach(f => {
-            if (f.attacker.health > 0) {
-                const unit = { ...f.attacker, animState: 'idle', damageTaken: 0 };
+            // [关键修复] 严防死守：普通死亡和瞬息死亡都绝对不能进入幸存者名单！
+            if (f.attacker.animState !== 'dying' && f.attacker.animState !== 'ephemeral_dying') {
+                const unit = { ...f.attacker, animState: 'idle' }; // 保留原有的 damageTaken
                 if (f.owner === 'player') survivorsP.push(unit as any);
                 else survivorsE.push(unit as any);
             }
-            if (f.blocker && f.blocker.health > 0) {
-                const unit = { ...f.blocker, animState: 'idle', damageTaken: 0 };
+            if (f.blocker && f.blocker.animState !== 'dying' && f.blocker.animState !== 'ephemeral_dying') {
+                const unit = { ...f.blocker, animState: 'idle' }; // 保留原有的 damageTaken
                 if (f.owner === 'player') survivorsE.push(unit as any);
                 else survivorsP.push(unit as any);
             }
         });
 
-        // 胜负判定
-        const pNexus = stateRef.current.game.playerNexus;
-        const eNexus = stateRef.current.game.enemyNexus;
-        const newGameResult = pNexus <= 0 ? 'defeat' : (eNexus <= 0 ? 'victory' : null);
-
-        if (newGameResult === 'victory') {
-            const heroes = survivorsP.filter(c => c.isChampion).map(c => c.key);
-            setWinningHeroKeys(heroes);
-        }
+        // [剥离裁判权] 胜负判定已交由全局的“智能裁判(useEffect)”处理，确保多单位进攻时能爽快地鞭尸！
 
         // 归位
         setGame(prev => {
             // [修正] 战斗后只消耗发起进攻一方的 Token
-            // 假设 finalField[0].owner 是发起方 (如果不为空)
-            // 这里做一个安全检查
             const currentFights = stateRef.current.combatField;
             const attackerOwner = currentFights.length > 0 ? currentFights[0].owner : null;
 
@@ -702,10 +1123,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             return {
                 ...prev,
-                gameResult: newGameResult,
+                // [关键] 只要这里将 phase 切回 'main'
+                // 外面挂载的智能裁判就会瞬间苏醒并介入吹哨！
                 phase: 'main',
-                turnOwner: prev.attackToken.player ? 'enemy' : 'player', // 简单轮换，或者根据 attackerOwner 轮换
-                attackToken: nextAttackToken, // 应用更新后的 Token 状态
+                turnOwner: prev.attackToken.player ? 'enemy' : 'player',
+                attackToken: nextAttackToken,
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now()
             };
@@ -729,43 +1151,87 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
     const updateSpellCasting = (newState: any) => setGame(prev => ({ ...prev, spellCasting: newState }));
 
-    const finalizeSpell = (card: CardData, owner: 'player' | 'enemy', targets: any[]) => {
-        const { newMana, newSpellMana } = calculateNewMana(
-            card.cost,
-            owner === 'player' ? game.playerMana : game.enemyMana,
-            owner === 'player' ? game.playerSpellMana : game.enemySpellMana,
-            false
-        );
+    // [修改 3：施法生命周期重塑] commitSpell 替代 finalizeSpell
+    const commitSpell = (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
+        // [新增] 在生成快照前，先拯救处于悬浮缓冲站的上一张法术！
+        const existingPending = stateRef.current.game.pendingSpell;
 
-        setGame(prev => owner === 'player'
-            ? { ...prev, playerMana: newMana, playerSpellMana: newSpellMana }
-            : { ...prev, enemyMana: newMana, enemySpellMana: newSpellMana }
-        );
+        // A. [核心修复：打破时间循环] 同步构建一份绝对干净的 Game 状态快照！
+        let cleanSnapshot = {
+            ...stateRef.current.game,
+            spellCasting: null,
+            pendingSpell: null,
+            activeCard: null
+        };
 
-        setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
+        // [核心解药] 如果提供了原始阶段，就用原始阶段；如果没提供但当前是 'animating'，强制回滚到 'main'
+        const safePhase = originalPhase || (cleanSnapshot.phase === 'animating' ? 'main' : cleanSnapshot.phase);
 
+        // B. [防连环扣款] 直接在这份干净快照上扣除费用
+        if (!card.parentCard) {
+            const { newMana, newSpellMana } = calculateNewMana(
+                card.cost,
+                owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
+                owner === 'player' ? cleanSnapshot.playerSpellMana : cleanSnapshot.enemySpellMana,
+                false
+            );
+
+            if (owner === 'player') {
+                cleanSnapshot.playerMana = newMana;
+                cleanSnapshot.playerSpellMana = newSpellMana;
+            } else {
+                cleanSnapshot.enemyMana = newMana;
+                cleanSnapshot.enemySpellMana = newSpellMana;
+            }
+        }
+
+        // C. [响应机制分流] 根据法术速度决定是瞬间生效还是打包入栈
         if (card.type === 'spell-burst') {
+            // 极速法术：绕过堆叠，瞬间结算！
+            // [极其关键] 传入准备好的 cleanSnapshot，彻底杜绝 UI 旧状态(如正在瞄准)复活！
             executeSpellEffect(card.key, owner, targets, {
-                game, setGame, playerBench, setPlayerBench, enemyBench, setEnemyBench, playerHand, setPlayerHand, triggerShake
+                game: cleanSnapshot,
+                setGame,
+                playerBench: stateRef.current.playerBench, setPlayerBench,
+                enemyBench: stateRef.current.enemyBench, setEnemyBench,
+                combatField: stateRef.current.combatField, setCombatField, // [新增] 授予交战区权限
+                playerHand: stateRef.current.playerHand, setPlayerHand,
+                triggerShake
             });
-            // 修复：必须将 phase 重置为 'main'，否则游戏会卡在 animating 状态无法操作
-            setGame(prev => ({ ...prev, phase: 'main', lastActionTimestamp: Date.now() }));
+
+            // [修正] 结算后必须留在当前阶段（主阶段或格挡响应阶段），绝不能无脑回 main
+            setGame(prev => ({ ...prev, phase: safePhase, lastActionTimestamp: Date.now() }));
             setMessage("极速法术生效");
         } else {
             const stackItem: SpellStackItem = { card, owner, targets };
-            setGame(prev => ({
-                ...prev,
-                spellStack: [stackItem, ...prev.spellStack],
-                turnOwner: owner === 'player' ? 'enemy' : 'player',
-                consecutivePasses: 0,
-                lastActionTimestamp: Date.now(),
-                phase: 'main' // <--- 关键修复：解除 'animating' 锁定，激活 AI
-            }));
-            setMessage("法术入栈");
+            if (owner === 'player') {
+                // [核心修复：进入缓冲站] 玩家打出的法术，放入预提交区
+                setGame({
+                    ...cleanSnapshot,
+                    // [多重施法引擎] 如果缓冲站原本就有法术，把它强行挤进正规堆叠区！
+                    spellStack: existingPending ? [existingPending, ...cleanSnapshot.spellStack] : cleanSnapshot.spellStack,
+                    pendingSpell: stackItem,
+                    phase: safePhase // [关键修复] 植入安全的时空锚点！
+                });
+                setMessage("请确认是否打出该法术");
+            } else {
+                // 敌方的法术直接入栈并把响应权交给我们
+                setGame({
+                    ...cleanSnapshot,
+                    spellStack: [stackItem, ...cleanSnapshot.spellStack],
+                    turnOwner: 'player',
+                    consecutivePasses: 0,
+                    lastActionTimestamp: Date.now(),
+                    phase: safePhase // [关键修复] 植入安全的时空锚点！
+                });
+                setMessage("敌方打出法术，请响应");
+            }
         }
     };
 
     const playCard = (card: CardData, owner: 'player' | 'enemy', targets: any[] = []) => {
+        // [新增 极强防御] 记录进入动画前的真实阶段
+        const originalPhase = stateRef.current.game.phase;
 
         if (owner === 'player') {
             const { playerMana, playerSpellMana } = stateRef.current.game;
@@ -775,28 +1241,26 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
         }
 
-        if (owner === 'player' && card.isLevel2Choice && card.associatedChampionKey) {
+        // [底层重构] 英雄法术不再进行静默转换，而是统一进入抉择流程
+        if (owner === 'player' && card.associatedChampionKey) {
             const champKey = card.associatedChampionKey;
             const hasLv2 = playerBench.some(c => c.key === champKey && c.level === 2);
 
-            if (hasLv2) {
-                setGame(prev => ({
-                    ...prev,
-                    activeCard: card,
-                    spellCasting: {
-                        cardId: card.id,
-                        step: 'choose_mode',
-                        targets: [],
-                        allyId: undefined
-                    }
-                }));
-                setMessage("请抉择：点击左侧或右侧卡牌");
-                return;
-            } else {
-                const targetKey = (champKey === 'lyfe' ? 'lyfe_rush' : 'fenny_strike');
-                const transformed = createFullCard(targetKey);
-                card = { ...transformed, id: card.id };
-            }
+            // [修改 1：拔剑留鞘修复] 在弹窗瞬间，立刻把这张 0 费英雄法术从手牌里没收暂存！
+            setPlayerHand(prev => prev.filter(c => c.id !== card.id));
+
+            setGame(prev => ({
+                ...prev,
+                activeCard: card,
+                spellCasting: {
+                    cardId: card.id,
+                    step: 'choose_mode',
+                    targets: [],
+                    isHeroLeveled: hasLv2 // [关键] 告知 UI 英雄是否已升级，用于锁定大招显示
+                }
+            }));
+            setMessage(hasLv2 ? "请选择要施放的法术模式" : "选择法术施放（升级后可解锁大招）");
+            return;
         }
 
         // [新增] 触发语音事件
@@ -852,6 +1316,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         if (owner === 'player') setPlayerHand(prev => prev.filter(c => c.id !== card.id));
         else setEnemyHand(prev => prev.filter(c => c.id !== card.id));
 
+        // [新增] 判断如果打出的是单位，触发对应的放大展示音效
+        if (isUnit) {
+            if (owner === 'player') {
+                eventBus.emit(GameEvents.SFX_PLAYER_PLAY_UNIT);
+            } else {
+                eventBus.emit(GameEvents.SFX_ENEMY_PLAY_UNIT);
+            }
+        }
+
         // --- 播放出牌动画 ---
         setGame(prev => {
             const newStats = { ...prev.stats };
@@ -878,58 +1351,223 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         setTimeout(() => {
             setGame(prev => ({ ...prev, activeCard: null }));
             if (isUnit) {
-                // 单位：直接上场
-                if (owner === 'player') setPlayerBench(prev => [...prev, card]);
-                else setEnemyBench(prev => [...prev, card]);
+                // =====================================
+                // [核心修复] 单位入场发动机：不仅要上场，还要触发 ON_PLAY 战吼！
+                // =====================================
+                let tempPlayerBench = [...stateRef.current.playerBench];
+                let tempEnemyBench = [...stateRef.current.enemyBench];
+                let tempCombatField = [...stateRef.current.combatField]; // [关键修复] 初始化缺失的交战区快照！
+                let tempGame = { ...stateRef.current.game };
 
-                // 单位上场后交换攻守权
-                setGame(prev => ({
-                    ...prev,
+                // [新增] 卡牌物理砸入备战席音效 (底层判定，100%触发)
+                eventBus.emit(GameEvents.SFX_DROP_BENCH);
+
+                // 1. 单位先物理上场 (确保战吼如 ALL_ALLIES 能 Buff 到自己，或者系统能扫描到自己)
+                if (owner === 'player') tempPlayerBench.push(card);
+                else tempEnemyBench.push(card);
+
+                // 2. 扫描并触发入场特效 (ON_PLAY)
+                if (card.effects && card.effects.length > 0) {
+                    card.effects.forEach(effId => {
+                        const def = EFFECT_DB[effId];
+                        if (def && def.timing.includes('ON_PLAY')) {
+                            const ctx: EffectContext = {
+                                game: tempGame,
+                                playerBench: tempPlayerBench,
+                                enemyBench: tempEnemyBench,
+                                playerHand: stateRef.current.playerHand,
+                                enemyHand: stateRef.current.enemyHand,
+                                playerDeck: stateRef.current.playerDeck, // [新增] 把我方牌库喂进去！
+                                enemyDeck: stateRef.current.enemyDeck,   // [新增] 把敌方牌库喂进去！
+                                combatField: tempCombatField, // [核心修正] 这里也要改为用 tempCombatField，确保连环战吼数据一致
+                                owner: owner,
+                                sourceCard: card // [关键] 把登场单位作为源卡牌传进去，供复印机或条件扫描器识别
+                            };
+
+
+                           const res = processEffect(effId, targets, ctx);
+
+                            // 接收执行战吼后的新鲜快照
+                            tempGame = res.game;
+                            tempPlayerBench = res.playerBench;
+                            tempEnemyBench = res.enemyBench;
+
+                            // [重要修复] 如果战吼将衍生物空降到了交战区，必须将其同步到快照中，否则空降会彻底失效！
+                            if (res.combatField) tempCombatField = res.combatField;
+
+                            // [新增] 接收被处理器修改过的牌库，并通过外部的 setState 直接写回 React
+                            if (res.playerDeck && owner === 'player') setPlayerDeck(res.playerDeck);
+                            if (res.enemyDeck && owner === 'enemy') setEnemyDeckState(res.enemyDeck);
+                        }
+                    });
+                }
+
+                // 3. 统一将上场与战吼的结果拍板，下发给 React 渲染层
+                setPlayerBench(tempPlayerBench);
+                setEnemyBench(tempEnemyBench);
+                setCombatField(tempCombatField); // [重要修复] 将交战区快照一并提交给底层！
+                setGame({
+                    ...tempGame,
                     phase: 'main',
                     turnOwner: owner === 'player' ? 'enemy' : 'player',
                     consecutivePasses: 0,
                     lastActionTimestamp: Date.now()
-                }));
+                });
             } else {
-                // 法术：进入结算流程 (finalizeSpell 会负责扣费)
-                finalizeSpell(card, owner, targets);
+                // 法术：进入提交流程 (commitSpell 会处理 UI清理、扣费与入栈分流)
+                commitSpell(card, owner, targets, originalPhase); // [关键修复] 把时空锚点传给引擎！
             }
         }, 600);
     };
 
-    // 新增：处理玩家的抉择 (Left=小技能, Right=大招)
-    const resolveChoice = (choice: 'left' | 'right') => {
+    // [新增] 垃圾回收站下放：取消抉择
+    const cancelChoice = () => {
+        const currentActive = stateRef.current.game.activeCard;
+        if (currentActive) {
+            // [基因溯源] 检查是否有 parentCard。如果有，退回母体(0费英雄法术)；否则退回自己。
+            const cardToReturn = currentActive.parentCard || currentActive;
+            setPlayerHand(prev => [...prev, cardToReturn]);
+        }
+        setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
+    };
+
+    // [重构] 处理玩家的抉择 (彻底基于 Key 的数据驱动)
+    const resolveChoice = async (chosenCardKey: string) => {
+        const originalPhase = stateRef.current.game.phase; // [新增] 记录命运抉择前的真实阶段
         const originalCard = game.activeCard;
-        // 防御性检查
         if (!originalCard || !game.spellCasting || game.spellCasting.step !== 'choose_mode') return;
-        const heroData = playerBench.find(c => c.key === originalCard.associatedChampionKey);
-        if (heroData) {
-            eventBus.emit(GameEvents.SPELL_CHOICE, {
-                hero: heroData,
-                choice: choice === 'left' ? 'small' : 'ultimate'
-            });
+
+        // 1. 根据传入的 Key 直接创建真正的子法术实体，彻底剥离原有的 if-else 硬编码
+        const transformed = createFullCard(chosenCardKey);
+
+        // [修改 2：DNA 注入] 将暂存的英雄法术作为母体基因，封入子法术体内
+        transformed.parentCard = originalCard;
+
+        // [修改 2：验资扣款] 手动扣除所选子法术的费用
+        const { newMana, newSpellMana } = calculateNewMana(transformed.cost, game.playerMana, game.playerSpellMana, false);
+        setGame(prev => ({ ...prev, playerMana: newMana, playerSpellMana: newSpellMana }));
+
+        // 2. [视觉连招核心] 取消抉择界面，将新法术挂载至中心，开启子弹时间！
+        setGame(prev => ({
+            ...prev,
+            spellCasting: null,       // 销毁原有的英雄法术抉择容器
+            pendingSpell: null,
+            activeCard: transformed,  // 将新生成的子法术推向屏幕正中，触发 Big Card 动画
+            phase: 'animating'        // 挂起游戏主阶段，防止玩家点击其他东西打断施法
+        }));
+
+        // 3. [子弹时间] 强制等待 800ms，让 UI 部门把“法术华丽变身”演完！
+        await wait(800);
+
+        // 4. [动态目标嗅探] 彻底告别查不到和硬编码！
+        // [修复] 必须从 transformed.effects[0] 中提取真实的 effectId 来查表，绝不能用卡牌名查！
+        const effectId = transformed.effects && transformed.effects.length > 0 ? transformed.effects[0] : null;
+        const effectDef = effectId ? EFFECT_DB[effectId] : null;
+        // [核心修复] 同样改为通过 count > 0 来准确过滤掉 ALL_ALLIES 等不需要瞄准的自动目标
+        const needsTargets = effectDef && effectDef.targetRequirements && effectDef.targetRequirements.some(req => req.count > 0);
+
+        if (needsTargets) {
+            // [智能解析] 根据注册表定义，自动推导该法术到底需要点自己人、点敌人还是点全体
+            const reqType = effectDef.targetRequirements[0].type;
+            let step: 'select_ally' | 'select_enemy' | 'select_any' = 'select_any';
+            if (reqType.includes('ALLY')) step = 'select_ally';
+            else if (reqType.includes('ENEMY')) step = 'select_enemy';
+
+            setGame(prev => ({
+                ...prev,
+                phase: originalPhase === 'animating' ? 'main' : originalPhase, // [关键修复] 恢复原本的阶段
+                spellCasting: {
+                    cardId: transformed.id,
+                    step: step, // 将推导出的精准步骤告诉前台
+                    targets: [],
+                    allyId: undefined
+                }
+            }));
+            setMessage(`请选择 ${transformed.name} 的施放目标`);
+        } else {
+            // 如果是大招（或者不需要指定目标的AOE），动画播完直接拍到场上！
+            commitSpell(transformed, 'player', [], originalPhase); // [关键修复] 把时空锚点传给引擎
         }
+    };
 
-        const champKey = originalCard.associatedChampionKey;
-        let targetKey = '';
+    // [新增修改 4：撤回逻辑] 允许从法术堆叠中撤销未结算的法术，并基于 DNA 退还费用与还原母体
+    const withdrawSpellFromStack = (cardId: string) => {
+        const stackItem = stateRef.current.game.spellStack.find(s => s.card.id === cardId);
+        if (!stackItem || stackItem.owner !== 'player') return;
 
-        // 根据选择决定变成哪张卡
-        if (champKey === 'lyfe') {
-            targetKey = choice === 'left' ? 'lyfe_rush' : 'lyfe_ultimate';
-        } else if (champKey === 'fenny') {
-            targetKey = choice === 'left' ? 'fenny_strike' : 'fenny_ultimate';
-        }
+        // 1. 从堆叠中拔除
+        setGame(prev => ({
+            ...prev,
+            spellStack: prev.spellStack.filter(s => s.card.id !== cardId)
+        }));
 
-        // 1. 退出抉择显示状态
-        setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
+        // 2. 基因溯源与手牌返还
+        const cardToReturn = stackItem.card.parentCard || stackItem.card;
+        setPlayerHand(prev => [...prev, cardToReturn]);
 
-        // 2. 创建新卡并打出
-        const transformed = createFullCard(targetKey);
-        // 重要：使用原始卡牌的 ID，这样 playCard 里的 filter 才能正确移除手牌里的旧卡
-        playCard({ ...transformed, id: originalCard.id }, 'player');
+        // 3. 费用全额退款
+        const costToRefund = stackItem.card.cost;
+        setGame(prev => {
+            let newMana = prev.playerMana + costToRefund;
+            let newSpellMana = prev.playerSpellMana;
+            if (newMana > prev.playerMaxMana) {
+                newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
+                newMana = prev.playerMaxMana;
+            }
+            return { ...prev, playerMana: newMana, playerSpellMana: newSpellMana };
+        });
+        setMessage("法术已撤回");
+    };
+
+    // [新增] 预提交确认：将悬浮在缓冲站的法术真正推入堆叠区，并交出回合控制权
+    const confirmPendingSpell = () => {
+        setGame(prev => {
+            if (!prev.pendingSpell) return prev;
+            return {
+                ...prev,
+                spellStack: [prev.pendingSpell, ...prev.spellStack],
+                pendingSpell: null,
+                turnOwner: 'enemy',
+                consecutivePasses: 0,
+                lastActionTimestamp: Date.now()
+            };
+        });
+        setMessage("法术入栈，等待对方响应");
+    };
+
+    // [新增] 预提交撤销：点击悬浮法术退回手牌并全额退费
+    const cancelPendingSpell = () => {
+        const pending = stateRef.current.game.pendingSpell;
+        if (!pending || pending.owner !== 'player') return;
+
+        // 1. 清除挂起状态
+        setGame(prev => ({ ...prev, pendingSpell: null }));
+
+        // 2. 基因溯源与手牌返还
+        const cardToReturn = pending.card.parentCard || pending.card;
+        setPlayerHand(prev => [...prev, cardToReturn]);
+
+        // 3. 费用全额退款
+        const costToRefund = pending.card.cost;
+        setGame(prev => {
+            let newMana = prev.playerMana + costToRefund;
+            let newSpellMana = prev.playerSpellMana;
+            if (newMana > prev.playerMaxMana) {
+                newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
+                newMana = prev.playerMaxMana;
+            }
+            return {
+                ...prev,
+                playerMana: newMana,
+                playerSpellMana: newSpellMana,
+                phase: prev.phase === 'animating' ? 'main' : prev.phase // [绝佳兜底] 彻底粉碎时空死锁
+            };
+        });
+        setMessage("法术已取消打出");
     };
 
     const resolveStack = async () => {
+      const originalPhase = stateRefs.current.game.phase;
       setGame(prev => ({ ...prev, phase: 'animating' }));
       const stack = [...stateRefs.current.game.spellStack];
       for (const spell of stack) {
@@ -939,12 +1577,30 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
              game: stateRefs.current.game, setGame,
              playerBench: stateRefs.current.playerBench, setPlayerBench,
              enemyBench: stateRefs.current.enemyBench, setEnemyBench,
+             combatField: stateRefs.current.combatField, setCombatField,
              playerHand: stateRefs.current.playerHand, setPlayerHand,
              triggerShake, setMessage
           });
           setGame(prev => ({ ...prev, spellStack: prev.spellStack.filter(s => s.card.id !== spell.card.id) }));
+
+          // [核心修复：打破时空悖论]
+          // 必须等待 React 异步渲染周期结束，确保 stateRef 刷新！
+          // 否则 flushMicroQueue 会读取并覆写旧快照，导致刚刚撤回的卡牌蒸发！
+          await wait(50);
+
+          // 👇 [新增] 每结算完一个法术，都主动检查一次有没有触发旁观者的被动！
+          const isQueueProcessed = flushMicroQueue();
+          if (isQueueProcessed) await wait(50);
+
+          // 👇 [新增] 遇到升级就刹车挂起，播完演出再结算法术堆叠中的下一张牌！
+          while (
+              stateRef.current.game.levelUpCard !== null ||
+              (stateRef.current.game.pendingLevelUps && stateRef.current.game.pendingLevelUps.length > 0)
+          ) {
+              await wait(200);
+          }
       }
-      setGame(prev => ({ ...prev, phase: 'main', spellStack: [], consecutivePasses: 0 }));
+      setGame(prev => ({ ...prev, phase: originalPhase === 'react_to_block' ? 'react_to_block' : 'main', spellStack: [], consecutivePasses: 0 }));
       setMessage("法术结算完毕");
     };
 
@@ -954,7 +1610,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
              resolveStack();
              return;
         }
-        if (game.consecutivePasses >= 1) startRound();
+        // [核心修复 3] 判断连续让过时所处的阶段
+        if (game.consecutivePasses >= 1) {
+            if (game.phase === 'react_to_block') {
+                // 如果在格挡响应阶段双方连续让过，说明法术交锋彻底结束，进入真正的物理战斗碰撞！
+                resolveCombatAnimation();
+            } else {
+                // [核心修复] 如果在常规主阶段双方连续让过，不直接进入下回合，而是先执行回合结束清算序列（幻象清理等）
+                executeRoundEndSequence();
+            }
+        }
         else setGame(prev => ({ ...prev, turnOwner: prev.turnOwner === 'player' ? 'enemy' : 'player', consecutivePasses: prev.consecutivePasses + 1, lastActionTimestamp: Date.now() }));
     };
 
@@ -965,10 +1630,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 eventBus.emit(GameEvents.HERO_FIRST_ACTION, card);
                 heroActionHistory.current.add(card.id);
             }
+            eventBus.emit(GameEvents.SFX_BLOCK);
 
             setPlayerBench(prev => prev.filter(c => c.id !== card.id));
             setCombatField(prev => [...prev, { attacker: card, blocker: null, owner: 'player' }]);
         } else {
+            eventBus.emit(GameEvents.SFX_RECALL_BLOCK);
             setCombatField(prev => prev.filter(c => c.attacker.id !== card.id));
             setPlayerBench(prev => [...prev, card]);
         }
@@ -991,6 +1658,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 setMessage("只有【隐秘】单位能阻挡【隐秘】单位！");
                 return;
             }
+            eventBus.emit(GameEvents.SFX_BLOCK);
 
             setPlayerBench(prev => prev.filter(c => c.id !== blocker.id));
             setCombatField(prev => {
@@ -1010,6 +1678,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         if (combat && combat.blocker) {
             const blockerCard = combat.blocker;
 
+            eventBus.emit(GameEvents.SFX_RECALL_BLOCK);
             // 1. 移除战场上的阻挡者 (保持不变)
             setCombatField(prev => {
                 const n = [...prev];
@@ -1047,6 +1716,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
         // 如果该位置已经有阻挡者了，先把它踢回备战席
         const oldBlocker = combatField[combatIndex].blocker;
+
+        eventBus.emit(GameEvents.SFX_BLOCK);
 
         setEnemyBench(prev => {
             const newBench = prev.filter(c => c.id !== enemyId);
@@ -1086,6 +1757,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         let newDeck = [...playerDeck, ...cardsToReplace];
         newDeck = newDeck.sort(() => Math.random() - 0.5);
 
+        // [新增] 触发洗牌音效
+        eventBus.emit(GameEvents.SFX_SHUFFLE);
+
         // 4. 从新牌库中抽取等量的新卡
         const numToDraw = indicesToReplace.length;
         const newCards = newDeck.slice(0, numToDraw);
@@ -1115,6 +1789,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const newCards = currentDeck.splice(0, indicesToReplace.length);
             // 旧牌洗回牌库
             const newDeck = shuffleDeck([...currentDeck, ...cardsToReplace]);
+
+            // [新增] 触发洗牌音效
+            eventBus.emit(GameEvents.SFX_SHUFFLE);
 
             // 替换手牌中的对应位置
             let newCardIdx = 0;
@@ -1165,6 +1842,30 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         setPlayerHand([]);
     };
 
+    // ==========================================
+    // [新增] 统一升级系统 - 队列操作方法
+    // ==========================================
+    const queueLevelUp = (card: CardData) => {
+        // [新增] 阵亡隔离锁：死者严禁入队升级！
+        // 即使英雄达成了条件，只要此时它的状态是死亡或消散，直接没收排队券
+        if (card.animState === 'dying' || card.animState === 'ephemeral_dying') {
+            console.log(`[LevelUp System] 拒绝入队：英雄 ${card.name} 已阵亡。`);
+            return;
+        }
+
+        setGame(prev => ({
+            ...prev,
+            pendingLevelUps: [...prev.pendingLevelUps, card]
+        }));
+    };
+
+    const popLevelUp = () => {
+        setGame(prev => ({
+            ...prev,
+            pendingLevelUps: prev.pendingLevelUps.slice(1) // 移除队列第 0 位
+        }));
+    };
+
     return {
         game, setGame,
         playerHand, setPlayerHand,
@@ -1174,18 +1875,25 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         combatField, setCombatField,
         winningHeroKeys,
         message, setMessage,
+        playerDeck,
+        enemyDeckState, // ✅ 敌方牌库的正确变量名
+        playerInitialDeckInfo,
+        enemyInitialDeckInfo,
         actions: {
             startRound,
             resetGame,
             initiateAttack,
             commitAttack,
+            confirmBlock, // [核心修复 4] 暴露给 UI 层的按钮绑定！
             passTurn,
             playCard,
             resolveCombatAnimation,
             drawCards,
             startSpellCasting,
             updateSpellCasting,
-            finalizeSpell,
+            finalizeSpell: commitSpell, // 兼容 UI 层的旧版接口调用
+            commitSpell,
+            withdrawSpellFromStack,     // [新增] 暴露给前台用于点击撤回栈内法术
             toggleAttacker,
             selectBlocker,
             assignBlocker,
@@ -1193,11 +1901,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             resolveStack,
             closeLevelUp: () => setGame(prev => ({...prev, levelUpCard: null})),
             resolveChoice,
+            cancelChoice,      // [新增] 将取消抉择的权利正式赋予引擎内部动作
             selectChallenger, // [关键] 导出新增的函数
             challengeEnemy,    // [关键] 导出新增的函数
             replaceOpeningHand,
             performMulligan, // [新增]
-            requeueHandToDeck
+            confirmPendingSpell,
+            cancelPendingSpell,
+            requeueHandToDeck,
+            queueLevelUp,    // [新增] 暴露给战斗推演或事件监听，用于让英雄拿号排队
+            popLevelUp,       // [新增] 暴露给 UI 层，用于在视频播放完毕后请英雄离场
         }
     };
 };

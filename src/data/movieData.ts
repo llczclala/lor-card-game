@@ -10,6 +10,9 @@ import lyfe_win from '../movie/win/里芙_win.mp4';
 import fenny_levelup from '../movie/level up/芬妮_level up.mp4';
 import fenny_win from '../movie/win/芬妮_win.mp4';
 
+import pupu_specular_soul_levelup from '../movie/level up/卜卜灵鉴_level up.mp4';
+import pupu_specular_soul_win from '../movie/win/卜卜灵鉴_win.mp4';
+
 // 定义视频类型
 export type MovieType = 'title' | 'levelup' | 'win';
 
@@ -23,13 +26,15 @@ export const MOVIE_DB = {
     // 升级动画映射 (Key: 英雄ID -> 对应 cards.ts 中的 key)
     levelup: {
         lyfe: lyfe_levelup,
-        fenny: fenny_levelup // [修正] 注册芬妮升级视频
+        fenny: fenny_levelup, // [修正] 注册芬妮升级视频
+        pupu_specular_soul: pupu_specular_soul_levelup
     } as Record<string, string>,
 
     // 胜利动画映射 (Key: 英雄ID -> 视频数组)
     win: {
         lyfe: [lyfe_win],
-        fenny: [fenny_win]   // [修正] 注册芬妮胜利视频
+        fenny: [fenny_win],   // [修正] 注册芬妮胜利视频
+        pupu_specular_soul: [pupu_specular_soul_win]
     } as Record<string, string[]>
 };
 

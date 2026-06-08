@@ -1,4 +1,4 @@
-export type Region = 'Lyfe' | 'Fenny' | 'Logistics' | 'TEST';
+export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'TEST';
 export type CardType = 'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow';
 // 完整的 36 个关键词定义
 export type Keyword =
@@ -26,17 +26,28 @@ export interface CardData {
   imageUrl: string;
   level2ImageUrl?: string;
   type: CardType;
+  isCollectible?: boolean; // [新增] 构筑白名单标识。若为 false 则普通玩家无法将其加入卡组（不填默认为 true）
 
   // 英雄机制字段
   associatedSpellKey?: string; // 英雄对应的技能卡Key
   associatedChampionKey?: string; // 技能卡对应的英雄Key
   isLevel2Choice?: boolean; // 是否需要升级后二选一
+  choices?: string[]; // [新增] 命运抉择衍生卡的 Key 列表（数据驱动机制的核心引信）
+  levelUpCondition?: string; // [新增] 英雄升级条件纯文本描述
+  levelUpTarget?: number;    // [新增] 英雄升级进度的目标上限值
 
   // 运行时状态
   strikeCount: number;
-  animState?: 'idle' | 'attacking' | 'hit' | 'dying' | 'transform' | 'regenerating';
+  roundStrikes?: number; // [新增] 本回合打击次数记账本，用于法术动态增伤判定
+  customProgress?: number; // [新增] 私人记账本：专门用于记录卡牌在场上“目睹”等局部任务的进度
+  // [新增] 'ephemeral_dying' 用于区分瞬息自然消散与常规受击阵亡
+  // [修改] 增加 'delayed_attacking' 以支持防守方的滞后反击动画
+  animState?: 'idle' | 'attacking' | 'delayed_attacking' | 'hit' | 'dying' | 'ephemeral_dying' | 'transform' | 'regenerating' | 'buff';
   damageTaken?: number;
   buffs?: { power: number, health: number };
+  roundBuffs?: { power: number, health: number }; // [新增] 临时账本：专门记录单回合(ROUND)增益，用于回合末秋后算账
+  roundKeywords?: Keyword[]; // [核心新增] 词条临时账本：专门记录单回合获得的词条，回合末予以回收
+  parentCard?: CardData; // [新增] 法术血统(DNA)：记录衍生该卡牌的“母体”实体（用于撤回法术时完美还原手牌与费用）
 }
 
 export type CombatFieldItem = {
@@ -50,6 +61,20 @@ export interface SpellStackItem {
   card: CardData;
   owner: 'player' | 'enemy';
   targets: any[];
+}
+
+// ==========================================
+// [新增] 微队列调度系统相关类型
+// ==========================================
+export type PendingActionType =
+  | 'NEXUS_STRIKED'
+  | 'SPELL_PLAYED'   // 为未来的“法术大师”预留
+  | 'UNIT_HEALED';   // 为未来的治疗系英雄预留
+
+export interface PendingAction {
+    type: PendingActionType;
+    // 携带更丰富的包裹，方便引擎判断是否需要推进任务
+    payload?: any;
 }
 
 export type AttackTokenType = 'normal' | 'rally' | null;
@@ -79,7 +104,8 @@ export interface GameState {
     player: AttackTokenType;
     enemy: AttackTokenType;
   };
-  phase: 'main' | 'attack_declare' | 'block_declare' | 'resolution' | 'animating' | 'mulligan';
+  // [核心修复] 新增 'react_to_block' 阶段，作为格挡后、伤害结算前的法术博弈缓冲区
+  phase: 'main' | 'attack_declare' | 'block_declare' | 'react_to_block' | 'resolution' | 'animating' | 'mulligan';
   turnOwner: 'player' | 'enemy';
   consecutivePasses: number;
 
@@ -88,7 +114,9 @@ export interface GameState {
     step: 'select_ally' | 'select_enemy' | 'select_any' | 'choose_mode';
     allyId?: string;
     targets: any[];
+    isHeroLeveled?: boolean; // [新增] 告知界面：当前施放英雄法术的英雄是否已升级
   };
+  pendingSpell: SpellStackItem | null; // [新增] 预提交缓冲站：存放已打出但未最终确认的法术
   spellStack: SpellStackItem[];
   gameResult: 'victory' | 'defeat' | null;
 
@@ -96,6 +124,7 @@ export interface GameState {
   nexusDamage?: { target: 'player' | 'enemy', amount: number };
 
   leveledChampions: string[];
+  pendingLevelUps: CardData[]; // [新增] 待升级英雄候场区队列
   levelUpCard: CardData | null;
   lastActionTimestamp: number;
   activeCard: CardData | null;
@@ -170,6 +199,8 @@ export interface SavedDeck {
   cards: Record<string, number>; // 卡牌构成 { 'lyfe': 3 ... }
   createdAt: number;
   updatedAt: number;
+  cardBackIndex?: number;
+  boardIndex?: number;
 }
 
 // 单个形态的坐标参数

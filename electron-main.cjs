@@ -31,7 +31,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
 
   // [调试修改] 强制自动打开控制台，一定要加这一行！
-  mainWindow.webContents.openDevTools();
+//   mainWindow.webContents.openDevTools();
 
   // 当窗口关闭时
   mainWindow.on('closed', () => {

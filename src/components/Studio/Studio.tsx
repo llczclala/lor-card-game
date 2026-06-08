@@ -5,15 +5,6 @@ import { eventBus, GameEvents } from '../../utils/eventBus';
 import { ArtStudio } from './ArtStudio';
 import { SandboxSession } from './SandboxSession';
 
-// 临时占位符，防止当前阶段报错
-const PlaceholderArtStudio = () => (
-    <div className="flex-1 flex flex-col items-center justify-center bg-[#0f172a] border-l border-white/10">
-        <ImageIcon size={64} className="text-gray-600 mb-4 animate-pulse" />
-        <div className="text-gray-500 text-3xl font-black tracking-widest italic">ART STUDIO LOADING...</div>
-        <div className="text-gray-600 text-sm font-mono mt-2">Waiting for the final module...</div>
-    </div>
-);
-
 interface StudioProps {
     onClose: () => void;
 }

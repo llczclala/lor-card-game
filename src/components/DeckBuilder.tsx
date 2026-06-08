@@ -1,13 +1,14 @@
 import React, { useState, useMemo,useEffect} from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ShoppingCart, Eraser, AlertTriangle, Filter, X, User } from 'lucide-react';
+import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ShoppingCart, Eraser, AlertTriangle, Filter, X, User, LayoutGrid, GalleryHorizontalEnd } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
-import { HERO_IMAGES } from '../data/imageData';
+import { HERO_IMAGES, PERSONALIZATION_ASSETS } from '../data/imageData'; // [新增] 引入个性化资产
 import { Card } from './Card';
-import type { CardData } from '../types';
+import type { CardData, SavedDeck } from '../types';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { FullArtOverlay } from './Overlays';
 import { PersonalizationDrawer } from './PersonalizationDrawer';
+import { StyleSelector } from './StyleSelector'; // [核心新增] 直接复用原生的全屏选择器
 import type { useUserSystem } from '../hooks/useUserSystem';
 import { ArrowLeft } from 'lucide-react'; // [新增]
 
@@ -33,38 +34,114 @@ const toFullCardData = (staticData: any): CardData => ({
     buffs: { power: 0, health: 0 }
 });
 
-// --- [新增] 封面计算工具函数 ---
-const getDeckCover = (cards: Record<string, number>): string => {
+// --- [重构] 封面计算工具函数 (获取优先级最高的3张卡) ---
+const getDeckCovers = (cards: Record<string, number>): string[] => {
     const cardKeys = Object.keys(cards);
-    if (cardKeys.length === 0) return HERO_IMAGES.lyfe.base; // 空卡组默认图
+    if (cardKeys.length === 0) return [HERO_IMAGES.lyfe.base, HERO_IMAGES.fenny.base, HERO_IMAGES.pupu_specular_soul.base]; // 兜底三巨头
 
-    // 排序逻辑: 英雄 > 单位 > 数量多 > 数量少
     const sorted = cardKeys.sort((a, b) => {
         const cardA = CARD_DB[a];
         const cardB = CARD_DB[b];
         if (!cardA || !cardB) return 0;
-
-        // 1. 英雄优先
-        if (cardA.isChampion !== cardB.isChampion) {
-            return cardA.isChampion ? -1 : 1;
-        }
-        // 2. 数量多的优先
-        const countA = cards[a];
-        const countB = cards[b];
-        if (countA !== countB) {
-            return countB - countA;
-        }
-        // 3. 单位优先于法术
+        if (cardA.isChampion !== cardB.isChampion) return cardA.isChampion ? -1 : 1;
+        if (cards[a] !== cards[b]) return cards[b] - cards[a];
         const isUnitA = cardA.type.includes('unit');
         const isUnitB = cardB.type.includes('unit');
-        if (isUnitA !== isUnitB) {
-            return isUnitA ? -1 : 1;
-        }
-        return 0; // 保持默认顺序
+        if (isUnitA !== isUnitB) return isUnitA ? -1 : 1;
+        return 0;
     });
 
-    // 返回排在第一位的图片，如果是法术或者没图，兜底回默认
-    return CARD_DB[sorted[0]]?.imageUrl || HERO_IMAGES?.lyfe?.base || "";
+    const covers = sorted.slice(0, 3).map(k => CARD_DB[k]?.imageUrl || HERO_IMAGES.lyfe.base);
+    while (covers.length < 3) covers.push(HERO_IMAGES.lyfe.base); // 数量不足时兜底补齐
+    return covers;
+};
+
+// =========================================================================
+// [高级配置项暴露] 痛点 2 & 4：你可以在这里随意微调卡组图标在大厅中的全局高宽及卡牌疏密尺寸
+// =========================================================================
+const DIORAMA_SIZE = {
+    containerWidth: 'w-72',    // 整体容器宽度 (从 w-64 放大到 w-72)
+    containerHeight: 'h-96',   // 整体容器高度 (从 h-80 放大到 h-96)
+    cardWidth: 'w-36',         // 正面/卡背卡牌的基础宽度 (放大至 w-36)
+    cardHeight: 'h-52',        // 正面/卡背卡牌的基础高度 (放大至 w-52)
+    boardWidth: 'w-[270px]',   // 背景棋盘的平面横向铺开宽度
+    boardHeight: 'h-[160px]',  // 背景棋盘的平面横向铺开高度
+};
+
+// --- [重构] 商业级微缩景观牌组组件 (2.5D 平面写实拼贴) ---
+const DeckDiorama = ({ deck, covers, cardBackImg, boardImg, isCenter = false, isHub = false, isGridView = false }: any) => {
+    // 痛点 4：书橱模式下，所有牌组直接默认呈现“全亮、完全激活”的放大高精样式
+    const isFullyActive = isGridView || isCenter || isHub;
+    const scaleAndFocus = isFullyActive
+        ? 'scale-100 opacity-100 z-40 filter drop-shadow-[0_15px_35px_rgba(0,0,0,0.7)]'
+        : 'scale-75 opacity-25 pointer-events-none grayscale-[20%]';
+
+    if (deck.isNew) {
+        return (
+            <div className={`relative ${DIORAMA_SIZE.containerWidth} ${DIORAMA_SIZE.containerHeight} flex flex-col items-center justify-center transition-all duration-500 ${scaleAndFocus}`}>
+                <div className="absolute inset-0 rounded-2xl border-4 border-dashed border-gray-600/50 bg-slate-800/30 flex flex-col items-center justify-center transition-all hover:border-blue-400 hover:bg-blue-900/20">
+                    <Plus size={48} className="text-gray-600 mb-4" />
+                    <span className="font-bold tracking-widest text-gray-500">NEW DECK</span>
+                </div>
+                {isFullyActive && <div className="absolute inset-0 rounded-2xl bg-yellow-400/0 hover:bg-yellow-400/10 mix-blend-overlay transition-colors pointer-events-auto cursor-pointer z-50"></div>}
+            </div>
+        );
+    }
+
+    const cardCount = Object.values(deck.cards).reduce((a: any, b: any) => a + b, 0);
+
+    return (
+        <div className={`relative ${DIORAMA_SIZE.containerWidth} ${DIORAMA_SIZE.containerHeight} transition-all duration-500 ${scaleAndFocus}`}>
+            {/* 1. 最底层大棋盘背景 (痛点 3：平铺展开于正背面，展现完整棋盘原画) */}
+            <div className={`${DIORAMA_SIZE.boardWidth} ${DIORAMA_SIZE.boardHeight} absolute top-4 left-1/2 -translate-x-1/2 rounded-xl overflow-hidden border border-slate-700/80 shadow-2xl z-0`}>
+                <img src={boardImg} className="w-full h-full object-cover opacity-80" alt="Board" />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
+            </div>
+
+            {/* 2. 左侧扇形核心三卡 (痛点 3：重排 Z 轴层级，封面 1 在最顶层，2 其次，3 在最底) */}
+            <div className="absolute top-12 left-6 z-20 pointer-events-none">
+                {covers.map((url: string, i: number) => {
+                    const rotations = [-16, 0, 16];
+                    const translatesX = [0, 24, 48];
+                    const translatesY = [12, 0, 12];
+                    // i=0(第一张英雄) 拿到最高 z-index(25)，i=2 拿到最低 z-index(21)
+                    const zIndexes = [25, 23, 21];
+                    return (
+                        <div
+                            key={i}
+                            className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 border-slate-950 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-500`}
+                            style={{ transform: `translateX(${translatesX[i]}px) translateY(${translatesY[i]}px) rotate(${rotations[i]}deg)`, zIndex: zIndexes[i] }}
+                        >
+                            <img src={url} className="w-full h-full object-cover" alt="Hero Front" />
+                        </div>
+                    )
+                })}
+            </div>
+
+            {/* 3. 右下角厚度卡背堆叠 (痛点 3：卡背尺寸与正面完全 1:1 对齐，保持平行倾斜切入) */}
+            <div className={`absolute bottom-6 right-6 ${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} z-30 pointer-events-none`} style={{ transform: 'rotate(10deg) translate(20px, 12px)' }}>
+                {/* 模拟底部的卡牌实体厚度层 */}
+                {[2, 1, 0].map(i => (
+                    <div key={i} className="absolute inset-0 bg-slate-950 rounded-xl border border-slate-900 shadow-md" style={{ transform: `translate(-${i * 3}px, -${i * 3}px)`, zIndex: i === 0 ? 10 : 5 - i }}></div>
+                ))}
+                {/* 顶层主卡背 */}
+                <div className="absolute inset-0 rounded-xl border-2 border-slate-600 shadow-2xl overflow-hidden z-10">
+                    <img src={cardBackImg} className="w-full h-full object-cover" alt="Card Back" />
+                </div>
+            </div>
+
+            {/* 4. 半透明黑色信息铭牌 */}
+            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-slate-950/95 border border-slate-800/80 px-6 py-2 rounded-full z-40 flex flex-col items-center shadow-2xl backdrop-blur-md whitespace-nowrap min-w-[160px]">
+                <span className="text-white font-black truncate w-full text-center text-sm tracking-wide">{deck.name}</span>
+                <span className={`text-[10px] font-mono font-bold tracking-widest ${cardCount === 40 ? 'text-emerald-400' : 'text-rose-500'}`}>{cardCount} / 40</span>
+            </div>
+
+            {/* 5. 金色悬停高光遮罩 (痛点 3：彻底移除死板的正方形描边包装，利用全透层赋予自由卡组随形高光) */}
+            {isFullyActive && (
+                <div className="absolute inset-x-2 inset-y-4 rounded-3xl bg-yellow-400/0 hover:bg-yellow-400/10 mix-blend-overlay transition-colors pointer-events-auto cursor-pointer z-50"></div>
+            )}
+        </div>
+    );
 };
 
 // [新增] 智能命名工具函数
@@ -113,6 +190,31 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     };
     const hoverTimerRef = React.useRef<number | null>(null);
     const [viewMode, setViewMode] = useState<'SELECTION' | 'EDITOR'>('SELECTION');
+
+    // [核心新增] 大厅 2.0 状态机
+    const [viewStyle, setViewStyle] = useState<'GRID' | 'CAROUSEL'>('CAROUSEL');
+    // [核心修复] 痛点 5：若玩家已有卡组，默认将镜头聚光灯打在第一个实体卡组（索引 1），否则停在新建按钮上
+    const [carouselIndex, setCarouselIndex] = useState(userSystem.decks.length > 0 ? 1 : 0);
+    const [hubDeckId, setHubDeckId] = useState<string | null>(null); // 备战枢纽被打开的卡组
+    // [核心修复] 彻底废弃 subOverlay，全面对齐 PersonalizationDrawer 的原生状态机制
+    const [selectorType, setSelectorType] = useState<'cardBack' | 'desk' | null>(null);
+    const [hubHoverItem, setHubHoverItem] = useState<'cardBack' | 'desk' | null>(null); // 负责还原右侧面板的高级悬停预览图
+
+    // 组合全体卡组 (包含新建入口)
+    const allCarouselDecks = useMemo(() => [{ id: 'NEW_DECK', isNew: true }, ...userSystem.decks], [userSystem.decks]);
+
+    // 劫持滚轮事件实现无限循环
+    const handleWheelScroll = (e: React.WheelEvent) => {
+        if (viewStyle !== 'CAROUSEL' || hubDeckId) return; // Grid模式或枢纽打开时不劫持
+        const total = allCarouselDecks.length;
+        if (total === 0) return;
+
+        if (e.deltaY > 0) {
+            setCarouselIndex(prev => (prev + 1) % total);
+        } else if (e.deltaY < 0) {
+            setCarouselIndex(prev => (prev - 1 + total) % total);
+        }
+    };
 
     // [新增] 进入特定卡组的编辑模式
     const handleEnterDeck = (deckId: string) => {
@@ -196,6 +298,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         }, 150);
     };
 
+    // [新增] 彻底离开列表区域后的强制卸载保险 (防卡死 Bug)
+    const handleListContainerLeave = () => {
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = window.setTimeout(() => {
+            setHoveredCardKey(null);
+        }, 1000); // 鼠标彻底离开列表 1 秒后，强制清理悬浮图
+    };
+
     const clearDeck = () => {
         if (Object.keys(localDeck).length === 0) return;
 
@@ -259,8 +369,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         const card = CARD_DB[key];
         const currentCount = localDeck[key] || 0;
         const ownedCount = getOwnedCount(key);
-        if (currentCount >= 3) return;
-        if (currentCount >= ownedCount) return;
+
+        // [管理员特权] 动态识别身份，解除单卡3张与持有数量拦截
+        const isAdmin = userSystem.userId === 'dev_full_admin';
+        const maxLimit = isAdmin ? 40 : 3;
+
+        if (currentCount >= maxLimit) return;
+        if (!isAdmin && currentCount >= ownedCount) return;
+
         if (card.isChampion && stats.champions + 1 > 6) return;
         eventBus.emit(GameEvents.UI_CLICK);
         setLocalDeck(prev => ({ ...prev, [key]: currentCount + 1 }));
@@ -286,11 +402,13 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         const currentCount = localDeck[key] || 0;
         const ownedCount = getOwnedCount(key); // [新增]
 
-        const maxPerCard = 3; // 单卡上限
+        // [管理员特权] 动态计算加满按钮的目标数量，免除持有量和3张瓶颈
+        const isAdmin = userSystem.userId === 'dev_full_admin';
+        const maxPerCard = isAdmin ? 40 : 3; // 单卡上限
         const deckLimit = 40;
         const championLimit = 6;
 
-        let wantToAdd = Math.min(maxPerCard, ownedCount) - currentCount;
+        let wantToAdd = isAdmin ? (maxPerCard - currentCount) : (Math.min(maxPerCard, ownedCount) - currentCount);
 
         if (wantToAdd <= 0) return;
 
@@ -368,10 +486,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         const remaining = 40 - stats.total;
         if (remaining <= 0) return;
 
+        const isAdmin = userSystem.userId === 'dev_full_admin';
+
         const matchingKeys = Object.keys(CARD_DB).filter(key => {
             const card = CARD_DB[key];
+
+            // [核心新增] 构筑白名单拦截：防止自动填充把衍生卡或测试卡塞进卡组
+            if (!isAdmin && card.isCollectible === false) return false;
+
             if (card.isChampion) return false; // 自动填充依然排除英雄
-            if (getOwnedCount(key) <= 0) return false;
+            // [管理员特权] 自动填充不检查卡牌是否完全未解锁
+            if (!isAdmin && getOwnedCount(key) <= 0) return false;
 
             // [修改] 让自动填充也遵循玩家当前的高级筛选！
             if (searchTerm && !card.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
@@ -391,7 +516,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
         const candidates = matchingKeys.filter(key => {
             const currentCount = newDeck[key] || 0;
-            return currentCount < 3 && currentCount < getOwnedCount(key);
+            const maxLimit = isAdmin ? 40 : 3;
+            // [管理员特权] 扩展候选词条的填充空间至 40 张
+            return currentCount < maxLimit && (isAdmin || currentCount < getOwnedCount(key));
         });
 
         while (added < remaining && candidates.length > 0) {
@@ -418,7 +545,12 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
 
     const visibleCards = useMemo(() => {
+        const isAdmin = userSystem.userId === 'dev_full_admin'; // [新增] 识别开发者权限
+
         return Object.values(CARD_DB).filter(c => {
+            // [核心新增] 构筑白名单拦截：如果不是开发者，且该卡被标记为不可收集，则直接隐藏！
+            if (!isAdmin && c.isCollectible === false) return false;
+
             // 1. 基础搜索
             if (searchTerm && !c.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
 
@@ -438,7 +570,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
             return true;
         });
-    }, [searchTerm, category, costFilter, regionFilter, userSystem.collection]); // 依赖全套新状态
+    }, [searchTerm, category, costFilter, regionFilter, userSystem.collection, userSystem.userId]); // [修改] 补充 userId 依赖
 
     const handleStart = () => {
         if (stats.total !== 40) return;
@@ -454,135 +586,226 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         onStartGame(finalDeck);
     };
 
-    // 如果处于“选择模式”，直接渲染选择界面并返回，不执行下方的编辑器渲染
+    // 如果处于“选择模式”，渲染全新的“备战枢纽 2.0”
     if (viewMode === 'SELECTION') {
-        return (
-            <div className="w-full h-full bg-[#0f172a] text-white flex flex-col items-center relative overflow-hidden font-sans">
-                {/* 背景装饰 (保持在最底层) */}
-                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none z-0"></div>
+        const hubDeck = userSystem.decks.find((d: any) => d.id === hubDeckId);
+        const hubCardCount = hubDeck ? Object.values(hubDeck.cards).reduce((a: any, b: any) => a + b, 0) : 0;
+        const isFull = hubCardCount === 40;
 
-                {/* ================= [新增] 固定顶部的黑色头部容器 ================= */}
-                {/* 1. absolute top-0 left-0 w-full: 绝对定位占满顶部
-                    2. h-28: 设定固定高度 (与下方 grid 的 pt-28 对应)
-                    3. bg-black: 纯黑背景托底
-                    4. z-40: 确保层级高于滚动的网格内容
-                    5. flex items-center justify-center: 让标题在容器内居中
-                    6. border-b border-white/10 shadow-xl: 增加一点底部边界感和阴影，提升层次
-                */}
-                <div className="absolute top-0 left-0 w-full h-28 bg-black z-40 flex items-end pb-6 justify-center border-b border-white/10 shadow-xl">
-                    {/* 标题 (移入容器内，移除自身的 absolute 和 top-8) */}
-                    <h1 className="text-4xl font-black italic tracking-tighter drop-shadow-lg">
-                        DECK SELECTION
-                    </h1>
+        return (
+            <div className="w-full h-full bg-[#0f172a] text-white flex flex-col relative overflow-hidden font-sans">
+                {/* 1. 大厅基础视效 */}
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none z-0"></div>
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.5)_0%,rgba(15,23,42,1)_60%)] z-0 pointer-events-none"></div>
+
+                {/* 2. 顶部大厅 Header 控制栏 */}
+                <div className="absolute top-0 left-0 w-full h-28 bg-black/60 backdrop-blur-md z-40 flex items-end pb-4 justify-center border-b border-white/10 shadow-2xl">
+                    <h1 className="text-4xl font-black italic tracking-tighter drop-shadow-[0_0_20px_rgba(59,130,246,0.6)]">PREPARATION HUB</h1>
+                    <div className="absolute right-32 bottom-4 flex bg-black/80 p-1 rounded-lg border border-white/10 shadow-inner">
+                        <button onClick={() => setViewStyle('GRID')} className={`p-2 rounded transition-colors ${viewStyle === 'GRID' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><LayoutGrid size={18} /></button>
+                        <button onClick={() => setViewStyle('CAROUSEL')} className={`p-2 rounded transition-colors ${viewStyle === 'CAROUSEL' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><GalleryHorizontalEnd size={18} /></button>
+                    </div>
                 </div>
-                {/* [修改] 卡组网格容器：
-                    1. pt-28: 给顶部标题留出空间
-                    2. h-full: 撑满高度
-                    3. max-w-full px-12: 增加横向宽度利用率
-                    4. grid-cols-6: 改为 6 列
-                    5. content-start: 确保内容紧贴顶部
-                */}
-                {/* [修复] 将确认弹窗移植到选择界面，否则弹窗无法显示 */}
-                <AnimatePresence>
-                    {confirmModal && (
-                        <div
-                            className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in"
-                            onClick={() => setConfirmModal(null)}
-                        >
-                            <motion.div
-                                initial={{ scale: 0.9, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                exit={{ scale: 0.9, opacity: 0 }}
-                                className="bg-slate-900 border border-red-500/30 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center relative overflow-hidden"
-                                onClick={e => e.stopPropagation()}
-                            >
-                                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-500 to-transparent"></div>
-                                <div className="flex flex-col items-center gap-4 mb-6">
-                                    <div className="p-4 bg-red-500/10 rounded-full">
-                                        <AlertTriangle size={32} className="text-red-500" />
-                                    </div>
-                                    <h3 className="text-2xl font-black text-white tracking-widest">{confirmModal.title}</h3>
-                                    <p className="text-gray-300 whitespace-pre-line leading-relaxed">{confirmModal.message}</p>
+
+                <button onClick={handleGlobalBack} className="absolute top-8 right-8 z-50 p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group"><ArrowLeft size={24} className="text-gray-400 group-hover:text-white" /></button>
+
+                {/* 3. 核心浏览区（劫持鼠标滚轮的循环无尽舞台） */}
+                {/* 痛点 1 & 3：使用 css 批量隐藏轮播图下方原生滚条 [&::-webkit-scrollbar]:hidden */}
+                <div onWheel={handleWheelScroll} className={`flex-1 w-full pt-40 pb-20 relative z-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${viewStyle === 'GRID' ? 'overflow-y-auto px-16' : 'overflow-hidden flex items-center justify-center'}`}>
+
+                    {viewStyle === 'GRID' ? (
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-12 gap-y-28 content-start w-full max-w-[95%] mx-auto">
+                            <div className="w-full flex justify-center mt-12" onClick={handleCreateAndEdit}><DeckDiorama deck={{ isNew: true }} isGridView={true} /></div>
+                            {userSystem.decks.map((deck: any) => (
+                                <div key={deck.id} onClick={() => setHubDeckId(deck.id)} className="w-full flex justify-center mt-12 relative group/del">
+                                    <DeckDiorama deck={deck} covers={getDeckCovers(deck.cards)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isGridView={true} />
+                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id); }} className="absolute -top-6 -right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20"><Trash2 size={16} className="text-white" /></button>
                                 </div>
-                                <div className="flex gap-4 justify-center">
-                                    <button onClick={() => setConfirmModal(null)} className="flex-1 py-3 rounded-lg border border-white/10 hover:bg-white/5 text-gray-300 font-bold transition-colors">CANCEL</button>
-                                    <button onClick={confirmModal.onConfirm} className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all hover:scale-105">CONFIRM</button>
+                            ))}
+                        </div>
+                    ) : (
+                        // 轮播模式：横向无限环形滚动机制
+                        allCarouselDecks.map((deck: any, idx: number) => {
+                            const total = allCarouselDecks.length;
+                            let diff = (idx - carouselIndex) % total;
+                            if (diff > Math.floor(total / 2)) diff -= total;
+                            if (diff < -Math.floor(total / 2)) diff += total;
+
+                            if (Math.abs(diff) > 3) return null; // 剔除远处不可见项的渲染
+                            const isCenter = diff === 0;
+                            const translateX = diff * 380; // 痛点 2: 进一步扩大间距，彻底推开图标
+
+                            return (
+                                <motion.div
+                                    key={deck.id} initial={false}
+                                    animate={{ x: translateX, zIndex: isCenter ? 50 : 10 }}
+                                    transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+                                    className="absolute"
+                                    onClick={() => {
+                                        if (isCenter) { deck.isNew ? handleCreateAndEdit() : setHubDeckId(deck.id); }
+                                        else { setCarouselIndex(idx); }
+                                    }}
+                                >
+                                    <DeckDiorama deck={deck} covers={deck.isNew ? [] : getDeckCovers(deck.cards)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isCenter={isCenter} />
+                                </motion.div>
+                            );
+                        })
+                    )}
+                </div>
+
+                {/* 4. 备战枢纽核心交互大图层 */}
+                <AnimatePresence>
+                    {hubDeckId && hubDeck && (
+                        <motion.div
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            className="absolute inset-0 z-[100] bg-black/85 backdrop-blur-xl flex items-center justify-center select-none"
+                            onContextMenu={(e) => { e.preventDefault(); setHubDeckId(null); }} // [体验核心] 背景高斯模糊处右键立刻退出
+                        >
+                            {/* 关闭枢纽大按钮 */}
+                            <button onClick={() => setHubDeckId(null)} className="absolute top-8 right-8 text-gray-400 hover:text-white bg-white/5 border border-white/10 p-3 rounded-full transition-all hover:bg-red-500/80 z-50"><X size={24} /></button>
+
+                            {/* 左侧翼：卡牌列表只读预览 */}
+                            <motion.div initial={{ x: -60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-80 h-[85vh] bg-slate-900/90 border border-white/10 rounded-3xl flex flex-col mr-12 shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden" onContextMenu={(e) => e.stopPropagation()}>
+                                <div className="p-5 bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0 z-20">DECK PREVIEW</div>
+
+                                {/* 痛点 1 & 5：隐藏滚动条，并架设上下两层凸出的半透明黑影渐变层进行卡牌边缘裁剪虚化 */}
+                                <div className="flex-1 relative overflow-hidden bg-slate-950">
+                                    {/* 顶部向下凸出虚化遮罩 */}
+                                    <div className="absolute top-0 left-0 w-full h-10 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
+
+                                    <div
+                                        className="h-full overflow-y-auto px-4 py-8 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                                        onMouseLeave={handleListContainerLeave} // [新增] 彻底离开列表时触发1秒卸载保险
+                                    >
+                                        {Object.entries(hubDeck.cards).map(([key, count]: any) => {
+                                            const card = CARD_DB[key];
+                                            if (!card) return null;
+                                            return (
+                                                <div key={key} className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help" onMouseEnter={() => setHoveredCardKey(key)} onMouseLeave={() => setHoveredCardKey(null)}>
+                                                    <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
+                                                    <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
+                                                    <div className="absolute inset-0 flex items-center justify-between px-3">
+                                                        <div className="flex gap-3 items-center"><span className="w-6 h-6 rounded-full bg-blue-900 flex justify-center items-center text-xs font-bold border border-blue-500 text-blue-200">{card.cost}</span><span className="text-sm font-bold truncate w-32 drop-shadow-md">{card.name}</span></div>
+                                                        <span className="text-yellow-400 font-black text-sm">x{count}</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    {/* 底部向上凸出虚化遮罩 */}
+                                    <div className="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
+                                </div>
+
+                                <div className="p-4 shrink-0 flex gap-2 border-t border-white/10 bg-black/40 z-20">
+                                    <button onClick={() => { setConfirmModal({ title: "DELETE DECK", message: "确认删除该卡组？此操作不可逆。", type: 'danger', onConfirm: () => { userSystem.deleteDeck(hubDeckId); setConfirmModal(null); setHubDeckId(null); } }); }} className="p-4 bg-red-950/40 hover:bg-red-600 text-red-200 rounded-xl transition-colors border border-red-900/30"><Trash2 size={20} /></button>
+                                    <button onClick={() => handleEnterDeck(hubDeckId)} className="flex-1 p-4 bg-blue-900 hover:bg-blue-600 text-white font-black tracking-widest rounded-xl transition-all">EDIT DECK</button>
                                 </div>
                             </motion.div>
-                        </div>
-                    )}
-                </AnimatePresence>
 
-                {/* 返回按钮 */}
-                <button
-                    onClick={handleGlobalBack}
-                    className="absolute top-8 right-8 z-50 p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group"
-                >
-                    <ArrowLeft size={24} className="text-gray-400 group-hover:text-white" />
-                </button>
+                            {/* 正中心：主角微缩景观展示与发车按钮 */}
+                            <div className="flex flex-col items-center gap-12 z-50 mx-6">
+                                <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
 
-                <div className="grid grid-cols-6 gap-6 w-full max-w-[95%] h-full overflow-y-auto pt-28 pb-12 px-8 z-0 content-start custom-scrollbar">
+                                {/* 拦截拦截发车按钮 */}
+                                <button
+                                    onClick={() => { if (isFull) onStartGame(Object.entries(hubDeck.cards).flatMap(([k, c]: any) => Array(c).fill(k))); }}
+                                    disabled={!isFull}
+                                    className={`w-72 py-5 rounded-2xl font-black text-2xl tracking-[0.2em] flex items-center justify-center gap-3 transition-all ${isFull ? 'bg-gradient-to-r from-blue-600 to-cyan-400 text-white hover:scale-110 shadow-[0_10px_40px_rgba(59,130,246,0.6)] border border-cyan-300/20' : 'bg-gray-900/80 text-red-500 cursor-not-allowed border border-red-900/50 backdrop-blur-md'}`}
+                                >
+                                    <Play fill="currentColor" size={24} /> {isFull ? 'START GAME' : '卡组未满 (ERROR)'}
+                                </button>
+                            </div>
 
-                    {/* 1. 新建卡组按钮 (样式微调，适应 grid-cols-6) */}
-                    <motion.button
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={handleCreateAndEdit}
-                        className="group relative w-full aspect-[3/4] rounded-xl border-4 border-dashed border-gray-600 hover:border-blue-400 hover:bg-blue-900/10 flex flex-col items-center justify-center transition-all cursor-pointer bg-slate-800/50"
-                    >
-                        {/* 稍微缩小图标 */}
-                        <Plus size={32} className="text-gray-600 group-hover:text-blue-400 transition-colors mb-2" />
-                        <span className="text-xs text-gray-500 font-bold tracking-widest group-hover:text-blue-300">NEW DECK</span>
-                    </motion.button>
+                            {/* 右侧翼：完美复刻抽屉逻辑的个性化大面板 */}
+                            {/* [关键修正] 去掉 overflow-hidden 改为 overflow-visible，允许悬浮预览图溢出外侧！ */}
+                            {/* [修复] 将 h-[85vh] 改为 h-fit pb-10，让面板高度自适应内部的两个按钮，去除多余空白 */}
+                            <motion.div initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-72 h-fit pb-10 bg-[#1e293b]/90 border border-white/10 rounded-3xl flex flex-col ml-12 shadow-2xl relative overflow-visible backdrop-blur-md z-40" onContextMenu={(e) => e.stopPropagation()}>
+                                <div className="p-5 bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0 mb-4">CUSTOMIZE</div>
 
-                    {/* 2. 现有卡组列表 */}
-                    {userSystem.decks.map(deck => {
-                        const coverUrl = getDeckCover(deck.cards);
-                        const cardCount = Object.values(deck.cards).reduce((a, b) => a + b, 0);
+                                {/* [修复] 稍微缩小 gap-16 为 gap-10，让上下图标布局更紧凑 */}
+                                <div className="flex-1 flex flex-col justify-center items-center gap-10 px-6 relative">
+                                    {/* 悬停大图预览 (Floating Preview) - 完美复原抽屉的原生体验 */}
+                                    {/* [修复] 将 right-[110%] 改为 left-[105%]，让大图朝向画面最右侧空旷区域弹出，完美避开中心卡组 */}
+                                    {hubHoverItem && (
+                                        <div className="absolute left-[105%] top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50">
+                                            <div className="absolute inset-0 bg-black/80 backdrop-blur-xl rounded-xl -m-4"></div>
+                                            <div className={`relative border-2 border-orange-500/50 rounded-lg overflow-hidden shadow-2xl ${hubHoverItem === 'cardBack' ? 'w-[240px] h-[360px]' : 'w-[400px] h-[225px]'}`}>
+                                                <img src={hubHoverItem === 'cardBack' ? PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex] : PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} className="w-full h-full object-cover" alt="Preview" />
+                                                <div className="absolute bottom-0 w-full bg-black/60 text-white text-center text-xs py-1 font-mono tracking-widest backdrop-blur-sm">PREVIEW</div>
+                                            </div>
+                                        </div>
+                                    )}
 
-                        return (
-                            <motion.div
-                                key={deck.id}
-                                layoutId={deck.id}
-                                onClick={() => handleEnterDeck(deck.id)}
-                                whileHover={{ y: -5 }} // 稍微减小悬浮位移
-                                className="relative w-full aspect-[3/4] group cursor-pointer perspective-1000"
-                            >
-                                {/* ... 内部 3D 样式保持不变 ... */}
-                                {/* 3D 堆叠效果 */}
-                                <div className="absolute top-1.5 left-1.5 w-full h-full bg-gray-800 rounded-xl border border-gray-700 shadow-xl z-0"></div>
-                                <div className="absolute top-0.5 left-0.5 w-full h-full bg-gray-700 rounded-xl border border-gray-600 z-10"></div>
-
-                                {/* 顶层封面 */}
-                                <div className="absolute inset-0 bg-gray-900 rounded-xl border-2 border-gray-600 group-hover:border-blue-500 overflow-hidden z-20 shadow-lg transition-colors">
-                                    <img src={coverUrl} alt="Cover" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity duration-500 group-hover:scale-110" />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
-
-                                    {/* 信息文字 (字体调小一点适配小卡片) */}
-                                    <div className="absolute bottom-0 left-0 w-full p-3">
-                                        <h3 className="font-bold text-sm truncate text-white drop-shadow-md">{deck.name}</h3>
-                                        <div className="flex justify-between items-center mt-1">
-                                            <span className="text-[10px] font-mono text-gray-400">{new Date(deck.updatedAt).toLocaleDateString()}</span>
-                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cardCount === 40 ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'}`}>
-                                                {cardCount}/40
-                                            </span>
+                                    {/* 卡背更换大按钮 - 还原原生 group-hover 倾斜特效 */}
+                                    <div className="flex flex-col items-center gap-4 w-full">
+                                        <span className="text-xs text-yellow-600 font-bold tracking-widest uppercase">Card Back</span>
+                                        <div
+                                            className="relative group cursor-pointer"
+                                            onMouseEnter={() => setHubHoverItem('cardBack')}
+                                            onMouseLeave={() => setHubHoverItem(null)}
+                                            onClick={() => setSelectorType('cardBack')}
+                                        >
+                                            <div className="w-32 h-48 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
+                                                <img src={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} className="w-full h-full object-cover" alt="Card Back" />
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteDeck(deck.id);
-                                        }}
-                                        className="absolute top-1 right-1 p-1.5 bg-black/60 hover:bg-red-600 rounded-full opacity-0 group-hover:opacity-100 transition-all z-30"
-                                    >
-                                        <Trash2 size={12} className="text-white" />
-                                    </button>
+                                    {/* 棋盘桌垫更换大按钮 - 还原原生 group-hover 倾斜特效 */}
+                                    <div className="flex flex-col items-center gap-4 w-full">
+                                        <span className="text-xs text-yellow-600 font-bold tracking-widest uppercase">Battlefield Mat</span>
+                                        <div
+                                            className="relative group cursor-pointer"
+                                            onMouseEnter={() => setHubHoverItem('desk')}
+                                            onMouseLeave={() => setHubHoverItem(null)}
+                                            onClick={() => setSelectorType('desk')}
+                                        >
+                                            <div className="w-48 h-28 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:-rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
+                                                <img src={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} className="w-full h-full object-cover" alt="Board" />
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </motion.div>
-                        );
-                    })}
-                </div>
+
+                            {/* 完美复用的原生全屏选择器模态框 */}
+                            {selectorType && (
+                                <div className="absolute inset-0 z-[200]">
+                                    <StyleSelector
+                                        type={selectorType}
+                                        currentSelected={selectorType === 'cardBack' ? (hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex) : (hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex)}
+                                        unlockedIndices={selectorType === 'cardBack' ? userSystem.settings.unlockedCardBacks : userSystem.settings.unlockedDesks}
+                                        onSelect={(idx: number) => {
+                                            if (selectorType === 'cardBack') userSystem.saveDeck({...hubDeck, cardBackIndex: idx});
+                                            else userSystem.saveDeck({...hubDeck, boardIndex: idx});
+                                        }}
+                                        onClose={() => setSelectorType(null)}
+                                    />
+                                </div>
+                            )}
+
+                            {/* [核心修复] 完美复用备战环节的成熟方案，解决数据串屏Bug，并自然地从列表右侧滑出 */}
+                            <AnimatePresence mode="wait">
+                                {hoveredCardKey && CARD_DB[hoveredCardKey] && (
+                                    <motion.div
+                                        key={hoveredCardKey} // [最关键] 有了身份证，切换时强行销毁重绘，彻底杀掉震动 Bug！
+                                        className="absolute left-[105%] top-1/2 -translate-y-1/2 z-[150] pointer-events-auto"
+                                        onMouseEnter={handlePreviewEnter}
+                                        onMouseLeave={handlePreviewLeave}
+                                        initial={{ opacity: 0, x: -20, scale: 1.1 }}
+                                        animate={{ opacity: 1, x: 0, scale: 1.25 }}
+                                        exit={{ opacity: 0, x: -10, transition: { duration: 0.1 } }}
+                                        transition={{ type: "spring", stiffness: 300, damping: 25, opacity: { duration: 0.2 } }}
+                                    >
+                                        <div className="drop-shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
+                                            <Card data={toFullCardData(CARD_DB[hoveredCardKey])} location="preview" isFaceUp={true} onViewArt={(c) => setViewCard(c)} />
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </div>
         );
     }
@@ -749,9 +972,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     <div>
                                         <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">阵营 (REGION)</span>
                                         <div className="flex flex-wrap gap-2">
-                                            {['ALL', 'Lyfe', 'Fenny', 'Logistics', 'TEST'].map(r => (
+                                            {['ALL', 'Lyfe', 'Fenny', 'Pupu', 'Logistics', 'TEST'].map(r => (
                                                 <button key={r} onClick={()=>setRegionFilter(r)} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${regionFilter===r ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
-                                                    {r === 'Lyfe' ? '里芙' : r === 'Fenny' ? '芬妮' : r === 'Logistics' ? '后勤' : r === 'TEST' ? '测试' : '全部'}
+                                                    {r === 'Lyfe' ? '里芙' : r === 'Pupu' ? '卜卜' :r === 'Fenny' ? '芬妮' : r === 'Logistics' ? '后勤' : r === 'TEST' ? '测试' : '全部'}
                                                 </button>
                                             ))}
                                         </div>
@@ -769,12 +992,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     {visibleCards.map(card => {
                         const ownedCount = getOwnedCount(card.key);
                         const inDeckCount = localDeck[card.key] || 0;
-                        const isLocked = ownedCount === 0;
+
+                        // [管理员特权] 动态计算卡组中该卡的锁定与上限置灰状态
+                        const isAdmin = userSystem.userId === 'dev_full_admin';
+                        const isLocked = !isAdmin && ownedCount === 0;
                         const fullCard = toFullCardData(card);
 
                         // [判断] 是否已达到最大上限（拥有量、卡组限制等）
                         // 注意：isMaxed 控制的是“能否放入卡组”，而不是“能否购买”
-                        const isMaxed = isLocked || stats.total >= 40 || inDeckCount >= 3 || inDeckCount >= ownedCount;
+                        const maxLimit = isAdmin ? 40 : 3;
+                        const isMaxed = isLocked || stats.total >= 40 || inDeckCount >= maxLimit || (!isAdmin && inDeckCount >= ownedCount);
 
                         // [新增] 是否还可以购买更多？ (只要拥有量不到3张，就显示购买按钮)
                         const canBuy = ownedCount < 3;
@@ -918,7 +1145,10 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 </div>
 
                 {/* 卡牌列表 (保持不变) */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                <div
+                    className="flex-1 overflow-y-auto p-4 space-y-2"
+                    onMouseLeave={handleListContainerLeave} // [新增] 彻底离开列表时触发1秒卸载保险
+                >
                     {Object.entries(localDeck).map(([key, count]) => {
                         const card = CARD_DB[key];
                         // 兜底：防止 deleted cards 报错

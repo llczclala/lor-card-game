@@ -38,10 +38,6 @@ export const StandardGameWrapper: React.FC<StandardGameWrapperProps> = (props) =
             enemyDeck={encounter.deck}
             enemyHeroConfig={encounter.heroConfig}
 
-            // --- 规则配置 ---
-            // [修复] 移除底层组件未定义的预留属性 aiType
-            disableMulligan={false} // 允许换牌
-
             // --- 回调注入 ---
             onVictory={handleVictory}
             onDefeat={handleDefeat}

@@ -1,4 +1,6 @@
 
+import { DEV_ADMIN_UID } from '../data/initialUserData'; // [新增] 导入管理员绝对标识
+
 const STORAGE_PREFIX = 'snowbreak_rivals_';
 
 // 存档键名枚举
@@ -70,7 +72,14 @@ export const StorageUtils = {
     getOrCreateUserId: (): string => {
         let uid = localStorage.getItem(STORAGE_KEYS.USER_ID);
         if (!uid) {
-            uid = `guest_${StorageUtils.generateUUID()}`;
+            // [核心修复] 大门安检：根据编译环境智能下发身份
+            if (import.meta.env.DEV) {
+                // 如果是开发环境 (npm run dev)，直接为您下发管理员特权 ID
+                uid = DEV_ADMIN_UID;
+            } else {
+                // 如果是生产环境 (npm run dist)，摇树优化会干掉上面的 if，只留下游客生成逻辑
+                uid = `guest_${StorageUtils.generateUUID()}`;
+            }
             localStorage.setItem(STORAGE_KEYS.USER_ID, uid);
         }
         return uid;

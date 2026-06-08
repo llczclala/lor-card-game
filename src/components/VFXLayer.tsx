@@ -7,9 +7,16 @@ export interface VFXTarget {
     type: 'ally' | 'enemy' | 'player_nexus' | 'enemy_nexus' | string;
 }
 
+// [新增] 接口扩展
+export interface PersistentLine {
+    sourceId: string;
+    targets: VFXTarget[];
+}
+
 interface VFXLayerProps {
     isCasting: boolean;
     selectedTargets: VFXTarget[];
+    persistentLines?: PersistentLine[]; // [新增]
 }
 
 // 颜色常量 (Hex)
@@ -19,7 +26,7 @@ const COLORS = {
     red: 0xef4444
 };
 
-export const VFXLayer: React.FC<VFXLayerProps> = ({ isCasting, selectedTargets = [] }) => {
+export const VFXLayer: React.FC<VFXLayerProps> = ({ isCasting, selectedTargets = [], persistentLines = [] }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const appRef = useRef<PIXI.Application | null>(null);
 
@@ -29,9 +36,12 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({ isCasting, selectedTargets =
     useEffect(() => { targetsRef.current = selectedTargets; }, [selectedTargets]);
 
     // --- 核心绘制逻辑 (脱离 React 渲染周期) ---
+    const persistentLinesRef = useRef(persistentLines);
+    useEffect(() => { persistentLinesRef.current = persistentLines; }, [persistentLines]);
+
     useEffect(() => {
-        // 只有当正在施法且容器存在时才初始化
-        if (!isCasting || !containerRef.current) return;
+        // [核心修复] 去掉 isCasting 限制。只要组件挂载，Pixi 引擎就应该保持运转以绘制持久连线
+        if (!containerRef.current) return;
 
         // 1. 初始化 Pixi 应用
         const width = containerRef.current.clientWidth;
@@ -151,21 +161,33 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({ isCasting, selectedTargets =
         };
 
         // 5. 启动渲染循环 (Game Loop)
-        // Pixi Ticker 会自动以 60FPS 运行，这是流畅动画的关键
         app.ticker.add(() => {
             g.clear();
 
-            // 绘制已锁定的箭头
-            targetsRef.current.forEach(target => {
-                const endPos = getElementCenter(target.id);
-                if (endPos) {
-                    const color = getTargetColor(target.type);
-                    drawArrow(centerPos, endPos, color, false);
+            // A. 绘制所有已确认法术的持久化连线
+            persistentLinesRef.current.forEach(line => {
+                const startPos = getElementCenter(line.sourceId);
+                if (startPos) {
+                    line.targets.forEach(target => {
+                        const endPos = getElementCenter(target.id);
+                        if (endPos) {
+                            // 使用较浅的颜色/透明度表示这是"准备生效"的连线
+                            drawArrow(startPos, endPos, getTargetColor(target.type), false);
+                        }
+                    });
                 }
             });
 
-            // 绘制当前的搜索箭头
-            drawArrow(centerPos, mousePos, COLORS.white, true);
+            // B. 只有在瞄准状态时，才绘制来自中心点的高亮射线
+            if (isCasting) {
+                targetsRef.current.forEach(target => {
+                    const endPos = getElementCenter(target.id);
+                    if (endPos) {
+                        drawArrow(centerPos, endPos, getTargetColor(target.type), false);
+                    }
+                });
+                drawArrow(centerPos, mousePos, COLORS.white, true);
+            }
         });
 
         // 清理函数
@@ -175,9 +197,6 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({ isCasting, selectedTargets =
             appRef.current = null;
         };
     }, [isCasting]); // 仅当施法状态切换时触发
-
-    // 如果不在施法状态，不渲染 DOM 节点，完全移除开销
-    if (!isCasting) return null;
 
     return (
         <div

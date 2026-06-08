@@ -23,22 +23,26 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
     };
     const isFenny = data.region === 'Fenny';
     const isLyfe = data.region === 'Lyfe';
+    const isPupu = data.region === 'Pupu';
     const isLogistics = data.region === 'Logistics';
 
     const borderColor = isFenny
-        ? 'border-red-900'
-        : (isLogistics ? 'border-white-900' : (isLyfe ? 'border-blue-900' : 'border-grey-900'));
+        ? 'border-orange-900'
+        : isPupu ? 'border-red-900':((isLogistics ? 'border-white-900' : (isLyfe ? 'border-blue-900' : 'border-grey-900')));
 
     const bgGradient = isFenny
-        ? 'bg-gradient-to-b from-gray-900 via-red-950 to-gray-900'
+        ? 'bg-gradient-to-b from-gray-900 via-orange-950 to-gray-900'
         : (isLogistics
             ? 'bg-gradient-to-b from-gray-900 via-white-950 to-gray-900'
             :  (isLyfe
                  ? 'bg-gradient-to-b from-gray-900 via-blue-950 to-gray-900'
-                 : 'bg-gradient-to-b from-gray-900 via-grey-950 to-gray-900'));
+                 : 'bg-gradient-to-b from-gray-900 via-red-950 to-gray-900'));
 
-    const costColor = data.region === 'Fenny' ? 'bg-red-800 border-red-500' : 'bg-blue-600 border-blue-400';
-
+    const costColor = data.region === 'Fenny'
+                                       ? 'bg-orange-800 border-orange-500'
+                                       : ('Lyfe'
+                                          ? 'bg-blue-600 border-blue-400'
+                                          : 'bg-red-600 border-red-400');
     return (
         <div className={`w-full h-full relative overflow-hidden rounded-2xl border-[4px] ${borderColor} ${bgGradient} flex flex-col items-center pt-6 ${className}`}>
 
@@ -83,7 +87,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
                 <div className="absolute inset-0 bg-black/50 rounded-xl border border-white/10 backdrop-blur-sm shadow-inner"></div>
                 <div className="relative h-full flex items-center justify-center p-4 text-center overflow-hidden">
                     {/* 使用 text-base 或 text-lg 确保缩放后依然清晰 */}
-                    <p className="text-gray-100 text-lg leading-snug font-medium text-shadow-sm">
+                    <p className="text-gray-100 text-1xl leading-snug font-medium text-shadow-sm">
                         {data.description}
                     </p>
                 </div>

@@ -3,7 +3,7 @@ import { motion, AnimatePresence, type Variants, useMotionValue, useVelocity, us
 import { Check, RefreshCw } from 'lucide-react'; // [加回] 图标
 import type { CardData } from '../types';
 import { Card } from './Card';
-import { canAffordCard } from '../utils/gameRules';
+import { canAffordCard, checkCardConditionActive } from '../utils/gameRules'; // [修改] 引入前置侦察兵
 import { useDrawingQueue } from '../hooks/useDrawingQueue';
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
@@ -12,6 +12,8 @@ interface PlayerHandProps {
     onHover: (card: CardData | null) => void;
     onViewArt: (card: CardData) => void;
     game: any; // 传入 game state 以判断出牌条件
+    playerBench: CardData[]; // [新增] 需要传入备战席供条件扫描
+    combatField: any[];      // [新增] 需要传入交战区供条件扫描
     cardBackUrl: string;
 }
 // [新增] 景深缩放配置常量，方便随时微调手感
@@ -27,7 +29,7 @@ const AnimatedHandCard = ({
     translateY, translateX, baseScale, baseRotate, cardZIndex,
     vw, vh,
     onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
-    game, cardBackUrl, onViewArt
+    game, playerBench, combatField, cardBackUrl, onViewArt // [修改] 接收战场数据
 }: any) => {
     // 1. 挂载 X 和 Y 轴坐标监听器 (脱离 React 渲染流)
     const x = useMotionValue(0);
@@ -76,7 +78,8 @@ const AnimatedHandCard = ({
             dragElastic={0.2}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
-            className="pointer-events-auto relative cursor-pointer origin-bottom"
+            // [修复 1] 抽卡动画期间(isNew)，强行关闭指针事件，防止鼠标提前触发 Hover 导致卡牌半空乱飞
+            className={`relative origin-bottom ${isNew ? 'pointer-events-none' : 'pointer-events-auto cursor-pointer'}`}
 
             initial={isNew ? { x: -40 * vw, y: -10 * vh, scale: 1, rotate: 11, opacity: 1, boxShadow: '0px 0px 0px rgba(0,0,0,0)' } : false}
             animate={isNew ? {
@@ -106,7 +109,28 @@ const AnimatedHandCard = ({
         >
             <Card
                 data={c} location="hand" onViewArt={onViewArt}
-                isPlayable={game.phase === 'main' && game.turnOwner === 'player' && canAffordCard(c, game.playerMana, game.playerSpellMana)}
+                playerNexusHealth={game.playerNexus} // [新增] 透传给英雄查血用
+                enemyNexusHealth={game.enemyNexus}   // [新增] 透传给英雄查血用
+                isPlayable={(() => {
+                    // [核心修复] 如果卡牌正在播放抽卡/入场动画，强制返回 false，熄灭高光
+                    if (isNew) return false;
+
+                    // 1. 判断是否是玩家的回合
+                    if (game.turnOwner !== 'player') return false;
+                    // 2. 判断费用是否足够
+                    if (!canAffordCard(c, game.playerMana, game.playerSpellMana)) return false;
+
+                    const isMainPhase = game.phase === 'main';
+                    const isCombatPhase = game.phase === 'attack_declare' || game.phase === 'block_declare' || game.phase === 'react_to_block';
+
+                    if (isMainPhase) return true; // 主阶段有钱就能打
+                    if (isCombatPhase) {
+                        // 战斗和响应阶段，只能打极速 (burst) 或 快速 (fast) 法术
+                        return c.type === 'spell-burst' || c.type === 'spell-fast';
+                    }
+                    return false;
+                })()}
+                isConditionActive={checkCardConditionActive(c, playerBench, combatField)} // [新增] 调用侦察兵，点亮橙色描边！
                 cardBackUrl={cardBackUrl} isNew={isNew} delay={myDelay} isDragging={isDragging}
             />
         </motion.div>
@@ -114,7 +138,7 @@ const AnimatedHandCard = ({
 };
 
 export const PlayerHand: React.FC<PlayerHandProps> = ({
-    hand, onCardClick, onHover, onViewArt, game, cardBackUrl
+    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl // [核心修复] 补全解构，并赋予默认空数组兜底
 }) => {
     const validHand = hand.filter(c => c && c.key && c.type);
 
@@ -126,6 +150,13 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
     const pointerPos = React.useRef({ x: 0, y: 0 });
 
     const { isNewCard } = useDrawingQueue(validHand);
+
+    // [修复 2] 监听手牌数组长度变化。只要打出卡牌(长度变短)或刚抽完卡，立刻强制重置所有的鼠标悬停/拖拽状态，防止状态残留导致手牌“赖在半空中”
+    useEffect(() => {
+        setIsAreaHover(false);
+        setHoverIndex(null);
+        setDraggingId(null);
+    }, [hand.length]);
 
     let newCardCounter = 0;
     const newCardDelays = hand.map(c => {
@@ -191,10 +222,16 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             vw={vw}
                             vh={vh}
                             game={game}
+                            playerBench={playerBench} // [核心修复] 把备战席传给物理核组件
+                            combatField={combatField} // [核心修复] 把交战区传给物理核组件
                             cardBackUrl={cardBackUrl}
                             onViewArt={onViewArt}
-                            onPointerDown={(e: any) => { pointerPos.current = { x: e.clientX, y: e.clientY }; }}
+                            onPointerDown={(e: any) => {
+                                if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
+                                pointerPos.current = { x: e.clientX, y: e.clientY };
+                            }}
                             onPointerUp={(e: any) => {
+                                if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
                                 const dist = Math.hypot(e.clientX - pointerPos.current.x, e.clientY - pointerPos.current.y);
                                 if (dist < 5) onCardClick(c);
                             }}
@@ -227,6 +264,7 @@ interface OpeningMulliganProps {
     onToggleIndex: (index: number) => void;
     // [新增] 当动画播放到"该真正换数据了"的时候通知父组件
     onAnimationStep: (step: 'ready_to_replace' | 'finished') => void;
+    onViewArt?: (card: CardData) => void; // [核心修复] 接收查看大图的回调
 }
 
 export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
@@ -234,8 +272,9 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
     cardBackUrl,
     selectedIndices,
     isConfirmed,
-    onToggleIndex,   // <--- 这里必须接收 onToggleIndex
-    onAnimationStep  // <--- 这里必须接收 onAnimationStep
+    onToggleIndex,
+    onAnimationStep,
+    onViewArt        // [核心修复] 解构出 onViewArt
 }) => {
     // --- 1. 内部状态管理 (从 GameSession 移入) ---
     const [animPhase, setAnimPhase] = useState<'enter' | 'select' | 'discard' | 'draw' | 'exit'>('enter');
@@ -402,19 +441,24 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                                         <motion.div layoutId="selection-glow" className="absolute -inset-2 rounded-xl border-4 border-blue-400 shadow-[0_0_20px_#3b82f6] z-0" />
                                     )}
                                     <div className="relative z-10">
-                                        <Card data={c} location="preview" cardBackUrl={cardBackUrl} isFaceUp={isFaceUp} />
+                                        {/* [核心修复] 将 onViewArt 传给底层的 Card，让它知道该如何拦截右键！ */}
+                                        <Card data={c} location="preview" cardBackUrl={cardBackUrl} isFaceUp={isFaceUp} onViewArt={onViewArt} />
                                     </div>
                                     <AnimatePresence>
                                         {animPhase === 'select' && (
                                             <motion.button
-                                                initial={{ opacity: 0, y: -10 }}
-                                                animate={{ opacity: 1, y: 20 }}
-                                                exit={{ opacity: 0 }}
+                                                // [视觉正骨] 将 x: "-50%" 显式注入 Framer Motion，统一接管双轴坐标
+                                                initial={{ opacity: 0, x: "-50%", y: -10 }}
+                                                animate={{ opacity: 1, x: "-50%", y: 20 }}
+                                                exit={{ opacity: 0, x: "-50%" }}
                                                 // 阻止冒泡，避免触发卡牌点击，直接调用 props 传来的 onToggleIndex
                                                 onClick={(e) => { e.stopPropagation(); onToggleIndex(index); }}
-                                                className={`absolute bottom-[-60px] left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm shadow-xl transition-colors duration-200 whitespace-nowrap ${isSelected ? 'bg-red-600 text-white ring-2 ring-red-400 hover:bg-red-500' : 'bg-slate-700 text-gray-300 border border-slate-500 hover:bg-slate-600 hover:text-white'}`}
+                                                // [视觉正骨] 移除 Tailwind 的 -translate-x-1/2，避免控制权冲突
+                                                // [逻辑换脑] 反转 isSelected 判定：未选中时显示红色“更换”，选中时显示灰白“保留”
+                                                className={`absolute bottom-[-60px] left-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm shadow-xl transition-colors duration-200 whitespace-nowrap ${!isSelected ? 'bg-red-600 text-white ring-2 ring-red-400 hover:bg-red-500' : 'bg-green-700 text-gray-300 border border-green-500 hover:bg-green-600 hover:text-white'}`}
                                             >
-                                                {isSelected ? <><RefreshCw size={14} /> 更换</> : <><Check size={14} /> 保留</>}
+                                                {/* [逻辑换脑] 文本与图标同样反转映射 */}
+                                                {!isSelected ? <><RefreshCw size={14} /> 更换</> : <><Check size={14} /> 保留</>}
                                             </motion.button>
                                         )}
                                     </AnimatePresence>

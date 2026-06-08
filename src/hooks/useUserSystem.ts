@@ -6,7 +6,9 @@ import {
     STARTER_COLLECTION,
     INITIAL_USER_DECKS,
     createInitialProfile,
-    STARTER_DECK_LYFE
+    STARTER_DECK_LYFE,
+    DEV_ADMIN_UID,       // [新增] 导入唯一标识
+    DEV_ADMIN_PROFILE    // [新增] 导入名片模板
 } from '../data/initialUserData';
 import type { UserProfile, UserSettings, UserCollection, SavedDeck, UserSummary } from '../types';
 import type { GachaResult } from '../logic/gachaLogic';
@@ -124,10 +126,39 @@ export const useUserSystem = () => {
 
     // --- 3. 启动时自动登录 ---
     useEffect(() => {
+        // ==========================================
+        // [新增] 阶段二：开发专属 VIP 自动复苏 (Auto-Injection)
+        // 注意：被 import.meta.env.DEV 包裹的代码，在 npm run dist 打包时会被 Tree-Shaking 物理抹除！
+        // ==========================================
+        if (import.meta.env.DEV) {
+            const list = StorageUtils.getUserIndex();
+            const adminExists = list.some(u => u.uid === DEV_ADMIN_UID);
+
+            // 如果缓存被清空，导致找不到管理员账号，立刻触发静默建号
+            if (!adminExists) {
+                console.warn("[Dev System] 管理员账号丢失，正在执行自动复苏协议...");
+
+                // 1. 强制写入管理员名片
+                StorageUtils.save(`${STORAGE_KEYS.USER_PROFILE}_${DEV_ADMIN_UID}`, DEV_ADMIN_PROFILE);
+                // 2. 强制写入全卡全满的资产包 (设置和卡组会通过 loadUserData 的兜底逻辑自动生成)
+                StorageUtils.save(`${STORAGE_KEYS.USER_ASSETS}_${DEV_ADMIN_UID}`, FULL_COLLECTION);
+
+                // 3. 强行将管理员注册回全局用户列表
+                StorageUtils.updateUserIndex({
+                    uid: DEV_ADMIN_UID,
+                    displayName: DEV_ADMIN_PROFILE.displayName,
+                    avatarId: DEV_ADMIN_PROFILE.avatarId,
+                    lastLoginAt: Date.now(),
+                    type: 'full'
+                });
+            }
+        }
+
         const currentId = StorageUtils.getOrCreateUserId();
         // 如果 ID 包含 dev_full 或者是全卡档，标记 mode
         const list = StorageUtils.getUserIndex();
         const exist = list.find(u => u.uid === currentId);
+        // [微调] 兼容我们新定义的 DEV_ADMIN_UID
         const mode = (exist?.type === 'full' || currentId.includes('dev_full')) ? 'full' : 'starter';
 
         loadUserData(currentId, mode);

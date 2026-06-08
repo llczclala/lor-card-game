@@ -14,11 +14,36 @@ export const GameEvents = {
     RECALL_UNIT: 'recall_unit',     // 撤回攻击/阻挡单位
     CANCEL_SPELL: 'cancel_spell',   // 撤回法术/取消抉择
 
+    // ================= [新增] 细化互动音效事件 =================
+    SFX_DROP_BENCH: 'SFX_DROP_BENCH',             // 砸入备战席
+    SFX_RECALL_BLOCK: 'SFX_RECALL_BLOCK',         // 撤回格挡/进攻
+    SFX_ENEMY_PLAY_UNIT: 'SFX_ENEMY_PLAY_UNIT',   // 敌方打出单位
+    SFX_PLAYER_PLAY_UNIT: 'SFX_PLAYER_PLAY_UNIT', // 我方打出单位
+    SFX_BLOCK: 'SFX_BLOCK',                       // 挺进交战区格挡
+    SFX_CARD_HOVER: 'SFX_CARD_HOVER',             // 卡牌悬停
+    SFX_SHUFFLE: 'SFX_SHUFFLE',                   // 洗牌
+    SFX_SELECT_UNIT: 'SFX_SELECT_UNIT',           // 选定目标
+    SFX_SUMMON: 'SFX_SUMMON',                     // 衍生召唤
 
+    // [新增] 专属英雄与结算音效
+    SFX_DEFEAT: 'SFX_DEFEAT',                               // 被击败
+    SFX_PUPU_ULTIMATE: 'SFX_PUPU_ULTIMATE',                 // 卜卜大招
+    SFX_PUPU_SKILL1: 'SFX_PUPU_SKILL1',                     // 卜卜小技能
+    SFX_PUPU_SKILL1_UPGRADED: 'SFX_PUPU_SKILL1_UPGRADED',   // 卜卜小技能强化
+    // ==========================================================
 
     // --- 机制/语音类事件 ---
     ROUND_START: 'round_start',
     PLAY_CARD_VOICE: 'play_card_voice',
+
+    // [修改] 丰富水晶受击广播，明确要求携带伤害来源等详细 payload
+    // Payload: { target: 'player' | 'enemy', amount: number, source?: CardData }
+    NEXUS_STRIKED: 'nexus_striked',
+
+    // [新增] 法术打出广播，用于未来支持“打出X张法术后升级”等全局被动
+    // Payload: { card: CardData, owner: 'player' | 'enemy' }
+    SPELL_PLAYED: 'spell_played',
+
     // [新增] 战斗打击音效事件
     SFX_STRIKE_NORMAL: 'sfx_strike_normal',       // 普通卡牌互撞
     SFX_STRIKE_NEXUS: 'sfx_strike_nexus',         // 打击水晶

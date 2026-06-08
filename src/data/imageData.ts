@@ -15,6 +15,11 @@ import border_hero from '../image/cardborder/cardborder_hero.png';
 import border_spell from '../image/cardborder/cardborder_spell.png';
 import border_unit from '../image/cardborder/cardborder_unit.png';
 
+// [新增] 引入局内视觉特效贴图
+import effect_break from '../image/effect/break.png';
+import effect_broken1 from '../image/effect/broken1.png';
+import effect_broken2 from '../image/effect/broken2.png';
+
 // 引入里芙的原画
 import lyfe_1 from '../image/hero/里芙1.png';
 import lyfe_2 from '../image/hero/里芙2.png';
@@ -22,6 +27,11 @@ import lyfe_2 from '../image/hero/里芙2.png';
 // 引入芬妮的原画
 import fenny_1 from '../image/hero/芬妮1.png';
 import fenny_2 from '../image/hero/芬妮2.png';
+
+// 引入卜卜 灵鉴的原画
+import pupu_specular_soul_1 from '../image/hero/卜卜灵鉴1.png';
+import pupu_specular_soul_2 from '../image/hero/卜卜灵鉴2.png';
+
 // --- 法术卡面 (Spells) ---
 // 通用法术
 import spell_01 from '../image/spells/01.png'; // 单挑
@@ -40,6 +50,12 @@ import fenny_spell_02 from '../image/spells/fenny_spell02.png';  // 绝对主角
 import lyfe_spell_base from '../image/spells/lyfe_spell.png';    // 里芙的决意
 import lyfe_spell_01 from '../image/spells/lyfe_spell01.png';   // 无尽霜刃
 import lyfe_spell_02 from '../image/spells/lyfe_spell02.png';   // 吞噬神座
+
+// 卜卜灵鉴专属法术
+import pupu_specular_soul_spell_base from '../image/spells/pupu_specular_soul_spell.png';    // 卜卜的卜卦
+import pupu_specular_soul_spell_01 from '../image/spells/pupu_specular_soul_spell01.png';   // 镜涌万象
+import pupu_specular_soul_spell_02 from '../image/spells/pupu_specular_soul_spell02.png';   // 吉煞映照
+
 // --- 测试单位原画 (0_01 ~ 0_36) ---
 // 1-10
 import t_01 from '../image/attendants/0_01.png';
@@ -180,6 +196,16 @@ import unit_doveil from '../image/units/Star_Bright_Squad_Doveil.png';
 import unit_alivy from '../image/units/Star_Bright_Squad_Alivy.png';
 import unit_dakors from '../image/units/Star_Bright_Squad_Dakors.png';
 
+// [新增] 重叶小队 (Star Bright Squad)
+import unit_mabel from '../image/units/Chongye_Squad_Mabel.png';
+import unit_elice from '../image/units/Chongye_Squad_Elice.png';
+import unit_golia from '../image/units/Chongye_Squad_Golia.png';
+
+//  镜爻 卜卜
+import Mirror from '../image/units/Mirror.png';
+import Mirror_pupu from '../image/units/Mirror_pupu.png';
+
+
 import PGgachaDeskImg from '../image/gacha/PermanentGachaPool/desk.png';
 import PGgachaBtnImg from '../image/gacha/PermanentGachaPool/button.png';
 
@@ -204,7 +230,8 @@ export const gacha_icon = {
 // 导出英雄图库常量
 export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
     lyfe: { base: lyfe_1, level2: lyfe_2 },
-    fenny: { base: fenny_1, level2: fenny_2 }
+    fenny: { base: fenny_1, level2: fenny_2 },
+    pupu_specular_soul: { base: pupu_specular_soul_1, level2: pupu_specular_soul_2 }
 };
 // [新增] 导出正式单位图片集合
 export const UNIT_IMAGES = {
@@ -247,6 +274,14 @@ export const UNIT_IMAGES = {
     alivy: unit_alivy,
     dakors: unit_dakors,
 
+    // [新增] 重叶小队
+    mabel: unit_mabel,
+    elice: unit_elice,
+    golia: unit_golia,
+
+    Mirror: Mirror,
+    Mirror_pupu: Mirror_pupu,
+
 };
 
 // [新增] 导出法术图库
@@ -267,7 +302,12 @@ export const SPELL_IMAGES = {
     // 里芙
     lyfe_spell: lyfe_spell_base,
     lyfe_rush: lyfe_spell_01,
-    lyfe_ultimate: lyfe_spell_02
+    lyfe_ultimate: lyfe_spell_02,
+
+    // 卜卜灵鉴
+    pupu_specular_soul_spell: pupu_specular_soul_spell_base,
+    pupu_specular_soul_rush: pupu_specular_soul_spell_01,
+    pupu_specular_soul_ultimate: pupu_specular_soul_spell_02
 };
 
 
@@ -348,4 +388,13 @@ export const CURRENCY_ICONS = {
     silverCoin: icon_silver,
     dataGold: icon_data,
     bitGold: icon_bit
+};
+
+// ==========================================
+// [新增] 导出局内视觉特效资源集合 (VFX Decals)
+// ==========================================
+export const EFFECT_IMAGES = {
+    groundCrack: effect_break,     // 砸击：地面龟裂
+    cardBroken1: effect_broken1,   // 死亡预备：卡牌碎裂 1
+    cardBroken2: effect_broken2    // 死亡预备：卡牌碎裂 2
 };

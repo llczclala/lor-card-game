@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { X, RefreshCw, ChevronUp, ChevronDown,ShoppingCart } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { CardData, GameStats } from '../types';
-import { KEYWORD_DB } from '../data/keywords';
+import { KEYWORD_DB, GLOSSARY_DB } from '../data/keywords'; // [核心修改] 引入术语字典
 import { getCardLore } from '../data/loreData';
 import { ChampionLevelUp } from './ChampionLevelUp';
 import { CARD_DB } from '../data/cards';
@@ -10,6 +10,7 @@ import { getLeveledUpCard, getCardPrice } from '../utils/gameRules';
 import { UI_ICONS, CURRENCY_ICONS } from '../data/imageData';
 import { calculateGameScore } from '../logic/scoring'; // [新增] 评分逻辑
 import { STORAGE_KEYS } from '../utils/storageUtils';
+import { Card } from './Card';
 
 // [新增] 自定义购买确认弹窗组件
 const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: any) => (
@@ -28,7 +29,113 @@ const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: an
         </div>
     </div>
 );
+// ==========================================
+// [新增] 商业级富文本解析引擎 (Rich Text Parser)
+// ==========================================
+// [核心修改] 接收深度跳转方法
+const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card: CardData) => void }) => {
+    if (!text) return null;
 
+    // 1. 动态生成正则
+    const glossaryKeys = Object.keys(GLOSSARY_DB).sort((a, b) => b.length - a.length);
+    // [核心修改] 增加 4. 匹配中文双引号包裹的关联卡牌 (如 “镜爻”)
+    const PARSE_REGEX = new RegExp(`(“[^”]+”|\\[.*?\\]|[+-]\\d+\\/[+-]\\d+|${glossaryKeys.join('|')})`, 'g');
+
+    // 2. 切割文本
+    const parts = text.split(PARSE_REGEX);
+
+    return (
+        <>
+            {parts.map((part, index) => {
+                if (!part) return null;
+
+                // [核心新增] 规则 D：衍生卡/关联卡 (如 “镜爻”)
+                if (part.startsWith('“') && part.endsWith('”')) {
+                    const tokenName = part.slice(1, -1);
+                    // 在全局卡牌库中反查该实体卡牌
+                    const associatedCard = Object.values(CARD_DB).find(c => c.name.includes(tokenName) || c.key.includes(tokenName));
+
+                    if (associatedCard) {
+                        return (
+                            <span
+                                key={index}
+                                className="group relative inline-block text-blue-400 font-bold mx-1 cursor-pointer hover:brightness-125 transition-all"
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    if (onNavigate) onNavigate(associatedCard as CardData);
+                                }}
+                            >
+                                {part}
+                                {/* [核心修改] 切换为 deck-builder 尺寸，恢复完整的卡面排版与介绍信息 */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-[400] text-center translate-y-2 group-hover:translate-y-0 origin-bottom drop-shadow-2xl">
+                                    <Card data={associatedCard as CardData} location="deck-builder" />
+                                </div>
+                            </span>
+                        );
+                    }
+                    // 兜底：找不到关联卡牌则纯蓝字显示
+                    return <span key={index} className="text-blue-400 font-bold mx-1">{part}</span>;
+                }
+
+                // 规则 A：核心机制关键词 (如 [碾压])
+                if (part.startsWith('[') && part.endsWith(']')) {
+                    const kw = part.slice(1, -1);
+                    // [核心修复] 遍历字典的值，匹配中文 label，而不是用英文 Key 直查
+                    const kwConfig = Object.values(KEYWORD_DB).find(config => config.label === kw);
+
+                    if (kwConfig) {
+                        return (
+                            <span key={index} className="group relative inline-flex items-center text-yellow-400 font-bold mx-1 cursor-help">
+                                {kw}
+                                <img src={kwConfig.icon} alt={kw} className="w-5 h-5 ml-1 inline-block align-middle drop-shadow-md -mt-0.5" />
+
+                                {/* 悬浮精美解释气泡 */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-gray-900/95 border border-white/20 p-3 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-[300] text-center translate-y-2 group-hover:translate-y-0 backdrop-blur-sm">
+                                    <div className="font-bold text-yellow-400 mb-1 text-sm">{kwConfig.label}</div>
+                                    <div className="text-gray-300 text-xs leading-relaxed font-normal">{kwConfig.description}</div>
+                                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-gray-900 border-b border-r border-white/20 rotate-45"></div>
+                                </div>
+                            </span>
+                        );
+                    }
+                    // 兜底：找不到配置的直接金字显示
+                    return <span key={index} className="text-yellow-400 font-bold mx-1">{part}</span>;
+                }
+
+                // 规则 B：身材增减益数值 (如 +2/+0, -1/-1)
+                if (/^[+-]\d+\/[+-]\d+$/.test(part)) {
+                    // 粗略判断是否是纯负面减益
+                    const isDebuff = part.startsWith('-');
+                    return (
+                        <span key={index} className={`font-black tracking-wider mx-1 px-1 rounded-sm bg-black/30 border border-white/10 ${isDebuff ? 'text-red-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.5)]' : 'text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]'}`}>
+                            {part}
+                        </span>
+                    );
+                }
+
+                // 规则 C：术语字典词汇 (如 入场, 进攻)
+                if (GLOSSARY_DB[part]) {
+                    const glConfig = GLOSSARY_DB[part];
+                    return (
+                        <span key={index} className="group relative inline-block text-yellow-300 font-bold mx-1 border-b border-yellow-500/50 cursor-help border-dashed">
+                            {part}
+
+                            {/* 悬浮术语气泡 */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-slate-900 border border-yellow-600/50 p-3 rounded-lg shadow-2xl opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-[300] text-center translate-y-2 group-hover:translate-y-0">
+                                <div className="font-bold text-yellow-400 mb-1 text-sm">{glConfig.label}</div>
+                                <div className="text-gray-300 text-xs leading-relaxed font-normal">{glConfig.description}</div>
+                                <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-slate-900 border-b border-r border-yellow-600/50 rotate-45"></div>
+                            </div>
+                        </span>
+                    );
+                }
+
+                // 兜底：其余普通文本
+                return <span key={index}>{part}</span>;
+            })}
+        </>
+    );
+};
 // [新增] 扩展 Props 定义
 interface FullArtOverlayProps {
     card: CardData;
@@ -43,29 +150,27 @@ interface FullArtOverlayProps {
 export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver = 0 }: FullArtOverlayProps) => {
     const [isLoreOpen, setIsLoreOpen] = useState(false);
 
-    // [新增] 购买确认弹窗状态
+    // [核心新增] 深度跳转状态接管
+    // 将外部传入的 card 转为内部状态，右键衍生卡时直接替换此状态！
+    const [currentCard, setCurrentCard] = useState<CardData>(card);
+    useEffect(() => {
+        setCurrentCard(card);
+        setViewLevel(card.level);
+        setAnimState('idle');
+    }, [card]);
+
     const [confirmState, setConfirmState] = useState<{count: number, cost: number} | null>(null);
 
-    // [新增] 1. 视图状态管理：当前查看的等级 (默认跟随传入卡牌的等级)
-    const [viewLevel, setViewLevel] = useState(card.level);
-    // [新增] 动画状态：'idle' (静止) | 'up' (升级遮罩) | 'down' (降级遮罩)
+    const [viewLevel, setViewLevel] = useState(currentCard.level);
     const [animState, setAnimState] = useState<'idle' | 'up' | 'down'>('idle');
 
-    // [新增] 2. 准备 Level 1 和 Level 2 数据
-    // 使用 useMemo 避免重复计算，依赖 card.key 变化
     const { baseCard, leveledCard } = useMemo(() => {
-        // 始终基于卡牌库中的基础数据 (Level 1)
-        const base = CARD_DB[card.key] as CardData;
-        // 动态计算升级后数据 (Level 2)
+        const base = CARD_DB[currentCard.key] as CardData;
         const leveled = getLeveledUpCard(base);
         return { baseCard: base, leveledCard: leveled };
-    }, [card.key]);
+    }, [currentCard.key]);
 
-    // [新增] 3. 确定当前展示的目标卡牌数据
-    // 如果不是英雄，直接显示原卡；如果是英雄，根据 viewLevel 切换数据对象
-    const targetCard = !card.isChampion ? card : (viewLevel === 1 ? baseCard : leveledCard);
-
-    // [新增] 确定当前图片 URL (优先使用 Level 2 专属图)
+    const targetCard = !currentCard.isChampion ? currentCard : (viewLevel === 1 ? baseCard : leveledCard);
     const displayImage = targetCard.level === 2 && targetCard.level2ImageUrl ? targetCard.level2ImageUrl : targetCard.imageUrl;
 
     const getRegionLabel = (region: string, key: string) => {
@@ -77,9 +182,16 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
         return isChampion ? 'HERO' : 'UNIT';
     };
 
-    const loreText = getCardLore(card.key);
+    const loreText = getCardLore(currentCard.key); // [修正] 用 currentCard
 
-    // [新增] 4. 切换处理函数
+    // [核心新增] 深度跳转处理方法
+    const handleDeepNavigate = (newCard: CardData) => {
+        setCurrentCard(newCard);
+        setViewLevel(newCard.level);
+        setIsLoreOpen(false); // 跳转后自动关闭故事抽屉，保持整洁
+    };
+
+    // 4. 切换处理函数
     const handleLevelToggle = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (animState !== 'idle') return; // 防止动画中重复点击
@@ -111,7 +223,7 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
                 {/* [新增] 购买确认弹窗挂载点 */}
                 {confirmState && (
                     <PurchaseConfirmModal
-                        cardName={card.name}
+                        cardName={currentCard.name}
                         count={confirmState.count}
                         cost={confirmState.cost}
                         onCancel={() => setConfirmState(null)}
@@ -169,7 +281,7 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
 
                     {/* [新增] 等级切换按钮 (仅英雄显示) */}
                     {/* 位置：右下角，bottom-20 避开底部故事抽屉 */}
-                    {card.isChampion && animState === 'idle' && (
+                    {currentCard.isChampion && animState === 'idle' && (
                         <motion.button
                             onClick={handleLevelToggle}
                             className="absolute bottom-20 right-6 z-30 p-2 bg-black/60 hover:bg-white/20 rounded-full border border-white/20 backdrop-blur-md shadow-xl group/btn cursor-pointer"
@@ -189,8 +301,8 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
                     {onBuy && animState === 'idle' && (
                         <div className="absolute left-6 bottom-[18%] flex flex-col gap-3 z-40 items-start">
                             {(() => {
-                                const price = getCardPrice(card.cost);
-                                const isTest = card.region === 'TEST';
+                                const price = getCardPrice(currentCard.cost);
+                                const isTest = currentCard.region === 'TEST';
                                 const canBuyMore = isTest || ownedCount < 3;
 
                                 if (!canBuyMore) return null;
@@ -386,7 +498,9 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
                                 Level Up Condition
                             </div>
                             <p className="text-white text-xl font-medium italic text-center leading-relaxed max-w-[80%]">
-                                "{targetCard.name.includes('里芙') ? '我打击 2 次。' : (targetCard.name.includes('芬妮') ? '造成过伤害。' : '满足特定条件。')}"
+                                "{targetCard.name.includes('里芙') ? '此牌打击 2 次。' :
+                                 (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 10。' :
+                                 (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 4 次' :'满足特定条件。'))}"
                             </p>
                         </div>
                     )}
@@ -398,8 +512,9 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
                             <h3 className="text-gray-600 text-[10px] font-black uppercase tracking-[0.4em]">
                                 {viewLevel === 2 ? 'LEVEL 2 EFFECT' : 'EFFECT'}
                             </h3>
-                            <p className="text-gray-300 text-lg leading-relaxed font-light px-4 whitespace-pre-line">
-                                {targetCard.description}
+                            {/* [核心修改] 传入 handleDeepNavigate 支持衍生卡右键下钻 */}
+                            <p className="text-gray-300 text-lg leading-relaxed font-light px-4 whitespace-pre-wrap">
+                                <RichTextParser text={targetCard.description} onNavigate={handleDeepNavigate} />
                             </p>
                         </div>
                     )}
@@ -414,9 +529,10 @@ interface LevelUpOverlayProps {
     onClose: () => void;
     onPlayMovie: (heroKey: string, onEnd: () => void) => void;
     onStopMovie: () => void; // [新增] 定义回调
+    popLevelUp?: () => void; // [新增] 定义出队回调
 }
 
-export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, onPlayMovie, onStopMovie }) => {
+export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, onPlayMovie, onStopMovie, popLevelUp }) => {
     return (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black">
             {/* 引入 ChampionLevelUp 组件处理所有动画流程 (旋转 -> 视频 -> 爆发) */}
@@ -424,7 +540,10 @@ export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, o
                 card={card}
                 onPlayMovie={onPlayMovie}
                 onStopMovie={onStopMovie} // [新增] 透传给核心组件
-                onComplete={onClose}
+                onComplete={() => {
+                    if (popLevelUp) popLevelUp(); // [核心修改] 动画/视频彻底播完后，先将英雄移除队列！
+                    onClose(); // 再关闭全屏弹窗，交还控制权
+                }}
             />
         </div>
     );

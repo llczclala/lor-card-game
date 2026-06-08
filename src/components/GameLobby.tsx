@@ -13,7 +13,8 @@ import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench } from 'lucide-reac
 
 // [新增] 引入 GM 工作室主控台
 import { Studio } from './Studio/Studio';
-
+// [新增] 引入全新的全息科技图鉴舱
+import { GalleryCodex } from './GalleryCodex';
 // [新增] 导出背景类型，供 App.tsx 等外部调用
 export type BgType = 'movie' | 'pic';
 export interface BgConfig { type: BgType; url: string; index: number; }
@@ -188,6 +189,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
     // --- [新增] GM 开发者工具状态 ---
     const [isStudioOpen, setIsStudioOpen] = useState(false);
+    // [修正] 彻底更名为独立命名空间 isCodexBookOpen，绝不与原版的头像选择相册（isGalleryOpen）发生任何串线
+    const [isCodexBookOpen, setIsCodexBookOpen] = useState(false);
 
     // --- [新增] 玩家档案与头像裁剪系统状态 ---
     const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -519,6 +522,18 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     className="flex gap-4"
                     style={{ transform: 'skewY(2.5deg)' }}
                 >
+                    {/* [修正] 呼叫正确的状态机，并同步执行 setShowUI(false) 瞬间隐藏大厅所有的倾斜按钮面板 */}
+                    <GlassButton
+                        onClick={() => {
+                            setIsCodexBookOpen(true);
+                            setShowUI(false);
+                        }}
+                        className="w-32 h-12 rounded-sm flex-row gap-2"
+                        label="GALLERY"
+                    >
+                        <ClipboardList size={18} />
+                    </GlassButton>
+
                     <GlassButton onClick={onOpenShop} className="w-32 h-12 rounded-sm flex-row gap-2" label="SHOP">
                         <ShoppingBag size={18} />
                     </GlassButton>
@@ -1002,6 +1017,19 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
             <AnimatePresence>
                 {isStudioOpen && (
                     <Studio onClose={() => { setIsStudioOpen(false); setShowUI(true); }} />
+                )}
+            </AnimatePresence>
+
+            {/* ================= [修正] 挂载正确的组件开关，并在关闭时通过 setShowUI(true) 完美唤醒大厅原本的UI面板 ================= */}
+            <AnimatePresence>
+                {isCodexBookOpen && (
+                    <GalleryCodex
+                        onClose={() => {
+                            setIsCodexBookOpen(false);
+                            setShowUI(true);
+                        }}
+                        userSystem={userSystem} // [核心修正] 将大厅现有的资产数据完美注入图鉴，一秒点亮全彩与灰阶黑白锁定！
+                    />
                 )}
             </AnimatePresence>
 

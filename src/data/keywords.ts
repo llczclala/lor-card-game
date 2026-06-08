@@ -271,3 +271,73 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
         icon: icon36
     }
 };
+// ==========================================
+// [新增] 纯文本术语字典 (动作与时机词)
+// ==========================================
+
+export interface GlossaryConfig {
+    label: string;
+    description: string;
+    color: string; // Tailwind 颜色基调，用于渲染富文本高亮
+}
+
+export const GLOSSARY_DB: Record<string, GlossaryConfig> = {
+    // --- 时机词 ---
+    '入场': {
+        label: '入场',
+        description: '当该单位从手牌被打出，或通过效果被召唤到战场时触发。',
+        color: 'yellow'
+    },
+    '进攻': {
+        label: '进攻',
+        description: '当该单位被玩家拖入战场，并声明为攻击者时触发。',
+        color: 'red'
+    },
+    '进攻时': { // 兼容部分文案的变体
+        label: '进攻时',
+        description: '当该单位被玩家拖入战场，并声明为攻击者时触发。',
+        color: 'red'
+    },
+    '回合开始': {
+        label: '回合开始',
+        description: '在每个回合的最开始阶段自动触发。',
+        color: 'emerald'
+    },
+    '阵亡时': {
+        label: '阵亡时',
+        description: '当该单位的生命值降至 0 或被处决消灭时触发。',
+        color: 'purple'
+    },
+
+    // --- 动作词 ---
+    '备战': {
+        label: '备战',
+        description: '立刻获得一个进攻标识。如果本回合尚未发起过进攻，你可以借此发起进攻。',
+        color: 'orange'
+    },
+    '召唤': {
+        label: '召唤',
+        description: '通过法术或技能，将一个特定的单位直接放置到备战席或战场上。',
+        color: 'blue'
+    },
+    '折返': {
+        label: '折返',
+        description: '将一个在场上的单位强制移回手牌，并清除其受到的所有伤害与临时状态。',
+        color: 'cyan'
+    },
+    '复制': {
+        label: '复制',
+        description: '创造一个目标卡牌的精准副本，包含其当前的面板数值和所有的状态词条。',
+        color: 'fuchsia'
+    },
+    '抉择': {
+        label: '抉择',
+        description: '打出该卡牌时，可以从数个不同的选项（形态或法术）中选择一项来发动。',
+        color: 'amber'
+    },
+    '打击': {
+        label: '打击',
+        description: '利用自身的攻击力，对目标（单位或水晶）造成等量的物理伤害。',
+        color: 'rose'
+    }
+};

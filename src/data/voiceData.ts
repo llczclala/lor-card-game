@@ -16,7 +16,6 @@ import lyfe_victory_1 from '../music/voice/天启者/里芙/胜利1.mp3';
 import lyfe_victory_2 from '../music/voice/天启者/里芙/胜利2.mp3';
 
 // --- [修正] 芬妮 (Fenny) 语音资源 ---
-// 路径替换为 "天启者/芬妮"
 import fenny_die from '../music/voice/天启者/芬妮/被击败.mp3';
 import fenny_ult_select from '../music/voice/天启者/芬妮/大招.mp3';
 import fenny_skill_select_1 from '../music/voice/天启者/芬妮/小技能1.mp3';
@@ -32,6 +31,23 @@ import fenny_kill_2 from '../music/voice/天启者/芬妮/敌人击败2.mp3';
 import fenny_kill_3 from '../music/voice/天启者/芬妮/敌人击败3.mp3';
 import fenny_victory_1 from '../music/voice/天启者/芬妮/胜利1.mp3';
 import fenny_victory_2 from '../music/voice/天启者/芬妮/胜利2.mp3';
+
+// --- [修正] 芬妮 (Fenny) 语音资源 ---
+import pupu_specular_soul_die from '../music/voice/天启者/卜卜灵鉴/被击败.mp3';
+import pupu_specular_soul_ult_select from '../music/voice/天启者/卜卜灵鉴/大招.mp3';
+import pupu_specular_soul_skill_select_1 from '../music/voice/天启者/卜卜灵鉴/小技能1.mp3';
+import pupu_specular_soul_skill_select_2 from '../music/voice/天启者/卜卜灵鉴/小技能2.mp3';
+import pupu_specular_soul_play_1 from '../music/voice/天启者/卜卜灵鉴/登场1.mp3';
+import pupu_specular_soul_play_2 from '../music/voice/天启者/卜卜灵鉴/登场2.mp3';
+import pupu_specular_soul_play_revenge_1 from '../music/voice/天启者/卜卜灵鉴/进攻或格挡1.mp3';
+import pupu_specular_soul_play_revenge_2 from '../music/voice/天启者/卜卜灵鉴/进攻或格挡2.mp3';
+import pupu_specular_soul_enemy_spawn_1 from '../music/voice/天启者/卜卜灵鉴/敌人出现1.mp3';
+import pupu_specular_soul_enemy_spawn_2 from '../music/voice/天启者/卜卜灵鉴/敌人出现2.mp3';
+import pupu_specular_soul_kill_1 from '../music/voice/天启者/卜卜灵鉴/敌人击败1.mp3';
+import pupu_specular_soul_kill_2 from '../music/voice/天启者/卜卜灵鉴/敌人击败2.mp3';
+import pupu_specular_soul_kill_3 from '../music/voice/天启者/卜卜灵鉴/敌人击败3.mp3';
+import pupu_specular_soul_victory_1 from '../music/voice/天启者/卜卜灵鉴/胜利1.mp3';
+import pupu_specular_soul_victory_2 from '../music/voice/天启者/卜卜灵鉴/胜利2.mp3';
 
 // 导出语音事件类型 (关键修复：确保 export 关键字存在)
 export type VoiceEventType =
@@ -78,5 +94,15 @@ export const VOICE_DB: VoiceRegistry = {
         victory: [fenny_victory_1, fenny_victory_2],
         spell_small: [fenny_skill_select_1, fenny_skill_select_2],
         spell_ultimate: [fenny_ult_select]
-    }
+    },
+    'pupu_specular_soul': {
+        play: [pupu_specular_soul_play_1, pupu_specular_soul_play_2],
+        attack_block: [pupu_specular_soul_play_revenge_1, pupu_specular_soul_play_revenge_2],
+        die: [pupu_specular_soul_die],
+        enemy_spawn: [pupu_specular_soul_enemy_spawn_1, pupu_specular_soul_enemy_spawn_2],
+        kill: [pupu_specular_soul_kill_1, pupu_specular_soul_kill_2, pupu_specular_soul_kill_3],
+        victory: [pupu_specular_soul_victory_1, pupu_specular_soul_victory_2],
+        spell_small: [pupu_specular_soul_skill_select_1, pupu_specular_soul_skill_select_2],
+        spell_ultimate: [pupu_specular_soul_ult_select]
+    },
 };

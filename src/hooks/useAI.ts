@@ -24,8 +24,14 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
     useEffect(() => {
         const { game: currGame } = stateRef.current;
 
-        // 只有在轮到敌方、且非动画阶段、且游戏未结束时思考
-        if (currGame.gameResult || currGame.turnOwner === 'player' || currGame.phase === 'animating') return;
+        // [核心修改] 植入 AI 逻辑锁：增加对 pendingLevelUps 队列的监控。
+        // 只要有人排队等升级，或者正在播动画，AI 的时间就会被完全冻结！
+        if (
+            currGame.gameResult ||
+            currGame.turnOwner === 'player' ||
+            currGame.phase === 'animating' ||
+            (currGame.pendingLevelUps && currGame.pendingLevelUps.length > 0)
+        ) return;
 
         const timer = setTimeout(() => {
             const freshState = stateRef.current;
@@ -39,7 +45,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 setMessage("敌方正在思考格挡...");
 
                 // 1. 获取所有待分配的阻挡者 (复制一份备战席)
-                let availableBlockers = [...bench];
+                let availableBlockers = bench.filter((c: CardData) => c.animState !== 'dying' && c.animState !== 'ephemeral_dying');
                 // 2. 创建新的战场状态 (复制一份当前战场)
                 const newCombatField = field.map(f => ({ ...f }));
                 // 3. 玩家备战席 (用于判断威胁? 这里主要是处理 field 里的 attacker)
@@ -139,12 +145,18 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
 
                     // 稍微延迟一下确认，展示格挡意图
                     setTimeout(() => {
-                        actions.resolveCombatAnimation();
+                        actions.confirmBlock(); // [核心修复] 调用 confirmBlock，切入 react_to_block 阶段
                     }, 500);
                 }
                 return;
             }
-
+            // --- 阶段 A.5: 格挡后响应阶段 (React to Block Phase) ---
+            if (g.phase === 'react_to_block') {
+                setMessage("敌方让过（不响应格挡）。");
+                // 因为目前 AI 还没有被教导如何在战斗中打出法术，所以直接交还优先权/确认物理结算
+                actions.passTurn();
+                return;
+            }
             // --- 阶段 B: 进攻确认 (Attack Declare) ---
             if (g.phase === 'attack_declare') {
                 // AI 已经发起进攻，现在是确认阶段 (通常由 initiateAttack 后的逻辑触发)
@@ -179,6 +191,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                     const attackers: CardData[] = [];
 
                     bench.forEach(unit => {
+                        if (unit.animState === 'dying' || unit.animState === 'ephemeral_dying') return;
                         if (unit.power === 0) return;
 
                         // 畏惧逻辑
@@ -198,12 +211,18 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
 
                     if (attackers.length > 0) {
                         setMessage("敌方发起进攻！");
-                        if (actions.setGame && actions.setCombatField && actions.setEnemyBench) {
-                            actions.setGame((prev: any) => ({ ...prev, phase: 'block_declare', turnOwner: 'player', consecutivePasses: 0, lastActionTimestamp: Date.now() }));
+                        if (actions.setCombatField && actions.setEnemyBench && actions.commitAttack) {
                             const newCombat = attackers.map((c: CardData) => ({ attacker: c, blocker: null, owner: 'enemy' }));
                             const remainingBench = bench.filter(b => !attackers.some(a => a.id === b.id));
+
+                            // 1. 先将卡牌实体状态推入战场
                             actions.setEnemyBench(remainingBench);
                             actions.setCombatField(newCombat);
+
+                            // 2. 延迟 50ms 确保 React 完成 DOM 与 State 渲染后，调用标准发车指令触发所有特效
+                            setTimeout(() => {
+                                actions.commitAttack();
+                            }, 50);
                         }
                         return;
                     }

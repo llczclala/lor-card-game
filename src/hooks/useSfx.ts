@@ -15,7 +15,22 @@ import gachaSingleSound from '../music/music/单抽.mp3';
 import gachaTenSound from '../music/music/十连抽.mp3';
 import gachaConvertSound from '../music/music/转化通用银.mp3';
 
-
+// ================= [新增] 全新动作与反馈音效 =================
+import dropBench1Sound from '../music/music/进入备战席1.mp3';
+import dropBench2Sound from '../music/music/进入备战席2.mp3';
+import recallBlockSound from '../music/music/撤回格挡或进攻.mp3';
+import enemyPlayUnitSound from '../music/music/敌方打出单位.mp3';
+import playerPlayUnitSound from '../music/music/我方打出单位.mp3';
+import blockSound from '../music/music/格挡或进攻.mp3';
+import cardHoverSound from '../music/music/卡牌悬停.mp3';
+import shuffleSound from '../music/music/洗牌.mp3';
+import selectUnitSound from '../music/music/选择单位.mp3';
+import summonSound from '../music/music/召唤.mp3';
+import defeatSound from '../music/music/被击败.mp3';
+import pupuUltSound from '../music/music/卜卜 灵鉴/卜卜大招.mp3';
+import pupuSkillSound from '../music/music/卜卜 灵鉴/卜卜小技能.mp3';
+import pupuSkillUpSound from '../music/music/卜卜 灵鉴/卜卜小技能强化.mp3';
+// ==========================================================
 export const useSfx = () => {
     // [新增] 全局音效音量 Ref (默认 0.6)
     const globalVolumeRef = useRef(0.6);
@@ -26,7 +41,6 @@ export const useSfx = () => {
     }, []);
     useEffect(() => {
         // 创建 Audio 对象 (预加载)
-        // 使用 volume = 0.6 避免音效太吵，掩盖 BGM
         const playSound = (src: string, baseVolume: number = 1.0) => {
             const audio = new Audio(src);
             // [修改] 应用全局音量倍率
@@ -50,6 +64,22 @@ export const useSfx = () => {
         const playNexus = () => playSound(nexusStrikeSound, 0.9);    // 水晶打击更响亮
         const playQuickAtk = () => playSound(quickStrikeSound, 0.8); // 快攻锐利
         const playQuickDef = () => playSound(quickCounterSound, 0.8);// 反击沉闷
+
+        // ================= [新增] 细化游戏行为音效触发器 =================
+        const playDropBench = () => playSound(Math.random() > 0.5 ? dropBench1Sound : dropBench2Sound, 0.7);
+        const playRecallBlock = () => playSound(recallBlockSound, 0.7);
+        const playEnemyPlayUnit = () => playSound(enemyPlayUnitSound, 0.8);
+        const playPlayerPlayUnit = () => playSound(playerPlayUnitSound, 0.8);
+        const playBlock = () => playSound(blockSound, 0.8);
+        const playCardHover = () => playSound(cardHoverSound, 0.3); // 悬停音效较频繁，音量压低
+        const playShuffle = () => playSound(shuffleSound, 0.8);
+        const playSelectUnit = () => playSound(selectUnitSound, 0.7);
+        const playSummon = () => playSound(summonSound, 0.8);
+        const playDefeat = () => playSound(defeatSound, 0.8);
+        const playPupuUlt = () => playSound(pupuUltSound, 0.9);
+        const playPupuSkill = () => playSound(pupuSkillSound, 0.8);
+        const playPupuSkillUp = () => playSound(pupuSkillUpSound, 0.9);
+        // ==============================================================
 
         // --- 注册事件监听 ---
 
@@ -79,6 +109,22 @@ export const useSfx = () => {
         eventBus.on(GameEvents.GACHA_START_TEN, playGachaTen);
         eventBus.on(GameEvents.GACHA_CONVERT, playGachaConvert);
 
+        // ================= [新增] 新音效事件绑定 =================
+        eventBus.on(GameEvents.SFX_DROP_BENCH, playDropBench);
+        eventBus.on(GameEvents.SFX_RECALL_BLOCK, playRecallBlock);
+        eventBus.on(GameEvents.SFX_ENEMY_PLAY_UNIT, playEnemyPlayUnit);
+        eventBus.on(GameEvents.SFX_PLAYER_PLAY_UNIT, playPlayerPlayUnit);
+        eventBus.on(GameEvents.SFX_BLOCK, playBlock);
+        eventBus.on(GameEvents.SFX_CARD_HOVER, playCardHover);
+        eventBus.on(GameEvents.SFX_SHUFFLE, playShuffle);
+        eventBus.on(GameEvents.SFX_SELECT_UNIT, playSelectUnit);
+        eventBus.on(GameEvents.SFX_SUMMON, playSummon);
+        eventBus.on(GameEvents.UNIT_DIE, playDefeat);
+        eventBus.on(GameEvents.SFX_PUPU_ULTIMATE, playPupuUlt);
+        eventBus.on(GameEvents.SFX_PUPU_SKILL1, playPupuSkill);
+        eventBus.on(GameEvents.SFX_PUPU_SKILL1_UPGRADED, playPupuSkillUp);
+        // =========================================================
+
         // --- 清理函数 ---
         return () => {
             eventBus.off(GameEvents.GAME_START, playClick);
@@ -96,9 +142,23 @@ export const useSfx = () => {
             eventBus.off(GameEvents.GACHA_START_SINGLE, playGachaSingle);
             eventBus.off(GameEvents.GACHA_START_TEN, playGachaTen);
             eventBus.off(GameEvents.GACHA_CONVERT, playGachaConvert);
+            eventBus.off(GameEvents.SFX_DROP_BENCH, playDropBench);
+            eventBus.off(GameEvents.SFX_RECALL_BLOCK, playRecallBlock);
+            eventBus.off(GameEvents.SFX_ENEMY_PLAY_UNIT, playEnemyPlayUnit);
+            eventBus.off(GameEvents.SFX_PLAYER_PLAY_UNIT, playPlayerPlayUnit);
+            eventBus.off(GameEvents.SFX_BLOCK, playBlock);
+            eventBus.off(GameEvents.SFX_CARD_HOVER, playCardHover);
+            eventBus.off(GameEvents.SFX_SHUFFLE, playShuffle);
+            eventBus.off(GameEvents.SFX_SELECT_UNIT, playSelectUnit);
+            eventBus.off(GameEvents.SFX_SUMMON, playSummon);
+            eventBus.off(GameEvents.UNIT_DIE, playDefeat);
+            eventBus.off(GameEvents.SFX_PUPU_ULTIMATE, playPupuUlt);
+            eventBus.off(GameEvents.SFX_PUPU_SKILL1, playPupuSkill);
+            eventBus.off(GameEvents.SFX_PUPU_SKILL1_UPGRADED, playPupuSkillUp);
         };
     }, []);
+
     return {
-        setSfxVolume // [导出]
+        setSfxVolume
     };
 };
