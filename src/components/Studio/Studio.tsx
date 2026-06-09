@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Image as ImageIcon, X, Wrench, Settings, Dat
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { ArtStudio } from './ArtStudio';
 import { SandboxSession } from './SandboxSession';
+import { EnemyDeckEditor } from './EnemyDeckEditor';
 
 interface StudioProps {
     onClose: () => void;
@@ -69,10 +70,17 @@ export const Studio: React.FC<StudioProps> = ({ onClose }) => {
                             <span className="font-bold tracking-wide text-sm">特效与战斗沙盒</span>
                         </button>
 
-                        {/* 3. 预留：AI 卡组配置 (原第2项顺延) */}
-                        <button disabled className="w-full flex items-center gap-3 px-4 py-3 rounded-md text-gray-600 bg-black/20 cursor-not-allowed">
-                            <Settings size={18} />
-                            <span className="font-bold tracking-wide text-sm">AI 行为树配置 (未解锁)</span>
+                        {/* 3. 敌方卡组编辑器 */}
+                        <button
+                            onClick={() => setActiveTool('ai')}
+                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-all ${
+                                activeTool === 'ai'
+                                ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]'
+                                : 'text-gray-400 hover:bg-white/10 hover:text-white'
+                            }`}
+                        >
+                            <Sword size={18} />
+                            <span className="font-bold tracking-wide text-sm">敌方卡组编辑器</span>
                         </button>
 
                         {/* 3. 预留：肉鸽关卡编辑 */}
@@ -119,7 +127,6 @@ export const Studio: React.FC<StudioProps> = ({ onClose }) => {
                             <ArtStudio onClose={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} />
                         </motion.div>
                     )}
-                    {/* [新增] 沙盒工作区 */}
                     {activeTool === 'sandbox' && (
                         <motion.div
                             key="sandbox-session"
@@ -127,6 +134,16 @@ export const Studio: React.FC<StudioProps> = ({ onClose }) => {
                             className="absolute inset-0 flex"
                         >
                             <SandboxSession onClose={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} />
+                        </motion.div>
+                    )}
+                    {/* 敌方卡组编辑器工作区 */}
+                    {activeTool === 'ai' && (
+                        <motion.div
+                            key="enemy-deck-editor"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            className="absolute inset-0 flex"
+                        >
+                            <EnemyDeckEditor onClose={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} />
                         </motion.div>
                     )}
                 </AnimatePresence>
