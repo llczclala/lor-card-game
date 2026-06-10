@@ -980,6 +980,13 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '回复法术法力。', type: 'unit', keywords: ['Channel'],
     imageUrl: TEST_IMAGES.channel,
     isCollectible: false
+  },
+  // --- 泰坦 (Titan) ---
+  test_titan: {
+    key: 'test_titan', name: '测试：泰坦', cost: 1, power: 2, health: 4, maxHealth: 4, isChampion: false, level: 0, region: 'TEST',
+    description: '回合结束脉冲+攻，然后黯淡。', type: 'unit', keywords: ['Titan'],
+    imageUrl: TEST_IMAGES.titan,
+    isCollectible: false
   }
 };
 

@@ -37,7 +37,8 @@ export const FullScreenToggle: React.FC = () => {
     return (
         <button
             onClick={toggleFullscreen}
-            className="fixed top-4 right-4 z-[9999] p-2 bg-slate-900/50 hover:bg-slate-800/80 text-gray-400 hover:text-white rounded-full backdrop-blur-sm transition-all duration-200 border border-white/10 hover:scale-110 shadow-lg group"
+            // [修复] 将 right-4 修改为 left-4，将全屏按钮移至屏幕左上角
+            className="fixed top-4 left-4 z-[9999] p-2 bg-slate-900/50 hover:bg-slate-800/80 text-gray-400 hover:text-white rounded-full backdrop-blur-sm transition-all duration-200 border border-white/10 hover:scale-110 shadow-lg group"
             title={isFullscreen ? "退出全屏" : "全屏模式"}
         >
             {isFullscreen ? (

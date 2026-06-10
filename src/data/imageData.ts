@@ -97,6 +97,7 @@ import t_33 from '../image/attendants/0_33.png';
 import t_34 from '../image/attendants/0_34.png';
 import t_35 from '../image/attendants/0_35.png';
 import t_36 from '../image/attendants/0_36.png';
+import t_37 from '../image/attendants/0_37.png'; // Titan 测试卡
 
 // [新增] 引入按钮容器背景 (注意文件名拼写 buttton1)
 import button_container from '../image/icon/buttton1.png';
@@ -348,7 +349,8 @@ export const TEST_IMAGES = {
     volatile: t_33,
     echo: t_34,
     impact: t_35,
-    channel: t_36
+    channel: t_36,
+    titan: t_37
 };
 
 // [新增] 导出水晶资源集合

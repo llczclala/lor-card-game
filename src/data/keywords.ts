@@ -37,6 +37,7 @@ import icon33 from '../image/keyword/33.png'; // Volatile
 import icon34 from '../image/keyword/34.png'; // Echo
 import icon35 from '../image/keyword/35.png'; // Impact
 import icon36 from '../image/keyword/36.png'; // Channel
+import icon37 from '../image/keyword/37.png'; // Titan
 
 export interface KeywordConfig {
     label: string;
@@ -269,6 +270,13 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
         description: '召唤时恢复 1 点法术法力。',
         color: 'blue',
         icon: icon36
+    },
+    // --- 5. 泰坦造物 (Titan) ---
+    'Titan': {
+        label: '泰坦',
+        description: '回合结束时，获得+X/+0，X为场上泰坦单位数量。然后此关键词黯淡。',
+        color: 'cyan',
+        icon: icon37
     }
 };
 // ==========================================

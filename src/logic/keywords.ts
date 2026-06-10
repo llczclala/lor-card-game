@@ -75,6 +75,67 @@ export const applyRoundEndKeywords = (cards: CardData[]): CardData[] => {
     });
 };
 
+// ==========================================
+// [泰坦] 脉冲解析器 — 回合结束时调用
+// ==========================================
+
+export interface TitanPulseResult {
+  playerBoard: CardData[];
+  enemyBoard: CardData[];
+  pulsedUnits: number;  // 本次脉冲了多少个单位
+  pulseAmount: number;  // 本次脉冲的攻击力数值
+}
+
+/**
+ * 处理泰坦脉冲：数场上泰坦总数 → 给未黯淡的泰坦加攻 → 标记黯淡
+ * @param playerBoard 我方场上单位
+ * @param enemyBoard 敌方场上单位
+ * @returns 更新后的双方场上单位 + 脉冲信息
+ */
+export const resolveTitanPulse = (
+  playerBoard: CardData[],
+  enemyBoard: CardData[],
+): TitanPulseResult => {
+  const allUnits = [...playerBoard, ...enemyBoard];
+
+  // 1. 计算场上泰坦总数（包括已黯淡的，关键词还在就计入）
+  const titanCount = allUnits.filter(c => c.keywords.includes('Titan')).length;
+
+  if (titanCount === 0) {
+    return { playerBoard, enemyBoard, pulsedUnits: 0, pulseAmount: 0 };
+  }
+
+  // 2. 为未黯淡的泰坦加攻并标记黯淡
+  const processBoard = (board: CardData[]): CardData[] =>
+    board.map(c => {
+      if (!c.keywords.includes('Titan')) return c;
+      if ((c.depletedKeywords || []).includes('Titan')) return c;
+      return {
+        ...c,
+        buffs: {
+          power: (c.buffs?.power || 0) + titanCount,
+          health: c.buffs?.health || 0,
+        },
+        depletedKeywords: [...(c.depletedKeywords || []), 'Titan'],
+      };
+    });
+
+  const newPlayerBoard = processBoard(playerBoard);
+  const newEnemyBoard = processBoard(enemyBoard);
+
+  // 3. 统计本次脉冲的单位数
+  const pulsedUnits = [...playerBoard, ...enemyBoard].filter(
+    c => c.keywords.includes('Titan') && !(c.depletedKeywords || []).includes('Titan')
+  ).length;
+
+  return {
+    playerBoard: newPlayerBoard,
+    enemyBoard: newEnemyBoard,
+    pulsedUnits,
+    pulseAmount: titanCount,
+  };
+};
+
 export const calculateCombatInteraction = (
     attacker: CardData,
     blocker: CardData | null

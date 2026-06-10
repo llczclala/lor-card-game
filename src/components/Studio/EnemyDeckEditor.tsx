@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, Plus, Trash2, Save, Download, X,
-    Swords, Box, Zap, AlertTriangle, Filter, LayoutGrid, User
+    Swords, Box, Zap, AlertTriangle, Filter, LayoutGrid, User, BookOpen
 } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes';
+import { TUTORIAL_STAGES } from '../../data/tutorialStages'; // [新增]
 import { Card } from '../Card';
 import { FullArtOverlay } from '../Overlays'; // [植入精髓] 右键大图检视
 import type { EnemyArchetype } from '../../data/enemies/archetypes';
@@ -41,16 +42,23 @@ const toFullCardData = (staticData: any): CardData => ({
 // ============================================================
 const getDeckCovers = (arch: EnemyArchetype): string[] => {
     const covers: string[] = [];
-    const champ = CARD_DB[arch.champion];
-    covers.push(champ?.imageUrl || HERO_IMAGES.fenny.base); // 主封面必为英雄
+    const champ = CARD_DB[arch.champion || ''];
+    if (champ) covers.push(champ.imageUrl);
 
-    // 智能抓取核心池中最贵的两张卡作为左右副封面
-    const sorted = [...arch.coreCards]
-        .filter(k => CARD_DB[k] && !CARD_DB[k].isChampion)
+    // 智能抓取核心池中最贵且不是英雄的卡作为副封面
+    // [关键修正] 使用 Set 进行去重，确保不会抓到重复的原画
+    const uniqueCoreKeys = Array.from(new Set(arch.coreCards));
+    const sorted = uniqueCoreKeys
+        .filter(k => CARD_DB[k] && !CARD_DB[k].isChampion && k !== arch.champion)
         .sort((a, b) => CARD_DB[b].cost - CARD_DB[a].cost);
 
-    covers.push(CARD_DB[sorted[0]]?.imageUrl || HERO_IMAGES.lyfe.base);
-    covers.push(CARD_DB[sorted[1]]?.imageUrl || HERO_IMAGES.pupu_specular_soul.base);
+    let i = 0;
+    while (covers.length < 3 && i < sorted.length) {
+        covers.push(CARD_DB[sorted[i]]?.imageUrl || '');
+        i++;
+    }
+    // [策略 B 落地] 如果卡牌种类不足 3 种，不再使用里芙兜底，而是推入特殊标识 'CARD_BACK'
+    while (covers.length < 3) covers.push('CARD_BACK');
     return covers;
 };
 
@@ -77,10 +85,15 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
             <div className="absolute top-10 left-6 z-20 pointer-events-none">
                 {covers.map((url, i) => {
                     const rotations = [-16, 0, 16], translatesX = [0, 24, 48], translatesY = [12, 0, 12], zIndexes = [25, 23, 21];
+                    // [策略 B 落地] 识别特殊标识，渲染卡背
+                    const isBack = url === 'CARD_BACK';
+                    const renderUrl = isBack ? cardBackImg : url;
                     return (
-                        <div key={i} className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 border-slate-950 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden`}
+                        <div key={i} className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden ${isBack ? 'border-slate-800/80 bg-slate-900' : 'border-slate-950'}`}
                              style={{ transform: `translateX(${translatesX[i]}px) translateY(${translatesY[i]}px) rotate(${rotations[i]}deg)`, zIndex: zIndexes[i] }}>
-                            <img src={url} className="w-full h-full object-cover" alt="Hero" />
+                            <img src={renderUrl} className={`w-full h-full object-cover ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt={isBack ? "Card Back Fill" : "Hero Front"} />
+                            {/* [补充] 如果是卡背，加一层极薄的暗色遮罩强化神秘感 */}
+                            {isBack && <div className="absolute inset-0 bg-black/40"></div>}
                         </div>
                     )
                 })}
@@ -155,26 +168,65 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
         setSelectedId(newId); setIsDirty(true);
     }, []);
 
+    // [新增] 弹窗 UI 状态
+    const [confirmModal, setConfirmModal] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    } | null>(null);
+
     const deleteArchetype = useCallback((id: string) => {
-        if (!confirm(`确定要删除流派「${archetypes[id]?.name || id}」吗？此操作不可撤销。`)) return;
-        setArchetypes(prev => { const n = { ...prev }; delete n[id]; return n; });
-        setSelectedId(null); setIsDirty(true);
+        // [修复] 弃用原生 confirm，改用沉浸式弹窗
+        setConfirmModal({
+            title: "DELETE ARCHETYPE",
+            message: `确定要删除流派「${archetypes[id]?.name || id}」吗？\n此操作不可撤销。`,
+            onConfirm: () => {
+                setArchetypes(prev => { const n = { ...prev }; delete n[id]; return n; });
+                setSelectedId(null);
+                setIsDirty(true);
+                setConfirmModal(null); // 关闭弹窗
+            }
+        });
     }, [archetypes]);
+
+    // [核心修复] 将读取数量的函数移动至顶部，确保下方的 quickAddToPool 在初始化时能够合法引用！
+    const getCardCountInTargetPool = useCallback((key: string) => {
+        if (!selected) return 0;
+        return selected[targetPool].filter(k => k === key).length;
+    }, [selected, targetPool]);
 
     const addCardToPool = useCallback((cardKey: string) => {
         if (!selectedId || !selected) return;
-        const current = [...selected[targetPool]];
-        current.push(cardKey);
-        updateArchetype({ [targetPool]: current });
-        if (activeListTab !== targetPool) setActiveListTab(targetPool); // 智能切切页
-    }, [selectedId, selected, targetPool, activeListTab, updateArchetype]);
+        const currentCount = getCardCountInTargetPool(cardKey);
+        const wantToAdd = 3 - currentCount;
+        if (wantToAdd <= 0) return;
 
-    const removeCardFromPool = useCallback((field: 'coreCards' | 'preferredPool', index: number) => {
+        const current = [...selected[targetPool]];
+        for (let i = 0; i < wantToAdd; i++) {
+            current.push(cardKey);
+        }
+        updateArchetype({ [targetPool]: current });
+        if (activeListTab !== targetPool) setActiveListTab(targetPool);
+    }, [selectedId, selected, targetPool, activeListTab, updateArchetype, getCardCountInTargetPool]);
+
+    const removeCardFromPool = useCallback((field: 'coreCards' | 'preferredPool', cardKey: string) => {
         if (!selectedId || !selected) return;
         const current = [...selected[field]];
-        current.splice(index, 1);
-        updateArchetype({ [field]: current });
+        // 从后往前删，删除一个对应的卡牌
+        const idx = current.lastIndexOf(cardKey);
+        if (idx !== -1) {
+            current.splice(idx, 1);
+            updateArchetype({ [field]: current });
+        }
     }, [selectedId, selected, updateArchetype]);
+
+    // [核心修复] 将一维数组转化为聚合分组数组 (cardKey -> count)，用于折叠显示
+    const groupedActivePool = useMemo(() => {
+        if (!selected) return [];
+        const map: Record<string, number> = {};
+        selected[activeListTab].forEach(k => map[k] = (map[k] || 0) + 1);
+        return Object.entries(map).map(([key, count]) => ({ key, count }));
+    }, [selected, activeListTab]);
 
     // --- 防卡死悬停雷达 ---
     const handleCardEnter = useCallback((key: string) => {
@@ -225,13 +277,37 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
         });
     }, [searchTerm, category]);
 
-    const getCardCountInTargetPool = useCallback((key: string) => {
-        if (!selected) return 0;
-        return selected[targetPool].filter(k => k === key).length;
-    }, [selected, targetPool]);
 
     return (
         <div className="w-full h-full flex bg-[#0f172a] text-white overflow-hidden font-sans relative">
+
+            {/* [新增] 全局游戏内确认弹窗 */}
+            <AnimatePresence>
+                {confirmModal && (
+                    <div className="absolute inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setConfirmModal(null)}>
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="bg-slate-900 border border-red-500/30 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center relative overflow-hidden"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-500 to-transparent"></div>
+                            <div className="flex flex-col items-center gap-4 mb-6">
+                                <div className="p-4 bg-red-500/10 rounded-full">
+                                    <AlertTriangle size={32} className="text-red-500" />
+                                </div>
+                                <h3 className="text-2xl font-black text-white tracking-widest">{confirmModal.title}</h3>
+                                <p className="text-gray-300 whitespace-pre-line leading-relaxed">{confirmModal.message}</p>
+                            </div>
+                            <div className="flex gap-4 justify-center">
+                                <button onClick={() => setConfirmModal(null)} className="flex-1 py-3 rounded-lg border border-white/10 hover:bg-white/5 text-gray-300 font-bold transition-colors">CANCEL</button>
+                                <button onClick={confirmModal.onConfirm} className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all hover:scale-105">CONFIRM</button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
 
             {/* ==================== 1. 左栏：流派列表 ==================== */}
             <div className="w-[280px] h-full border-r border-white/10 flex flex-col bg-slate-900/90 backdrop-blur-md shrink-0 relative z-20">
@@ -245,24 +321,29 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                         <Plus size={18} /> 新建流派
                     </button>
                 </div>
-                <div className="flex-1 overflow-y-auto custom-scrollbar">
-                    {Object.entries(archetypes).map(([id, arch]) => (
-                        <div key={id} onClick={() => setSelectedId(id)}
-                            className={`group relative cursor-pointer border-b border-white/5 transition-all ${selectedId === id ? 'bg-slate-800/80 border-l-4 border-l-red-500 shadow-inner' : 'hover:bg-slate-800/50 border-l-4 border-l-transparent'}`}>
-                            <div className="px-5 py-4">
-                                <div className="flex items-center justify-between mb-1">
-                                    <span className="text-sm font-bold tracking-wide">{arch.name}</span>
-                                    <button onClick={e => { e.stopPropagation(); deleteArchetype(id); }}
-                                        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-600/20 text-gray-500 hover:text-red-400 transition-all">
-                                        <Trash2 size={14} />
-                                    </button>
-                                </div>
-                                <div className="text-xs text-gray-500 space-y-0.5 font-mono">
-                                    <div>👑 {CARD_DB[arch.champion]?.name || arch.champion}</div>
+                <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] p-4 space-y-3">
+                    {Object.entries(archetypes).map(([id, arch]) => {
+                        const champImg = CARD_DB[arch.champion || '']?.imageUrl || '';
+                        return (
+                            <div key={id} onClick={() => setSelectedId(id)}
+                                className={`group relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all h-24 ${selectedId === id ? 'border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)] scale-105 z-10' : 'border-white/10 hover:border-gray-400 opacity-70 hover:opacity-100'}`}>
+                                {champImg && <div className="absolute inset-0 bg-cover bg-top opacity-60" style={{ backgroundImage: `url(${champImg})` }}></div>}
+                                <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900/80 to-transparent"></div>
+                                <div className="absolute inset-0 px-4 py-3 flex flex-col justify-center">
+                                    <div className="flex items-center justify-between mb-1 relative z-10">
+                                        <span className="text-base font-black tracking-widest text-white drop-shadow-md">{arch.name}</span>
+                                        <button onClick={e => { e.stopPropagation(); deleteArchetype(id); }}
+                                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg bg-red-600/50 hover:bg-red-500 text-red-200 hover:text-white transition-all backdrop-blur-sm">
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
+                                    <div className="text-[10px] text-gray-400 font-bold tracking-widest relative z-10">
+                                        {CARD_DB[arch.champion || '']?.name ? `CORE: ${CARD_DB[arch.champion || ''].name}` : 'NO CORE HERO'}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
 
@@ -301,9 +382,15 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                         </div>
 
                         {/* 卡牌网格区域 (支持左键添加，右键看大图) */}
-                        <div className="flex-1 p-8 overflow-y-auto custom-scrollbar relative">
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.1)_0%,transparent_70%)] pointer-events-none"></div>
-                            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 pb-32 relative z-10">
+                        <div className="flex-1 relative overflow-hidden bg-[#0f172a]">
+                            {/* 顶部向下凸出虚化遮罩 */}
+                            <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none"></div>
+
+                            {/* [修复] 彻底隐藏滚动条，加大 padding (p-10) 赋予舞台纵深 */}
+                            <div className="h-full p-10 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] relative">
+                                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.1)_0%,transparent_70%)] pointer-events-none"></div>
+                            {/* [修复] 移除拥挤的 xl:grid-cols-6，将间距拉大至 gap-10，完美释放呼吸感 */}
+                            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-10 pb-32 relative z-10">
                                 {visibleCards.map(c => {
                                     const count = getCardCountInTargetPool(c.key);
                                     return (
@@ -319,12 +406,27 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                                     {count}
                                                 </div>
                                             )}
+
+                                            {/* [新增] 快速添加闪电按钮 */}
+                                            {count < 3 && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); quickAddToPool(c.key); }}
+                                                    className="absolute top-1/2 right-4 -translate-y-1/2 w-12 h-12 bg-blue-600/90 hover:bg-blue-500 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all shadow-xl border-2 border-white/50 z-30 hover:scale-110 backdrop-blur-sm"
+                                                    title="快速加满3张"
+                                                >
+                                                    <Zap size={24} fill="currentColor" />
+                                                </button>
+                                            )}
                                         </div>
                                     )
                                 })}
                             </div>
                         </div>
-                    </>
+
+                        {/* 底部向上凸出虚化遮罩 */}
+                        <div className="absolute bottom-0 left-0 w-full h-12 bg-gradient-to-t from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none"></div>
+                    </div>
+                </>
                 ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-600">
                         <LayoutGrid size={64} className="opacity-20 mb-4" />
@@ -363,8 +465,15 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                         <div className="w-full space-y-5">
                             {/* 横向滚动英雄头像库 */}
                             <div>
-                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><User size={12}/> CORE CHAMPION</div>
-                                <div className="flex gap-3 overflow-x-auto custom-scrollbar pb-2 px-1">
+                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1">
+                                    <User size={12}/> CORE CHAMPION (OPTIONAL)
+                                </div>
+                                <div className="flex gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pb-2 px-1">
+                                    {/* 允许组建纯法术或纯小兵的无英雄卡组！ */}
+                                    <div onClick={() => updateArchetype({ champion: '' })}
+                                         className={`shrink-0 w-12 h-12 rounded-full border-2 transition-all cursor-pointer flex items-center justify-center bg-slate-800 ${!selected.champion ? 'border-yellow-400 scale-110 shadow-[0_0_15px_rgba(250,204,21,0.5)] z-10 relative' : 'border-transparent opacity-40 hover:opacity-100 hover:border-gray-500'}`}>
+                                        <X size={20} className="text-gray-400" />
+                                    </div>
                                     {championOptions.map(c => (
                                         <div key={c.key} onClick={() => updateArchetype({ champion: c.key })}
                                              className={`shrink-0 w-12 h-12 rounded-full border-2 transition-all cursor-pointer ${selected.champion === c.key ? 'border-yellow-400 scale-110 shadow-[0_0_15px_rgba(250,204,21,0.5)] z-10 relative' : 'border-transparent opacity-40 hover:opacity-100 hover:border-gray-500'}`}>
@@ -386,68 +495,103 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                     ))}
                                 </div>
                             </div>
+
+                            {/* 关联考核关卡 */}
+                            <div>
+                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><BookOpen size={12}/> 关联考核</div>
+                                <select
+                                    value={selected.tutorialStageId || ''}
+                                    onChange={e => updateArchetype({ tutorialStageId: e.target.value || undefined })}
+                                    className="w-full bg-black/60 text-xs px-3 py-2.5 rounded-lg border border-white/5 text-gray-300 focus:outline-none focus:border-amber-500 transition-colors appearance-none cursor-pointer"
+                                >
+                                    <option value="">— 不关联 —</option>
+                                    {Object.values(TUTORIAL_STAGES).map(stage => (
+                                        <option key={stage.id} value={stage.id}>
+                                            {stage.name}（{stage.category === 'basic' ? '基础' : stage.category === 'keyword' ? '关键词' : 'XX'}）
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="text-[9px] text-gray-600 mt-1.5 font-mono tracking-wider px-0.5">
+                                    关联后，该流派将作为对应考核关卡的敌方牌组
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    {/* 卡牌列表区 (带有渐变隐入黑影的边缘虚化) */}
+                    {/* 卡牌列表区 (完全对齐 DeckBuilder 边缘虚化规范) */}
                     <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 relative">
-                        {/* Tab 切换控制 */}
-                        <div className="flex bg-black border-b border-gray-800 shrink-0">
-                            <button onClick={() => setActiveListTab('coreCards')}
-                                className={`flex-1 py-3 text-sm font-black tracking-widest transition-all border-b-2 ${activeListTab === 'coreCards' ? 'text-blue-400 border-blue-400 bg-blue-900/10' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}>
-                                🎯 核心 ({selected.coreCards.length})
-                            </button>
-                            <button onClick={() => setActiveListTab('preferredPool')}
-                                className={`flex-1 py-3 text-sm font-black tracking-widest transition-all border-b-2 ${activeListTab === 'preferredPool' ? 'text-purple-400 border-purple-400 bg-purple-900/10' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}>
-                                🃏 倾向 ({selected.preferredPool.length})
-                            </button>
+                        {/* Tab 切换控制与提示说明 */}
+                        <div className="flex flex-col bg-black border-b border-gray-800 shrink-0">
+                            <div className="flex">
+                                <button onClick={() => setActiveListTab('coreCards')}
+                                    className={`flex-1 py-3 text-sm font-black tracking-widest transition-all border-b-2 ${activeListTab === 'coreCards' ? 'text-blue-400 border-blue-400 bg-blue-900/10' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}>
+                                    🎯 核心 ({selected.coreCards.length})
+                                </button>
+                                <button onClick={() => setActiveListTab('preferredPool')}
+                                    className={`flex-1 py-3 text-sm font-black tracking-widest transition-all border-b-2 ${activeListTab === 'preferredPool' ? 'text-purple-400 border-purple-400 bg-purple-900/10' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}>
+                                    🃏 倾向 ({selected.preferredPool.length})
+                                </button>
+                            </div>
+                            <div className="px-4 py-1.5 bg-slate-900/50 text-[10px] text-gray-500 font-mono text-center tracking-widest">
+                                {activeListTab === 'coreCards' ? 'AI 每次出战【必定携带】的基石' : 'AI 填补 40 张卡组空缺的【随机卡池】'}
+                            </div>
                         </div>
 
-                        {/* 顶端虚化遮罩 */}
-                        <div className="absolute top-[46px] left-0 w-full h-8 bg-gradient-to-b from-slate-950 to-transparent z-10 pointer-events-none"></div>
+                        {/* [绝佳修复] 内部包裹独立定位容器，确保上下渐变遮罩完美锁定悬浮 */}
+                        <div className="flex-1 relative overflow-hidden bg-slate-950">
+                            {/* 顶部向下凸出虚化遮罩 */}
+                            <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
 
-                        {/* 隐藏系统滚动条的丝滑列表 */}
-                        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" onMouseLeave={handleContainerLeave}>
-                            {selected[activeListTab].map((cardKey, index) => {
-                                const card = CARD_DB[cardKey];
-                                const isValid = !!card;
-                                return (
-                                    <div key={`${cardKey}-${index}`}
-                                         className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help group transition-colors"
-                                         onMouseEnter={() => isValid && handleCardEnter(cardKey)}
-                                         onMouseLeave={handleCardLeave}
-                                         onContextMenu={(e) => { e.preventDefault(); if (isValid) setViewCard(toFullCardData(card)); }}>
-                                        {isValid && card.imageUrl && (
-                                            <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
-                                        )}
-                                        <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
-                                        <div className="absolute inset-0 flex items-center justify-between px-3 z-10">
-                                            <div className="flex gap-3 items-center">
-                                                <span className={`w-6 h-6 rounded-full flex justify-center items-center text-xs font-bold border ${isValid ? 'bg-blue-900 border-blue-500 text-blue-200' : 'bg-red-900 border-red-500 text-red-300'}`}>
-                                                    {isValid ? card.cost : '?'}
-                                                </span>
-                                                <span className={`text-sm font-bold truncate w-40 drop-shadow-md ${!isValid ? 'text-red-400 line-through' : 'text-white'}`}>
-                                                    {isValid ? card.name : cardKey}
-                                                </span>
-                                            </div>
-                                            {/* 右侧悬浮垃圾桶移除操作 */}
-                                            <button onClick={(e) => { e.stopPropagation(); removeCardFromPool(activeListTab, index); }}
-                                                className="opacity-0 group-hover:opacity-100 p-2 rounded-lg bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white transition-all border border-red-500/30">
-                                                <Trash2 size={16} />
+                            {/* 隐藏系统滚动条的丝滑列表 */}
+                            <div className="h-full overflow-y-auto px-4 py-6 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" onMouseLeave={handleContainerLeave}>
+                                {groupedActivePool.map((item) => {
+                                    const cardKey = item.key;
+                                    const count = item.count;
+                                    const card = CARD_DB[cardKey];
+                                    const isValid = !!card;
+                                    return (
+                                        <div key={cardKey}
+                                             className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help group transition-colors"
+                                             onMouseEnter={() => isValid && handleCardEnter(cardKey)}
+                                             onMouseLeave={handleCardLeave}
+                                             onContextMenu={(e) => { e.preventDefault(); if (isValid) setViewCard(toFullCardData(card)); }}>
+
+                                            {/* 快速删除按钮 */}
+                                            <button onClick={(e) => { e.stopPropagation(); removeCardFromPool(activeListTab, cardKey); }}
+                                                className="w-8 h-full bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white rounded-l-md flex items-center justify-center transition-colors border-r border-gray-700 hover:border-red-500 z-20">
+                                                <Trash2 size={14} />
                                             </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                            {selected[activeListTab].length === 0 && (
-                                <div className="text-center py-10 text-gray-600 text-sm font-bold tracking-widest">
-                                    列表为空，请从中栏网格加入卡牌
-                                </div>
-                            )}
-                        </div>
 
-                        {/* 底端虚化遮罩 */}
-                        <div className="absolute bottom-0 left-0 w-full h-12 bg-gradient-to-t from-slate-950 to-transparent z-10 pointer-events-none"></div>
+                                            <div className="flex-1 relative h-full flex items-center">
+                                                {isValid && card.imageUrl && (
+                                                    <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
+                                                )}
+                                                <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent z-0"></div>
+                                                <div className="absolute inset-0 flex items-center justify-between px-3 z-10">
+                                                    <div className="flex gap-3 items-center">
+                                                        <span className={`w-6 h-6 rounded-full flex justify-center items-center text-xs font-bold border ${isValid ? 'bg-blue-900 border-blue-500 text-blue-200' : 'bg-red-900 border-red-500 text-red-300'}`}>
+                                                            {isValid ? card.cost : '?'}
+                                                        </span>
+                                                        <span className={`text-sm font-bold truncate w-32 drop-shadow-md ${!isValid ? 'text-red-400 line-through' : 'text-white'}`}>
+                                                            {isValid ? card.name : cardKey}
+                                                        </span>
+                                                    </div>
+                                                    <span className="text-yellow-400 font-black text-sm">x{count}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {groupedActivePool.length === 0 && (
+                                    <div className="text-center py-10 text-gray-600 text-sm font-bold tracking-widest">
+                                        列表为空，请从中栏网格加入卡牌
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 底部向上凸出虚化遮罩 */}
+                            <div className="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
+                        </div>
                     </div>
                 </div>
             )}

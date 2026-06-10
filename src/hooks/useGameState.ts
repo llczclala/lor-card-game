@@ -6,7 +6,7 @@ import { executeSpellEffect } from '../logic/spells';
 import { resolveSingleCombat} from '../logic/combat';
 import { calculateRoundStart, canAfford } from '../logic/core';
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { applyRoundStartKeywords, applyRoundEndKeywords } from '../logic/keywords'; // [新增] 引入回合结束扫荡
+import { applyRoundStartKeywords, applyRoundEndKeywords, resolveTitanPulse } from '../logic/keywords'; // [新增] 引入回合结束扫荡 + 泰坦脉冲
 import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
@@ -557,6 +557,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // [核心修复] 不要过度依赖 useEffect 的异步收尸，在这里手动将备战席的尸体彻底扬了
             setPlayerBench(prev => prev.filter(c => c.animState !== 'dying' && c.animState !== 'ephemeral_dying'));
             setEnemyBench(prev => prev.filter(c => c.animState !== 'dying' && c.animState !== 'ephemeral_dying'));
+        }
+
+        // [泰坦] 脉冲解析：双方备战席上的泰坦单位执行脉冲
+        const pulseResult = resolveTitanPulse(stateRef.current.playerBench, stateRef.current.enemyBench);
+        if (pulseResult.pulsedUnits > 0) {
+            setPlayerBench(pulseResult.playerBoard);
+            setEnemyBench(pulseResult.enemyBoard);
         }
 
         // 4. 尸体清理完毕，真正进入下一回合

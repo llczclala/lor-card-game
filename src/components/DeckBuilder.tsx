@@ -37,7 +37,7 @@ const toFullCardData = (staticData: any): CardData => ({
 // --- [重构] 封面计算工具函数 (获取优先级最高的3张卡) ---
 const getDeckCovers = (cards: Record<string, number>): string[] => {
     const cardKeys = Object.keys(cards);
-    if (cardKeys.length === 0) return [HERO_IMAGES.lyfe.base, HERO_IMAGES.fenny.base, HERO_IMAGES.pupu_specular_soul.base]; // 兜底三巨头
+    if (cardKeys.length === 0) return ['CARD_BACK', 'CARD_BACK', 'CARD_BACK']; // [策略 B 落地] 空卡组完全由卡背填充，不再使用三巨头
 
     const sorted = cardKeys.sort((a, b) => {
         const cardA = CARD_DB[a];
@@ -51,8 +51,8 @@ const getDeckCovers = (cards: Record<string, number>): string[] => {
         return 0;
     });
 
-    const covers = sorted.slice(0, 3).map(k => CARD_DB[k]?.imageUrl || HERO_IMAGES.lyfe.base);
-    while (covers.length < 3) covers.push(HERO_IMAGES.lyfe.base); // 数量不足时兜底补齐
+    const covers = sorted.slice(0, 3).map(k => CARD_DB[k]?.imageUrl || 'CARD_BACK');
+    while (covers.length < 3) covers.push('CARD_BACK'); // [策略 B 落地] 种类不足 3 种时，用卡背代替里芙
     return covers;
 };
 
@@ -106,13 +106,19 @@ const DeckDiorama = ({ deck, covers, cardBackImg, boardImg, isCenter = false, is
                     const translatesY = [12, 0, 12];
                     // i=0(第一张英雄) 拿到最高 z-index(25)，i=2 拿到最低 z-index(21)
                     const zIndexes = [25, 23, 21];
+
+                    // [策略 B 落地] 识别特殊标识，渲染玩家专属的高定卡背
+                    const isBack = url === 'CARD_BACK';
+                    const renderUrl = isBack ? cardBackImg : url;
+
                     return (
                         <div
                             key={i}
-                            className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 border-slate-950 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-500`}
+                            className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-500 ${isBack ? 'border-slate-800/80 bg-slate-900' : 'border-slate-950'}`}
                             style={{ transform: `translateX(${translatesX[i]}px) translateY(${translatesY[i]}px) rotate(${rotations[i]}deg)`, zIndex: zIndexes[i] }}
                         >
-                            <img src={url} className="w-full h-full object-cover" alt="Hero Front" />
+                            <img src={renderUrl} className={`w-full h-full object-cover ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt={isBack ? "Card Back Fill" : "Hero Front"} />
+                            {isBack && <div className="absolute inset-0 bg-black/40 mix-blend-multiply"></div>}
                         </div>
                     )
                 })}
@@ -768,22 +774,6 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 </div>
                             </motion.div>
 
-                            {/* 完美复用的原生全屏选择器模态框 */}
-                            {selectorType && (
-                                <div className="absolute inset-0 z-[200]">
-                                    <StyleSelector
-                                        type={selectorType}
-                                        currentSelected={selectorType === 'cardBack' ? (hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex) : (hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex)}
-                                        unlockedIndices={selectorType === 'cardBack' ? userSystem.settings.unlockedCardBacks : userSystem.settings.unlockedDesks}
-                                        onSelect={(idx: number) => {
-                                            if (selectorType === 'cardBack') userSystem.saveDeck({...hubDeck, cardBackIndex: idx});
-                                            else userSystem.saveDeck({...hubDeck, boardIndex: idx});
-                                        }}
-                                        onClose={() => setSelectorType(null)}
-                                    />
-                                </div>
-                            )}
-
                             {/* [核心修复] 完美复用备战环节的成熟方案，解决数据串屏Bug，并自然地从列表右侧滑出 */}
                             <AnimatePresence mode="wait">
                                 {hoveredCardKey && CARD_DB[hoveredCardKey] && (
@@ -806,10 +796,25 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         </motion.div>
                     )}
                 </AnimatePresence>
+
+                {/* [核心修复] 打破层叠结界，将选择器移至视口最外层，确保 z-index 置顶且不被拦截 */}
+                {selectorType && hubDeck && (
+                    <div className="absolute inset-0 z-[300]">
+                        <StyleSelector
+                            type={selectorType}
+                            currentSelected={selectorType === 'cardBack' ? (hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex) : (hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex)}
+                            unlockedIndices={selectorType === 'cardBack' ? userSystem.settings.unlockedCardBacks : userSystem.settings.unlockedDesks}
+                            onSelect={(idx: number) => {
+                                if (selectorType === 'cardBack') userSystem.saveDeck({...hubDeck, cardBackIndex: idx});
+                                else userSystem.saveDeck({...hubDeck, boardIndex: idx});
+                            }}
+                            onClose={() => setSelectorType(null)}
+                        />
+                    </div>
+                )}
             </div>
         );
     }
-
 
     return (
         <div className="w-full h-full flex bg-[#0f172a] text-white overflow-hidden font-sans">
@@ -985,9 +990,13 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     </AnimatePresence>
                 </div>
 
-                {/* 卡牌网格区域 */}
-                <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-                    {/* [修改] 移除了左侧边栏后空间大增，增加列数到 5~6 列 (lg:grid-cols-5 xl:grid-cols-6) */}
+                {/* 卡牌网格区域 (引入沉浸式边缘虚化) */}
+                <div className="flex-1 relative overflow-hidden bg-[#0f172a]">
+                    {/* 顶部边缘虚化遮罩 */}
+                    <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none"></div>
+
+                    <div className="h-full p-8 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                        {/* [修改] 移除了左侧边栏后空间大增，增加列数到 5~6 列 (lg:grid-cols-5 xl:grid-cols-6) */}
                     <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 pb-32">
                     {visibleCards.map(card => {
                         const ownedCount = getOwnedCount(card.key);
@@ -1078,7 +1087,11 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             </div>
                         );
                     })}
+                    </div>
                 </div>
+
+                {/* 底部边缘虚化遮罩 */}
+                <div className="absolute bottom-0 left-0 w-full h-12 bg-gradient-to-t from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none"></div>
             </div>
             </div>
 
@@ -1144,12 +1157,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     </div>
                 </div>
 
-                {/* 卡牌列表 (保持不变) */}
-                <div
-                    className="flex-1 overflow-y-auto p-4 space-y-2"
-                    onMouseLeave={handleListContainerLeave} // [新增] 彻底离开列表时触发1秒卸载保险
-                >
-                    {Object.entries(localDeck).map(([key, count]) => {
+                {/* 卡牌列表 (引入沉浸式边缘虚化) */}
+                <div className="flex-1 relative overflow-hidden bg-[#1e293b]">
+                    {/* 顶部向下凸出虚化遮罩 */}
+                    <div className="absolute top-0 left-0 w-full h-6 bg-gradient-to-b from-[#1e293b] via-[#1e293b]/80 to-transparent z-20 pointer-events-none"></div>
+
+                    <div
+                        className="h-full overflow-y-auto p-4 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                        onMouseLeave={handleListContainerLeave} // [新增] 彻底离开列表时触发1秒卸载保险
+                    >
+                        {Object.entries(localDeck).map(([key, count]) => {
                         const card = CARD_DB[key];
                         // 兜底：防止 deleted cards 报错
                         if (!card) return null;
@@ -1194,6 +1211,10 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             </div>
                         );
                     })}
+                    </div>
+
+                    {/* 底部向上凸出虚化遮罩 */}
+                    <div className="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-[#1e293b] via-[#1e293b]/80 to-transparent z-20 pointer-events-none"></div>
                 </div>
 
                 {/* 底部操作区 */}

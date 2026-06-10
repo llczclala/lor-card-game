@@ -16,6 +16,7 @@ interface KeywordEffectsProps {
     isChallengedTarget?: boolean;
     highlightTarget?: boolean;
     isBlocking?: boolean;
+    titanCount?: number;  // [泰坦] 场上泰坦总数，用于预显示数字
 }
 
 export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
@@ -28,7 +29,8 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
     canBeChallenged,
     isChallengedTarget,
     highlightTarget,
-    isBlocking = false
+    isBlocking = false,
+    titanCount
 }) => {
     // 辅助计算
     const isOnBoard = location === 'bench' || location === 'combat' || location === 'enemy_bench';
@@ -462,6 +464,48 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                     </motion.div>
                 </div>
             )}
+            {/* [泰坦] 脉冲特效 + 预显示数字 + 黯淡态 */}
+            {isOnBoard && data.keywords.includes('Titan') && KEYWORD_DB['Titan'] && (
+                <>
+                    {!data.depletedKeywords?.includes('Titan') && titanCount !== undefined && titanCount > 0 && (
+                        <div className="absolute -top-2 -right-2 z-50 w-6 h-6 rounded-full bg-cyan-600 text-white text-xs font-black flex items-center justify-center border-2 border-slate-900 shadow-lg shadow-cyan-500/50">
+                            {titanCount}
+                        </div>
+                    )}
+                    {data.animState === 'buff' && (
+                        <div className="absolute inset-0 z-40 pointer-events-none overflow-hidden" style={{ borderRadius }}>
+                            <motion.div className="absolute inset-0 bg-gradient-to-t from-cyan-500/30 via-blue-400/10 to-transparent"
+                                initial={{ scaleY: 0, opacity: 0 }} animate={{ scaleY: 1, opacity: 1 }}
+                                transition={{ duration: 0.6, ease: "easeOut" }} />
+                            {[0, 1, 2].map(i => (
+                                <motion.div key={i} className="absolute inset-0 border-2 border-cyan-400/60 rounded-xl"
+                                    initial={{ scale: 0.8, opacity: 0.6 }} animate={{ scale: 1.8, opacity: 0 }}
+                                    transition={{ duration: 0.8, delay: i * 0.15 }} />
+                            ))}
+                            <motion.div className="absolute inset-0 flex items-center justify-center"
+                                initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: [0, 1, 0], scale: [0.5, 1.5, 2.5] }}
+                                transition={{ duration: 0.7 }}>
+                                <img src={KEYWORD_DB['Titan'].icon} className="w-16 h-16 object-contain drop-shadow-[0_0_30px_rgba(6,182,212,1)]" alt="泰坦脉冲" />
+                            </motion.div>
+                            {titanCount !== undefined && titanCount > 0 && (
+                                <motion.div className="absolute -top-5 left-1/2 -translate-x-1/2 text-cyan-300 font-bold text-lg drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]"
+                                    initial={{ opacity: 0, y: 0 }} animate={{ opacity: [0, 1, 0], y: -24 }}
+                                    transition={{ duration: 1.2, delay: 0.3 }}>
+                                    +{titanCount}
+                                </motion.div>
+                            )}
+                        </div>
+                    )}
+                    {data.depletedKeywords?.includes('Titan') && (
+                        <div className="absolute inset-0 z-20 pointer-events-none" style={{ borderRadius }}>
+                            <div className="absolute inset-0 bg-gradient-to-br from-slate-700/20 to-slate-800/10 rounded-xl" />
+                            <div className="absolute inset-0 border-2 border-slate-600/40 rounded-xl box-border" />
+                            <div className="absolute bottom-1 left-1.5 text-[8px] text-slate-500/60 font-medium">黯淡</div>
+                        </div>
+                    )}
+                </>
+            )}
+
             {/* 9. Ephemeral Dying (瞬息消散) - 终极空洞化演出 */}
             <AnimatePresence>
                 {data.animState === 'ephemeral_dying' && (

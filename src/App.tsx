@@ -17,10 +17,19 @@ import { SettingsModal } from './components/SettingsModal';
 import { eventBus, GameEvents } from './utils/eventBus';
 import { ScaleWrapper } from './components/ScaleWrapper'; // [新增]
 import { StandardGameWrapper } from './components/modes/StandardGameWrapper';
+import { TutorialModeSelect } from './components/Tutorial/TutorialModeSelect';
+import { StageSelectScreen } from './components/Tutorial/StageSelectScreen';
+import { TutorialGameWrapper } from './components/Tutorial/TutorialGameWrapper';
+import { DeckPreviewModal } from './components/Tutorial/DeckPreviewModal';
 import type { BgConfig } from './components/GameLobby'; // [修复] 加入 type 关键字，解决纯类型导入报错
+import type { ExamCategoryId } from './data/tutorialStages';
+import { TUTORIAL_STAGES } from './data/tutorialStages'; // [新增]
+import { ENEMY_ARCHETYPES } from './data/enemies/archetypes'; // [新增]
+import { buildStandardEncounter } from './logic/encounterBuilder'; // [新增] 引入标准模式敌人生成器
 import { motion, AnimatePresence } from 'framer-motion';
 
-type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha';
+type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha'
+    | 'tutorial_mode_select' | 'tutorial_stage_select' | 'tutorial_game';
 export default function App() {
   const [appState, setAppState] = useState<AppState>('title');
   const [pendingAppState, setPendingAppState] = useState<AppState | null>(null);
@@ -28,6 +37,10 @@ export default function App() {
   const userSystem = useUserSystem();
   const [gameId, setGameId] = useState(0);
   const [deckBuilderSource, setDeckBuilderSource] = useState<'lobby' | 'mode_select'>('mode_select');
+  const [tutorialCategoryId, setTutorialCategoryId] = useState<ExamCategoryId | null>(null);
+  const [tutorialStageId, setTutorialStageId] = useState<string | null>(null);
+  const [previewStageId, setPreviewStageId] = useState<string | null>(null);
+  const [standardEncounter, setStandardEncounter] = useState<any>(null); // [新增] 提前缓存标准模式的敌人数据
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -144,6 +157,29 @@ export default function App() {
     setAppState('system_loading');
   };
 
+  // [新增] 模式选择 -> 教程分类选择
+  const handleTutorialSelect = () => {
+    setAppState('tutorial_mode_select');
+  };
+
+  // [新增] 教程分类选择 -> 关卡选择
+  const handleSelectCategory = (id: ExamCategoryId) => {
+    setTutorialCategoryId(id);
+    setAppState('tutorial_stage_select');
+  };
+
+  // [新增] 关卡选择 -> 加载对局
+  const handleStartStage = (stageId: string) => {
+    setTutorialStageId(stageId);
+    stopMovie();
+    setAppState('loading');
+  };
+
+  // [新增] 返回：关卡选择 -> 教程分类选择
+  const handleBackFromStageSelect = () => {
+    setAppState('tutorial_mode_select');
+  };
+
   // [新增] 大厅 -> 备战 (Lobby -> DeckBuilder)
   const handleLobbyOpenDeck = () => {
     stopMovie();
@@ -178,14 +214,22 @@ export default function App() {
   // 5. [DeckBuilder -> Loading]
   // 构筑完成点击 "START GAME" 触发
   const handleStartGame = ( ) => {
+    // [核心修正] 如果不是教程模式，在进入 Loading 前立即生成并锁定本局敌人！
+    if (!tutorialStageId) {
+        setStandardEncounter(buildStandardEncounter());
+    }
     setAppState('loading');
     stopMovie();
   };
 
-  // 6. [Loading -> Game]
+  // 6. [Loading -> Game / Tutorial Game]
   // VS动画结束触发
   const handleLoadingComplete = () => {
-    setAppState('game');
+    if (tutorialStageId) {
+      setAppState('tutorial_game');
+    } else {
+      setAppState('game');
+    }
     setGameId(prev => prev + 1);
   };
 
@@ -193,6 +237,8 @@ export default function App() {
   const handleExitGame = () => {
     stopMovie();
     stopBgm();
+    setTutorialStageId(null); // 清理教程状态
+    setStandardEncounter(null); // [清理] 清空上局敌人数据
     setPendingAppState('lobby');   // 告诉系统：加载完去大厅
     setAppState('system_loading'); // 立即进入加载界面
   };
@@ -284,7 +330,24 @@ export default function App() {
       ) as string[];
   }, [userSystem.activeDeck]);
 
-
+  // [新增] 获取敌方加载界面的英雄
+  const getEnemyDisplayHero = (): string => {
+      // 优先判断是否是教程考核模式
+      if (tutorialStageId) {
+          const stage = TUTORIAL_STAGES[tutorialStageId];
+          if (stage && stage.enemyArchetypeId) {
+              const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
+              if (archetype && archetype.champion) {
+                  return archetype.champion;
+              }
+          }
+      } else if (standardEncounter) {
+          // [核心修正] 标准模式直接从刚刚提前生成的配置中读取！
+          return standardEncounter.heroConfig.heroKey;
+      }
+      // 兜底防崩溃
+      return 'fenny';
+  };
 
   // [新增] 如果用户数据还没加载好，显示简单的加载中
   if (!userSystem.isReady) {
@@ -312,6 +375,25 @@ export default function App() {
         <ModeSelectScreen
             onPvESelect={handlePvESelect}
             onBack={handleBackToLobby}
+            onTutorialSelect={handleTutorialSelect} // [新增] 教程入口
+        />
+      )}
+
+      {/* [新增] 教程模式：分类选择 */}
+      {appState === 'tutorial_mode_select' && (
+        <TutorialModeSelect
+            onSelectCategory={handleSelectCategory}
+            onBack={handleBackToModeSelect}
+        />
+      )}
+
+      {/* [新增] 教程模式：关卡选择 */}
+      {appState === 'tutorial_stage_select' && tutorialCategoryId && (
+        <StageSelectScreen
+            categoryId={tutorialCategoryId}
+            onBack={handleBackFromStageSelect}
+            onStartStage={handleStartStage}
+            onViewDecks={setPreviewStageId}
         />
       )}
 
@@ -359,15 +441,33 @@ export default function App() {
       {appState === 'loading' && (
           <LoadingScreen
               heroKey={getDisplayHero()}
+              enemyHeroKey={getEnemyDisplayHero()} // [核心修复] 动态传入敌方真实英雄
               onComplete={handleLoadingComplete} // [Link 6]
               onMatchFound={stopBgm}
           />
       )}
 
-      {/* 6. 战斗 */}
-      {appState === 'game' && (
+      {/* 6. 战斗 (标准模式) */}
+      {appState === 'game' && standardEncounter && (
             <StandardGameWrapper
                 key={gameId}
+                deck={currentPlayerDeckList}
+                encounter={standardEncounter} // [核心修正] 传入在 loading 前就生成好的敌人
+                onExitGame={handleExitGame}
+                onExit={handleExitGame}
+                playBgm={playBgm}
+                playLevelUpMovie={playLevelUpMovie}
+                playVictoryMovie={playVictoryMovie}
+                stopMovie={stopMovie}
+                deskIndex={userSystem.settings.customization.currentDeskIndex}
+                cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
+            />
+       )}
+      {/* [新增] 6b. 战斗 (教程模式) */}
+      {appState === 'tutorial_game' && tutorialStageId && (
+            <TutorialGameWrapper
+                key={`tutorial_${gameId}`}
+                stageId={tutorialStageId}
                 deck={currentPlayerDeckList}
                 onExitGame={handleExitGame}
                 onExit={handleExitGame}
@@ -386,6 +486,21 @@ export default function App() {
               volumes={userSystem.settings.volume}
               onVolumeChange={handleVolumeChange}
           />
+
+      {/* [新增] 教程牌组预览弹窗 */}
+      {previewStageId && (
+          <DeckPreviewModal
+              stageId={previewStageId}
+              deskIndex={userSystem.settings.customization.currentDeskIndex}
+              cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
+              playerCustomDeck={currentPlayerDeckList}
+              onClose={() => setPreviewStageId(null)}
+              onStart={() => {
+                  handleStartStage(previewStageId);
+                  setPreviewStageId(null);
+              }}
+          />
+      )}
 
           <AnimatePresence>
           {customBg && (appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') && (

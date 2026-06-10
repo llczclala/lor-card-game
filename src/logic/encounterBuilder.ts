@@ -1,5 +1,6 @@
 import { CARD_DB } from '../data/cards';
 import { ENEMY_ARCHETYPES } from '../data/enemies/archetypes';
+import { TUTORIAL_STAGES } from '../data/tutorialStages';
 import type { EnemyHeroConfig } from '../types/gameModeTypes';
 
 /**
@@ -88,13 +89,51 @@ export const buildRoguelikeEncounter = (_stage: number, _difficulty: number): En
 };
 
 /**
- * [预留] 构建 [教程模式] 的遭遇战
+ * 构建 [教程模式] 的遭遇战
+ * 根据考核关卡配置，读取关联的敌方流派并生成卡组
  */
-export const buildTutorialEncounter = (_tutorialId: string): EncounterData => {
-    // TODO: 返回固定的死数据
+export const buildTutorialEncounter = (tutorialId: string): EncounterData => {
+    const stage = TUTORIAL_STAGES[tutorialId];
+    if (!stage) {
+        console.warn(`[EncounterBuilder] Unknown tutorial stage: ${tutorialId}, using fallback`);
+        return buildFallbackTutorial();
+    }
+
+    const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
+    if (!archetype) {
+        console.warn(`[EncounterBuilder] Unknown archetype: ${stage.enemyArchetypeId}, using fallback`);
+        return buildFallbackTutorial();
+    }
+
+    // 如果关卡指定了固定敌方卡组，直接使用
+    if (stage.enemyOverrideDeck && stage.enemyOverrideDeck.length > 0) {
+        return {
+            deck: stage.enemyOverrideDeck,
+            heroConfig: {
+                heroKey: archetype.champion,
+                level: stage.enemyHeroLevel ?? 1,
+                customName: archetype.name,
+            },
+            passiveEffects: [],
+        };
+    }
+
+    // 否则用标准填充逻辑生成 40 张卡组
+    const fullDeck = fillDeckToSize(archetype.coreCards, archetype.preferredPool, 40);
     return {
-        deck: ['fenny', 'fenny', 'fenny'], // 仅作示例
-        heroConfig: { heroKey: 'fenny', level: 1, customName: "教官" },
-        passiveEffects: []
+        deck: fullDeck,
+        heroConfig: {
+            heroKey: archetype.champion,
+            level: stage.enemyHeroLevel ?? 1,
+            customName: archetype.name,
+        },
+        passiveEffects: [],
     };
 };
+
+/** 教程模式的安全兜底 */
+const buildFallbackTutorial = (): EncounterData => ({
+    deck: ['fenny', 'fenny', 'fenny'],
+    heroConfig: { heroKey: 'fenny', level: 1, customName: "教官" },
+    passiveEffects: [],
+});

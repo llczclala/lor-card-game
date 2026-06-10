@@ -7,7 +7,7 @@ export type Keyword =
     | 'Scout' | 'Ephemeral' | 'Stun' | 'Double Attack' | 'Support' | 'Deadly'
     | 'SpellShield' | 'Silence' | 'Berserk' | 'Cleave' | 'Thorns' | 'Vanguard'
     | 'Ambush' | 'Plunder' | 'Exposed' | 'Shroud' | 'Immobile' | 'Reborn'
-    | 'Execute' | 'Sniper' | 'Volatile' | 'Echo' | 'Impact' | 'Channel';
+    | 'Execute' | 'Sniper' | 'Volatile' | 'Echo' | 'Impact' | 'Channel' | 'Titan';
 
 export interface CardData {
   id: string;
@@ -47,7 +47,8 @@ export interface CardData {
   buffs?: { power: number, health: number };
   roundBuffs?: { power: number, health: number }; // [新增] 临时账本：专门记录单回合(ROUND)增益，用于回合末秋后算账
   roundKeywords?: Keyword[]; // [核心新增] 词条临时账本：专门记录单回合获得的词条，回合末予以回收
-  parentCard?: CardData; // [新增] 法术血统(DNA)：记录衍生该卡牌的“母体”实体（用于撤回法术时完美还原手牌与费用）
+  depletedKeywords?: Keyword[]; // [泰坦] 黯淡关键词列表：关键词不再触发，但不失去，仍计入计数
+  parentCard?: CardData; // [新增] 法术血统(DNA)：记录衍生该卡牌的”母体”实体（用于撤回法术时完美还原手牌与费用）
 }
 
 export type CombatFieldItem = {
