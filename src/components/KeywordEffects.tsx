@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { CardData } from '../types';
 import { KEYWORD_DB } from '../data/keywords';
+import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于特效完成信号
 
 interface KeywordEffectsProps {
     data: CardData;
@@ -45,6 +46,20 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
     // ==========================================
     const [vfxState, setVfxState] = useState<'idle' | 'intro' | 'loop'>('idle');
     const [carouselIndex, setCarouselIndex] = useState(0);
+    // [泰坦] 卸载保护锁：捕获 animState:'buff' 后本地持有，确保 2s 动画播完才卸载
+    const [titanBuffActive, setTitanBuffActive] = useState(false);
+
+    // [泰坦] 一旦 animState 变成 'buff'，锁住渲染至少 2.3s（略长于完整时序）
+    useEffect(() => {
+        if (data.animState === 'buff' && isOnBoard && data.keywords.includes('Titan')) {
+            setTitanBuffActive(true);
+            const timer = setTimeout(() => {
+                setTitanBuffActive(false);
+                eventBus.emit(GameEvents.ROUND_END_EFFECT_COMPLETE); // [新增] 通知游戏循环可以继续了
+            }, 2300);
+            return () => clearTimeout(timer);
+        }
+    }, [data.animState]);
 
     // 自动收集进攻型词条 (加入 Challenger，使其享受 0.9s 的入场狂欢与常驻轮播)
     const offensiveKeywords = data.keywords.filter(k => k === 'Overwhelm' || k === 'QuickAttack' || k === 'Challenger');
@@ -464,44 +479,49 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                     </motion.div>
                 </div>
             )}
-            {/* [泰坦] 脉冲特效 + 预显示数字 + 黯淡态 */}
-            {isOnBoard && data.keywords.includes('Titan') && KEYWORD_DB['Titan'] && (
+            {/* [泰坦] 脉冲特效 — 2秒完整时序：渐变→遮罩→波纹（可出界）→爆闪→飘字 */}
+            {(titanBuffActive || (isOnBoard && data.keywords.includes('Titan') && KEYWORD_DB['Titan'])) && (
                 <>
-                    {!data.depletedKeywords?.includes('Titan') && titanCount !== undefined && titanCount > 0 && (
-                        <div className="absolute -top-2 -right-2 z-50 w-6 h-6 rounded-full bg-cyan-600 text-white text-xs font-black flex items-center justify-center border-2 border-slate-900 shadow-lg shadow-cyan-500/50">
-                            {titanCount}
-                        </div>
-                    )}
-                    {data.animState === 'buff' && (
-                        <div className="absolute inset-0 z-40 pointer-events-none overflow-hidden" style={{ borderRadius }}>
-                            <motion.div className="absolute inset-0 bg-gradient-to-t from-cyan-500/30 via-blue-400/10 to-transparent"
-                                initial={{ scaleY: 0, opacity: 0 }} animate={{ scaleY: 1, opacity: 1 }}
-                                transition={{ duration: 0.6, ease: "easeOut" }} />
-                            {[0, 1, 2].map(i => (
-                                <motion.div key={i} className="absolute inset-0 border-2 border-cyan-400/60 rounded-xl"
-                                    initial={{ scale: 0.8, opacity: 0.6 }} animate={{ scale: 1.8, opacity: 0 }}
-                                    transition={{ duration: 0.8, delay: i * 0.15 }} />
-                            ))}
-                            <motion.div className="absolute inset-0 flex items-center justify-center"
-                                initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: [0, 1, 0], scale: [0.5, 1.5, 2.5] }}
-                                transition={{ duration: 0.7 }}>
-                                <img src={KEYWORD_DB['Titan'].icon} className="w-16 h-16 object-contain drop-shadow-[0_0_30px_rgba(6,182,212,1)]" alt="泰坦脉冲" />
-                            </motion.div>
-                            {titanCount !== undefined && titanCount > 0 && (
-                                <motion.div className="absolute -top-5 left-1/2 -translate-x-1/2 text-cyan-300 font-bold text-lg drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]"
-                                    initial={{ opacity: 0, y: 0 }} animate={{ opacity: [0, 1, 0], y: -24 }}
-                                    transition={{ duration: 1.2, delay: 0.3 }}>
-                                    +{titanCount}
+                    {titanBuffActive && (
+                        <>
+                            {/* 内层容器：渐变/遮罩/爆闪/飘字（裁剪在卡牌边界内） */}
+                            <div className="absolute inset-0 z-40 pointer-events-none overflow-hidden" style={{ borderRadius }}>
+                                {/* ① 青蓝渐变从底部冲顶（0→0.25s） */}
+                                <motion.div className="absolute inset-0 bg-gradient-to-t from-cyan-500/50 via-blue-400/20 to-transparent origin-bottom"
+                                    initial={{ scaleY: 0, opacity: 0 }} animate={{ scaleY: 1, opacity: 1 }}
+                                    transition={{ duration: 0.25, ease: "easeOut" }} />
+
+                                {/* ② 青蓝亮度遮罩：同步上升→维持→（0.6s后随波纹褪去） */}
+                                <motion.div className="absolute inset-0 bg-cyan-500/[0.2]"
+                                    initial={{ opacity: 0 }} animate={{ opacity: [0, 0.5, 0.5, 0] }}
+                                    transition={{ duration: 1.0, times: [0, 0.2, 0.6, 1], ease: "easeInOut" }} />
+
+                                {/* ④ 泰坦图标爆闪（0.8s→1.2s，第一道波纹到达最大时触发） */}
+                                <motion.div className="absolute inset-0 flex items-center justify-center"
+                                    initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: [0, 1, 0], scale: [0.5, 1.4, 2.2] }}
+                                    transition={{ duration: 0.4, delay: 0.8 }}>
+                                    <img src={KEYWORD_DB['Titan'].icon} className="w-16 h-16 object-contain drop-shadow-[0_0_30px_rgba(6,182,212,1)]" alt="泰坦脉冲" />
                                 </motion.div>
-                            )}
-                        </div>
-                    )}
-                    {data.depletedKeywords?.includes('Titan') && (
-                        <div className="absolute inset-0 z-20 pointer-events-none" style={{ borderRadius }}>
-                            <div className="absolute inset-0 bg-gradient-to-br from-slate-700/20 to-slate-800/10 rounded-xl" />
-                            <div className="absolute inset-0 border-2 border-slate-600/40 rounded-xl box-border" />
-                            <div className="absolute bottom-1 left-1.5 text-[8px] text-slate-500/60 font-medium">黯淡</div>
-                        </div>
+
+                                {/* ⑤ 一切结束后飘字收尾（1.3s→2.0s） */}
+                                {titanCount !== undefined && titanCount > 0 && (
+                                    <motion.div className="absolute -top-5 left-1/2 -translate-x-1/2 text-cyan-300 font-black text-xl drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]"
+                                        initial={{ opacity: 0, y: 0 }} animate={{ opacity: [0, 1, 0], y: -32 }}
+                                        transition={{ duration: 0.7, delay: 1.3 }}>
+                                        +{titanCount}
+                                    </motion.div>
+                                )}
+                            </div>
+
+                            {/* ③ 3道蓝色同心波纹（可超出卡牌边界！）0.5s起，错开0.08s */}
+                            <div className="absolute inset-0 z-30 pointer-events-none overflow-visible" style={{ borderRadius }}>
+                                {[0, 1, 2].map(i => (
+                                    <motion.div key={i} className="absolute inset-0 border-[3px] border-cyan-400/80 rounded-xl"
+                                        initial={{ scale: 0.85, opacity: 0.8 }} animate={{ scale: [0.85, 2.6], opacity: [0.8, 0] }}
+                                        transition={{ duration: 0.5, delay: 0.5 + i * 0.08, times: [0, 0.6, 1], ease: "easeOut" }} />
+                                ))}
+                            </div>
+                        </>
                     )}
                 </>
             )}

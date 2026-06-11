@@ -1,6 +1,7 @@
 import type { Keyword } from '../types';
 
 // [修正] 批量导入 36 个关键词图标
+import icon0 from '../image/keyword/00.png';   // Overwhelm
 import icon1 from '../image/keyword/01.png';   // Overwhelm
 import icon2 from '../image/keyword/02.png';   // QuickAttack
 import icon3 from '../image/keyword/03.png';   // Regeneration
@@ -277,6 +278,13 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
         description: '回合结束时，获得+X/+0，X为场上泰坦单位数量。然后此关键词黯淡。',
         color: 'cyan',
         icon: icon37
+    },
+    // --- 6. 能力 (Ability) ---
+    'Ability': {
+        label: '能力',
+        description: '卡牌持有的独特能力，区别于关键词。',
+        color: 'amber',
+        icon: icon0
     }
 };
 // ==========================================

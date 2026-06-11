@@ -66,6 +66,9 @@ export const GameEvents = {
     GACHA_REVEAL_RARE: 'gacha_reveal_rare',
     GACHA_REVEAL_COMMON: 'gacha_reveal_common',
     GACHA_CONVERT: 'gacha_convert',
+
+    // [新增] 回合结束特效完成信号 — 用于协调回合跳转等待动画播完
+    ROUND_END_EFFECT_COMPLETE: 'round_end_effect_complete',
 } as const;
 
 // 导出类型，方便 TypeScript 提示

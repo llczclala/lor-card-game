@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { GameSession } from '../GameSession';
 import { TUTORIAL_STAGES } from '../../data/tutorialStages';
 import { buildTutorialEncounter } from '../../logic/encounterBuilder';
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [新增] 音效
 
 /**
  * 教程模式对局包装器
@@ -69,7 +70,7 @@ export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
                     <div className="text-lg font-bold mb-2">未知的考核关卡</div>
                     <div className="text-sm text-gray-500 font-mono">ID: {stageId}</div>
                     <button
-                        onClick={onExitGame}
+                        onClick={() => { eventBus.emit(GameEvents.UI_BACK); onExitGame(); }} // [新增] 音效
                         className="mt-6 px-6 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm transition-colors"
                     >
                         返回

@@ -4,6 +4,7 @@ import type { CardData } from '../types';
 import { Card } from './Card';
 import { CARD_DB } from '../data/cards';
 import { SkipForward } from 'lucide-react';
+import { preloadLevelUpMovieByKey } from '../utils/videoPreloader'; // [新增] 影片预加载
 
 
 interface ChampionLevelUpProps {
@@ -18,7 +19,7 @@ interface ChampionLevelUpProps {
  * 英雄升级动画控制器
  * 负责调度：Phase 1 (旋转聚气) -> Phase 2 (播放影片) -> Phase 3 (爆发展示)
  */
-export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete,onStopMovie }) => {
+export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete, onStopMovie, onPreloadMovie }) => {
     // 动画阶段：spin (旋转消失) -> video (播放视频) -> burst (爆发出现)
     const [phase, setPhase] = useState<'spin' | 'video' | 'burst'>('spin');
     // [新增] 跳过按钮显示状态
@@ -75,6 +76,13 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
     const variants = card.key === 'lyfe' ? lyfeVariants : defaultVariants;
 
     // --- 事件处理 ---
+
+    // [新增] Spin 阶段预加载影片：利用 1~1.5s 的旋转动画时间提前 fetch blob + 预热解码器
+    useEffect(() => {
+        if (phase === 'spin' && card.key) {
+            preloadLevelUpMovieByKey(card.key);
+        }
+    }, [phase, card.key]);
 
     // [新增] 监听阶段变化，控制跳过按钮
     useEffect(() => {

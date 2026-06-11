@@ -10,18 +10,25 @@ interface KeywordTrayProps {
     sizeClass?: string;    // 自定义图标尺寸 (例如 'w-[18px] h-[18px]')
     className?: string;    // 外部容器的自定义样式
     animState?: string;    // [新增] 宿主的动画状态，用于判定阵亡
+    depletedKeywords?: Keyword[]; // [泰坦] 黯淡关键词列表，关键词不再触发但仍计入计数
+    titanCount?: number;   // [泰坦] 场上泰坦总数，用于在泰坦图标上预显示脉冲加成
+    isOnBoard?: boolean;   // [泰坦] 卡牌是否在场上（备战席/战场），用于泰坦呼吸灯
+
 }
 
 // 内部子组件：拥有独立特效大脑的“智能关键词图标”
-const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animState }: { keyword: Keyword, sizeClass: string, isAttacking?: boolean, isDefending?: boolean, animState?: string }) => {
+const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animState, isDepleted, titanCount, isOnBoard }: { keyword: Keyword, sizeClass: string, isAttacking?: boolean, isDefending?: boolean, animState?: string, isDepleted?: boolean, titanCount?: number, isOnBoard?: boolean }) => {
     const config = KEYWORD_DB[keyword];
     if (!config) return null;
 
-    // 1. 状态计算大脑：判断当前词条是否被“激活”
+    // [能力] 手牌中不显示能力图标
+    if (keyword === 'Ability' && !isOnBoard) return null;
+
+    // 1. 状态计算大脑：判断当前词条是否被”激活”
     let isActive = false;
     let glowColor = '';
     // [新增] 加入 shield (护盾) 类型
-    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'none' = 'none';
+    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'none' = 'none';
 
     // [新增] 最高优先级：瞬息阵亡谢幕拦截！
     if (animState === 'ephemeral_dying' && keyword === 'Ephemeral') {
@@ -38,6 +45,18 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
         isActive = true;
         glowColor = 'rgba(253, 224, 71, 0.9)'; // 金黄色高亮护盾
         animType = 'shield';
+    }
+    // [泰坦] 沉稳呼吸：在场上时，未黯淡的泰坦图标保持巨人般的呼吸节奏
+    else if (keyword === 'Titan' && isOnBoard && !isDepleted) {
+        isActive = true;
+        glowColor = 'rgba(6, 182, 212, 0.6)'; // 青蓝光
+        animType = 'titan_breath';
+    }
+    // [能力] 呼吸灯：在场上时未耗尽的能力图标保持金色呼吸，耗尽时靠 isDepleted 变灰
+    else if (keyword === 'Ability' && isOnBoard && !isDepleted) {
+        isActive = true;
+        glowColor = 'rgba(59, 130, 246, 0.8)'; // 金色统一光效
+        animType = 'ability_breath';
     }
 
     // 进攻类词条激活判断
@@ -154,6 +173,33 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
                 times: [0, 0.8, 1], // 精准对齐 1.2s (80%) 的挂起时机
                 ease: "easeIn"
             }
+        },
+        // [泰坦] 沉稳呼吸：巨人般的亮度 + 缩放节奏（4s周期，低亮度抬高确保图标可见）
+        active_titan_breath: {
+            scale: [0.65, 0.65, 0.9, 0.65, 0.65],
+            filter: [
+                `brightness(0.55) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(0.55) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(1.15) drop-shadow(0px 0px 12px ${glowColor})`,
+                `brightness(0.55) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(0.55) drop-shadow(0px 0px 3px ${glowColor})`,
+            ],
+            transition: {
+                duration: 4,
+                times: [0, 0.2, 0.4, 0.6, 1], // 低0.8s → 升0.8s → 降0.8s → 低1.6s
+                repeat: Infinity,
+                ease: "easeInOut"
+            }
+        },
+        // [能力] 金色呼吸灯：沉稳的明暗+缩放循环
+        active_ability_breath: {
+            scale: [0.75, 0.95, 0.75],
+            filter: [
+                `brightness(0.6) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(1.1) drop-shadow(0px 0px 10px ${glowColor})`,
+                `brightness(0.6) drop-shadow(0px 0px 3px ${glowColor})`,
+            ],
+            transition: { duration: 2.5, repeat: Infinity, ease: "easeInOut" }
         }
     };
 
@@ -177,9 +223,28 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
                 className="w-full h-full relative z-10 flex items-center justify-center"
             >
                 {config.icon ? (
-                    <img src={config.icon} alt={config.label} className="w-full h-full object-contain drop-shadow-md group-hover:brightness-125 transition-all" />
+                    <img src={config.icon} alt={config.label}
+                      className={`w-full h-full object-contain drop-shadow-md group-hover:brightness-125 transition-all ${isDepleted ? 'grayscale opacity-30 brightness-50' : ''}`} />
                 ) : (
                     <span className={`text-[10px] font-bold text-${config.color}-400`}>{config.label.substring(0, 1)}</span>
+                )}
+
+                {/* [泰坦] 预显示脉冲加成数字（在 motion.div 内部，随图标一起呼吸缩放） */}
+                {keyword === 'Titan' && titanCount !== undefined && titanCount > 0 && !isDepleted && (
+                    isOnBoard ? (
+                        /* 场上模式：白字蓝紫描边斜体加粗，居中覆盖在图标上 */
+                        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+                            <span className="text-white font-black italic text-[10px] leading-none"
+                                  style={{ textShadow: '0 0 4px rgba(99,102,241,0.9), -1px -1px 0 #6366f1, 1px -1px 0 #6366f1, -1px 1px 0 #6366f1, 1px 1px 0 #6366f1' }}>
+                                {titanCount}
+                            </span>
+                        </div>
+                    ) : (
+                        /* 手牌/预览模式：右上角蓝紫色数字徽章 */
+                        <div className="absolute -top-2 -right-2 z-20 min-w-[18px] h-[18px] rounded-full bg-indigo-600/90 text-white text-[10px] font-black flex items-center justify-center px-1 border border-indigo-300/40 shadow-lg shadow-indigo-500/40">
+                            {titanCount}
+                        </div>
+                    )
                 )}
             </motion.div>
         </div>
@@ -193,7 +258,10 @@ export const KeywordTray: React.FC<KeywordTrayProps> = ({
     isDefending = false,
     sizeClass,
     className = '',
-    animState // [新增]
+    animState,
+    depletedKeywords,
+    titanCount,
+    isOnBoard = false,
 }) => {
     if (!keywords || keywords.length === 0) return null;
 
@@ -213,7 +281,10 @@ export const KeywordTray: React.FC<KeywordTrayProps> = ({
                     sizeClass={finalSizeClass}
                     isAttacking={isAttacking}
                     isDefending={isDefending}
-                    animState={animState} // [新增] 透传状态
+                    animState={animState}
+                    isDepleted={depletedKeywords?.includes(k)} // [泰坦] 黯淡关键词 → 图标变灰
+                    titanCount={titanCount}
+                    isOnBoard={isOnBoard} // [泰坦] 场上模式 → 呼吸灯 + 居中数字
                 />
             ))}
         </div>

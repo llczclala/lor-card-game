@@ -27,7 +27,10 @@ const createFullCard = (key: string): CardData => {
         roundBuffs: { power: 0, health: 0 }, // [新增] 初始化临时账本
         roundStrikes: 0, // [新增] 初始化本回合打击数
         // [核心修复] 初始充能写死在建卡瞬间！从牌库抽出来时就已经装好电池了
-        customProgress: key === 'Chongye_Squad_Elice' ? 1 : 0
+        customProgress: key === 'Chongye_Squad_Elice' ? 1 : 0,
+        // [能力] 初始化运行时状态：在牌库/手牌中时隐藏，上场后由 playCard 设为 breathing
+        abilityState: (base as any).ability ? 'hidden' as const : undefined,
+        abilityCharges: (base as any).ability?.maxCharges,
     } as CardData;
 };
 
@@ -564,6 +567,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         if (pulseResult.pulsedUnits > 0) {
             setPlayerBench(pulseResult.playerBoard);
             setEnemyBench(pulseResult.enemyBoard);
+            // [修复] 同步更新 ref，让 startRound 读到最新数据而非被异步 setState 吞掉
+            stateRef.current = {
+                ...stateRef.current,
+                playerBench: pulseResult.playerBoard,
+                enemyBench: pulseResult.enemyBoard,
+            };
+            // [修复] 等待脉冲特效组件发射完成信号，确保播完再跳转新回合
+            // 使用事件驱动而非硬编码延时，未来其他回合结束特效也可复用此信号
+            setMessage("泰坦脉冲...");
+            await new Promise<void>(resolve => {
+                const handler = () => { eventBus.off(GameEvents.ROUND_END_EFFECT_COMPLETE, handler); resolve(); };
+                eventBus.on(GameEvents.ROUND_END_EFFECT_COMPLETE, handler);
+                // 安全兜底：万一组件没挂载导致信号永远不会来，5s 后强行继续
+                setTimeout(() => { eventBus.off(GameEvents.ROUND_END_EFFECT_COMPLETE, handler); resolve(); }, 5000);
+            });
         }
 
         // 4. 尸体清理完毕，真正进入下一回合
@@ -610,6 +628,27 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
         const nextPlayerBench = applyRoundStartKeywords(clearRoundBuffsAndBarrier(alivePlayerBench));
         const nextEnemyBench = applyRoundStartKeywords(clearRoundBuffsAndBarrier(aliveEnemyBench));
+
+        // [能力] 回合开始类能力闪光
+        const flashRoundAbility = (cards: any[]) => cards.map((c: any) => {
+            if (c.ability && c.ability.trigger === 'round_start' && c.abilityState !== 'dimmed') {
+                const updated = { ...c, abilityState: 'flashing' as const };
+                setTimeout(() => {
+                    const chargeLeft = c.ability.maxCharges === -1 ? -1 : (c.abilityCharges || 0) - 1;
+                    const finalState = c.ability.postTriggerState === 'dim' && chargeLeft === 0 ? 'dimmed' : 'breathing';
+                    const updater = (prev: any[]) => prev.map((pc: any) =>
+                        pc.id === c.id ? { ...pc, abilityState: finalState, abilityCharges: chargeLeft } : pc
+                    );
+                    setPlayerBench((prev: any) => prev.some((p: any) => p.id === c.id) ? updater(prev) : prev);
+                    setEnemyBench((prev: any) => prev.some((p: any) => p.id === c.id) ? updater(prev) : prev);
+                }, 500);
+                return updated;
+            }
+            return c;
+        });
+        const finalPlayerBench = flashRoundAbility(nextPlayerBench);
+        const finalEnemyBench = flashRoundAbility(nextEnemyBench);
+
         let tempGame = {
             ...currentGameState,
             ...nextRoundBase,
@@ -621,8 +660,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             lastActionTimestamp: Date.now()
         };
         setGame(tempGame as GameState);
-        setPlayerBench(nextPlayerBench);
-        setEnemyBench(nextEnemyBench);
+        setPlayerBench(finalPlayerBench);
+        setEnemyBench(finalEnemyBench);
     };
     const resetGame = () => {
         // [修复] 替换未定义的 initDeck 函数，使用正规的解析与洗牌流程
@@ -714,6 +753,23 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         let tempCombatField = [...currentCombatField];
         let hasEffectTriggered = false;
 
+        // [能力] 触发攻击宣告类能力的闪光
+        const flashAttackAbility = (fighterList: any[]) => fighterList.map((fight: any) => {
+            if (fight.attacker && fight.attacker.ability && fight.attacker.ability.trigger === 'on_attack_declare' && fight.attacker.abilityState === 'breathing') {
+                const attacker = { ...fight.attacker, abilityState: 'flashing' as const };
+                setTimeout(() => {
+                    const chargeLeft = attacker.ability.maxCharges === -1 ? -1 : (attacker.abilityCharges || 0) - 1;
+                    const finalState = (chargeLeft === 0 && attacker.ability.postTriggerState === 'dim') ? 'dimmed' : 'breathing';
+                    setCombatField((prev: any) => prev.map((f: any) =>
+                        f.attacker.id === attacker.id ? { ...f, attacker: { ...f.attacker, abilityState: finalState, abilityCharges: chargeLeft } } : f
+                    ));
+                }, 500);
+                return { ...fight, attacker };
+            }
+            return fight;
+        });
+        tempCombatField = flashAttackAbility(tempCombatField);
+
         // [关键] 仅遍历初始时的参战者，防止新空降的单位也带有攻击宣告从而导致死循环！
         const initialFighters = [...tempCombatField];
 
@@ -750,6 +806,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
         });
 
+        // [修复] 根据进攻方决定格挡方：player 进攻 → enemy 格挡，enemy 进攻 → player 格挡
+        const firstOwner = currentCombatField[0]?.owner || 'player';
+        const blockTurnOwner = firstOwner === 'player' ? 'enemy' : 'player';
+
         // 统一结算并下发给 React 渲染层
         if (hasEffectTriggered) {
             setPlayerBench(tempPlayerBench);
@@ -758,13 +818,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             setGame({
                 ...tempGame,
                 phase: 'block_declare',
-                turnOwner: 'enemy',
+                turnOwner: blockTurnOwner,
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now()
             });
         } else {
             // 如果没有触发任何宣告特效，走基础流程
-            setGame(prev => ({ ...prev, phase: 'block_declare', turnOwner: 'enemy', consecutivePasses: 0, lastActionTimestamp: Date.now() }));
+            setGame(prev => ({ ...prev, phase: 'block_declare', turnOwner: blockTurnOwner, consecutivePasses: 0, lastActionTimestamp: Date.now() }));
         }
 
         setMessage("等待格挡...");
@@ -888,6 +948,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             } else {
                 if (hasQuickAttack) {
                     setTimeout(() => eventBus.emit(GameEvents.SFX_QUICK_ATTACK), 320);
+                    // [新增] 格挡者反击快攻音效，略延后以体现反击时序
+                    setTimeout(() => eventBus.emit(GameEvents.SFX_QUICK_BLOCK), 450);
                     impactDelay = 320;
                 } else {
                     setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NORMAL), 250);
@@ -1370,8 +1432,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 eventBus.emit(GameEvents.SFX_DROP_BENCH);
 
                 // 1. 单位先物理上场 (确保战吼如 ALL_ALLIES 能 Buff 到自己，或者系统能扫描到自己)
-                if (owner === 'player') tempPlayerBench.push(card);
-                else tempEnemyBench.push(card);
+                // [能力] 初始化能力状态：上场时设为 breathing
+                const cardWithAbility = card.ability
+                    ? { ...card, abilityState: 'breathing' as const, abilityCharges: card.ability.maxCharges }
+                    : card;
+                if (owner === 'player') tempPlayerBench.push(cardWithAbility);
+                else tempEnemyBench.push(cardWithAbility);
 
                 // 2. 扫描并触发入场特效 (ON_PLAY)
                 if (card.effects && card.effects.length > 0) {
@@ -1408,6 +1474,33 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         }
                     });
                 }
+
+                // [能力] 触发 ON_PLAY 类能力的闪光
+                const flashOnPlay = (bench: any[]) => bench.map((c: any) => {
+                    if (c.ability && c.ability.trigger === 'on_play' && c.abilityState === 'breathing') {
+                        const updated = { ...c, abilityState: 'flashing' as const };
+                        // 动画后转入终态
+                        setTimeout(() => {
+                            const chargeLeft = c.ability.maxCharges === -1 ? -1 : (c.abilityCharges || 0) - 1;
+                            const finalState = (chargeLeft === 0 && c.ability.postTriggerState === 'dim') ? 'dimmed' : 'breathing';
+                            const cardRef = owner === 'player'
+                                ? stateRef.current.playerBench.find((bc: any) => bc.id === c.id)
+                                : stateRef.current.enemyBench.find((bc: any) => bc.id === c.id);
+                            // 用 setState 更新（仅在卡牌还在场上时）
+                            if (cardRef) {
+                                const updater = (prev: any[]) => prev.map((pc: any) =>
+                                    pc.id === c.id ? { ...pc, abilityState: finalState, abilityCharges: chargeLeft } : pc
+                                );
+                                if (owner === 'player') setPlayerBench(updater);
+                                else setEnemyBench(updater);
+                            }
+                        }, 500);
+                        return updated;
+                    }
+                    return c;
+                });
+                tempPlayerBench = flashOnPlay(tempPlayerBench);
+                tempEnemyBench = flashOnPlay(tempEnemyBench);
 
                 // 3. 统一将上场与战吼的结果拍板，下发给 React 渲染层
                 setPlayerBench(tempPlayerBench);

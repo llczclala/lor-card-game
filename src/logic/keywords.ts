@@ -117,6 +117,7 @@ export const resolveTitanPulse = (
           health: c.buffs?.health || 0,
         },
         depletedKeywords: [...(c.depletedKeywords || []), 'Titan'],
+        animState: 'buff',  // [修复] 触发前端脉冲特效（青色光柱 + 泰坦图标 + +N 数字）
       };
     });
 

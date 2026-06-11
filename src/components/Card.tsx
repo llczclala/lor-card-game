@@ -86,6 +86,7 @@ interface CardProps {
   isDragging?: boolean; // [新增] 用于告诉 Card 现在正在被拖拽，屏蔽 Hover 动画
   isLocked?: boolean;   // [新增] 锁定状态：将卡牌置灰禁用，并显示解锁提示
   lockedMessage?: string; // [新增] 动态锁卡提示文案
+  titanCount?: number;   // [泰坦] 场上泰坦总数，用于在关键词图标上预显示脉冲加成
   isConditionActive?: boolean; // [新增] 动态描边变色，标识前置条件已满足
   playerNexusHealth?: number; // [新增] 透传我方水晶血量，供手牌英雄升级进度判定
   enemyNexusHealth?: number;  // [新增] 透传敌方水晶血量
@@ -164,6 +165,7 @@ export const Card: React.FC<CardProps> = ({
     isDragging = false, // [新增] 默认不处于拖拽状态
     isLocked = false,   // [新增] 默认不锁定
     lockedMessage = "升级以解锁", // [新增] 默认提示文案
+    titanCount,          // [泰坦] 场上泰坦总数
     isConditionActive = false,
     playerNexusHealth = 20, // [修复] 透传我方水晶血量，默认20
     enemyNexusHealth = 20   // [修复] 透传敌方水晶血量，默认20
@@ -339,7 +341,10 @@ export const Card: React.FC<CardProps> = ({
                 setTargetPower(currentFinalPower);
                 setTimeout(() => { setPowerDelta(null); setLocalShake(false); }, 1000);
             } else if (diff > 0) {
-                setLocalFlash(true);
+                // [泰坦] 泰坦脉冲的特效由 KeywordEffects 的 animState:'buff' 独立处理，不触发通用的金色高光
+                if (!data.keywords.includes('Titan')) {
+                    setLocalFlash(true);
+                }
                 setTimeout(() => {
                     setLocalFlash(false);
                     setPowerDelta(diff);
@@ -653,7 +658,7 @@ export const Card: React.FC<CardProps> = ({
                             <div className="flex-1 z-10 relative pointer-events-none"></div>
 
                             {/* [我方] 底部：动态折行黑水晶卡槽 */}
-                            {data.keywords && data.keywords.length > 0 && (
+                            {(data.keywords && data.keywords.length > 0 || (data.ability && data.abilityState && data.abilityState !== 'hidden')) && (
                                 <div className="relative z-30 w-full flex justify-center mt-auto pb-[2px]">
                                     {/* [替换] 引入智能卡槽，下放进攻/防守状态，由图标自身负责发光与动画 */}
                                     <KeywordTray
@@ -661,6 +666,9 @@ export const Card: React.FC<CardProps> = ({
                                         isAttacking={isCombat && !isBlocker}
                                         isDefending={isCombat && isBlocker}
                                         animState={data.animState}
+                                        depletedKeywords={data.depletedKeywords}
+                                        titanCount={titanCount}
+                                        isOnBoard={true}
                                     />
                                 </div>
                             )}
@@ -668,7 +676,7 @@ export const Card: React.FC<CardProps> = ({
                     ) : (
                         <>
                             {/* [敌方] 顶部：动态折行黑水晶卡槽 */}
-                            {data.keywords && data.keywords.length > 0 && (
+                            {(data.keywords && data.keywords.length > 0 || (data.ability && data.abilityState && data.abilityState !== 'hidden')) && (
                                 <div className="relative z-30 w-full flex justify-center mb-auto pt-[2px]">
                                     {/* [替换] 引入智能卡槽 */}
                                     <KeywordTray
@@ -676,6 +684,9 @@ export const Card: React.FC<CardProps> = ({
                                         isAttacking={isCombat && !isBlocker}
                                         isDefending={isCombat && isBlocker}
                                         animState={data.animState}
+                                        depletedKeywords={data.depletedKeywords}
+                                        titanCount={titanCount}
+                                        isOnBoard={true}
                                     />
                                 </div>
                             )}
@@ -761,13 +772,16 @@ export const Card: React.FC<CardProps> = ({
                                         </div>
                                     )}
                                 </div>
-                                    {data.keywords && data.keywords.length > 0 && (
+                                    {(data.keywords && data.keywords.length > 0 || (data.ability && data.abilityState && data.abilityState !== 'hidden')) && (
                                         <div className="flex justify-center mb-2">
                                             {/* [替换] 竖向手牌模式也统一使用智能卡槽，自带六边形黑底，视觉更加统一和规整 */}
                                             <KeywordTray
                                                 keywords={data.keywords}
                                                 animState={data.animState}
+                                                depletedKeywords={data.depletedKeywords}
+                                                titanCount={titanCount}
                                                 className="scale-125"
+                                                isOnBoard={false}
                                             />
                                         </div>
                                     )}
@@ -828,13 +842,16 @@ export const Card: React.FC<CardProps> = ({
                                  </>
                              )}
 
-                             {isBench && data.keywords && data.keywords.length > 0 && (
+                             {isBench && (data.keywords && data.keywords.length > 0 || (data.ability && data.abilityState && data.abilityState !== 'hidden')) && (
                                  <div className="flex justify-center mb-6">
                                     {/* [替换] 竖向备战席模式使用智能卡槽 */}
                                     <KeywordTray
                                         keywords={data.keywords}
                                         animState={data.animState}
+                                        depletedKeywords={data.depletedKeywords}
+                                        titanCount={titanCount}
                                         className="scale-[1.8]"
+                                        isOnBoard={true}
                                     />
                                  </div>
                              )}
@@ -876,6 +893,7 @@ export const Card: React.FC<CardProps> = ({
                 isChallengedTarget={isChallengedTarget}
                 highlightTarget={highlightTarget}
                 isBlocking={isBlocking}
+                titanCount={titanCount}
             />
 
             {/* [极致重构] 攻击力飘字 (Power Floater) - 左侧双向爆裂 */}

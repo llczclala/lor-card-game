@@ -40,6 +40,26 @@ export const useSfx = () => {
         globalVolumeRef.current = Math.max(0, Math.min(1, vol));
     }, []);
     useEffect(() => {
+        // [修复] 浏览器自动播放策略解锁：首次用户交互时激活音频上下文
+        let unlocked = false;
+        const unlockAudio = () => {
+            if (unlocked) return;
+            unlocked = true;
+            try {
+                // 创建并立即关闭一个 AudioContext，通知浏览器允许音频播放
+                const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                osc.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.001); // 1ms 静默脉冲
+                ctx.close();
+            } catch (_) { /* 不支持 AudioContext 时静默降级 */ }
+            document.removeEventListener('click', unlockAudio);
+            document.removeEventListener('touchstart', unlockAudio);
+        };
+        document.addEventListener('click', unlockAudio, { once: true });
+        document.addEventListener('touchstart', unlockAudio, { once: true });
+
         // 创建 Audio 对象 (预加载)
         const playSound = (src: string, baseVolume: number = 1.0) => {
             const audio = new Audio(src);
@@ -127,6 +147,8 @@ export const useSfx = () => {
 
         // --- 清理函数 ---
         return () => {
+            document.removeEventListener('click', unlockAudio);
+            document.removeEventListener('touchstart', unlockAudio);
             eventBus.off(GameEvents.GAME_START, playClick);
             eventBus.off(GameEvents.UI_CLICK, playClick);
             eventBus.off(GameEvents.UI_BACK, playRecall);

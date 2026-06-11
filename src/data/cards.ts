@@ -43,7 +43,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
    // --- 英雄：芬妮 (Fenny) ---
   fenny: {
       key: 'fenny', name: '芬妮', cost: 1, power: 1, health: 5, maxHealth: 5, isChampion: true, level: 1, region: 'Fenny',
-      description: '进攻：首次进攻时，永久赋予自己 +3/+0。', type: 'unit', keywords: ['Overwhelm'],
+      description: '进攻：首次进攻时，永久赋予自己 +3/+0。', type: 'unit', keywords: ['Overwhelm', 'Ability'],
+      ability: { id: 'fenny_lv1_first_strike', label: '锋芒初显', description: '进攻：首次进攻时，永久赋予自己 +3/+0。', trigger: 'on_attack_declare', maxCharges: 1, postTriggerState: 'dim', isLevelAbility: true },
       imageUrl: HERO_IMAGES.fenny.base,
       level2ImageUrl: HERO_IMAGES.fenny.level2,
       associatedSpellKey: 'fenny_spell',
@@ -79,7 +80,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 英雄：卜卜 灵鉴(pupu_specular_soul) ---
   pupu_specular_soul: {
     key: 'pupu_specular_soul', name: '卜卜 灵鉴', cost: 2, power: 4, health: 3, maxHealth: 3,isChampion: true, level: 1, region: 'Pupu',
-    description: '进攻时：召唤一个进攻状态的 “镜爻”。', type: 'unit', keywords: ['QuickAttack'],
+    description: '进攻时：召唤一个进攻状态的 “镜爻”。', type: 'unit', keywords: ['QuickAttack', 'Ability'],
+    ability: { id: 'pupu_lv1_mirror_summon', label: '灵鉴之冲', description: '进攻时：召唤一个进攻状态的\"镜爻\"。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
     imageUrl: HERO_IMAGES.pupu_specular_soul.base,
     level2ImageUrl: HERO_IMAGES.pupu_specular_soul.level2,
     associatedSpellKey: 'pupu_specular_soul_spell',
@@ -612,6 +614,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: [],
+    ability: { id: 'mabel_tutor', label: '导游向导', description: '入场：将牌库中最底部的卜卜置于牌库顶部。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
     description: '入场：将我们牌库中最底部的卜卜置于牌库顶部。',
     imageUrl: UNIT_IMAGES.mabel,
     effects: ['effect_mabel_tutor']
@@ -630,6 +633,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: [],
+    ability: { id: 'elice_robot_engine', label: '无人机调度程序', description: '入场：召唤一个\"侦察机器人\"。回合开始：若上回合我方打击过敌方水晶，则召唤一个\"侦察机器人\"。', trigger: 'on_play', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.elice,
     description: '入场：召唤一个“侦察机器人”。回合开始：若上回合我方打击过敌方水晶，则召唤一个“侦察机器人”。',
     effects: ['effect_elice_robot_engine']
@@ -667,6 +671,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: [],
+    ability: { id: 'golia_buff', label: '高能碳水补给', description: '入场：本回合给予我方所有单位 +2/+0 和 [碾压]。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
     description: '入场：本回合给予我方所有单位 +2/+0 和 [碾压]。',
     imageUrl: UNIT_IMAGES.golia,
     effects: ['effect_golia_buff']

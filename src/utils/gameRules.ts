@@ -70,7 +70,10 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             level2ImageUrl: card.level2ImageUrl,
             description: '回合开始时：进行备战。',
             // [新增] 动态添加被动技能
-            effects: ['effect_lyfe_rally_passive']
+            effects: ['effect_lyfe_rally_passive'],
+            ability: { id: 'lyfe_lv2_rally', label: '里芙的压制', description: '回合开始时：进行备战。', trigger: 'round_start', maxCharges: -1, postTriggerState: 'recharge' },
+            abilityState: 'breathing' as const,
+            abilityCharges: -1,
         } as CardData;
     }
 
@@ -84,7 +87,10 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             maxHealth: card.maxHealth +1,
             level2ImageUrl: card.level2ImageUrl,
             description: '进攻：首次进攻时，永久赋予自己 +5/+0。',
-            effects: ['effect_fenny_attack_lv2'] // 假设有顺劈效果
+            effects: ['effect_fenny_attack_lv2'],
+            ability: { id: 'fenny_lv2_first_strike', label: '绝对主角', description: '进攻：首次进攻时，永久赋予自己 +5/+0。', trigger: 'on_attack_declare', maxCharges: 1, postTriggerState: 'dim', isLevelAbility: true },
+            abilityState: 'breathing' as const,
+            abilityCharges: 1,
         } as CardData;
     }
 
@@ -97,7 +103,10 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             maxHealth: card.maxHealth + 1,
             level2ImageUrl: card.level2ImageUrl,
             description: '进攻时：召唤一个进攻状态的 “镜爻 卜卜” ',
-            effects: ['effect_pupu_level2_attack']
+            effects: ['effect_pupu_level2_attack'],
+            ability: { id: 'pupu_lv2_clone_summon', label: '镜爻·复刻', description: '进攻时：召唤一个完全复制自身的”镜爻 卜卜”参与进攻。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
+            abilityState: 'breathing' as const,
+            abilityCharges: -1,
         } as CardData;
     }
 

@@ -59,7 +59,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
     }, [isLoop, muted]);
 
-    // 3. [核心修复] 智能看门狗 (Smart Watchdog)
+    // 3. [新增] 解码预热：src 变化时立即开始加载并触发解码，消除播放时首帧卡顿
+    useEffect(() => {
+        if (!src) return;
+        const video = videoRef.current;
+        if (!video) return;
+
+        // 设置 src 开始加载（如果还没设置）
+        if (video.src !== src && video.src !== window.location.origin + src) {
+            video.src = src;
+            video.load();
+        }
+
+        // 短暂 play/pause 触发浏览器解码器预热
+        // 即使 isVisible=false，这次预热的解码帧会被缓存，真正播放时秒开
+        const warmup = () => {
+            video.play().then(() => {
+                video.pause();
+            }).catch(() => {
+                // 浏览器可能因 autoplay 策略拒绝，静默忽略即可
+            });
+        };
+        // 延迟一小段时间等 load 完成再触发解码
+        const timer = setTimeout(warmup, 100);
+        return () => clearTimeout(timer);
+    }, [src]);
+
+    // 4. [核心修复] 智能看门狗 (Smart Watchdog)
     useEffect(() => {
         if (!isVisible || !src) return;
 

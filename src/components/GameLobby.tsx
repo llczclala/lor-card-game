@@ -814,7 +814,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                 <div className="w-32 h-32 rounded-sm border-4 border-gray-600 overflow-hidden relative group">
                                     {renderAvatar(profile?.avatarConfig, profile?.avatarId)}
                                     <button
-                                        onClick={() => setIsGalleryOpen(true)}
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsGalleryOpen(true); }} // [新增] 音效
                                         className="absolute bottom-0 w-full py-1 bg-black/70 text-white text-xs font-mono opacity-0 group-hover:opacity-100 transition-opacity flex justify-center items-center gap-1"
                                     >
                                         <Crop size={12} /> MODIFY
@@ -858,7 +858,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                     </div>
                                     <div className="flex items-center gap-4 text-sm font-mono text-gray-400">
                                         <span>UID: {userSystem.userId}</span>
-                                        <button onClick={() => navigator.clipboard.writeText(userSystem.userId)} className="hover:text-white"><Copy size={14} /></button>
+                                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); navigator.clipboard.writeText(userSystem.userId); }} className="hover:text-white"><Copy size={14} /></button> {/* [新增] 音效 */}
                                     </div>
                                     <div className="flex items-center gap-3 mt-2">
                                         <span className="px-3 py-1 bg-yellow-500/20 text-yellow-300 font-bold rounded-sm border border-yellow-500/30">LEVEL {profile?.level || 1}</span>
@@ -901,7 +901,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             {galleryItems.map(item => (
                                 <div
                                     key={item.key}
-                                    onClick={() => { setCropTarget(item); setCropScale(1); setCropOffset({x:0, y:0}); setIsGalleryOpen(false); setIsCropperOpen(true); }}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setCropTarget(item); setCropScale(1); setCropOffset({x:0, y:0}); setIsGalleryOpen(false); setIsCropperOpen(true); }} // [新增] 音效
                                     className="aspect-[3/4] border-2 border-white/10 hover:border-blue-500 cursor-pointer overflow-hidden rounded-sm relative group transition-all hover:scale-105"
                                 >
                                     <img src={item.url} className="w-full h-full object-cover" />
@@ -909,7 +909,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                 </div>
                             ))}
                         </div>
-                        <button onClick={() => setIsGalleryOpen(false)} className="fixed right-12 bottom-12 w-16 h-16 rounded-full bg-gray-600 hover:bg-gray-500 text-white flex items-center justify-center"><X size={32}/></button>
+                        <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setIsGalleryOpen(false); }} className="fixed right-12 bottom-12 w-16 h-16 rounded-full bg-gray-600 hover:bg-gray-500 text-white flex items-center justify-center"><X size={32}/></button> {/* [新增] 音效 */}
                     </motion.div>
                 )}
 

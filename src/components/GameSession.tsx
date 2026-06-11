@@ -251,6 +251,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
     }, [game.gameResult, playBgm]);
 
     const handleVictorySequence = useCallback((onEnd: () => void) => {
+        // [新增] 预加载胜利影片（利用 blackout_in 过渡时间提前 fetch 解码）
+        const heroKeys = playerBench.filter(c => c.isChampion).map(c => c.key);
+        if (heroKeys.length > 0) {
+            import('../utils/videoPreloader').then(m => m.preloadVictoryMovieByKeys(heroKeys));
+        }
+
         // 1. 挑选 MVP (保持原逻辑：用于语音互动)
         const survivingHeroes = playerBench.filter(c => c.isChampion);
         const mvp = survivingHeroes.length > 0
@@ -822,6 +828,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     key={c.id}
                                     data={c}
                                     location="enemy_bench"
+                                    titanCount={[...playerBench, ...enemyBench].filter(tc => tc.keywords.includes('Titan')).length}
                                     canBeChallenged={game.phase === 'attack_declare' && game.selectedChallengerId !== null}
                                     onClick={() => {
 
@@ -940,6 +947,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     key={c.id}
                                     data={c}
                                     location="bench"
+                                    titanCount={[...playerBench, ...enemyBench].filter(tc => tc.keywords.includes('Titan')).length}
                                     isSelected={game.selectedBlockerId === c.id || game.spellCasting?.allyId === c.id}
                                     highlightTarget={(game.phase === 'attack_declare' && game.turnOwner === 'player') || (game.phase === 'block_declare' && game.turnOwner === 'player')}
                                     isBlocking={game.phase === 'block_declare'}

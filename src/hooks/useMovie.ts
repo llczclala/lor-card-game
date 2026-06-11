@@ -1,3 +1,4 @@
+import { getVideoUrl } from '../utils/videoPreloader';
 import { useState, useCallback } from 'react';
 import { getRandomTitleMovie, getLevelUpMovie, getVictoryMovie, getHallMovies } from '../data/movieData';
 
@@ -12,6 +13,11 @@ export const useMovie = () => {
 
     const setMovieVolume = useCallback((vol: number) => {
         setMovieVolumeState(Math.max(0, Math.min(1, vol)));
+    }, []);
+
+    // [新增] 获取最终播放 URL：优先用预加载的 blob URL（通过共享预加载器）
+    const resolveMovieUrl = useCallback((src: string): string => {
+        return getVideoUrl(src);
     }, []);
     // 播放标题循环视频
     const playTitleMovie = useCallback(() => {
@@ -47,11 +53,11 @@ export const useMovie = () => {
         return nextIndex;
     }, []);
 
-    // 播放升级视频 (一次性)
+    // 播放升级视频 (一次性) — 优先使用预加载的 blob URL
     const playLevelUpMovie = useCallback((heroKey: string, onEnd?: () => void) => {
         const movie = getLevelUpMovie(heroKey);
         if (movie) {
-            setCurrentMovie(movie);
+            setCurrentMovie(resolveMovieUrl(movie));
             setIsLooping(false);
             setIsVisible(true);
             setOnComplete(() => onEnd); // 存储回调
@@ -59,20 +65,20 @@ export const useMovie = () => {
             // 如果没找到视频，直接执行回调，防止流程卡死
             if (onEnd) onEnd();
         }
-    }, []);
+    }, [resolveMovieUrl]);
 
-    // 播放胜利视频 (一次性)
+    // 播放胜利视频 (一次性) — 优先使用预加载的 blob URL
     const playVictoryMovie = useCallback((heroKeys: string[], onEnd?: () => void) => {
         const movie = getVictoryMovie(heroKeys);
         if (movie) {
-            setCurrentMovie(movie);
+            setCurrentMovie(resolveMovieUrl(movie));
             setIsLooping(false);
             setIsVisible(true);
             setOnComplete(() => onEnd);
         } else {
             if (onEnd) onEnd();
         }
-    }, []);
+    }, [resolveMovieUrl]);
 
     // [修改] 支持传入 immediate 参数
     const stopMovie = useCallback((immediate: boolean = false) => {
@@ -92,6 +98,9 @@ export const useMovie = () => {
         }
     }, [isLooping, onComplete]);
 
+    // [新增] 预加载升级影片：供 ChampionLevelUp 在 spin 阶段调用
+    /* 已迁移至 videoPreloader.ts */
+
     return {
         currentMovie,
         isLooping,
@@ -104,6 +113,6 @@ export const useMovie = () => {
         isImmediate,
         handleVideoEnded,
         movieVolume,
-        setMovieVolume
+        setMovieVolume,
     };
 };

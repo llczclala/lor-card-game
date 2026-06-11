@@ -7,7 +7,7 @@ export type Keyword =
     | 'Scout' | 'Ephemeral' | 'Stun' | 'Double Attack' | 'Support' | 'Deadly'
     | 'SpellShield' | 'Silence' | 'Berserk' | 'Cleave' | 'Thorns' | 'Vanguard'
     | 'Ambush' | 'Plunder' | 'Exposed' | 'Shroud' | 'Immobile' | 'Reborn'
-    | 'Execute' | 'Sniper' | 'Volatile' | 'Echo' | 'Impact' | 'Channel' | 'Titan';
+    | 'Execute' | 'Sniper' | 'Volatile' | 'Echo' | 'Impact' | 'Channel' | 'Titan' | 'Ability';
 
 export interface CardData {
   id: string;
@@ -49,6 +49,31 @@ export interface CardData {
   roundKeywords?: Keyword[]; // [核心新增] 词条临时账本：专门记录单回合获得的词条，回合末予以回收
   depletedKeywords?: Keyword[]; // [泰坦] 黯淡关键词列表：关键词不再触发，但不失去，仍计入计数
   parentCard?: CardData; // [新增] 法术血统(DNA)：记录衍生该卡牌的”母体”实体（用于撤回法术时完美还原手牌与费用）
+
+  // [能力] 配置——描述卡牌持有的独立能力（区别于关键词）
+  ability?: AbilityConfig;
+  // [能力] 运行时状态——由通用状态机驱动
+  abilityState?: AbilityRuntimeState;
+  abilityCharges?: number;
+}
+
+// ==========================================
+// [新增] 能力系统类型
+// ==========================================
+export type AbilityTrigger = 'on_play' | 'on_attack_declare' | 'round_start';
+
+export type AbilityPostState = 'dim' | 'recharge';
+
+export type AbilityRuntimeState = 'hidden' | 'breathing' | 'flashing' | 'dimmed';
+
+export interface AbilityConfig {
+  id: string;                 // 能力标识
+  label: string;              // 能力名（tooltip 用）
+  description: string;        // 能力描述
+  trigger: AbilityTrigger;    // 触发时机
+  maxCharges: number | -1;    // -1 = 无限次 / 1 = 单次
+  postTriggerState: AbilityPostState; // 触发后变暗还是恢复呼吸
+  isLevelAbility?: boolean;   // 是否会随升级更换
 }
 
 export type CombatFieldItem = {

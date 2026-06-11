@@ -608,8 +608,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 <div className="absolute top-0 left-0 w-full h-28 bg-black/60 backdrop-blur-md z-40 flex items-end pb-4 justify-center border-b border-white/10 shadow-2xl">
                     <h1 className="text-4xl font-black italic tracking-tighter drop-shadow-[0_0_20px_rgba(59,130,246,0.6)]">PREPARATION HUB</h1>
                     <div className="absolute right-32 bottom-4 flex bg-black/80 p-1 rounded-lg border border-white/10 shadow-inner">
-                        <button onClick={() => setViewStyle('GRID')} className={`p-2 rounded transition-colors ${viewStyle === 'GRID' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><LayoutGrid size={18} /></button>
-                        <button onClick={() => setViewStyle('CAROUSEL')} className={`p-2 rounded transition-colors ${viewStyle === 'CAROUSEL' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><GalleryHorizontalEnd size={18} /></button>
+                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('GRID'); }} className={`p-2 rounded transition-colors ${viewStyle === 'GRID' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><LayoutGrid size={18} /></button> {/* [新增] 音效 */}
+                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('CAROUSEL'); }} className={`p-2 rounded transition-colors ${viewStyle === 'CAROUSEL' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><GalleryHorizontalEnd size={18} /></button> {/* [新增] 音效 */}
                     </div>
                 </div>
 
@@ -623,7 +623,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-12 gap-y-28 content-start w-full max-w-[95%] mx-auto">
                             <div className="w-full flex justify-center mt-12" onClick={handleCreateAndEdit}><DeckDiorama deck={{ isNew: true }} isGridView={true} /></div>
                             {userSystem.decks.map((deck: any) => (
-                                <div key={deck.id} onClick={() => setHubDeckId(deck.id)} className="w-full flex justify-center mt-12 relative group/del">
+                                <div key={deck.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setHubDeckId(deck.id); }} className="w-full flex justify-center mt-12 relative group/del"> {/* [新增] 音效 */}
                                     <DeckDiorama deck={deck} covers={getDeckCovers(deck.cards)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isGridView={true} />
                                     <button onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id); }} className="absolute -top-6 -right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20"><Trash2 size={16} className="text-white" /></button>
                                 </div>
@@ -648,6 +648,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     transition={{ type: 'spring', stiffness: 260, damping: 26 }}
                                     className="absolute"
                                     onClick={() => {
+                                        eventBus.emit(GameEvents.UI_CLICK); // [新增] 音效
                                         if (isCenter) { deck.isNew ? handleCreateAndEdit() : setHubDeckId(deck.id); }
                                         else { setCarouselIndex(idx); }
                                     }}
@@ -668,7 +669,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             onContextMenu={(e) => { e.preventDefault(); setHubDeckId(null); }} // [体验核心] 背景高斯模糊处右键立刻退出
                         >
                             {/* 关闭枢纽大按钮 */}
-                            <button onClick={() => setHubDeckId(null)} className="absolute top-8 right-8 text-gray-400 hover:text-white bg-white/5 border border-white/10 p-3 rounded-full transition-all hover:bg-red-500/80 z-50"><X size={24} /></button>
+                            <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setHubDeckId(null); }} className="absolute top-8 right-8 text-gray-400 hover:text-white bg-white/5 border border-white/10 p-3 rounded-full transition-all hover:bg-red-500/80 z-50"><X size={24} /></button> {/* [新增] 音效 */}
 
                             {/* 左侧翼：卡牌列表只读预览 */}
                             <motion.div initial={{ x: -60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-80 h-[85vh] bg-slate-900/90 border border-white/10 rounded-3xl flex flex-col mr-12 shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden" onContextMenu={(e) => e.stopPropagation()}>
@@ -703,7 +704,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 </div>
 
                                 <div className="p-4 shrink-0 flex gap-2 border-t border-white/10 bg-black/40 z-20">
-                                    <button onClick={() => { setConfirmModal({ title: "DELETE DECK", message: "确认删除该卡组？此操作不可逆。", type: 'danger', onConfirm: () => { userSystem.deleteDeck(hubDeckId); setConfirmModal(null); setHubDeckId(null); } }); }} className="p-4 bg-red-950/40 hover:bg-red-600 text-red-200 rounded-xl transition-colors border border-red-900/30"><Trash2 size={20} /></button>
+                                    <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setConfirmModal({ title: "DELETE DECK", message: "确认删除该卡组？此操作不可逆。", type: 'danger', onConfirm: () => { userSystem.deleteDeck(hubDeckId); setConfirmModal(null); setHubDeckId(null); } }); }} className="p-4 bg-red-950/40 hover:bg-red-600 text-red-200 rounded-xl transition-colors border border-red-900/30"><Trash2 size={20} /></button> {/* [新增] 音效 */}
                                     <button onClick={() => handleEnterDeck(hubDeckId)} className="flex-1 p-4 bg-blue-900 hover:bg-blue-600 text-white font-black tracking-widest rounded-xl transition-all">EDIT DECK</button>
                                 </div>
                             </motion.div>
@@ -714,7 +715,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                                 {/* 拦截拦截发车按钮 */}
                                 <button
-                                    onClick={() => { if (isFull) onStartGame(Object.entries(hubDeck.cards).flatMap(([k, c]: any) => Array(c).fill(k))); }}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); if (isFull) onStartGame(Object.entries(hubDeck.cards).flatMap(([k, c]: any) => Array(c).fill(k))); }} // [新增] 音效
                                     disabled={!isFull}
                                     className={`w-72 py-5 rounded-2xl font-black text-2xl tracking-[0.2em] flex items-center justify-center gap-3 transition-all ${isFull ? 'bg-gradient-to-r from-blue-600 to-cyan-400 text-white hover:scale-110 shadow-[0_10px_40px_rgba(59,130,246,0.6)] border border-cyan-300/20' : 'bg-gray-900/80 text-red-500 cursor-not-allowed border border-red-900/50 backdrop-blur-md'}`}
                                 >
@@ -749,7 +750,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             className="relative group cursor-pointer"
                                             onMouseEnter={() => setHubHoverItem('cardBack')}
                                             onMouseLeave={() => setHubHoverItem(null)}
-                                            onClick={() => setSelectorType('cardBack')}
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSelectorType('cardBack'); }} // [新增] 音效
                                         >
                                             <div className="w-32 h-48 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
                                                 <img src={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} className="w-full h-full object-cover" alt="Card Back" />
@@ -764,7 +765,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             className="relative group cursor-pointer"
                                             onMouseEnter={() => setHubHoverItem('desk')}
                                             onMouseLeave={() => setHubHoverItem(null)}
-                                            onClick={() => setSelectorType('desk')}
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSelectorType('desk'); }} // [新增] 音效
                                         >
                                             <div className="w-48 h-28 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:-rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
                                                 <img src={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} className="w-full h-full object-cover" alt="Board" />
@@ -823,7 +824,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 {confirmModal && (
                     <div
                         className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in"
-                        onClick={() => setConfirmModal(null)} // 点击背景关闭
+                        onClick={() => { eventBus.emit(GameEvents.UI_BACK); setConfirmModal(null); }} // [新增] 音效 点击背景关闭
                     >
                         <motion.div
                             initial={{ scale: 0.9, opacity: 0 }}
@@ -847,13 +848,13 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                             <div className="flex gap-4 justify-center">
                                 <button
-                                    onClick={() => setConfirmModal(null)}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_BACK); setConfirmModal(null); }} // [新增] 音效
                                     className="flex-1 py-3 rounded-lg border border-white/10 hover:bg-white/5 text-gray-300 font-bold transition-colors"
                                 >
                                     CANCEL
                                 </button>
                                 <button
-                                    onClick={confirmModal.onConfirm}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); confirmModal.onConfirm(); }} // [新增] 音效
                                     className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all hover:scale-105"
                                 >
                                     CONFIRM
@@ -932,23 +933,23 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             </div>
                             {/* Category Buttons */}
                             <div className="flex gap-1 bg-slate-800 p-1 rounded-md">
-                                <button onClick={()=>setCategory('HERO')} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='HERO'?'bg-yellow-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><User size={14}/> 英雄</button>
-                                <button onClick={()=>setCategory('SPELL')} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='SPELL'?'bg-blue-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Zap size={14}/> 法术</button>
-                                <button onClick={()=>setCategory('UNIT')} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='UNIT'?'bg-orange-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Box size={14}/> 单位</button>
+                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCategory('HERO'); }} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='HERO'?'bg-yellow-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><User size={14}/> 英雄</button> {/* [新增] 音效 */}
+                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCategory('SPELL'); }} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='SPELL'?'bg-blue-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Zap size={14}/> 法术</button> {/* [新增] 音效 */}
+                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCategory('UNIT'); }} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='UNIT'?'bg-orange-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Box size={14}/> 单位</button> {/* [新增] 音效 */}
                             </div>
                         </div>
 
                         <div className="flex items-center gap-2">
                             {/* Advanced Filters */}
                             <button
-                                onClick={() => setIsFilterOpen(!isFilterOpen)}
+                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsFilterOpen(!isFilterOpen); }} // [新增] 音效
                                 className={`py-2 px-4 flex items-center justify-center gap-2 text-sm font-bold rounded-md transition-colors ${isFilterOpen ? 'bg-blue-600 text-white' : 'bg-slate-800 text-gray-300 hover:bg-slate-700'}`}
                             >
                                 <Filter size={16} /> 高级筛选
                             </button>
                             {/* Reset */}
                             <button
-                                onClick={resetFilters} disabled={!isFilterActive}
+                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); resetFilters(); }} disabled={!isFilterActive} // [新增] 音效
                                 className={`p-2 rounded-md transition-colors ${isFilterActive ? 'bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
                                 title="清空筛选"
                             >
@@ -967,7 +968,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">费用 (COST)</span>
                                         <div className="flex flex-wrap gap-1.5">
                                             {['ALL', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '10+'].map(c => (
-                                                <button key={c} onClick={()=>setCostFilter(c)} className={`w-8 h-8 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${costFilter===c ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                <button key={c} onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCostFilter(c); }} className={`w-8 h-8 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${costFilter===c ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}> {/* [新增] 音效 */}
                                                     {c}
                                                 </button>
                                             ))}
@@ -978,7 +979,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">阵营 (REGION)</span>
                                         <div className="flex flex-wrap gap-2">
                                             {['ALL', 'Lyfe', 'Fenny', 'Pupu', 'Logistics', 'TEST'].map(r => (
-                                                <button key={r} onClick={()=>setRegionFilter(r)} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${regionFilter===r ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                <button key={r} onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setRegionFilter(r); }} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${regionFilter===r ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}> {/* [新增] 音效 */}
                                                     {r === 'Lyfe' ? '里芙' : r === 'Pupu' ? '卜卜' :r === 'Fenny' ? '芬妮' : r === 'Logistics' ? '后勤' : r === 'TEST' ? '测试' : '全部'}
                                                 </button>
                                             ))}
