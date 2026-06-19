@@ -13,6 +13,9 @@ import { useUserSystem } from './hooks/useUserSystem';
 import { SystemLoadingScreen } from './components/SystemLoadingScreen';
 import { GameLobby } from './components/GameLobby';
 import { GachaScreen } from './components/GachaScreen';
+import { ShopScreen } from './components/ShopScreen'; // [核心新增] 引入商店组件
+import { MissionPanel } from './components/MissionUI'; // [核心新增] 引入军需面板
+import { useMissionSystem } from './hooks/useMissionSystem'; // [核心新增] 引入军功大脑
 import { SettingsModal } from './components/SettingsModal';
 import { eventBus, GameEvents } from './utils/eventBus';
 import { ScaleWrapper } from './components/ScaleWrapper'; // [新增]
@@ -26,15 +29,19 @@ import type { ExamCategoryId } from './data/tutorialStages';
 import { TUTORIAL_STAGES } from './data/tutorialStages'; // [新增]
 import { ENEMY_ARCHETYPES } from './data/enemies/archetypes'; // [新增]
 import { buildStandardEncounter } from './logic/encounterBuilder'; // [新增] 引入标准模式敌人生成器
+import { getHallBgmByIndex } from './data/movieData'; // [新增] 引入大厅音画联动雷达
 import { motion, AnimatePresence } from 'framer-motion';
 
+// [核心修复] AppState 增加 'shop' 状态
 type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha'
-    | 'tutorial_mode_select' | 'tutorial_stage_select' | 'tutorial_game';
+    | 'tutorial_mode_select' | 'tutorial_stage_select' | 'tutorial_game' | 'shop';
 export default function App() {
   const [appState, setAppState] = useState<AppState>('title');
   const [pendingAppState, setPendingAppState] = useState<AppState | null>(null);
   const [lobbyVideoIndex, setLobbyVideoIndex] = useState(0);
   const userSystem = useUserSystem();
+  const missionSystem = useMissionSystem(userSystem.userId); // [核心挂载] 实例化军功大脑
+  const [isMissionOpen, setIsMissionOpen] = useState(false); // [新增] 军需面板开关状态
   const [gameId, setGameId] = useState(0);
   const [deckBuilderSource, setDeckBuilderSource] = useState<'lobby' | 'mode_select'>('mode_select');
   const [tutorialCategoryId, setTutorialCategoryId] = useState<ExamCategoryId | null>(null);
@@ -66,10 +73,14 @@ export default function App() {
       if (bg) {
           localStorage.setItem('sbr_lobby_bg', JSON.stringify(bg));
           stopMovie(); // [性能优化] 如果设置了自定义背景，彻底停用底层默认视频解码
+          // [新增] 智能切轨：如果自定义背景是视频，切入专属音轨；如果是静态图片，兜底采用 default
+          playBgm(bg.type === 'movie' ? getHallBgmByIndex(bg.index) : 'default');
       } else {
           localStorage.removeItem('sbr_lobby_bg');
           if (appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') {
               playHallMovie(lobbyVideoIndex); // 恢复底层播放
+              // [新增] 恢复大厅轮播视频的专属 BGM
+              playBgm(getHallBgmByIndex(lobbyVideoIndex));
           }
       }
   };
@@ -80,8 +91,10 @@ export default function App() {
   const {
       currentMovie, isVisible, isLooping,
       playTitleMovie, playLevelUpMovie, playVictoryMovie, stopMovie,isImmediate,
-      handleVideoEnded,playHallMovie,setMovieVolume
-  } = useMovie();
+      handleVideoEnded,playHallMovie,setMovieVolume,
+      prepareLevelUpMovie, prepareVictoryMovie
+  // [核心重构] 将玩家的画质设置作为神经信号注入调度大脑（默认兜底 1k）
+  } = useMovie((userSystem.settings as any)?.videoResolution || '1k');
 
   // --- 初始化同步音量 ---
   useEffect(() => {
@@ -146,6 +159,14 @@ export default function App() {
     setPendingAppState('gacha');
     setAppState('system_loading');
     stopMovie();
+  };
+
+  // [核心新增] 大厅 -> 商店 (Lobby -> Shop)
+  const handleOpenShop = () => {
+      stopBgm();
+      setPendingAppState('shop');
+      setAppState('system_loading');
+      stopMovie();
   };
 
   // 4. [ModeSelect -> DeckBuilder]
@@ -249,6 +270,8 @@ export default function App() {
           const nextIndex = lobbyVideoIndex + 1;
           const actualIndex = playHallMovie(nextIndex);
           setLobbyVideoIndex(actualIndex);
+          // [新增] 视频切台的同时，无缝滑切底层的背景音乐
+          playBgm(getHallBgmByIndex(actualIndex));
       }
   };
   // 全局 ESC 监听
@@ -272,20 +295,27 @@ export default function App() {
       playTitleMovie();
     }
     else if (appState === 'lobby') {
-      playBgm('default');
-      if (!customBgRef.current) { // [修改] 如果存在自定义背景，阻止无用解码
-          const idx = playHallMovie();
+      // [核心修正] 彻底接入智能音画感知系统
+      if (customBgRef.current) {
+          playBgm(customBgRef.current.type === 'movie' ? getHallBgmByIndex(customBgRef.current.index) : 'default');
+      } else {
+          playBgm(getHallBgmByIndex(lobbyVideoIndex));
+          const idx = playHallMovie(lobbyVideoIndex); // 保持索引不丢
           setLobbyVideoIndex(idx);
       }
     }
-    else if (appState === 'gacha') {
+    // [核心修复] 让商店和抽卡共享环境底层视效
+    else if (appState === 'gacha' || appState === 'shop') {
       playBgm('gacha');
-      if (!customBgRef.current && !isVisible) playHallMovie(); // [修改]
+      if (!customBgRef.current && !isVisible) playHallMovie(lobbyVideoIndex); // 强行切自己的BGM
     }
     else if (appState === 'mode_select') {
-       playBgm('default');
-       if (!customBgRef.current && !isVisible) { // [修改]
-           playHallMovie(lobbyVideoIndex);
+       // [核心修正] 模式选择界面也完全继承大厅的智能音轨
+       if (customBgRef.current) {
+           playBgm(customBgRef.current.type === 'movie' ? getHallBgmByIndex(customBgRef.current.index) : 'default');
+       } else {
+           playBgm(getHallBgmByIndex(lobbyVideoIndex));
+           if (!isVisible) playHallMovie(lobbyVideoIndex);
        }
     }
     else if (appState === 'deck_builder') {
@@ -413,8 +443,11 @@ export default function App() {
                   onGachaClick={handleLobbyGacha}
                   onOpenSettings={() => setIsSettingsOpen(true)}
                   onOpenDeck={handleLobbyOpenDeck}
-                  customBg={customBg}                     // [新增] 传入全局自定义背景
-                  onUpdateCustomBg={handleUpdateCustomBg} // [新增] 更新全局背景的回调
+                  onOpenShop={handleOpenShop}
+                  onOpenMission={() => setIsMissionOpen(true)} // [新增] 绑定任务面板唤起
+                  hasClaimableReward={missionSystem.hasClaimableReward} // [新增] 传递发光黄点信号
+                  customBg={customBg}
+                  onUpdateCustomBg={handleUpdateCustomBg}
               />
       )}
 
@@ -423,6 +456,14 @@ export default function App() {
           <GachaScreen
               userSystem={userSystem}
               onBack={handleBackToLobby}
+          />
+      )}
+
+      {/* [核心新增] 商店界面 */}
+      {appState === 'shop' && (
+          <ShopScreen
+              userSystem={userSystem}
+              onClose={handleBackToLobby}
           />
       )}
 
@@ -443,6 +484,7 @@ export default function App() {
               heroKey={getDisplayHero()}
               enemyHeroKey={getEnemyDisplayHero()} // [核心修复] 动态传入敌方真实英雄
               onComplete={handleLoadingComplete} // [Link 6]
+              skinOverrides={userSystem.activeDeck?.skinOverrides}
               onMatchFound={stopBgm}
           />
       )}
@@ -457,10 +499,14 @@ export default function App() {
                 onExit={handleExitGame}
                 playBgm={playBgm}
                 playLevelUpMovie={playLevelUpMovie}
+                prepareLevelUpMovie={prepareLevelUpMovie} // [新增] 下发升级预热
                 playVictoryMovie={playVictoryMovie}
+                prepareVictoryMovie={prepareVictoryMovie} // [新增] 下发胜利预热
                 stopMovie={stopMovie}
-                deskIndex={userSystem.settings.customization.currentDeskIndex}
-                cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
+                // [核心修复] 优先读取卡组专属配置，没有则回退到全局默认配置
+                deskIndex={userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex}
+                cardBackIndex={userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex}
+                missionSystem={missionSystem} // [核心挂载] 注入军功大脑供结算画面使用
             />
        )}
       {/* [新增] 6b. 战斗 (教程模式) */}
@@ -473,10 +519,14 @@ export default function App() {
                 onExit={handleExitGame}
                 playBgm={playBgm}
                 playLevelUpMovie={playLevelUpMovie}
+                prepareLevelUpMovie={prepareLevelUpMovie} // [新增] 下发升级预热
                 playVictoryMovie={playVictoryMovie}
+                prepareVictoryMovie={prepareVictoryMovie} // [新增] 下发胜利预热
                 stopMovie={stopMovie}
-                deskIndex={userSystem.settings.customization.currentDeskIndex}
-                cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
+                // [核心修复] 优先读取卡组专属配置，没有则回退到全局默认配置
+                deskIndex={userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex}
+                cardBackIndex={userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex}
+                missionSystem={missionSystem} // [核心挂载] 注入军功大脑供结算画面使用
             />
        )}
       {/* 全局设置面板 */}
@@ -485,14 +535,25 @@ export default function App() {
               onClose={() => setIsSettingsOpen(false)}
               volumes={userSystem.settings.volume}
               onVolumeChange={handleVolumeChange}
+              videoResolution={(userSystem.settings as any)?.videoResolution || '1k'}
+              onResolutionChange={(res) => userSystem.updateSettings({ videoResolution: res } as any)}
+          />
+
+      {/* [核心挂载] 军需处视觉终端面板 */}
+          <MissionPanel
+              isOpen={isMissionOpen}
+              onClose={() => setIsMissionOpen(false)}
+              missionSystem={missionSystem}
+              userSystem={userSystem}
           />
 
       {/* [新增] 教程牌组预览弹窗 */}
       {previewStageId && (
           <DeckPreviewModal
               stageId={previewStageId}
-              deskIndex={userSystem.settings.customization.currentDeskIndex}
-              cardBackIndex={userSystem.settings.customization.currentCardBackIndex}
+              // [核心修复] 优先读取卡组专属配置，没有则回退到全局默认配置
+              deskIndex={userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex}
+              cardBackIndex={userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex}
               playerCustomDeck={currentPlayerDeckList}
               onClose={() => setPreviewStageId(null)}
               onStart={() => {
@@ -503,7 +564,8 @@ export default function App() {
       )}
 
           <AnimatePresence>
-          {customBg && (appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') && (
+          {/* [核心修复] 将 shop 加入白名单 */}
+          {customBg && (appState === 'lobby' || appState === 'mode_select' || appState === 'gacha' || appState === 'shop') && (
               <motion.div
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                   className="absolute inset-0 z-[1] bg-black pointer-events-none"
@@ -523,7 +585,8 @@ export default function App() {
                 isVisible={isVisible}
                 isLoop={isLooping}
                 onEnded={handleVideoEnded}
-                zIndex={(appState === 'title' || appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') ? 0 : 500}
+                // [核心修复] 将 shop 加入白名单
+                zIndex={(appState === 'title' || appState === 'lobby' || appState === 'mode_select' || appState === 'gacha' || appState === 'shop') ? 0 : 500}
                 noFade={isImmediate}
             />
         </div>

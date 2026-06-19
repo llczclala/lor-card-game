@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Shield, Palette, Layout, AlertTriangle, Target } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
+import { getGachaItems } from '../data/skinData'; // [核心新增] 引入外观资产调度局
 import { eventBus, GameEvents } from '../utils/eventBus';
 
 // 例如: "hero:lyfe", "cardBack:1", "desk:2"
@@ -36,27 +37,23 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                 type: 'hero' as const
             }));
 
-        // B. 卡背列表 (跳过默认的 index 0)
-        const cardBacks = PERSONALIZATION_ASSETS.cardBacks
-            .map((img, idx) => ({
-                id: `cardBack:${idx}`,
-                name: `Card Style #${idx + 1}`,
-                image: img,
-                type: 'cardBack' as const,
-                idx
-            }))
-            .filter(item => item.idx > 0); // 排除默认
+        // B. 卡背列表 [核心修复] 废除本地遍历，从外观资产调度局获取合法的盲盒卡背，并动态读取官方定制名称！
+        const cardBacks = getGachaItems('cardBack').map(config => ({
+            id: `cardBack:${config.index}`,
+            name: config.name, // 直接挂载调度局分配的名称 (如 1234 占位符)
+            image: PERSONALIZATION_ASSETS.cardBacks[config.index!],
+            type: 'cardBack' as const,
+            idx: config.index
+        }));
 
-        // C. 牌桌列表 (跳过默认的 index 0)
-        const desks = PERSONALIZATION_ASSETS.desks
-            .map((img, idx) => ({
-                id: `desk:${idx}`,
-                name: `Battlefield #${idx + 1}`,
-                image: img,
-                type: 'desk' as const,
-                idx
-            }))
-            .filter(item => item.idx > 0); // 排除默认
+        // C. 牌桌列表 [核心修复] 同理，向调度局索要合法的盲盒棋盘清单与名称！
+        const desks = getGachaItems('desk').map(config => ({
+            id: `desk:${config.index}`,
+            name: config.name, // 直接挂载调度局分配的名称
+            image: PERSONALIZATION_ASSETS.desks[config.index!],
+            type: 'desk' as const,
+            idx: config.index
+        }));
 
         return { hero: heroes, cardBack: cardBacks, desk: desks };
     }, []);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect} from 'react';
 import { Sword } from 'lucide-react';
-import { HERO_IMAGES } from '../data/imageData';
+import { HERO_IMAGES, getSkinImage } from '../data/imageData'; // [修改] 引入皮肤提取引擎
 // [新增] 引入 CARD_DB 以支持普通单位图片查找
 import { CARD_DB } from '../data/cards';
 
@@ -9,25 +9,38 @@ interface LoadingScreenProps {
     enemyHeroKey?: string;
     onComplete: () => void;
     onMatchFound?: () => void; // [新增] 匹配成功回调
+    skinOverrides?: Record<string, number>; // [核心新增]
 }
 
 export const LoadingScreen: React.FC<LoadingScreenProps> = ({ 
     heroKey, 
     enemyHeroKey = 'fenny',
     onComplete,
-    onMatchFound // [新增]
+    onMatchFound, // [新增]
+    skinOverrides = {} // [核心新增]
 }) => {
     // 阶段控制: 'matching'(匹配中) -> 'found'(匹配成功) -> 'vs'(碰撞展示) -> 'loading'(读条) -> 'end'(结束)
     const [phase, setPhase] = useState<'matching' | 'found' | 'vs' | 'loading' | 'end'>('matching');
     const [matchTimer, setMatchTimer] = useState(0);
     const [progress, setProgress] = useState(0);
-    // [新增] 智能图片获取函数
+    // [核心重构] 智能图片获取函数 (支持高清皮肤动态抓取)
     const getArt = (key: string) => {
-        // 1. 优先尝试英雄图库 (高清竖图)
+        const skinId = skinOverrides[key] || 0;
+
+        // 1. 最高优先级：如果穿了皮肤，直接提取高清皮肤原画！
+        // (注：由于我们只有一张高清大图作为 base，所以这里不区分 level 2，直接拿)
+        if (skinId > 0) {
+            const skinImg = getSkinImage(key, skinId, false);
+            if (skinImg) return skinImg;
+        }
+
+        // 2. 其次尝试默认英雄图库 (高清竖图)
         if (HERO_IMAGES[key]) return HERO_IMAGES[key].base;
-        // 2. 其次尝试卡牌数据库 (普通单位图)
+
+        // 3. 再次尝试卡牌数据库 (普通单位图)
         if (CARD_DB[key]) return CARD_DB[key].imageUrl;
-        // 3. 兜底
+
+        // 4. 兜底
         return '';
     };
 

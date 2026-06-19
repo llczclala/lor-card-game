@@ -36,15 +36,19 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
     const isPreviewUnlocked = unlockedIndices.includes(previewIndex);
 
     return (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/95 backdrop-blur-xl animate-fade-in text-white">
-            {/* 关闭按钮 */}
+        <>
+            {/* 关闭按钮 - 独立 fixed 定位，完全脱离 flex 布局，永不被遮挡 */}
             <button
                 onClick={onClose}
-                className="absolute top-8 right-8 p-2 rounded-full bg-white/5 hover:bg-white/20 transition-all text-gray-400 hover:text-white"
+                className="fixed top-8 right-8 z-[999] p-3 rounded-full
+                           bg-black/70 border border-white/20 text-white
+                           hover:bg-white/20 hover:border-white/60
+                           shadow-2xl transition-all"
             >
                 <X size={32} />
             </button>
 
+            <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/95 backdrop-blur-xl animate-fade-in text-white">
             <div className="flex w-full h-full max-w-[1600px] p-12 gap-12">
 
                 {/* --- 左侧：缩略图列表 --- */}
@@ -168,5 +172,6 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                 </div>
             </div>
         </div>
+        </>
     );
 };

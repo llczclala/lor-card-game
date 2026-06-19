@@ -74,9 +74,7 @@ export const EXAM_CATEGORIES: ExamCategory[] = [
         description: '掌握对局的基本规则：出牌、进攻、格挡、取胜',
         icon: '⚔️',
         stageIds: [
-            'basic_01_attack',
-            'basic_02_block',
-            'basic_03_victory',
+            'basic_01_victory',
         ],
     },
     {
@@ -108,57 +106,8 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
     // 基础考核
     // ============================================
 
-    basic_01_attack: {
-        id: 'basic_01_attack',
-        name: '进攻！出击！',
-        description: '学习如何部署单位、发起进攻，对敌方水晶造成伤害。',
-        category: 'basic',
-        enemyArchetypeId: 'lyfe_blitz',
-
-        // 给新手一套简单的预组牌
-        playerDeck: [
-            'fenny', 'fenny', 'fenny',
-            'fenny_strike', 'fenny_strike',
-            'test_impact', 'test_impact', 'test_impact',
-        ],
-        playerHeroConfig: {
-            heroKey: 'fenny',
-            level: 1,
-        },
-        disableMulligan: true,
-        enemyHeroLevel: 1,
-        objectives: [
-            '使用手牌中的单位卡部署到备战席',
-            '对敌方水晶累计造成 10 点伤害',
-        ],
-    },
-
-    basic_02_block: {
-        id: 'basic_02_block',
-        name: '格挡！防守！',
-        description: '学习如何利用己方单位阻挡敌方进攻，保护己方水晶。',
-        category: 'basic',
-        enemyArchetypeId: 'fenny_pressure',
-
-        playerDeck: [
-            'lyfe', 'lyfe', 'lyfe',
-            'prayer', 'prayer',
-            'test_volatile', 'test_volatile', 'test_volatile',
-        ],
-        playerHeroConfig: {
-            heroKey: 'lyfe',
-            level: 1,
-        },
-        disableMulligan: true,
-        enemyHeroLevel: 1,
-        objectives: [
-            '在敌方进攻回合用己方单位进行格挡',
-            '成功格挡至少 2 次敌方攻击',
-        ],
-    },
-
-    basic_03_victory: {
-        id: 'basic_03_victory',
+    basic_01_victory: {
+        id: 'basic_01_victory',
         name: '战斗与胜利',
         description: '综合运用出击与格挡，击败敌方取得对局胜利。',
         category: 'basic',
@@ -177,7 +126,7 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
             heroKey: 'fenny',
             level: 1,
         },
-        disableMulligan: false,
+        disableMulligan: true,
         enemyHeroLevel: 1,
         objectives: [
             '灵活运用进攻与格挡',

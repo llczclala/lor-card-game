@@ -5,6 +5,7 @@ import { Card } from './Card';
 import { CARD_DB } from '../data/cards';
 import { SkipForward } from 'lucide-react';
 import { preloadLevelUpMovieByKey } from '../utils/videoPreloader'; // [新增] 影片预加载
+import { useUserSystem } from '../hooks/useUserSystem'; // [核心新增] 引入用户系统以感知画质配置
 
 
 interface ChampionLevelUpProps {
@@ -13,13 +14,14 @@ interface ChampionLevelUpProps {
     onComplete: () => void;
     // [新增] 停止视频回调，支持 immediate 参数
     onStopMovie?: (immediate?: boolean) => void;
+    onPrepareMovie?: (heroKey: string) => void; // [核心新增] 接收预装弹函数
 }
 
 /**
  * 英雄升级动画控制器
  * 负责调度：Phase 1 (旋转聚气) -> Phase 2 (播放影片) -> Phase 3 (爆发展示)
  */
-export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete, onStopMovie, onPreloadMovie }) => {
+export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete, onStopMovie, onPrepareMovie }) => { // [修改] 解构 onPrepareMovie
     // 动画阶段：spin (旋转消失) -> video (播放视频) -> burst (爆发出现)
     const [phase, setPhase] = useState<'spin' | 'video' | 'burst'>('spin');
     // [新增] 跳过按钮显示状态
@@ -77,12 +79,18 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
 
     // --- 事件处理 ---
 
+    // [核心新增] 获取玩家档案中的最高画质追求
+    const userSystem = useUserSystem();
+    const videoRes = (userSystem.settings as any)?.videoResolution || '1k';
+
     // [新增] Spin 阶段预加载影片：利用 1~1.5s 的旋转动画时间提前 fetch blob + 预热解码器
     useEffect(() => {
         if (phase === 'spin' && card.key) {
-            preloadLevelUpMovieByKey(card.key);
+            // [核心修复] 携带分辨率参数发起突击下载，防止 4K 播放时请求 1K 缓存导致掉帧！
+            preloadLevelUpMovieByKey(card.key, videoRes);
+            if (onPrepareMovie) onPrepareMovie(card.key); // [扣下扳机] 在后台静默播放/暂停首帧！
         }
-    }, [phase, card.key]);
+    }, [phase, card.key, onPrepareMovie, videoRes]); // 补充依赖
 
     // [新增] 监听阶段变化，控制跳过按钮
     useEffect(() => {

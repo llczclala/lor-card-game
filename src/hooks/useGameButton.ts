@@ -14,6 +14,7 @@ export interface ButtonConfig {
 interface UseGameButtonProps {
     phase: string;
     turnOwner: string;
+    isAutoAdvancing?: boolean; // [新增] 接收底层引擎的自动推进托管状态
 
     // 换牌阶段相关参数
     isMulliganPhase: boolean;
@@ -51,6 +52,7 @@ interface UseGameButtonProps {
 export const useGameButton = ({
     phase,
     turnOwner,
+    isAutoAdvancing, // [新增] 从上层透传接收信号
     isMulliganPhase,
     mulliganState,
     combatState,
@@ -60,6 +62,15 @@ export const useGameButton = ({
 
     return useMemo(() => {
         const baseStyle = "w-36 h-36 rounded-full border-4 shadow-lg flex flex-col items-center justify-center transition-all active:scale-95 z-20 cursor-pointer relative";
+
+        // --- 0. 自动推进托管状态 (Auto-Advancing) --- [最高优先级视觉拦截]
+        if (isAutoAdvancing) {
+            return {
+                style: `${baseStyle} bg-slate-800/80 border-slate-600 text-slate-400 cursor-wait`,
+                text: "自动推进...",
+                disabled: true
+            };
+        }
 
         // --- 1. 换牌阶段 (Mulligan Phase) ---
         if (isMulliganPhase && mulliganState) {
@@ -188,5 +199,6 @@ export const useGameButton = ({
         // Default
         return { style: `${baseStyle} bg-gray-800 border-gray-600 text-gray-400`, text: "...", disabled: true };
 
-    }, [phase, turnOwner, isMulliganPhase, mulliganState, combatState, actions]);
+    // [新增] 必须将 isAutoAdvancing 加入依赖数组，否则按钮不会随信号重绘
+    }, [phase, turnOwner, isAutoAdvancing, isMulliganPhase, mulliganState, combatState, actions]);
 };

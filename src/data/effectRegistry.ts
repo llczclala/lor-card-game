@@ -303,7 +303,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_elice_robot_engine': {
         id: 'effect_elice_robot_engine',
         name: '无人机调度程序',
-        description: '自带1层充能。目睹敌方水晶受伤时充满1层。满充能且本回合未召唤时，消耗充能召唤1个侦察机器人。',
+        description: '自带1层充能。目睹敌方水晶受伤时充满1层。满充能且本回合未召唤时，消耗充能召唤1个环境净化无人机。',
         class: 'SUMMON',
         // [核心] 因为她的逻辑已经变成了状态机，我们需要让她在入场(ON_PLAY)和回合开始(ROUND_START)时都进行一次安检
         timing: 'ON_PLAY_AND_ROUND_START',
@@ -345,8 +345,96 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         speed: 'BURST',
         targetRequirements: [],
         params: {
-            summonKey: 'pupu_specular_soul' // 借用 summonKey 字段作为“检索目标”
+            summonKey: 'pupu_specular_soul' // 借用 summonKey 字段作为”检索目标”
         }
+    },
+
+    // ==========================================
+    // 猫汐尔 · 图征小队效果 (Mauxir — Illustration Squad)
+    // ==========================================
+
+    // --- 库兰娅丝 入场召唤 ---
+    'effect_Illustration_Squad_Kuranas_summon': {
+        id: 'effect_Illustration_Squad_Kuranas_summon',
+        name: '临床特长',
+        description: '入场：召唤一个【清泉医疗鳄】。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonKey: 'Kuranas_Crocodile', summonZone: 'bench' }
+    },
+
+    // --- 清泉医疗鳄 回合结束 ---
+    'effect_Kuranas_Crocodile_round_end': {
+        id: 'effect_Kuranas_Crocodile_round_end',
+        name: '清泉抚慰',
+        description: '【回合结束时】：给予我方所有召唤单位和拉美西斯 +0/+1。',
+        class: 'BUFF',
+        timing: 'ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [{ type: 'ALL_ALLIES', count: 0, label: '全体友军' }],
+        params: { power: 0, health: 1, duration: 'PERMANENT' }
+    },
+
+    // --- 斯瓦莉 入场召唤 ---
+    'effect_Illustration_Squad_Swali_summon': {
+        id: 'effect_Illustration_Squad_Swali_summon',
+        name: '益智拼图',
+        description: '入场：召唤一个【珍馐绵羊】。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonKey: 'Swali_Sheep', summonZone: 'bench' }
+    },
+
+    // --- 珍馐绵羊 亡语 ---
+    'effect_Swali_Sheep_deathrattle': {
+        id: 'effect_Swali_Sheep_deathrattle',
+        name: '营养补给',
+        description: '【亡语】：在手牌中生成一张【梦莲无人机】。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { condition: 'last_breath_generate_card', summonKey: 'dream_lotus_drone' }
+    },
+
+    // --- 索莉妮 入场召唤 ---
+    'effect_Illustration_Squad_Soline_summon': {
+        id: 'effect_Illustration_Squad_Soline_summon',
+        name: 'AI急救协议',
+        description: '入场：召唤一个【搜救阿努比斯】。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonKey: 'Soline_Anubis', summonZone: 'bench' }
+    },
+
+    // --- 搜救阿努比斯 打击触发 ---
+    'effect_Soline_Anubis_strike': {
+        id: 'effect_Soline_Anubis_strike',
+        name: '精准索敌',
+        description: '打击时，在手牌中生成一张易逝的【梦莲无人机】。',
+        class: 'BUFF',
+        timing: 'ON_ATTACK',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { condition: 'strike_generate_fleeting', summonKey: 'dream_lotus_drone' }
+    },
+
+    // --- 梦莲无人机 ---
+    'effect_dream_lotus_drone': {
+        id: 'effect_dream_lotus_drone',
+        name: '梦莲无人机',
+        description: '赋予一个单位 +1/+0，若该单位是召唤单位，则再赋予 +1/+0。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [{ type: 'ANY_UNIT', count: 1, label: '选择一个单位' }],
+        params: { power: 1, health: 0, duration: 'PERMANENT', condition: 'bonus_if_summon' }
     }
 };
 

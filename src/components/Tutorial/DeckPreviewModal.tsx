@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, User, Swords, Shield, Sword, Play } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
@@ -7,8 +7,11 @@ import { TUTORIAL_STAGES } from '../../data/tutorialStages';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { getCardBackUrl } from '../../utils/styleUtils';
 import { UI_IMAGES, HERO_IMAGES, PERSONALIZATION_ASSETS } from '../../data/imageData';
-import { Card } from '../Card'; // [新增] 用于悬浮预览
-import type { CardData } from '../../types'; // [新增]
+import { Card } from '../Card';
+import type { CardData } from '../../types';
+// [新增] 悬停预览统一方案
+import { useCardGaze } from '../../hooks/useCardGaze';
+import { FloatingCardPreview } from '../FloatingCardPreview';
 
 interface DeckPreviewModalProps {
     stageId: string;
@@ -25,19 +28,20 @@ const toFullCardData = (staticData: any): CardData => ({
     damageTaken: 0, buffs: { power: 0, health: 0 }
 });
 
-// [新增] 提取封面工具 (复用自编辑器，支持策略 B：空缺位置用卡背填补)
-const getDeckCovers = (deckList: any[], defaultHeroKey: string) => {
-    const covers: string[] = [];
+// [新增] 提取封面工具 (升维改造：包装为带皮肤与卡背属性的对象)
+const getDeckCovers = (deckList: any[], defaultHeroKey: string): { url: string; skinId: number; isBack: boolean }[] => {
+    const covers: { url: string; skinId: number; isBack: boolean }[] = [];
     const champ = deckList.find((c: any) => c.isChampion) || deckList.find((c: any) => c.key === defaultHeroKey);
-    if (champ) covers.push(CARD_DB[champ.key]?.imageUrl || '');
+    if (champ) covers.push({ url: CARD_DB[champ.key]?.imageUrl || '', skinId: 0, isBack: false });
 
     const sorted = deckList.filter((c: any) => !c.isChampion && c.key !== champ?.key).sort((a: any, b: any) => b.cost - a.cost);
     let i = 0;
     while(covers.length < 3 && i < sorted.length) {
-        covers.push(CARD_DB[sorted[i].key]?.imageUrl || '');
+        const url = CARD_DB[sorted[i].key]?.imageUrl;
+        if (url) covers.push({ url, skinId: 0, isBack: false });
         i++;
     }
-    while(covers.length < 3) covers.push('CARD_BACK');
+    while(covers.length < 3) covers.push({ url: 'CARD_BACK', skinId: 0, isBack: true });
     return covers;
 };
 
@@ -53,15 +57,26 @@ const PreviewDiorama = ({ covers, cardBackImg, boardImg, isEnemy }: any) => {
 
             {/* 核心三卡扇形展开 */}
             <div className="absolute top-10 left-6 z-20 pointer-events-none">
-                {covers.map((url: string, i: number) => {
+                {covers.map((cover: { url: string; skinId: number; isBack: boolean }, i: number) => {
                     const rotations = [-16, 0, 16], translatesX = [0, 24, 48], translatesY = [12, 0, 12], zIndexes = [25, 23, 21];
-                    const isBack = url === 'CARD_BACK';
-                    const renderUrl = isBack ? cardBackImg : url;
+                    const isBack = cover.isBack;
+                    const renderUrl = isBack ? cardBackImg : cover.url;
+                    const skinId = cover.skinId;
+
                     return (
-                        <div key={i} className={`w-24 h-36 absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-500 ${isBack ? 'border-slate-800/80 bg-slate-900' : (isEnemy ? 'border-red-900' : 'border-blue-900')}`}
+                        <div key={i} className={`w-24 h-36 absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-500 ${isBack ? 'border-slate-800/80 bg-slate-900' : `bg-slate-950 ${isEnemy ? 'border-red-900' : 'border-blue-900'}`}`}
                             style={{ transform: `translateX(${translatesX[i]}px) translateY(${translatesY[i]}px) rotate(${rotations[i]}deg)`, zIndex: zIndexes[i] }}>
-                            <img src={renderUrl} className={`w-full h-full object-cover ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt="" />
-                            {isBack && <div className="absolute inset-0 bg-black/40 mix-blend-multiply"></div>}
+
+                            {!isBack && (
+                                <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none z-0 ${
+                                    skinId > 0
+                                        ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
+                                        : 'from-gray-300/40 via-gray-200/20 to-white/5'
+                                }`}></div>
+                            )}
+
+                            <img src={renderUrl} className={`w-full h-full object-cover relative z-10 ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt="" />
+                            {isBack && <div className="absolute inset-0 bg-black/40 mix-blend-multiply z-20"></div>}
                         </div>
                     )
                 })}
@@ -120,9 +135,8 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
     // [核心修复] 将错误的 UI_IMAGES 替换为正确的 PERSONALIZATION_ASSETS，解决 undefined[0] 的白屏崩溃！
     const deskImage = PERSONALIZATION_ASSETS.desks[deskIndex] || PERSONALIZATION_ASSETS.desks[0];
 
-    // [新增] 防卡死悬浮组件状态
-    const [hoveredCardKey, setHoveredCardKey] = useState<string | null>(null);
-    const hoverTimerRef = useRef<number | null>(null);
+    // [新增] 统一悬停预览
+    const { gazeTarget, bindGazeEvents, keepAlive, scheduleDismiss } = useCardGaze({ delay: 300 });
 
     // 玩家卡组
     const playerDeckList = useMemo(() => {
@@ -146,16 +160,6 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
     const enemyHeroKey = enemyArchetype?.champion || 'fenny';
 
     if (!stage) return null;
-
-    // 悬停雷达
-    const handleCardEnter = (key: string) => {
-        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-        setHoveredCardKey(key);
-    };
-    const handleCardLeave = () => {
-        hoverTimerRef.current = window.setTimeout(() => setHoveredCardKey(null), 150);
-    };
-
     return (
         <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -179,14 +183,14 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                 </div>
                 <div className="flex-1 relative overflow-hidden bg-slate-950">
                     <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
-                    <div className="h-full overflow-y-auto px-4 py-8 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" onMouseLeave={handleCardLeave}>
+                    <div className="h-full overflow-y-auto px-4 py-8 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         {playerDeckList.length === 0 ? (
                             <div className="text-gray-600 text-sm text-center py-8 font-mono tracking-widest">NO CARDS</div>
                         ) : (
                             playerDeckList.map(({ key, name, cost, count, imageUrl, isChampion }) => (
                                 <div key={key}
                                     className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help group transition-colors"
-                                    onMouseEnter={() => handleCardEnter(key)} onMouseLeave={handleCardLeave}
+                                    {...(CARD_DB[key] ? bindGazeEvents(CARD_DB[key]) : {})}
                                 >
                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${imageUrl})` }}></div>
                                     <div className="absolute inset-0 bg-gradient-to-r from-blue-950/90 via-black/60 to-transparent"></div>
@@ -258,14 +262,14 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                 </div>
                 <div className="flex-1 relative overflow-hidden bg-slate-950">
                     <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
-                    <div className="h-full overflow-y-auto px-4 py-8 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" onMouseLeave={handleCardLeave}>
+                    <div className="h-full overflow-y-auto px-4 py-8 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         {enemyDeckList.length === 0 ? (
                             <div className="text-gray-600 text-sm text-center py-8 font-mono tracking-widest">NO CARDS</div>
                         ) : (
                             enemyDeckList.map(({ key, name, cost, count, imageUrl, isChampion }) => (
                                 <div key={key}
                                     className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-red-500 overflow-hidden cursor-help group transition-colors"
-                                    onMouseEnter={() => handleCardEnter(key)} onMouseLeave={handleCardLeave}
+                                    {...(CARD_DB[key] ? bindGazeEvents(CARD_DB[key]) : {})}
                                 >
                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${imageUrl})` }}></div>
                                     <div className="absolute inset-0 bg-gradient-to-r from-red-950/90 via-black/60 to-transparent"></div>
@@ -287,23 +291,13 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                 </div>
             </motion.div>
 
-            {/* ===== 中央防卡死大悬浮图检视 ===== */}
-            <AnimatePresence mode="wait">
-                {hoveredCardKey && CARD_DB[hoveredCardKey] && (
-                    <motion.div
-                        key={hoveredCardKey}
-                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[600] pointer-events-none"
-                        initial={{ opacity: 0, scale: 0.8, y: -20 }}
-                        animate={{ opacity: 1, scale: 1.5, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.1 } }}
-                        transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                    >
-                        <div className="drop-shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
-                            <Card data={toFullCardData(CARD_DB[hoveredCardKey])} location="preview" isFaceUp={true} onViewArt={() => {}} />
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* ===== 统一智能悬停预览 ===== */}
+            <FloatingCardPreview
+                gazeTarget={gazeTarget}
+                mode="follow"
+                scale={1.5}
+                onViewArt={() => {}}
+            />
         </motion.div>
     );
 };

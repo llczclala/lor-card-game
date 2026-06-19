@@ -15,6 +15,7 @@ interface PlayerHandProps {
     playerBench: CardData[]; // [新增] 需要传入备战席供条件扫描
     combatField: any[];      // [新增] 需要传入交战区供条件扫描
     cardBackUrl: string;
+    skinOverrides?: Record<string, number>; // [核心新增] 接收皮肤配置字典
 }
 // [新增] 景深缩放配置常量，方便随时微调手感
 const HOVER_SCALE = 2.5;
@@ -29,7 +30,7 @@ const AnimatedHandCard = ({
     translateY, translateX, baseScale, baseRotate, cardZIndex,
     vw, vh,
     onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
-    game, playerBench, combatField, cardBackUrl, onViewArt // [修改] 接收战场数据
+    game, playerBench, combatField, cardBackUrl, onViewArt, skinOverrides // [修改] 增加解构
 }: any) => {
     // 1. 挂载 X 和 Y 轴坐标监听器 (脱离 React 渲染流)
     const x = useMotionValue(0);
@@ -109,6 +110,7 @@ const AnimatedHandCard = ({
         >
             <Card
                 data={c} location="hand" onViewArt={onViewArt}
+                skinId={skinOverrides?.[c.key] || 0} // [核心修复] 手牌彻底穿上皮肤！
                 playerNexusHealth={game.playerNexus} // [新增] 透传给英雄查血用
                 enemyNexusHealth={game.enemyNexus}   // [新增] 透传给英雄查血用
                 isPlayable={(() => {
@@ -138,7 +140,7 @@ const AnimatedHandCard = ({
 };
 
 export const PlayerHand: React.FC<PlayerHandProps> = ({
-    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl // [核心修复] 补全解构，并赋予默认空数组兜底
+    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, skinOverrides // [新增解构]
 }) => {
     const validHand = hand.filter(c => c && c.key && c.type);
 
@@ -226,6 +228,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             combatField={combatField} // [核心修复] 把交战区传给物理核组件
                             cardBackUrl={cardBackUrl}
                             onViewArt={onViewArt}
+                            skinOverrides={skinOverrides}
                             onPointerDown={(e: any) => {
                                 if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
                                 pointerPos.current = { x: e.clientX, y: e.clientY };
@@ -258,6 +261,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
 interface OpeningMulliganProps {
     hand: CardData[];
     cardBackUrl: string;
+    skinOverrides?: Record<string, number>;
     // [修改] 状态由父组件(Hook)控制
     selectedIndices: Set<number>;
     isConfirmed: boolean;
@@ -270,6 +274,7 @@ interface OpeningMulliganProps {
 export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
     hand,
     cardBackUrl,
+    skinOverrides,
     selectedIndices,
     isConfirmed,
     onToggleIndex,
@@ -442,7 +447,7 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                                     )}
                                     <div className="relative z-10">
                                         {/* [核心修复] 将 onViewArt 传给底层的 Card，让它知道该如何拦截右键！ */}
-                                        <Card data={c} location="preview" cardBackUrl={cardBackUrl} isFaceUp={isFaceUp} onViewArt={onViewArt} />
+                                        <Card data={c} location="preview" cardBackUrl={cardBackUrl} isFaceUp={isFaceUp} onViewArt={onViewArt} skinId={skinOverrides?.[c.key] || 0} /> {/* [核心修复] 换牌界面的卡牌穿上皮肤！ */}
                                     </div>
                                     <AnimatePresence>
                                         {animPhase === 'select' && (

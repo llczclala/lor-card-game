@@ -44,12 +44,12 @@ export const resolveSingleCombat = (
     // 1. 调用关键词逻辑计算伤害
     const interaction = calculateCombatInteraction(newAttacker, newBlocker);
 
-    // [核心修复] 物理破盾法则：如果护盾抵挡了伤害，必须立刻将 'Barrier' 词条从单位身上剥离！
+    // [改造] 物理破盾法则：如果护盾抵挡了伤害，将 'Barrier' 标记为黯淡而非移除
     if (interaction.attackerBarrierPopped) {
-        newAttacker.keywords = newAttacker.keywords.filter(k => k !== 'Barrier');
+        newAttacker.depletedKeywords = [...(newAttacker.depletedKeywords || []), 'Barrier'];
     }
     if (newBlocker && interaction.blockerBarrierPopped) {
-        newBlocker.keywords = newBlocker.keywords.filter(k => k !== 'Barrier');
+        newBlocker.depletedKeywords = [...(newBlocker.depletedKeywords || []), 'Barrier'];
     }
 
     // [致命 Bug 修复] 绝不减 c.health，只累加 damageTaken
@@ -173,18 +173,18 @@ export const calculateCombatOutcome = (
         if (result.attackerDamage > 0) {
             newAttacker.damageTaken = (newAttacker.damageTaken || 0) + result.attackerDamage;
         }
-        // [新增] 如果屏障破碎，移除关键词
+        // [改造] 如果屏障破碎，标记黯淡而非移除
         if (result.attackerBarrierPopped) {
-            newAttacker.keywords = newAttacker.keywords.filter((k: Keyword) => k !== 'Barrier');
+            newAttacker.depletedKeywords = [...(newAttacker.depletedKeywords || []), 'Barrier'];
         }
 
         if (newBlocker) {
             if (result.blockerDamage > 0) {
                 newBlocker.damageTaken = (newBlocker.damageTaken || 0) + result.blockerDamage;
             }
-            // [新增] 如果屏障破碎，移除关键词
+            // [改造] 如果屏障破碎，标记黯淡而非移除
             if (result.blockerBarrierPopped) {
-                newBlocker.keywords = newBlocker.keywords.filter((k: Keyword) => k !== 'Barrier');
+                newBlocker.depletedKeywords = [...(newBlocker.depletedKeywords || []), 'Barrier'];
             }
         }
 

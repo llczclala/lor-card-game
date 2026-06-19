@@ -93,17 +93,19 @@ export const useSpellSystem = ({ onComplete }: SpellSystemProps) => {
             eventBus.emit(GameEvents.SFX_SELECT_UNIT);
 
             // 构建目标数据结构 (标准化)
+            // [核心修复 BUG 4]：为水晶目标补齐虚拟的 DOM 锚点 ID，防止特效层取不到坐标而卡死
             const targetObj = target === 'nexus'
-                ? { type: owner === 'player' ? 'player_nexus' : 'enemy_nexus' }
+                ? { type: owner === 'player' ? 'player_nexus' : 'enemy_nexus', id: owner === 'player' ? 'nexus_player' : 'nexus_enemy' }
                 : { type: owner === 'player' ? 'ally' : 'enemy', id: target.id };
 
             const newTargets = [...selectedTargets, targetObj];
 
             // 检查是否选完了
             if (currentStepIndex + 1 >= effect.targetRequirements.length) {
-                // 全部完成 -> 触发回调并重置
+                // [核心修复 BUG 1]：完成目标选择后，绝不主动销毁前台 UI 连线！
+                // 将新目标存入状态以维持连线渲染，并向上层大脑汇报。由底层（useGameState）控制何时真正 cancel
+                setSelectedTargets(newTargets);
                 onComplete(castingCard, newTargets);
-                cancelCasting();
             } else {
                 // 还没完 -> 存入并进下一步
                 setSelectedTargets(newTargets);
@@ -120,6 +122,8 @@ export const useSpellSystem = ({ onComplete }: SpellSystemProps) => {
 
     return {
         isCasting: !!castingCard,
+        // [新增] 动态计算目标是否已经全部选定完毕
+        isSelectionComplete: !!castingCard && selectedTargets.length >= (getEffectDef(castingCard)?.targetRequirements.length || 0),
         activeCard: castingCard, // 当前正在施放的卡
 
         selectedTargets,

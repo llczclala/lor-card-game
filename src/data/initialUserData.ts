@@ -1,4 +1,5 @@
 import { CARD_DB } from './cards';
+import { SKIN_IMAGES } from './imageData'; // [皮肤] 用于构建全皮肤数据
 
 /**
  * 初始用户数据模板
@@ -18,13 +19,23 @@ export const DEFAULT_SETTINGS = {
     },
     // 默认解锁的装饰品索引列表
     unlockedCardBacks: [0],
-    unlockedDesks: [0]
+    unlockedDesks: [0],
+    videoResolution: '1k' // [新增] 默认 1k
 };
 
 // --- 2. 卡牌收藏定义 ---
 
 // 辅助：获取所有卡牌 ID
 const allCardKeys = Object.keys(CARD_DB);
+
+// [皮肤] 从 SKIN_IMAGES 构建全皮肤数据
+const buildFullSkins = (): Record<string, number[]> => {
+    const result: Record<string, number[]> = {};
+    for (const [cardKey, skinMap] of Object.entries(SKIN_IMAGES)) {
+        result[cardKey] = Object.keys(skinMap).map(Number).sort((a, b) => a - b);
+    }
+    return result;
+};
 
 // 方案 A: 全卡全满 (开发/测试模式)
 // 给予所有卡牌各 3 张，无限资源
@@ -34,11 +45,20 @@ export const FULL_COLLECTION = {
         return acc;
     }, {} as Record<string, number>),
 
+    ownedSkins: buildFullSkins(), // [皮肤] 全皮肤
+
     resources: {
         silverCoin: 99999, // [新增] 无限银币
         dataGold: 99999,
         bitGold: 99999
     }
+};
+
+// [皮肤] 全卡档专用设置：解锁所有卡背和棋盘
+export const FULL_SETTINGS = {
+    ...DEFAULT_SETTINGS,
+    unlockedCardBacks: [0, 1, 2, 3, 4, 5, 6], // [核心新增] 解锁全部 7 款卡背 (包含英雄专属)
+    unlockedDesks: [0, 1, 2, 3, 4],           // 全部 5 款棋盘
 };
 
 // 方案 B: 新手初始收藏 (正式上线模式)
@@ -76,10 +96,15 @@ export const STARTER_COLLECTION = {
     ownedCards: STARTER_KEYS.reduce((acc, key) => {
         // 确保 key 存在于 DB 中才添加，防止脏数据
         if (CARD_DB[key]) {
-            acc[key] = 3;
+            // [核心修复] 严格限制新手资产：英雄仅 1 张，其余普通卡 2 张。
+            // 2名英雄 + 19名随从/法术 = 刚好总计 40 张初始卡牌！极大激发抽卡欲望！
+            const isHero = CARD_DB[key].isChampion;
+            acc[key] = isHero ? 1 : 2;
         }
         return acc;
     }, {} as Record<string, number>),
+
+    ownedSkins: {}, // [皮肤] 暂不预设皮肤 (完全纯净的初始号)
 
     resources: {
         silverCoin: 500000, // [新增] 初始给予 5000 通用银，方便前期合成
@@ -97,12 +122,13 @@ export const STARTER_DECK_LYFE = {
     name: '里芙：战术突击',
     hero: 'lyfe',
     cards: {
-        'lyfe': 3,
-        'single_combat': 3,
-        'prayer': 3,
-        'Messenger_Squad_Ah_Hua': 3,
-        'Messenger_Squad_Gena': 3,
-        'Argo_Squad_Pigeon': 3,
+        'lyfe': 1,
+        'single_combat': 2,
+        'prayer': 2,
+        'focus': 2,
+        'Messenger_Squad_Ah_Hua': 2,
+        'Messenger_Squad_Gena': 2,
+        'Argo_Squad_Pigeon': 2,
         'Argo_Squad_Musician': 2,
     },
     createdAt: Date.now(),
@@ -116,12 +142,14 @@ export const STARTER_DECK_FENNY = {
     name: '芬妮：黄金狂热',
     hero: 'fenny',
     cards: {
-        'fenny': 3,
-        'hidden_arrow': 3,
+        'fenny': 1,
+        'hidden_arrow': 2,
         'inspire': 2,
-        'Ghost_Squad_Antina': 3,
-        'Ghost_Squad_Vez': 3,
-        'Typhoon_Squad_Flameheart': 3,
+        'destruction': 2,
+        'Ghost_Squad_Antina': 2,
+        'Ghost_Squad_Vez': 2,
+        'Typhoon_Squad_Flameheart': 2,
+        'Typhoon_Squad_Dornier': 2,
     },
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -144,7 +172,8 @@ export const createInitialProfile = (userId: string) => ({
     lastLoginAt: Date.now(),
 
     // [新增] 抽卡核心数据字段
-    pityCounter: 0,      // 当前垫了多少抽
+    pityCounter: 0,      // 当前垫了多少抽 (100抽保底)
+    skinPityCounter: 0,  // [核心新增] 皮肤保底计数器 (30抽保底)
     gachaTarget: null    // 当前定轨目标 (例如 "hero:lyfe")
 });
 

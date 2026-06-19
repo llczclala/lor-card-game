@@ -7,6 +7,7 @@ import {
 import { CARD_DB } from '../../data/cards';
 import { CARD_CROP_CONFIG } from '../../data/cardCropConfig';
 import { Card } from '../Card';
+import { SKIN_IMAGES, getSkinImage } from '../../data/imageData'; // [皮肤]
 import type { CardData, CardCropData } from '../../types';
 
 // ================= 类型定义 =================
@@ -38,8 +39,21 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
     const isDragging = useRef(false);
     const dragStart = useRef({ x: 0, y: 0, baseX: 0, baseY: 0 });
 
-    // === 数据层 (Overrides) ===
-    const [localOverrides, setLocalOverrides] = useState<Record<string, CardCropData>>({});
+    // === [皮肤] 当前编辑的皮肤ID ===
+    const [editingSkinId, setEditingSkinId] = useState(0);
+    // 获取当前卡牌可用皮肤列表
+    const availableSkinIds = useMemo(() => {
+        if (!selectedKey) return [0];
+        const skins = SKIN_IMAGES[selectedKey];
+        if (!skins) return [0];
+        return Object.keys(skins).map(Number).sort();
+    }, [selectedKey]);
+    const currentSkinIndex = availableSkinIds.indexOf(editingSkinId);
+    const hasPrevSkin = currentSkinIndex > 0;
+    const hasNextSkin = currentSkinIndex < availableSkinIds.length - 1;
+
+    // === 数据层 (Overrides) 支持皮肤嵌套格式 ===
+    const [localOverrides, setLocalOverrides] = useState<Record<string, any>>({});
 
     // 1. 初始化读取 localStorage
     useEffect(() => {
@@ -49,21 +63,26 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
         } catch (e) { console.error("Failed to parse local overrides", e); }
     }, []);
 
-    // 2. 当选中卡牌或切换模式时，加载对应的坐标
+    // 2. 当选中卡牌、切换皮肤或切换模式时，加载对应的坐标
     useEffect(() => {
         if (!selectedKey) return;
 
         const loadCropData = () => {
-            // [修改] 根据 heroLevel 决定读取哪个键
             const targetMode = heroLevel === 2 ? `${activeMode}_lv2` as keyof CardCropData : activeMode;
 
-            // 优先读取本地热更新，其次读静态字典，最后默认
-            const override = localOverrides[selectedKey]?.[targetMode];
-            const staticData = CARD_CROP_CONFIG[selectedKey]?.[targetMode];
+            // [皮肤] 读取嵌套格式（带 skinId）
+            const skinOverrides = localOverrides[selectedKey]?.[editingSkinId];
+            const override = skinOverrides?.[targetMode];
+            // 兼容老格式（无 skinId）
+            const oldOverride = !override ? localOverrides[selectedKey]?.[targetMode] : undefined;
+            const staticData = CARD_CROP_CONFIG[selectedKey]?.[editingSkinId]?.[targetMode];
 
             if (override) {
                 setCropScale(override.scale);
                 setCropOffset({ x: override.offsetX, y: override.offsetY });
+            } else if (oldOverride) {
+                setCropScale(oldOverride.scale);
+                setCropOffset({ x: oldOverride.offsetX, y: oldOverride.offsetY });
             } else if (staticData) {
                 setCropScale(staticData.scale);
                 setCropOffset({ x: staticData.offsetX, y: staticData.offsetY });
@@ -73,7 +92,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
             }
         };
         loadCropData();
-    }, [selectedKey, activeMode, heroLevel]); // [修改] 加入 heroLevel 触发重载
+    }, [selectedKey, activeMode, heroLevel, editingSkinId]);
 
     // === 逻辑过滤 ===
     const isFilterActive = category !== 'ALL' || costFilter !== 'ALL' || regionFilter !== 'ALL' || searchTerm !== '';
@@ -102,17 +121,17 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
         });
     }, [searchTerm, category, costFilter, regionFilter]);
 
-    // === 核心功能 ===
+    // === [皮肤] 核心功能：保存裁剪（按 skinId 隔离） ===
     const handleSaveCrop = () => {
         if (!selectedKey) return;
 
         const newOverrides = { ...localOverrides };
         if (!newOverrides[selectedKey]) newOverrides[selectedKey] = {};
+        if (!newOverrides[selectedKey][editingSkinId]) newOverrides[selectedKey][editingSkinId] = {};
 
-        // [修改] 根据 heroLevel 存入对应的键名
         const targetMode = heroLevel === 2 ? `${activeMode}_lv2` as keyof CardCropData : activeMode;
 
-        newOverrides[selectedKey][targetMode] = {
+        newOverrides[selectedKey][editingSkinId][targetMode] = {
             scale: parseFloat(cropScale.toFixed(2)),
             offsetX: parseFloat(cropOffset.x.toFixed(2)),
             offsetY: parseFloat(cropOffset.y.toFixed(2))
@@ -139,6 +158,13 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
     };
 
     const targetCard = selectedKey ? CARD_DB[selectedKey] : null;
+    // [皮肤] 工作台显示的图片（根据 skinId 切换）
+    const workbenchImageUrl = useMemo(() => {
+        if (!targetCard) return '';
+        if (heroLevel === 2 && targetCard.level2ImageUrl) return targetCard.level2ImageUrl;
+        if (editingSkinId > 0) return getSkinImage(selectedKey!, editingSkinId) || targetCard.imageUrl;
+        return targetCard.imageUrl;
+    }, [targetCard, selectedKey, editingSkinId, heroLevel]);
 
     // 动态计算工作台裁剪框尺寸
     const getCropperDimensions = () => {
@@ -283,7 +309,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                                 {/* 1. 底层：完整图片（暗色）- flex居中，利用宽高自适应打破 object-cover 带来的物理裁切 */}
                                 <div className="absolute inset-0 flex items-center justify-center overflow-visible">
                                     <img
-                                        src={heroLevel === 2 && targetCard.level2ImageUrl ? targetCard.level2ImageUrl : targetCard.imageUrl}
+                                        src={workbenchImageUrl}
                                         draggable={false}
                                         className="max-w-none opacity-30 pointer-events-none transition-none block"
                                         style={{
@@ -297,7 +323,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                                 {/* 2. 顶层：高亮裁剪框 - overflow-hidden 只显示框内 */}
                                 <div className={`absolute inset-0 overflow-hidden ${cropperDim.rounded} border border-white/20 bg-black flex items-center justify-center`}>
                                     <img
-                                        src={heroLevel === 2 && targetCard.level2ImageUrl ? targetCard.level2ImageUrl : targetCard.imageUrl}
+                                        src={workbenchImageUrl}
                                         draggable={false}
                                         className="max-w-none pointer-events-none transition-none block"
                                         style={{
@@ -368,8 +394,8 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                             {/* [修复 4] 强行放大预览图，更利于开发观察 */}
                             <div className={`transform scale-[1.55] origin-center shadow-2xl ${activeMode === 'combat' ? 'w-[240px] h-[162px]' : ''}`}>
                                 <Card
-                                    // [核心修复 1] 加入 key，强制 React 在切换卡牌、等级、形态时彻底销毁并重建组件，清除生命值对比残留，阻止错误播放受伤动画
-                                    key={`${targetCard.key}-${heroLevel}-${activeMode}`}
+                                    // [皮肤] 加入 editingSkinId 以在切换皮肤时强制重建组件
+                                    key={`${targetCard.key}-${heroLevel}-${activeMode}-skin${editingSkinId}`}
                                     data={(() => {
                                         // [核心修复 2] 模拟游戏引擎：如果是 2 级，手动赋予数值增长
                                         const cardInfo = { ...targetCard, level: heroLevel };
@@ -388,6 +414,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                                     })()}
                                     location={activeMode}
                                     isFaceUp={true}
+                                    skinId={editingSkinId}
                                 />
                             </div>
                         </>
@@ -418,6 +445,43 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                                 className={`flex-1 h-16 rounded-lg flex flex-col items-center justify-center gap-1 transition-all border-2 ${activeMode === 'combat' ? 'bg-red-900/40 border-green-400 text-green-400 scale-105 shadow-[0_0_15px_rgba(74,222,128,0.2)]' : 'bg-slate-800 border-transparent text-gray-400 hover:bg-slate-700'}`}
                             >
                                 <Sword size={20} /> <span className="text-[10px] font-bold">COMBAT</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* [皮肤] 皮肤切换导航栏 */}
+                    <div>
+                        <span className="text-xs font-black tracking-[0.2em] text-gray-500 mb-3 block">SKIN PREVIEW</span>
+                        <div className="flex items-center justify-between gap-3 bg-slate-800/50 rounded-lg p-3 border border-white/5">
+                            <button
+                                onClick={() => {
+                                    const idx = availableSkinIds.indexOf(editingSkinId);
+                                    if (idx > 0) setEditingSkinId(availableSkinIds[idx - 1]);
+                                }}
+                                disabled={!hasPrevSkin}
+                                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${hasPrevSkin ? 'bg-yellow-600/30 text-yellow-400 hover:bg-yellow-600/50 cursor-pointer' : 'bg-slate-800 text-gray-600 cursor-not-allowed'}`}
+                            >
+                                <span className="text-lg font-black">‹</span>
+                            </button>
+
+                            <div className="flex flex-col items-center">
+                                <span className="text-sm font-mono font-bold text-yellow-400">
+                                    SKIN {editingSkinId}
+                                </span>
+                                <span className="text-[10px] text-gray-500">
+                                    {currentSkinIndex + 1} / {availableSkinIds.length}
+                                </span>
+                            </div>
+
+                            <button
+                                onClick={() => {
+                                    const idx = availableSkinIds.indexOf(editingSkinId);
+                                    if (idx < availableSkinIds.length - 1) setEditingSkinId(availableSkinIds[idx + 1]);
+                                }}
+                                disabled={!hasNextSkin}
+                                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${hasNextSkin ? 'bg-yellow-600/30 text-yellow-400 hover:bg-yellow-600/50 cursor-pointer' : 'bg-slate-800 text-gray-600 cursor-not-allowed'}`}
+                            >
+                                <span className="text-lg font-black">›</span>
                             </button>
                         </div>
                     </div>

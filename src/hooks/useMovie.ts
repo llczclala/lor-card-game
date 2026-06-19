@@ -1,8 +1,10 @@
 import { getVideoUrl } from '../utils/videoPreloader';
 import { useState, useCallback } from 'react';
 import { getRandomTitleMovie, getLevelUpMovie, getVictoryMovie, getHallMovies } from '../data/movieData';
+import type { VideoResolution } from '../data/movieData'; // [新增] 引入画质类型
 
-export const useMovie = () => {
+// [核心重构] 接收画质参数，默认为 1k
+export const useMovie = (resolution: VideoResolution = '1k') => {
     const [currentMovie, setCurrentMovie] = useState<string | null>(null);
     const [isLooping, setIsLooping] = useState(false);
     const [isVisible, setIsVisible] = useState(false);
@@ -21,14 +23,14 @@ export const useMovie = () => {
     }, []);
     // 播放标题循环视频
     const playTitleMovie = useCallback(() => {
-        const movie = getRandomTitleMovie();
+        const movie = getRandomTitleMovie(resolution); // [注入画质]
         if (movie) {
             setCurrentMovie(movie);
             setIsLooping(true);
             setIsVisible(true);
             setOnComplete(undefined);
         }
-    }, []);
+    }, [resolution]); // [追加依赖]
 
     // [新增] 播放大厅视频
     const playHallMovie = useCallback((index?: number) => {
@@ -53,23 +55,28 @@ export const useMovie = () => {
         return nextIndex;
     }, []);
 
-    // 播放升级视频 (一次性) — 优先使用预加载的 blob URL
-    const playLevelUpMovie = useCallback((heroKey: string, onEnd?: () => void) => {
-        const movie = getLevelUpMovie(heroKey);
+    // [核心新增：静默热车] 预备升级视频：提前喂给放映机触发解码缓存，但不显示
+    const prepareLevelUpMovie = useCallback((heroKey: string) => {
+        const movie = getLevelUpMovie(heroKey, resolution); // [注入画质]
         if (movie) {
             setCurrentMovie(resolveMovieUrl(movie));
             setIsLooping(false);
-            setIsVisible(true);
-            setOnComplete(() => onEnd); // 存储回调
-        } else {
-            // 如果没找到视频，直接执行回调，防止流程卡死
-            if (onEnd) onEnd();
+            setIsVisible(false);
         }
-    }, [resolveMovieUrl]);
+    }, [resolveMovieUrl, resolution]); // [追加依赖]
 
-    // 播放胜利视频 (一次性) — 优先使用预加载的 blob URL
-    const playVictoryMovie = useCallback((heroKeys: string[], onEnd?: () => void) => {
-        const movie = getVictoryMovie(heroKeys);
+    // [核心新增：静默热车] 预备胜利视频：供结算黑屏期间后台解码
+    const prepareVictoryMovie = useCallback((heroKeys: string[]) => {
+        const movie = getVictoryMovie(heroKeys, resolution); // [注入画质]
+        if (movie) {
+            setCurrentMovie(resolveMovieUrl(movie));
+            setIsLooping(false);
+            setIsVisible(false);
+        }
+    }, [resolveMovieUrl, resolution]); // [追加依赖]
+    // 播放升级视频 (一次性) — 优先使用预加载的 blob URL
+    const playLevelUpMovie = useCallback((heroKey: string, onEnd?: () => void) => {
+        const movie = getLevelUpMovie(heroKey, resolution); // [注入画质]
         if (movie) {
             setCurrentMovie(resolveMovieUrl(movie));
             setIsLooping(false);
@@ -78,7 +85,20 @@ export const useMovie = () => {
         } else {
             if (onEnd) onEnd();
         }
-    }, [resolveMovieUrl]);
+    }, [resolveMovieUrl, resolution]); // [追加依赖]
+
+    // 播放胜利视频 (一次性) — 优先使用预加载的 blob URL
+    const playVictoryMovie = useCallback((heroKeys: string[], onEnd?: () => void) => {
+        const movie = getVictoryMovie(heroKeys, resolution); // [注入画质]
+        if (movie) {
+            setCurrentMovie(resolveMovieUrl(movie));
+            setIsLooping(false);
+            setIsVisible(true);
+            setOnComplete(() => onEnd);
+        } else {
+            if (onEnd) onEnd();
+        }
+    }, [resolveMovieUrl, resolution]); // [追加依赖]
 
     // [修改] 支持传入 immediate 参数
     const stopMovie = useCallback((immediate: boolean = false) => {
@@ -105,6 +125,8 @@ export const useMovie = () => {
         currentMovie,
         isLooping,
         isVisible,
+        prepareLevelUpMovie, // [核心导出] 提前供弹 (升级)
+        prepareVictoryMovie, // [核心导出] 提前供弹 (胜利)
         playTitleMovie,
         playLevelUpMovie,
         playVictoryMovie,

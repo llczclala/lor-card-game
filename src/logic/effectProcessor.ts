@@ -240,10 +240,10 @@ export const processEffect = (
                     // =====================================
                     targetsToHit.forEach(hitId => {
                         const applyDmg = (c: CardData) => {
-                            // [核心修复：法术不穿盾] 优先检查屏障拦截
-                            if (c.keywords.includes('Barrier') && dmg > 0) {
+                            // [改造] 法术不穿盾：屏障抵挡伤害后标记黯淡而非移除
+                            if (c.keywords.includes('Barrier') && !(c.depletedKeywords || []).includes('Barrier') && dmg > 0) {
                                 events.push({ type: 'sfx_shield_break', payload: null });
-                                return { ...c, keywords: c.keywords.filter(k => k !== 'Barrier'), animState: 'hit' as const };
+                                return { ...c, depletedKeywords: [...(c.depletedKeywords || []), 'Barrier'], animState: 'hit' as const };
                             }
                             if (dmg > 0) events.push({ type: 'unit_damage', payload: { id: c.id, amount: dmg } });
                             return { ...c, damageTaken: (c.damageTaken||0) + dmg, animState: 'hit' as const };
@@ -290,10 +290,10 @@ export const processEffect = (
                             let nextKeywords = c.keywords;
                             let finalDmg = dmg;
 
-                            // [核心修复：法术单挑不穿盾] 优先检查屏障拦截
-                            if (c.keywords.includes('Barrier') && finalDmg > 0) {
+                            // [改造] 法术单挑不穿盾：屏障抵挡伤害后标记黯淡而非移除
+                            const hasActiveBarrier = c.keywords.includes('Barrier') && !(c.depletedKeywords || []).includes('Barrier');
+                            if (hasActiveBarrier && finalDmg > 0) {
                                 events.push({ type: 'sfx_shield_break', payload: null });
-                                nextKeywords = nextKeywords.filter(k => k !== 'Barrier');
                                 finalDmg = 0; // 伤害被抵挡
                             }
 
@@ -322,7 +322,7 @@ export const processEffect = (
                                 newDamageTaken += 9999;
                             }
 
-                            return { ...c, keywords: nextKeywords, damageTaken: newDamageTaken, animState: 'hit' as const };
+                            return { ...c, keywords: nextKeywords, depletedKeywords: hasActiveBarrier ? [...(c.depletedKeywords || []), 'Barrier'] : c.depletedKeywords, damageTaken: newDamageTaken, animState: 'hit' as const };
                         };
 
                         // [致命 Bug 修复] 梳理打击逻辑，彻底移除复制粘贴导致的重复扣血！

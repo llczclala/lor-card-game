@@ -90,6 +90,31 @@ const GachaItem: React.FC<GachaItemProps> = ({ result, index, isFlipped, onFlip,
                     />
                 </div>
             );
+        } else if (result.type === 'skin') {
+            // [核心新增] 皮肤演出：直接展示高清晰度大图，不套卡牌边框，并加上专属徽记
+            return (
+                <div className="w-full h-full rounded-xl overflow-hidden border-2 border-purple-500/50 bg-slate-900 relative shadow-2xl flex flex-col">
+                    <div className="flex-1 relative overflow-hidden">
+                        <img
+                            src={result.displayImage}
+                            className="w-full h-full object-cover scale-110" // 稍微放大，更具冲击力
+                            alt={result.name}
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-purple-900/90 via-transparent to-transparent opacity-80"></div>
+                    </div>
+                    <div className="absolute bottom-0 w-full h-16 bg-gradient-to-r from-purple-900 to-black flex flex-col items-center justify-center border-t border-purple-500/30 p-2">
+                        <div className="text-purple-300 text-xs font-bold tracking-widest uppercase mb-1">
+                            限定皮肤
+                        </div>
+                        <div className="text-white text-sm font-black truncate w-full text-center">
+                            {result.name}
+                        </div>
+                    </div>
+                    <div className="absolute top-2 right-2 bg-purple-500 text-white p-1.5 rounded-full shadow-[0_0_15px_rgba(168,85,247,0.8)] z-10 animate-pulse">
+                        <Sparkles size={16} fill="currentColor" />
+                    </div>
+                </div>
+            );
         } else {
             // 饰品
             const isCardBack = result.type === 'cardBack';
@@ -121,13 +146,17 @@ const GachaItem: React.FC<GachaItemProps> = ({ result, index, isFlipped, onFlip,
 
     return (
         <div className="relative w-[200px] h-[300px]">
-            {/* 稀有光效底座 */}
+            {/* 稀有光效底座：根据类型决定金光还是紫光 */}
             {result.isRare && showFront && (
                 <motion.div
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1.2, rotate: 180 }}
                     transition={{ duration: 0.8, ease: "easeOut" }}
-                    className="absolute inset-0 -z-10 bg-gradient-to-r from-yellow-300 via-orange-500 to-yellow-300 blur-3xl opacity-50 rounded-full"
+                    className={`absolute inset-0 -z-10 blur-3xl opacity-50 rounded-full ${
+                        result.type === 'skin'
+                            ? 'bg-gradient-to-r from-purple-400 via-fuchsia-600 to-purple-400'
+                            : 'bg-gradient-to-r from-yellow-300 via-orange-500 to-yellow-300'
+                    }`}
                 />
             )}
 
@@ -193,9 +222,11 @@ const GachaItem: React.FC<GachaItemProps> = ({ result, index, isFlipped, onFlip,
                                         initial={{ opacity: 0 }}
                                         animate={{ opacity: 1 }}
                                         transition={{ delay: 0.4 }}
-                                        className="text-white/60 text-[10px] uppercase font-bold tracking-widest border border-white/20 px-2 py-1 rounded"
+                                        className="text-white/60 text-[10px] uppercase font-bold tracking-widest border border-white/20 px-2 py-1 rounded text-center whitespace-pre-line"
                                     >
-                                        重复卡牌已转化为通用银
+                                        {result.type === 'card'
+                                            ? (result.isRare ? '重复英雄转化为比特金' : '重复卡牌转化为通用银')
+                                            : (result.type === 'skin' ? '拥有该皮肤补偿比特金' : '重复饰品转化为比特金')}
                                     </motion.div>
                                 </motion.div>
                             )}

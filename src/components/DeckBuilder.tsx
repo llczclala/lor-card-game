@@ -2,7 +2,7 @@ import React, { useState, useMemo,useEffect} from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ShoppingCart, Eraser, AlertTriangle, Filter, X, User, LayoutGrid, GalleryHorizontalEnd } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
-import { HERO_IMAGES, PERSONALIZATION_ASSETS } from '../data/imageData'; // [新增] 引入个性化资产
+import { HERO_IMAGES, PERSONALIZATION_ASSETS, getSkinImage } from '../data/imageData'; // [修改] 补充引入 getSkinImage
 import { Card } from './Card';
 import type { CardData, SavedDeck } from '../types';
 import { eventBus, GameEvents } from '../utils/eventBus';
@@ -11,6 +11,9 @@ import { PersonalizationDrawer } from './PersonalizationDrawer';
 import { StyleSelector } from './StyleSelector'; // [核心新增] 直接复用原生的全屏选择器
 import type { useUserSystem } from '../hooks/useUserSystem';
 import { ArrowLeft } from 'lucide-react'; // [新增]
+// [新增] 悬停预览统一方案
+import { useCardGaze } from '../hooks/useCardGaze';
+import { FloatingCardPreview } from './FloatingCardPreview';
 
 
 
@@ -35,9 +38,14 @@ const toFullCardData = (staticData: any): CardData => ({
 });
 
 // --- [重构] 封面计算工具函数 (获取优先级最高的3张卡) ---
-const getDeckCovers = (cards: Record<string, number>): string[] => {
+// [皮肤修复] 新增 skinOverrides 参数，让大厅封面也能穿上皮肤
+const getDeckCovers = (cards: Record<string, number>, skinOverrides?: Record<string, number>): { url: string; skinId: number; isBack: boolean }[] => {
     const cardKeys = Object.keys(cards);
-    if (cardKeys.length === 0) return ['CARD_BACK', 'CARD_BACK', 'CARD_BACK']; // [策略 B 落地] 空卡组完全由卡背填充，不再使用三巨头
+    if (cardKeys.length === 0) return [
+        { url: 'CARD_BACK', skinId: 0, isBack: true },
+        { url: 'CARD_BACK', skinId: 0, isBack: true },
+        { url: 'CARD_BACK', skinId: 0, isBack: true }
+    ];
 
     const sorted = cardKeys.sort((a, b) => {
         const cardA = CARD_DB[a];
@@ -51,8 +59,16 @@ const getDeckCovers = (cards: Record<string, number>): string[] => {
         return 0;
     });
 
-    const covers = sorted.slice(0, 3).map(k => CARD_DB[k]?.imageUrl || 'CARD_BACK');
-    while (covers.length < 3) covers.push('CARD_BACK'); // [策略 B 落地] 种类不足 3 种时，用卡背代替里芙
+    const covers = sorted.slice(0, 3).map(k => {
+        const skinId = skinOverrides?.[k] || 0;
+        const url = getSkinImage(k, skinId) || CARD_DB[k]?.imageUrl || 'CARD_BACK';
+        return {
+            url,
+            skinId,
+            isBack: url === 'CARD_BACK'
+        };
+    });
+    while (covers.length < 3) covers.push({ url: 'CARD_BACK', skinId: 0, isBack: true });
     return covers;
 };
 
@@ -100,25 +116,34 @@ const DeckDiorama = ({ deck, covers, cardBackImg, boardImg, isCenter = false, is
 
             {/* 2. 左侧扇形核心三卡 (痛点 3：重排 Z 轴层级，封面 1 在最顶层，2 其次，3 在最底) */}
             <div className="absolute top-12 left-6 z-20 pointer-events-none">
-                {covers.map((url: string, i: number) => {
+                {covers.map((cover: { url: string; skinId: number; isBack: boolean }, i: number) => {
                     const rotations = [-16, 0, 16];
                     const translatesX = [0, 24, 48];
                     const translatesY = [12, 0, 12];
-                    // i=0(第一张英雄) 拿到最高 z-index(25)，i=2 拿到最低 z-index(21)
                     const zIndexes = [25, 23, 21];
 
-                    // [策略 B 落地] 识别特殊标识，渲染玩家专属的高定卡背
-                    const isBack = url === 'CARD_BACK';
-                    const renderUrl = isBack ? cardBackImg : url;
+                    const isBack = cover.isBack;
+                    const renderUrl = isBack ? cardBackImg : cover.url;
+                    const skinId = cover.skinId;
 
                     return (
                         <div
                             key={i}
-                            className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-500 ${isBack ? 'border-slate-800/80 bg-slate-900' : 'border-slate-950'}`}
+                            // [核心修改] 强行追加 bg-slate-950 纯黑厚重底色，彻底建立物质边界，阻断底层棋盘穿透
+                            className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden transition-all duration-500 ${isBack ? 'border-slate-800/80 bg-slate-900' : 'border-slate-800 bg-slate-950'}`}
                             style={{ transform: `translateX(${translatesX[i]}px) translateY(${translatesY[i]}px) rotate(${rotations[i]}deg)`, zIndex: zIndexes[i] }}
                         >
-                            <img src={renderUrl} className={`w-full h-full object-cover ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt={isBack ? "Card Back Fill" : "Hero Front"} />
-                            {isBack && <div className="absolute inset-0 bg-black/40 mix-blend-multiply"></div>}
+                            {/* [兜底环境光实装] */}
+                            {!isBack && (
+                                <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none z-0 ${
+                                    skinId > 0
+                                        ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
+                                        : 'from-gray-300/40 via-gray-200/20 to-white/5'
+                                }`}></div>
+                            )}
+                            {/* 提升层级到 z-10 盖住光效 */}
+                            <img src={renderUrl} className={`w-full h-full object-cover relative z-10 ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt={isBack ? "Card Back Fill" : "Hero Front"} />
+                            {isBack && <div className="absolute inset-0 bg-black/40 mix-blend-multiply z-20"></div>}
                         </div>
                     )
                 })}
@@ -187,14 +212,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const [isFilterOpen, setIsFilterOpen] = useState(false);
 
 
-    const [hoveredCardKey, setHoveredCardKey] = useState<string | null>(null);
+    // [新增] 统一悬停预览
+    const { gazeTarget, bindGazeEvents, keepAlive, scheduleDismiss } = useCardGaze({ delay: 300 });
 
     // [新增] 一键重置逻辑
     const isFilterActive = category !== 'ALL' || costFilter !== 'ALL' || regionFilter !== 'ALL' || searchTerm !== '';
     const resetFilters = () => {
         setSearchTerm(''); setCategory('ALL'); setCostFilter('ALL'); setRegionFilter('ALL');
     };
-    const hoverTimerRef = React.useRef<number | null>(null);
     const [viewMode, setViewMode] = useState<'SELECTION' | 'EDITOR'>('SELECTION');
 
     // [核心新增] 大厅 2.0 状态机
@@ -225,6 +250,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     // [新增] 进入特定卡组的编辑模式
     const handleEnterDeck = (deckId: string) => {
         eventBus.emit(GameEvents.UI_CLICK);
+        // [核心修复] 极其关键：切入备战前，抢先一步强行将确认状态归零，彻底截断由于 React 异步延迟产生的残留弹窗
+        setConfirmModal(null);
         userSystem.selectDeck(deckId);
         setViewMode('EDITOR');
     };
@@ -266,14 +293,6 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
             }
         }
     };
-    // 鼠标进入列表项
-    const handleDeckItemEnter = (key: string) => {
-        if (hoverTimerRef.current) {
-            clearTimeout(hoverTimerRef.current);
-            hoverTimerRef.current = null;
-        }
-        setHoveredCardKey(key);
-    };
     const [confirmModal, setConfirmModal] = useState<{
         title: string;
         message: string;
@@ -281,36 +300,6 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         type: 'danger' | 'info';
     } | null>(null);
 
-
-    // 鼠标离开列表项
-    const handleDeckItemLeave = () => {
-        hoverTimerRef.current = window.setTimeout(() => {
-            setHoveredCardKey(null);
-        }); // 150ms 缓冲，允许用户把鼠标移到左侧预览图上
-    };
-
-    // 鼠标进入预览图 (保持显示)
-    const handlePreviewEnter = () => {
-        if (hoverTimerRef.current) {
-            clearTimeout(hoverTimerRef.current);
-            hoverTimerRef.current = null;
-        }
-    };
-
-    // 鼠标离开预览图 (关闭)
-    const handlePreviewLeave = () => {
-        hoverTimerRef.current = window.setTimeout(() => {
-            setHoveredCardKey(null);
-        }, 150);
-    };
-
-    // [新增] 彻底离开列表区域后的强制卸载保险 (防卡死 Bug)
-    const handleListContainerLeave = () => {
-        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-        hoverTimerRef.current = window.setTimeout(() => {
-            setHoveredCardKey(null);
-        }, 1000); // 鼠标彻底离开列表 1 秒后，强制清理悬浮图
-    };
 
     const clearDeck = () => {
         if (Object.keys(localDeck).length === 0) return;
@@ -624,7 +613,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             <div className="w-full flex justify-center mt-12" onClick={handleCreateAndEdit}><DeckDiorama deck={{ isNew: true }} isGridView={true} /></div>
                             {userSystem.decks.map((deck: any) => (
                                 <div key={deck.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setHubDeckId(deck.id); }} className="w-full flex justify-center mt-12 relative group/del"> {/* [新增] 音效 */}
-                                    <DeckDiorama deck={deck} covers={getDeckCovers(deck.cards)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isGridView={true} />
+                                    <DeckDiorama deck={deck} covers={getDeckCovers(deck.cards, deck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isGridView={true} />
                                     <button onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id); }} className="absolute -top-6 -right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20"><Trash2 size={16} className="text-white" /></button>
                                 </div>
                             ))}
@@ -646,14 +635,28 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     key={deck.id} initial={false}
                                     animate={{ x: translateX, zIndex: isCenter ? 50 : 10 }}
                                     transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-                                    className="absolute"
+                                    /* [体验优化] 追加 group/del 的样式标记，赋予容器悬停监听权限 */
+                                    className="absolute group/del"
                                     onClick={() => {
                                         eventBus.emit(GameEvents.UI_CLICK); // [新增] 音效
                                         if (isCenter) { deck.isNew ? handleCreateAndEdit() : setHubDeckId(deck.id); }
                                         else { setCarouselIndex(idx); }
                                     }}
                                 >
-                                    <DeckDiorama deck={deck} covers={deck.isNew ? [] : getDeckCovers(deck.cards)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isCenter={isCenter} />
+                                    <DeckDiorama deck={deck} covers={deck.isNew ? [] : getDeckCovers(deck.cards, deck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isCenter={isCenter} />
+
+                                    {/* [体验优化] 轮播图删除补导：当该卡组被推向中央聚光灯（isCenter）且非新建空壳时，允许直接悬浮删除 */}
+                                    {isCenter && !deck.isNew && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation(); // [极其关键] 必须阻断冒泡，防止触发进入卡组的 onClick 动作！
+                                                handleDeleteDeck(deck.id);
+                                            }}
+                                            className="absolute top-2 right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20 shadow-xl"
+                                        >
+                                            <Trash2 size={16} className="text-white" />
+                                        </button>
+                                    )}
                                 </motion.div>
                             );
                         })
@@ -682,14 +685,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                                     <div
                                         className="h-full overflow-y-auto px-4 py-8 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
-                                        onMouseLeave={handleListContainerLeave} // [新增] 彻底离开列表时触发1秒卸载保险
                                     >
                                         {Object.entries(hubDeck.cards).map(([key, count]: any) => {
                                             const card = CARD_DB[key];
                                             if (!card) return null;
                                             return (
-                                                <div key={key} className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help" onMouseEnter={() => setHoveredCardKey(key)} onMouseLeave={() => setHoveredCardKey(null)}>
-                                                    <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
+                                                <div key={key} className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help" {...bindGazeEvents(card)}>
+                                                    {/* [皮肤修复] 动态提取枢纽卡组中配置的皮肤图 */}
+                                                    <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${getSkinImage(key, hubDeck.skinOverrides?.[key] || 0) || card.imageUrl})` }}></div>
                                                     <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
                                                     <div className="absolute inset-0 flex items-center justify-between px-3">
                                                         <div className="flex gap-3 items-center"><span className="w-6 h-6 rounded-full bg-blue-900 flex justify-center items-center text-xs font-bold border border-blue-500 text-blue-200">{card.cost}</span><span className="text-sm font-bold truncate w-32 drop-shadow-md">{card.name}</span></div>
@@ -711,7 +714,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                             {/* 正中心：主角微缩景观展示与发车按钮 */}
                             <div className="flex flex-col items-center gap-12 z-50 mx-6">
-                                <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
+                                <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards, hubDeck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
 
                                 {/* 拦截拦截发车按钮 */}
                                 <button
@@ -775,25 +778,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 </div>
                             </motion.div>
 
-                            {/* [核心修复] 完美复用备战环节的成熟方案，解决数据串屏Bug，并自然地从列表右侧滑出 */}
-                            <AnimatePresence mode="wait">
-                                {hoveredCardKey && CARD_DB[hoveredCardKey] && (
-                                    <motion.div
-                                        key={hoveredCardKey} // [最关键] 有了身份证，切换时强行销毁重绘，彻底杀掉震动 Bug！
-                                        className="absolute left-[105%] top-1/2 -translate-y-1/2 z-[150] pointer-events-auto"
-                                        onMouseEnter={handlePreviewEnter}
-                                        onMouseLeave={handlePreviewLeave}
-                                        initial={{ opacity: 0, x: -20, scale: 1.1 }}
-                                        animate={{ opacity: 1, x: 0, scale: 1.25 }}
-                                        exit={{ opacity: 0, x: -10, transition: { duration: 0.1 } }}
-                                        transition={{ type: "spring", stiffness: 300, damping: 25, opacity: { duration: 0.2 } }}
-                                    >
-                                        <div className="drop-shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
-                                            <Card data={toFullCardData(CARD_DB[hoveredCardKey])} location="preview" isFaceUp={true} onViewArt={(c) => setViewCard(c)} />
-                                        </div>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
+                            {/* 悬停预览 — 智能物理跟随 */}
+                            <FloatingCardPreview
+                                gazeTarget={gazeTarget}
+                                mode="follow"
+                                scale={1.25}
+                                interactive
+                                skinId={userSystem.activeDeck?.skinOverrides?.[gazeTarget?.card.key || ''] || 0}
+                                onMouseEnter={keepAlive}
+                                onMouseLeave={scheduleDismiss}
+                                onViewArt={(c) => setViewCard(c)}
+                            />
                         </motion.div>
                     )}
                 </AnimatePresence>
@@ -879,41 +874,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 </button>
             )}
             {/* Left Sidebar - Filters & Stats */}
-            <AnimatePresence mode="wait">
-                {hoveredCardKey && CARD_DB[hoveredCardKey] && (
-                    <motion.div
-                        // [关键] 使用 hoveredCardKey 作为 key
-                        // 这确保了每次切换卡牌时，React 都会视为“新组件”进行重绘
-                        // 1. 触发进场动画
-                        // 2. 强制数值直接渲染最终值，跳过任何“数字滚动”动画
-                        key={hoveredCardKey}
-
-                        className="absolute right-[350px] top-[250px] -translate-y-1/2 z-50 pointer-events-auto"
-                        onMouseEnter={handlePreviewEnter}
-                        onMouseLeave={handlePreviewLeave}
-
-                        // 定义渐入缓冲动画 (淡入 + 轻微位移)
-                        initial={{ opacity: 0, x: 0, scale: 1.1 }}
-                        animate={{ opacity: 1, x: 0, scale: 1.25 }} // 保持 1.25 倍放大
-                        exit={{ opacity: 0, x: 10, transition: { duration: 0.1 } }} // 快速退出
-                        transition={{
-                            type: "spring",
-                            stiffness: 300,
-                            damping: 25,
-                            opacity: { duration: 0.2 }
-                        }}
-                    >
-                        <div className="drop-shadow-2xl">
-                            <Card
-                                data={toFullCardData(CARD_DB[hoveredCardKey])}
-                                location="preview"
-                                isFaceUp={true}
-                                onViewArt={(c) => setViewCard(c)}
-                            />
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            <FloatingCardPreview
+                gazeTarget={gazeTarget}
+                mode="follow"
+                scale={1.25}
+                interactive
+                skinId={userSystem.activeDeck?.skinOverrides?.[gazeTarget?.card.key || ''] || 0}
+                onMouseEnter={keepAlive}
+                onMouseLeave={scheduleDismiss}
+                onViewArt={(c) => setViewCard(c)}
+            />
 
             {/* --- [重构] 中间主内容区 (包含顶部筛选台与卡牌网格) --- */}
             {/* 注意：我们彻底删除了原先的左侧 80px 宽的旧筛选边栏，为网格腾出了巨大空间！ */}
@@ -1036,6 +1006,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     <Card
                                         data={fullCard}
                                         location="deck-builder"
+                                        skinId={userSystem.activeDeck?.skinOverrides?.[card.key] || 0} // [核心修复] 给中间网格的卡牌通电！让它读取当前选中卡组的皮肤！
                                         isFaceUp={true}
                                         onViewArt={(c) => setViewCard(c)}
                                         // [关键修改] 永远隐藏内部的小购物车图标
@@ -1165,7 +1136,6 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                     <div
                         className="h-full overflow-y-auto p-4 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
-                        onMouseLeave={handleListContainerLeave} // [新增] 彻底离开列表时触发1秒卸载保险
                     >
                         {Object.entries(localDeck).map(([key, count]) => {
                         const card = CARD_DB[key];
@@ -1194,10 +1164,10 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     className="flex-1 relative h-full bg-gray-800 rounded-r-md overflow-hidden border border-gray-700 hover:border-blue-500 transition-all cursor-pointer"
                                     onClick={() => removeFromDeck(key)}
                                     onContextMenu={(e) => { e.preventDefault(); setViewCard(fullCard); }}
-                                    onMouseEnter={() => handleDeckItemEnter(key)}
-                                    onMouseLeave={handleDeckItemLeave}
+                                    {...bindGazeEvents(card)}
                                 >
-                                    <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
+                                    {/* [皮肤修复] 动态提取右侧正在编辑的卡组的皮肤图 */}
+                                    <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${getSkinImage(key, userSystem.activeDeck?.skinOverrides?.[key] || 0) || card.imageUrl})` }}></div>
                                     <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent"></div>
                                     <div className="absolute inset-0 flex items-center justify-between px-4">
                                         <div className="flex items-center gap-3">
@@ -1280,6 +1250,23 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     onBuy={(count, cost) => userSystem.purchaseCard(viewCard.key, count, cost)}
                     ownedCount={getOwnedCount(viewCard.key)}
                     playerSilver={userSystem.collection?.resources.silverCoin || 0}
+                    // [皮肤] 传递皮肤数据
+                    skinData={userSystem.activeDeck ? {
+                        ownedSkins: userSystem.collection?.ownedSkins || {},
+                        currentSkinId: userSystem.activeDeck.skinOverrides?.[viewCard.key] ?? 0,
+                        onSkinChange: (cardKey, newSkinId) => {
+                            const deck = userSystem.activeDeck;
+                            if (!deck) return;
+                            const updatedDeck = {
+                                ...deck,
+                                skinOverrides: {
+                                    ...(deck.skinOverrides || {}),
+                                    [cardKey]: newSkinId,
+                                },
+                            };
+                            userSystem.saveDeck(updatedDeck);
+                        },
+                    } : undefined}
                 />
             )}
         </div>

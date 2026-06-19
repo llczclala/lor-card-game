@@ -15,34 +15,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     noFade = false
 }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
-    const [opacity, setOpacity] = useState(0);
-
-    // 1. 基础播放控制 (响应式)
+    // 1. 基础播放控制 (纯物理控制，彻底剥离 React 渲染流)
     useEffect(() => {
         const video = videoRef.current;
         if (!video || !src) return;
 
         if (isVisible) {
             // A. 开始播放
-            // 如果源变了，重置
             if (video.src !== src && video.src !== window.location.origin + src) {
                 video.src = src;
                 video.load();
             }
-
-            // 尝试播放
             const playPromise = video.play();
             if (playPromise !== undefined) {
-                playPromise
-                    .then(() => {
-                        // 播放成功后再显示，防止黑屏
-                        setOpacity(1);
-                    })
-                    .catch(e => console.warn("Auto-play blocked:", e));
+                playPromise.catch(e => console.warn("Auto-play blocked:", e));
             }
         } else {
-            // B. 停止播放
-            setOpacity(0);
+            // B. 停止播放 (延迟暂停，给 CSS 淡出动画留出充足时间，防止画面定格)
             const delay = noFade ? 0 : 1000;
             const timer = setTimeout(() => {
                 if (video) video.pause();
@@ -104,27 +93,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         return () => clearInterval(interval);
     }, [isVisible, src]);
 
-    if (!src) return null;
 
     return (
         <div
-            className={`fixed inset-0 bg-black transition-opacity ease-in-out pointer-events-none ${noFade ? 'duration-0' : 'duration-1000'}`}
+            // [核心修复 1] 引入 transform-gpu 强制硬件隔离；将透明度交接给 Tailwind 类名处理
+            className={`fixed inset-0 bg-black transition-opacity ease-in-out pointer-events-none transform-gpu ${noFade ? 'duration-0' : 'duration-1000'} ${isVisible && src ? 'opacity-100' : 'opacity-0'}`}
             style={{
-                opacity: opacity,
                 zIndex: zIndex,
-                visibility: (isVisible || opacity > 0) ? 'visible' : 'hidden'
+                willChange: 'opacity' // [核心修复 2] 明确声明即将发生 opacity 复合层改变
             }}
         >
             <video
                 ref={videoRef}
-                src={src} // 直接绑定 src，配合 useEffect 里的 load 检查
-                className="w-full h-full object-cover"
+                src={src || undefined} // src为空时赋undefined，防止浏览器报错
+                className="w-full h-full object-cover transform-gpu"
                 playsInline
-                // [保留] 激进预加载
                 preload="auto"
-                // [保留] 结束回调
                 onEnded={onEnded}
-                // [保留] 错误熔断：如果原生报错，直接跳过
                 onError={(e) => {
                     console.error("Video Error:", e);
                     if (!isLoop && onEnded) onEnded();

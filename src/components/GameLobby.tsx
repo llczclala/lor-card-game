@@ -32,6 +32,7 @@ interface GameLobbyProps {
     // [新增] 背景管理 Props
     customBg: BgConfig | null;
     onUpdateCustomBg: (bg: BgConfig | null) => void;
+    hasClaimableReward?: boolean; // [新增] 接收是否有待领取的军功奖励信号
 }
 
 // [新增] 通用磨砂透视按钮组件
@@ -70,8 +71,9 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     onOpenShop,
     onOpenDeck,
     onSelectBackground,
-    customBg,           // [新增]
-    onUpdateCustomBg    // [新增]
+    customBg,
+    onUpdateCustomBg,
+    hasClaimableReward  // [新增]
 }) => {
     const [showUI, setShowUI] = useState(true);
     const { profile, collection } = userSystem;
@@ -456,6 +458,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                         <GlassButton onClick={handleOpenBgSelect} className="w-16 h-12 rounded-sm" label="BG">
                             <ImageIcon size={20} />
                         </GlassButton>
+                        {/* [撤销] 移除左侧违和的任务按钮，让辅助功能区保持纯粹 */}
                     </div>
                 </div>
             </div>
@@ -472,18 +475,23 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     >
                         <motion.div
                             // 内层：负责进出场动画 (x, opacity)
-                            // Framer Motion 会处理这里的 transform，但因为它在内部，所以是"倾斜坐标系内的位移"，效果更佳
                             initial={{ x: 100, opacity: 0 }}
                             animate={{ x: 0, opacity: 1 }}
                             exit={{ x: 100, opacity: 0 }}
                             className="flex items-center gap-4"
                         >
+                            {/* [核心恢复] 让 TASK 带着极其抢眼的脉冲黄点回归行动铁三角！ */}
                             <GlassButton
                                 onClick={onOpenMission}
                                 className="w-20 h-20 rounded-sm bg-blue-900 border-blue-500/30 hover:bg-blue-800 text-blue-200"
                                 label="TASK"
                             >
-                                <ClipboardList size={24} className="text-blue-300" />
+                                <div className="relative">
+                                    <ClipboardList size={24} className="text-blue-300" />
+                                    {hasClaimableReward && (
+                                        <span className="absolute -top-2 -right-4 w-4 h-4 bg-yellow-400 rounded-full border-2 border-yellow-200 shadow-[0_0_15px_yellow] animate-pulse" />
+                                    )}
+                                </div>
                             </GlassButton>
 
                             <div className="flex flex-col gap-4">

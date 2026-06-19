@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback} from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, Home } from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
@@ -11,7 +11,7 @@ import { Battlefield } from './Battlefield';
 import { CARD_DB } from '../data/cards';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { useVoice } from '../hooks/useVoice';
-import { UI_IMAGES, PERSONALIZATION_ASSETS } from '../data/imageData';
+import { UI_IMAGES, PERSONALIZATION_ASSETS, getSkinImage } from '../data/imageData';
 import { ManaGemSystem } from './ManaGemSystem';
 import { calculateNewMana } from '../utils/gameRules';
 import { getCardBackUrl} from '../utils/styleUtils';
@@ -22,11 +22,22 @@ import { useGameAnnouncer } from '../hooks/useGameAnnouncer';
 import { useSpellSystem } from '../hooks/useSpellSystem'; // [新增]
 import { useGameButton } from '../hooks/useGameButton'; // [新增]
 import { useMulligan } from '../hooks/useMulligan';
+import { useCursor } from '../hooks/useCursor'; // [新增] 引入全局指针控制器
+import { useUserSystem } from '../hooks/useUserSystem'; // [核心新增] 引入用户系统以读取当前卡组皮肤
 import { EFFECT_DB } from '../data/effectRegistry';
 import { VFXLayer } from './VFXLayer'; // [新增]
+// [新增] 法术弹道特效
+import SpellProjectile from './SpellProjectile';
+import { SpellImpactLayer } from './SpellImpactLayer'; // [核心新增] 引入独立的受击特效兵工厂
+// [新增] 法术弹道事件
+// [新增] 悬停预览统一方案
+import { useCardGaze } from '../hooks/useCardGaze';
+import { FloatingCardPreview } from './FloatingCardPreview';
 import { AnimatePresence, motion } from 'framer-motion'; // [新增] 确保引入了 framer-motion 用于施法UI动画
 import type { EnemyHeroConfig } from '../types/gameModeTypes'; // [新增] 引入类型
 import { AttackToken } from './AttackToken';
+import { DragGhostCard } from './DragGhostCard'; // [新增] 备战席替身拖拽
+
 
 // [修正] 专用的 Mana 计数动画 Hook (Drain -> Fill 模式)
 const useManaTicker = (target: number, round: number) => {
@@ -86,7 +97,9 @@ interface GameSessionProps {
     onExit: () => void;
     playBgm: (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat') => void;
     playLevelUpMovie: (heroKey: string, onEnd?: () => void) => void;
+    prepareLevelUpMovie?: (heroKey: string) => void; // [新增]
     playVictoryMovie: (heroKeys: string[], onEnd?: () => void) => void;
+    prepareVictoryMovie?: (heroKeys: string[]) => void; // [新增]
     stopMovie: (immediate?: boolean) => void;
     deskIndex: number;
     cardBackIndex?: number;
@@ -98,7 +111,7 @@ interface GameSessionProps {
 
 export const GameSession: React.FC<GameSessionProps> = ({
     deck, onExit, playBgm,
-    playLevelUpMovie, playVictoryMovie, stopMovie,
+    playLevelUpMovie, prepareLevelUpMovie, playVictoryMovie, prepareVictoryMovie, stopMovie, // [修改] 提取预热方法
     deskIndex, cardBackIndex = 0,
     enemyDeck,
     enemyHeroConfig: _enemyHeroConfig,
@@ -185,6 +198,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
     });
     const finalAnnouncement = announcement;
 
+    // [核心新增] 提取玩家当前激活卡组的皮肤配置字典！
+    const userSystem = useUserSystem();
+    const skinOverrides = userSystem.activeDeck?.skinOverrides || {};
+
     // [新增] 状态同步枢纽：监听底层大脑的施法请求，自动唤醒前台 UI 的瞄准射线！
     useEffect(() => {
         // 1. 如果底层要求选目标，且前台还没开始瞄准
@@ -203,7 +220,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     let previewManaCost = 0;
     let previewSpellManaCost = 0;
-
+    let isHoveringPlayableUnit = false; // [新增] 预判手牌单位是否可部署
 
     if (hoveredCard && game.phase === 'main' && game.turnOwner === 'player') {
         const cost = hoveredCard.cost;
@@ -215,6 +232,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
         previewManaCost = currentMana - newMana;
         previewSpellManaCost = currentSpellMana - newSpellMana;
+
+        // [新增] 如果是单位牌、法力值足够、且备战席未满，则触发部署预示
+        if (isUnit && canAffordCard(hoveredCard, game.playerMana, game.playerSpellMana) && playerBench.length < 6) {
+            isHoveringPlayableUnit = true;
+        }
     }
 
     // [保留] 使用动画 Hook 获取显示的数值 (如果您想保留数字显示作为辅助)
@@ -236,6 +258,570 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // 获取当前选中的卡背图片
     const currentCardBack = PERSONALIZATION_ASSETS.cardBacks[cardBackIndex];
     const { speakingCardId } = useVoice({ playerBench });
+    // [核心新增] 施法中心物理锚点，用于跨组件穿透 ScaleWrapper 的缩放结界
+    const spellCenterRef = useRef<HTMLDivElement>(null);
+
+    // ═══════════════════════════════════════════════
+    // 备战席替身拖拽系统（单卡版）
+    // ═══════════════════════════════════════════════
+
+    /** 🔧 程调这个！拖拽时 GhostCard 的缩放比 */
+    const GHOST_CARD_SCALE = 1.5;
+    /** 🔧 程调这个！向上拖动多少像素算"拖入战场"（Y 轴阈值） */
+    const BENCH_DRAG_THRESHOLD = 120;
+    /** 🔧 程调这个！战场拖拽时 GhostCard 的缩放比 */
+    const COMBAT_GHOST_SCALE = 1;
+
+    const [ghostState, setGhostState] = useState<{
+        cards: CardData[];
+        x: number;
+        y: number;
+        scale?: number;
+        w?: number;
+        h?: number;
+        location?: 'hand' | 'bench' | 'combat';
+    } | null>(null);
+    const dragCardIdRef = useRef<string | null>(null);          // 主拖拽卡（第一张抓起的那张）
+    const dragGroupRef = useRef<string[]>([]);                  // [多卡] 拖拽组内所有卡 ID
+    const hiddenCardElsRef = useRef<Map<string, HTMLElement>>(new Map()); // [多卡] 被隐藏的原卡 DOM 映射
+    const hiddenCardElRef = useRef<HTMLElement | null>(null);   // [兼容] 主拖拽卡的原卡 DOM
+    const dragActivatedRef = useRef(false);
+    const dragJustFinishedRef = useRef(false);
+    const dragStartRef = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+    const combatDragSlotRef = useRef<number | null>(null);
+    const combatDragRoleRef = useRef<'attacker' | 'blocker' | null>(null);
+
+    const { setCursor } = useCursor(); // [新增] 挂载全局指针遥控器
+
+    // [新增] 统一悬停预览（备战席 & 战场 800ms 长凝视）
+    const { gazeTarget, gazeCard, bindGazeEvents } = useCardGaze({
+        delay: 800,
+        isDragging: ghostState !== null,
+        isCasting: spellSystem.isCasting,
+    });
+
+    // [新增] 拖拽预瞄准系统 (Drag Preview System) 状态
+    const [dragPreviewSlots, setDragPreviewSlots] = useState<number[]>([]); // 记录被高亮的格挡槽位
+    const [previewAttackerCount, setPreviewAttackerCount] = useState<number>(0); // 记录即将冲锋的进攻者数量
+    const [isDraggingToBench, setIsDraggingToBench] = useState<boolean>(false); // 记录是否正在撤回备战席
+
+    // 稳定的 ref 副本，供异步事件处理器读取最新状态
+    const gameRef = useRef(game);
+    gameRef.current = game;
+    const benchRef = useRef(playerBench);
+    benchRef.current = playerBench;
+    const combatFieldRef = useRef(combatField);
+    combatFieldRef.current = combatField;
+    const msgRef = useRef(setMessage);
+    msgRef.current = setMessage;
+
+    // ==========================================
+    // [新增] 全局鼠标状态调度器 (The Cursor Director)
+    // ==========================================
+    useEffect(() => {
+        // 如果正在拖拽，指针状态交由物理拖拽引擎(onMove)直接超频控制，这里不予干涉
+        if (ghostState !== null) return;
+
+        // 判定：当前是否是对方的行动回合 (AI思考中)
+        const isAITurn = game.turnOwner === 'enemy' && game.phase === 'main';
+        // 判定：游戏处于播放全屏动画、结算界面、或AI正在思考时，视为系统繁忙
+        const isSystemBusy = game.phase === 'animating' || game.gameResult !== null || isAITurn;
+
+        if (isSystemBusy) {
+            setCursor('BUSY');       // 亮起等待轮盘
+        } else if (spellSystem.isCasting) {
+            setCursor('TARGET');     // 亮起瞄准准星
+        } else {
+            setCursor(null);         // 恢复空状态，交由 index.css 里的悬停规则(HOVER)接管
+        }
+
+        // 组件卸载时安全清理
+        return () => setCursor(null);
+    }, [game.phase, game.turnOwner, game.gameResult, spellSystem.isCasting, ghostState, setCursor]);
+
+    /** 备战席 pointerDown 入口（事件委托） */
+    const onBenchPointerDown = (e: React.PointerEvent) => {
+        const target = (e.target as HTMLElement).closest('[data-entity-id]') as HTMLElement | null;
+        if (!target) return;
+        const cardId = target.getAttribute('data-entity-id');
+        const card = playerBench.find(c => c.id === cardId);
+        if (!card) return;
+
+        // 阶段检查：只允许在主阶段(有进攻标识)/进攻宣告/格挡宣告时拖拽
+        const phase = game.phase;
+        const isPlayerTurn = game.turnOwner === 'player';
+        const hasAttackToken = game.attackToken.player !== null;
+        if (phase === 'block_declare' && isPlayerTurn && card.keywords.includes('CantBlock')) {
+            setMessage('该单位无法进行格挡！');
+            return;
+        }
+        const canDrag =
+            ((phase === 'main' && hasAttackToken) || phase === 'attack_declare') && isPlayerTurn ||
+            (phase === 'block_declare' && isPlayerTurn);
+        if (!canDrag) return;
+
+        const rect = target.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left;
+        const offsetY = e.clientY - rect.top;
+
+        dragCardIdRef.current = cardId;
+        dragGroupRef.current = [cardId]; // [多卡] 初始化拖拽组
+        hiddenCardElsRef.current.clear(); // [多卡] 清空隐藏映射
+        dragStartRef.current = { x: e.clientX, y: e.clientY, ox: offsetX, oy: offsetY };
+
+        // 立即显示 GhostCard（多卡队列）
+        setGhostState({ cards: [card], x: rect.left, y: rect.top, w: rect.width, h: rect.height, location: 'bench' });
+
+        // ── 全局 pointer 监听 ──
+        const onMove = (ev: PointerEvent) => {
+            if (!dragCardIdRef.current) return;
+            const dx = ev.clientX - dragStartRef.current.x;
+            const dy = ev.clientY - dragStartRef.current.y;
+
+            // 移动超过阈值 → 标记为"正在拖拽"，隐藏原卡
+            if (!dragActivatedRef.current && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+                dragActivatedRef.current = true;
+                const el = document.querySelector(
+                    `[data-entity-id="${dragCardIdRef.current}"]`,
+                ) as HTMLElement | null;
+                if (el) {
+                    hiddenCardElRef.current = el;
+                    hiddenCardElsRef.current.set(dragCardIdRef.current, el); // [多卡] 同步记录
+                    el.style.pointerEvents = 'none';
+                    el.style.opacity = '0';
+                }
+            }
+
+            // ═══════════════════════════════════════════════
+            // [多卡] 扫过检测：指针位置下方是否有其他备战席卡牌？
+            // ═══════════════════════════════════════════════
+            if (dragActivatedRef.current) {
+                // [新增] 拖拽预瞄雷达：实时计算发光槽位
+                const dragUpDistance = dragStartRef.current.y - ev.clientY;
+                const isDraggedToBattlefield = dragUpDistance > BENCH_DRAG_THRESHOLD;
+                const p = gameRef.current.phase;
+                const turn = gameRef.current.turnOwner;
+
+                if (isDraggedToBattlefield && turn === 'player') {
+                    // [新增] 动态指针：如果向上越过边界，主阶段/进攻阶段化为剑刃(ATTACK)，格挡阶段化为准星(TARGET)
+                    setCursor(p === 'main' || p === 'attack_declare' ? 'ATTACK' : 'TARGET');
+
+                    const numCards = dragGroupRef.current.length;
+                    if (p === 'main' || p === 'attack_declare') {
+                        setPreviewAttackerCount(numCards); // 预示生成几个进攻槽
+                        setDragPreviewSlots([]);
+                    } else if (p === 'block_declare') {
+                        setPreviewAttackerCount(0);
+                        let dropStartIndex = 0;
+                        const elements = document.elementsFromPoint(ev.clientX, ev.clientY);
+                        for (const el of elements) {
+                            const dropZone = (el as HTMLElement).closest('[data-combat-index]');
+                            if (dropZone) {
+                                dropStartIndex = parseInt(dropZone.getAttribute('data-combat-index') || '0', 10);
+                                break;
+                            }
+                        }
+                        const previews: number[] = [];
+                        const usedSlots = new Set<number>();
+                        dragGroupRef.current.forEach(id => {
+                            const c = benchRef.current.find(card => card.id === id);
+                            if (!c) return;
+                            let foundIdx = -1;
+                            const totalSlots = combatFieldRef.current.length;
+                            for (let offset = 0; offset < totalSlots; offset++) {
+                                const checkIdx = (dropStartIndex + offset) % totalSlots;
+                                const f = combatFieldRef.current[checkIdx];
+                                if (f.blocker !== null || usedSlots.has(checkIdx)) continue;
+                                if (f.attacker.keywords.includes('Elusive') && !c.keywords.includes('Elusive')) continue;
+                                const cPower = (c.power || 0) + (c.buffs?.power || 0);
+                                if (f.attacker.keywords.includes('Fearsome') && cPower < 3) continue;
+                                foundIdx = checkIdx;
+                                break;
+                            }
+                            if (foundIdx !== -1) {
+                                usedSlots.add(foundIdx);
+                                previews.push(foundIdx);
+                                dropStartIndex = (foundIdx + 1) % totalSlots;
+                            }
+                        });
+                        setDragPreviewSlots(previews); // 预示格挡目标发蓝光
+                    }
+                } else {
+                    // [新增] 动态指针：如果还在备战席徘徊，显示紧握的手套(HAND_GRAB)
+                    setCursor('HAND_GRAB');
+
+                    setDragPreviewSlots([]);
+                    setPreviewAttackerCount(0);
+                }
+
+                const elements = document.elementsFromPoint(ev.clientX, ev.clientY);
+                for (const el of elements) {
+                    const cardEl = (el as HTMLElement).closest('[data-entity-id]') as HTMLElement | null;
+                    if (!cardEl) continue;
+                    const entityId = cardEl.getAttribute('data-entity-id');
+                    if (!entityId) continue;
+
+                    // 跳过主拖拽卡和已在组里的卡
+                    if (entityId === dragCardIdRef.current) continue;
+                    if (dragGroupRef.current.includes(entityId)) continue;
+
+                    // 确认是己方备战席卡牌
+                    const card = benchRef.current.find(c => c.id === entityId);
+                    if (!card) continue;
+
+                    // 阶段有效性检查（与 onBenchPointerDown 入口一致）
+                    const p = gameRef.current.phase;
+                    const isPlayerTurn = gameRef.current.turnOwner === 'player';
+                    const hasAttackToken = gameRef.current.attackToken.player !== null;
+                    const canAdd =
+                        ((p === 'main' && hasAttackToken) || p === 'attack_declare') && isPlayerTurn ||
+                        (p === 'block_declare' && isPlayerTurn && !card.keywords.includes('CantBlock'));
+
+                    if (!canAdd) continue;
+
+                    // ← 扫到了！加入拖拽组
+                    dragGroupRef.current.push(entityId);
+                    cardEl.style.pointerEvents = 'none';
+                    cardEl.style.opacity = '0';
+                    hiddenCardElsRef.current.set(entityId, cardEl);
+
+                    // 更新 Ghost 多卡列表
+                    setGhostState(prev => {
+                        if (!prev) return null;
+                        const newCards = [...prev.cards, card];
+                        return { ...prev, cards: newCards };
+                    });
+
+                    break; // 单次事件只加一张，pointermove 频率够快
+                }
+            }
+
+            // 持续更新 Ghost 位置
+            setGhostState(prev =>
+                prev
+                    ? {
+                          ...prev,
+                          x: ev.clientX - dragStartRef.current.ox,
+                          y: ev.clientY - dragStartRef.current.oy,
+                      }
+                    : null,
+            );
+        };
+
+        const onUp = (ev: PointerEvent) => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+
+            const wasDragging = dragActivatedRef.current;
+            dragJustFinishedRef.current = wasDragging;
+
+            if (wasDragging) {
+                const p = gameRef.current.phase;
+                const turn = gameRef.current.turnOwner;
+                const dragUpDistance = dragStartRef.current.y - ev.clientY;
+                const isDraggedToBattlefield = dragUpDistance > BENCH_DRAG_THRESHOLD;
+
+                if (isDraggedToBattlefield && turn === 'player') {
+                    // [多卡] 收集拖拽组内所有有效卡牌
+                    const groupCards = dragGroupRef.current
+                        .map(id => benchRef.current.find(c => c.id === id))
+                        .filter((c): c is CardData => c !== undefined);
+
+                    if (groupCards.length > 0) {
+                        if (p === 'main') {
+                            // main 阶段：先发起进攻宣言，再逐个上场
+                            eventBus.emit(GameEvents.UI_CLICK);
+                            actions.initiateAttack();
+                            requestAnimationFrame(() => {
+                                // [错频优化] 每张卡间隔 60ms 依次发起冲锋，避免音效炸耳
+                                groupCards.forEach((c, index) => {
+                                    setTimeout(() => {
+                                        actions.toggleAttacker(c, true);
+                                    }, index * 60);
+                                });
+                            });
+                        } else if (p === 'attack_declare') {
+                            // attack_declare 阶段：直接全部上场
+                            eventBus.emit(GameEvents.UI_CLICK);
+                            groupCards.forEach((c, index) => {
+                                setTimeout(() => {
+                                    actions.toggleAttacker(c, true);
+                                }, index * 60);
+                            });
+                        } else if (p === 'block_declare') {
+                            eventBus.emit(GameEvents.UI_CLICK);
+
+                            // [修复 Bug E] 智能指针锚定：读取玩家鼠标松开时，指针悬停的敌方槽位作为起始点
+                            let dropStartIndex = 0;
+                            const elements = document.elementsFromPoint(ev.clientX, ev.clientY);
+                            for (const el of elements) {
+                                const dropZone = (el as HTMLElement).closest('[data-combat-index]');
+                                if (dropZone) {
+                                    dropStartIndex = parseInt(dropZone.getAttribute('data-combat-index') || '0', 10);
+                                    break;
+                                }
+                            }
+
+                            // [继承 Bug C 修复] 记录已被占用的槽位
+                            const usedSlots = new Set<number>();
+
+                            groupCards.forEach((c, index) => {
+                                let foundIdx = -1;
+                                const totalSlots = combatFieldRef.current.length;
+
+                                // 环形查找算法：从鼠标指引的槽位开始向右找，到头了就从 0 折返继续找
+                                for (let offset = 0; offset < totalSlots; offset++) {
+                                    const checkIdx = (dropStartIndex + offset) % totalSlots;
+                                    const f = combatFieldRef.current[checkIdx];
+
+                                    if (f.blocker !== null || usedSlots.has(checkIdx)) continue;
+                                    if (f.attacker.keywords.includes('Elusive') && !c.keywords.includes('Elusive')) continue;
+
+                                    const cPower = (c.power || 0) + (c.buffs?.power || 0);
+                                    if (f.attacker.keywords.includes('Fearsome') && cPower < 3) continue;
+
+                                    foundIdx = checkIdx;
+                                    break; // 找到了最近的合法空位
+                                }
+
+                                if (foundIdx !== -1) {
+                                    usedSlots.add(foundIdx);
+                                    // [错频优化] 计算依然是瞬间同步完成的，但是执行上阵动作带上了级联延迟！
+                                    setTimeout(() => {
+                                        actions.assignBlocker(foundIdx, c.id);
+                                    }, index * 60);
+                                    // [核心推进] 下一张拖拽队列中的卡，默认顺延到刚刚填入槽位的下一个位置
+                                    dropStartIndex = (foundIdx + 1) % totalSlots;
+                                }
+                            });
+                        }
+                    }
+                }
+                // 如果没拖够距离（放回备战席）→ 啥也不做，全部归位
+            }
+
+            // [多卡] 恢复所有被隐藏的卡牌
+            dragCardIdRef.current = null;
+            dragGroupRef.current = [];
+            dragActivatedRef.current = false;
+            setGhostState(null);
+
+            // [新增] 松手时清空预瞄状态并剥离指针强制覆盖
+            setDragPreviewSlots([]);
+            setPreviewAttackerCount(0);
+            setCursor(null);
+
+            hiddenCardElsRef.current.forEach((el) => {
+                setTimeout(() => {
+                    el.style.pointerEvents = '';
+                    el.style.opacity = '';
+                }, 0);
+            });
+            hiddenCardElsRef.current.clear();
+
+            const el = hiddenCardElRef.current;
+            hiddenCardElRef.current = null;
+            if (el) {
+                setTimeout(() => {
+                    el.style.pointerEvents = '';
+                    el.style.opacity = '';
+                }, 0);
+            }
+
+            setTimeout(() => { dragJustFinishedRef.current = false; }, 0);
+        };
+
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+        document.addEventListener('pointercancel', onUp);
+    };
+
+    /** 战场卡牌 pointerDown — 战场→备战席反向拖拽 */
+    const onCombatPointerDown = (e: React.PointerEvent, card: CardData, index: number, role: 'attacker' | 'blocker') => {
+        // 只允许在有效阶段拖拽我方单位
+        const phase = game.phase;
+        const isPlayerTurn = game.turnOwner === 'player';
+        const canDrag =
+            (phase === 'attack_declare' && role === 'attacker' && isPlayerTurn) ||
+            (phase === 'block_declare' && role === 'blocker' && isPlayerTurn);
+        if (!canDrag) return;
+
+        const target = (e.target as HTMLElement).closest('[data-entity-id]') as HTMLElement | null;
+        if (!target) return;
+
+        const rect = target.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left;
+        const offsetY = e.clientY - rect.top;
+
+        combatDragSlotRef.current = index;
+        combatDragRoleRef.current = role;
+        dragCardIdRef.current = card.id;
+        dragGroupRef.current = [card.id]; // [多卡] 初始化拖拽组（战场版）
+        hiddenCardElsRef.current.clear();
+        dragStartRef.current = { x: e.clientX, y: e.clientY, ox: offsetX, oy: offsetY };
+
+        // 显示 GhostCard（多卡队列）
+        setGhostState({ cards: [card], x: rect.left, y: rect.top, w: rect.width, h: rect.height, scale: COMBAT_GHOST_SCALE, location: 'combat' });
+
+        const onMove = (ev: PointerEvent) => {
+            if (!dragCardIdRef.current) return;
+            const dx = ev.clientX - dragStartRef.current.x;
+            const dy = ev.clientY - dragStartRef.current.y;
+
+            if (!dragActivatedRef.current && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+                dragActivatedRef.current = true;
+                const el = document.querySelector(
+                    `[data-entity-id="${dragCardIdRef.current}"]`,
+                ) as HTMLElement | null;
+                if (el) {
+                    hiddenCardElRef.current = el;
+                    hiddenCardElsRef.current.set(dragCardIdRef.current!, el);
+                    el.style.pointerEvents = 'none';
+                    el.style.opacity = '0';
+                }
+            }
+
+            // [多卡] 战场拖拽扫过检测
+            if (dragActivatedRef.current) {
+                // [新增] 动态指针：一旦在战场上开始拖拽，指针立刻变成紧握的手套(HAND_GRAB)
+                setCursor('HAND_GRAB');
+
+                // [新增] 撤回预瞄雷达：向下越过阈值时，点亮备战席
+                const dragDownDistance = ev.clientY - dragStartRef.current.y;
+                setIsDraggingToBench(dragDownDistance > BENCH_DRAG_THRESHOLD);
+
+                const roleType = combatDragRoleRef.current;
+                if (roleType) {
+                    const elements = document.elementsFromPoint(ev.clientX, ev.clientY);
+                    for (const el of elements) {
+                        const cardEl = (el as HTMLElement).closest('[data-entity-id]') as HTMLElement | null;
+                        if (!cardEl) continue;
+                        const entityId = cardEl.getAttribute('data-entity-id');
+                        if (!entityId) continue;
+                        if (dragGroupRef.current.includes(entityId)) continue;
+
+                        // [修复 Bug F] 同步修正战区多卡扫过检测的"所有权倒置"问题，等比复刻 onUp 的检索逻辑
+                        const combatIdx = combatFieldRef.current.findIndex(
+                            f => (roleType === 'attacker' && f.attacker.id === entityId && f.owner === 'player') ||
+                                 (roleType === 'blocker' && f.blocker?.id === entityId)
+                        );
+                        if (combatIdx === -1) continue;
+
+                        // 根据拖拽身份提取对应的卡牌
+                        const combatCard = roleType === 'attacker'
+                            ? combatFieldRef.current[combatIdx].attacker
+                            : combatFieldRef.current[combatIdx].blocker!;
+
+                        if (!combatCard) continue;
+                        const phase = gameRef.current.phase;
+                        if (roleType === 'attacker' && phase !== 'attack_declare') continue;
+                        if (roleType === 'blocker' && phase !== 'block_declare') continue;
+                        dragGroupRef.current.push(entityId);
+                        cardEl.style.pointerEvents = 'none';
+                        cardEl.style.opacity = '0';
+                        hiddenCardElsRef.current.set(entityId, cardEl);
+                        setGhostState(prev => {
+                            if (!prev) return null;
+                            const newCards = [...prev.cards, combatCard];
+                            return { ...prev, cards: newCards };
+                        });
+                        break;
+                    }
+                }
+            }
+
+            setGhostState(prev =>
+                prev
+                    ? { ...prev, x: ev.clientX - dragStartRef.current.ox, y: ev.clientY - dragStartRef.current.oy }
+                    : null,
+            );
+        };
+
+        const onUp = (ev: PointerEvent) => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+
+            const wasDragging = dragActivatedRef.current;
+            dragJustFinishedRef.current = wasDragging;
+
+            if (wasDragging) {
+                // 向下拖够距离 → 撤回（多卡版）
+                const dragDownDistance = ev.clientY - dragStartRef.current.y;
+                if (dragDownDistance > BENCH_DRAG_THRESHOLD) {
+                    const roleType = combatDragRoleRef.current;
+                    const phase = gameRef.current.phase;
+                    // [多卡] 处理拖拽组内所有卡牌
+                    const groupCards = dragGroupRef.current
+                        .map(id => {
+                            // [修复 Bug B] 完美区分攻守双方的身份检索！
+                            // 进攻方撤回：必须校验 owner === 'player' 且 id 匹配 attacker
+                            // 防守方撤回：战区 owner 是敌方，我们只需校验 blocker 的 id 即可
+                            const fi = combatFieldRef.current.findIndex(f =>
+                                (roleType === 'attacker' && f.attacker.id === id && f.owner === 'player') ||
+                                (roleType === 'blocker' && f.blocker?.id === id)
+                            );
+                            if (fi === -1) return null;
+
+                            // 精准提取对应的卡牌实体
+                            const card = roleType === 'attacker' ? combatFieldRef.current[fi].attacker : combatFieldRef.current[fi].blocker!;
+                            return { card, idx: fi };
+                        })
+                        .filter(Boolean);
+
+                    // [错频优化] 利用 index 将每张卡的撤回时间错开 60 毫秒，瞬间消除刺耳的重叠爆音
+                    groupCards.forEach((item, index) => {
+                        if (!item) return;
+                        setTimeout(() => {
+                            if (roleType === 'attacker' && phase === 'attack_declare') {
+                                eventBus.emit(GameEvents.RECALL_UNIT);
+                                actions.toggleAttacker(item.card, false);
+                            } else if (roleType === 'blocker' && phase === 'block_declare') {
+                                eventBus.emit(GameEvents.RECALL_UNIT);
+                                actions.recallBlocker(item.idx);
+                            }
+                        }, index * 60);
+                    });
+                }
+            }
+
+            // [多卡] 恢复所有被隐藏的原卡
+            dragCardIdRef.current = null;
+            dragGroupRef.current = [];
+            dragActivatedRef.current = false;
+            combatDragSlotRef.current = null;
+            combatDragRoleRef.current = null;
+            setGhostState(null);
+
+            // [新增] 松手时清空撤回预瞄状态并剥离指针强制覆盖
+            setIsDraggingToBench(false);
+            setCursor(null);
+
+            hiddenCardElsRef.current.forEach((el) => {
+                setTimeout(() => {
+                    el.style.pointerEvents = '';
+                    el.style.opacity = '';
+                }, 0);
+            });
+            hiddenCardElsRef.current.clear();
+
+            const el = hiddenCardElRef.current;
+            hiddenCardElRef.current = null;
+            if (el) {
+                setTimeout(() => {
+                    el.style.pointerEvents = '';
+                    el.style.opacity = '';
+                }, 0);
+            }
+
+            setTimeout(() => { dragJustFinishedRef.current = false; }, 0);
+        };
+
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+        document.addEventListener('pointercancel', onUp);
+    };
 
     useEffect(() => {
         playBgm('battle');
@@ -250,14 +836,33 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
     }, [game.gameResult, playBgm]);
 
+    // [核心新增] 胜利演出预热：计算出候选视频池，喂给底层放映机
+    const handlePrepareVictorySequence = useCallback(() => {
+        if (prepareVictoryMovie) {
+            const survivingHeroes = playerBench.filter(c => c.isChampion);
+            const mvp = survivingHeroes.length > 0
+                ? survivingHeroes[Math.floor(Math.random() * survivingHeroes.length)]
+                : playerBench[0];
+
+            const videoCandidates: string[] = [];
+            if (mvp && mvp.isChampion) videoCandidates.push(mvp.key);
+            if (winningHeroKeys && winningHeroKeys.length > 0) videoCandidates.push(...winningHeroKeys);
+            videoCandidates.push(...deck);
+
+            prepareVictoryMovie(videoCandidates);
+        }
+    }, [playerBench, winningHeroKeys, deck, prepareVictoryMovie]);
+
     const handleVictorySequence = useCallback((onEnd: () => void) => {
-        // [新增] 预加载胜利影片（利用 blackout_in 过渡时间提前 fetch 解码）
+    // [新增] 预加载胜利影片（利用 blackout_in 过渡时间提前 fetch 解码）
         const heroKeys = playerBench.filter(c => c.isChampion).map(c => c.key);
         if (heroKeys.length > 0) {
-            import('../utils/videoPreloader').then(m => m.preloadVictoryMovieByKeys(heroKeys));
+            // [核心修复] 从 userSystem 提取当前画质设置，喂给预加载器，确保精准命中 4K 缓存！
+            const res = (userSystem.settings as any)?.videoResolution || '1k';
+            import('../utils/videoPreloader').then(m => m.preloadVictoryMovieByKeys(heroKeys, res));
         }
 
-        // 1. 挑选 MVP (保持原逻辑：用于语音互动)
+    // 1. 挑选 MVP (保持原逻辑：用于语音互动)
         const survivingHeroes = playerBench.filter(c => c.isChampion);
         const mvp = survivingHeroes.length > 0
             ? survivingHeroes[Math.floor(Math.random() * survivingHeroes.length)]
@@ -368,7 +973,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
             }
         }
 
-        // --- 以下针对非手牌区的点击操作，由于目前暂不涉及拖拽，默认返回 false 即可 ---
+        // --- 以下针对非手牌区的点击操作 ---
+        // [新增] 如果刚结束拖拽，忽略这次 click（拖拽路径已经处理过了）
+        if (dragJustFinishedRef.current) return false;
+
         if (game.phase === 'attack_declare') {
             if (location === 'bench') {
                 eventBus.emit(GameEvents.UI_CLICK);
@@ -481,7 +1089,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
             {/* 放置在背景之上，Z轴层级需低于 UI 但高于棋盘背景 */}
             <VFXLayer
                 isCasting={spellSystem.isCasting}
+                showMousePreview={spellSystem.isCasting && !spellSystem.isSelectionComplete} // [新增] 精准控制：选完目标后彻底掐断鼠标射线
                 selectedTargets={spellSystem.selectedTargets}
+                // [核心修复] 直接传递真实的 DOM 节点引用，抛弃不稳定的 ID 盲捞
+                castingSpellRef={spellSystem.activeCard ? spellCenterRef : undefined}
                 // [核心修复] 将所有堆叠区的法术及其目标传入特效层，用于绘制持久化连线
                 persistentLines={[
                     // [修正] 直接提取卡牌底层的原生 id 作为起点定位符，不搞花里胡哨的自定义前缀
@@ -489,6 +1100,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     ...game.spellStack.map(s => ({ sourceId: s.card.id, targets: s.targets }))
                 ]}
             />
+            {/* ========================================================== */}
+
+            {/* [新增] Step 3.5: 法术弹道特效层 */}
+            <SpellProjectile />
+
+            {/* [新增] Step 3.8: 独立受击特效层 (事件直驱，无缝隔山打牛) */}
+            <SpellImpactLayer />
             {/* ========================================================== */}
 
 
@@ -510,6 +1128,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 <OpeningMulligan
                     hand={playerHand}
                     cardBackUrl={currentCardBackUrl}
+                    skinOverrides={skinOverrides} // [新增] 喂给换牌界面
 
                     // [修改] 状态透传 (受控组件)
                     selectedIndices={mulligan.selectedIndices}
@@ -544,6 +1163,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         }
                     }}
                     onPlayMovie={handleVictorySequence}
+                    onPrepareMovie={handlePrepareVictorySequence} // [核心新增] 下发胜利预热！
                 />
             )}
             {game.levelUpCard && (
@@ -558,6 +1178,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         }
                     }}
                     onPlayMovie={playLevelUpMovie}
+                    onPrepareMovie={prepareLevelUpMovie} // [核心新增] 下发升级预热！
                     onStopMovie={stopMovie}
                     popLevelUp={actions.popLevelUp} // [新增] 传入出队回调函数！
                 />
@@ -615,6 +1236,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                                 <Card
                                                     data={{...choiceData, id: `choice-${choiceKey}`, strikeCount: 0, keywords: []} as any}
                                                     location="preview"
+                                                    skinId={skinOverrides[choiceKey] || 0} // [新增] 给抉择卡穿皮肤
                                                     isLocked={!canPlay}
                                                     lockedMessage={lockedMessage}
                                                 />
@@ -639,93 +1261,117 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         <Card
                             data={game.activeCard}
                             location="preview" // 使用 preview 尺寸
+                            skinId={skinOverrides[game.activeCard.key] || 0} // [新增] 给打出大图穿皮肤
                             onViewArt={() => {}}
                         />
                     </div>
                 </div>
             )}
 
-            {/* ================= [新增] Step 4: 沉浸式施法 UI (The Ritual) ================= */}
-            <AnimatePresence>
-                {spellSystem.isCasting && spellSystem.activeCard && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
-
-                        {/* 1. 全屏半透明压暗 (聚焦视线) */}
+            {/* ================= [史诗级重构] 统一法术物理层 (The Unified Spell Layer) ================= */}
+            {/* 聚合 施法中、预提交、堆叠区 的所有法术，通过 layoutId 保持 DOM 唯一性，实现无缝平移缩放砸落！ */}
+            <div className="fixed inset-0 z-[100] pointer-events-none flex items-center justify-center">
+                {/* 1. 全屏半透明压暗 (仅施法时显现) */}
+                <AnimatePresence>
+                    {spellSystem.isCasting && (
                         <motion.div
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            className="absolute inset-0 bg-radial-gradient(circle, transparent 60%, rgba(0,0,0,0.6) 100%)"
+                            className="absolute inset-0 bg-radial-gradient(circle, transparent 60%, rgba(0,0,0,0.6) 100%) z-0"
                         />
+                    )}
+                </AnimatePresence>
 
-                        {/* 2. 中央施法核心 (可点击撤销) */}
-                        <motion.div
-                            initial={{ scale: 0, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0, opacity: 0 }}
-                            className="relative pointer-events-auto cursor-pointer group"
-                            onClick={() => {
-                                eventBus.emit(GameEvents.UI_BACK);
-
-                                // 1. 将卡牌加回手牌
-                                if (spellSystem.activeCard) {
-                                    // [基因溯源] 如果有 parentCard(母体)，退回母体
-                                    const cardToReturn = spellSystem.activeCard.parentCard || spellSystem.activeCard;
-                                    setPlayerHand(prev => [...prev, cardToReturn]);
-
-                                    // [退还费用] 如果退回的是变身而来的子法术，把扣掉的费用补回来
-                                    if (spellSystem.activeCard.parentCard) {
-                                        const cost = spellSystem.activeCard.cost;
-                                        setGame(prev => {
-                                            let newMana = prev.playerMana + cost;
-                                            let newSpellMana = prev.playerSpellMana;
-                                            // 超出基础法力池的差额，溢出到法术法力池
-                                            if (newMana > prev.playerMaxMana) {
-                                                newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
-                                                newMana = prev.playerMaxMana;
-                                            }
-                                            return { ...prev, playerMana: newMana, playerSpellMana: newSpellMana };
-                                        });
-                                    }
-                                }
-
-                                // 2. 清理全局状态
-                                setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
-                                spellSystem.cancelCasting();
-                            }}
-                        >
-
-                            <div className="fixed left-[15%] top-1/2 -translate-y-1/2 z-[101] pointer-events-none">
-                                {/* [核心修改] 完美复刻 GameAnnouncement 的金色渐变史诗感样式，去除了斜体，调整为 text-6xl */}
-                                <h2
-                                    className="text-6xl font-black tracking-widest drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] text-transparent bg-clip-text bg-gradient-to-b from-yellow-100 via-yellow-400 to-yellow-700"
-                                    style={{
-                                        textShadow: '0 2px 0 #000, 0 5px 10px rgba(0,0,0,0.5)',
-                                        WebkitTextStroke: '1px rgba(255,215,0,0.3)' // 描边增强质感
-                                    }}
-                                >
-                                    {spellSystem.instruction || "SELECT TARGET"}
-                                </h2>
-                            </div>
-
-                            {/* B. 圆形法术图标 */}
-                            <div className="w-32 h-32 rounded-full border-4 border-blue-400/80 shadow-[0_0_50px_rgba(59,130,246,0.6)] overflow-hidden relative z-10 transition-transform duration-300 group-hover:scale-110 group-hover:border-red-400">
-                                <img
-                                    src={spellSystem.activeCard.imageUrl}
-                                    alt="Casting"
-                                    className="w-full h-full object-cover animate-pulse-slow"
-                                />
-                                {/* 撤销提示 (Hover 出现) */}
-                                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                                    <span className="text-red-300 font-black tracking-widest text-xs">点击以</span>
-                                    <span className="text-white font-black tracking-widest text-sm">取消</span>
-                                </div>
-                            </div>
-
-                            {/* C. 能量波纹特效 */}
-                            <div className="absolute inset-0 rounded-full border border-blue-400 opacity-0 animate-ping-slow"></div>
+                {/* 2. 施法文字提示 */}
+                <AnimatePresence>
+                    {spellSystem.isCasting && spellSystem.activeCard && (
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute left-[15%] top-1/2 -translate-y-1/2 z-[101]">
+                            <h2 className="text-6xl font-black tracking-widest drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] text-transparent bg-clip-text bg-gradient-to-b from-yellow-100 via-yellow-400 to-yellow-700" style={{ textShadow: '0 2px 0 #000, 0 5px 10px rgba(0,0,0,0.5)', WebkitTextStroke: '1px rgba(255,215,0,0.3)' }}>
+                                {spellSystem.instruction || "SELECT TARGET"}
+                            </h2>
                         </motion.div>
-                    </div>
-                )}
-            </AnimatePresence>
+                    )}
+                </AnimatePresence>
+
+                {/* 3. 核心魔法：所有活动法术的统一渲染流 */}
+                {(() => {
+                    // 将三个独立状态的法术统合为一个处理队列
+                    const activeSpells = [];
+                    game.spellStack.forEach((s, idx) => activeSpells.push({ card: s.card, mode: 'stack', owner: s.owner, index: idx }));
+                    if (game.pendingSpell) activeSpells.push({ card: game.pendingSpell.card, mode: 'pending', owner: 'player', index: 0 });
+                    if (spellSystem.isCasting && spellSystem.activeCard) activeSpells.push({ card: spellSystem.activeCard, mode: 'casting', owner: 'player', index: 0 });
+
+                    return activeSpells.map(({ card, mode, owner, index }) => {
+                        const isCasting = mode === 'casting';
+                        const isPending = mode === 'pending';
+                        const isEnemy = owner === 'enemy';
+                        // 智能皮肤读取
+                        const currentImageUrl = skinOverrides[card.key] ? getSkinImage(card.key, skinOverrides[card.key], card.level === 2) || card.imageUrl : card.imageUrl;
+
+                        // 动态计算目标位置与缩放（交给 Framer Motion 自动补间飞行路线）
+                        const scale = isCasting ? 1 : 0.8;
+                        const yOffset = isCasting ? 0 : 0; // 预提交靠下，入栈居中
+                        const xOffset = isCasting || isPending ? 0 : 0;
+
+                        return (
+                            <motion.div
+                                key={card.id}
+                                layout // [真正的视觉魔术] DOM不变，只要检测到坐标/缩放改变，自动起飞！
+                                initial={isCasting ? { scale: 0, opacity: 0 } : false}
+                                animate={{ scale, x: xOffset, y: yOffset, opacity: 1 }}
+                                exit={{ scale: 0, opacity: 0 }}
+                                transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                                className={`absolute pointer-events-auto cursor-pointer group ${isCasting ? 'z-[105]' : 'z-[30]'}`}
+                                onClick={() => {
+                                    if (isCasting) {
+                                        eventBus.emit(GameEvents.UI_BACK);
+                                        const cardToReturn = card.parentCard || card;
+                                        setPlayerHand(prev => [...prev, cardToReturn]);
+                                        if (card.parentCard) {
+                                            const cost = card.cost;
+                                            setGame(prev => {
+                                                let newMana = prev.playerMana + cost;
+                                                let newSpellMana = prev.playerSpellMana;
+                                                if (newMana > prev.playerMaxMana) {
+                                                    newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
+                                                    newMana = prev.playerMaxMana;
+                                                }
+                                                return { ...prev, playerMana: newMana, playerSpellMana: newSpellMana };
+                                            });
+                                        }
+                                        setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
+                                        spellSystem.cancelCasting();
+                                    } else if (isPending) {
+                                        eventBus.emit(GameEvents.CANCEL_SPELL);
+                                        actions.cancelPendingSpell();
+                                    }
+                                }}
+                            >
+                                <div className="relative w-48 h-48 flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
+                                    <img src={UI_IMAGES.spellContainer} alt="Container" className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-all duration-300 ${isEnemy ? 'drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]'} ${!isEnemy ? 'group-hover:drop-shadow-[0_0_40px_rgba(239,68,68,0.5)]' : ''}`} />
+
+                                    {/* 物理锚点：使用 data-entity-id 供特效层绝对追踪 */}
+                                    <div ref={isCasting ? spellCenterRef : undefined} data-entity-id={card.id} className="relative w-[110px] h-[110px] rounded-full overflow-hidden z-10 bg-black">
+                                        <img src={currentImageUrl} className="w-full h-full object-cover animate-pulse-slow opacity-90 mix-blend-screen" draggable={false} />
+                                        {!isEnemy && (isCasting || isPending) && (
+                                            <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                                <span className="text-red-300 font-black tracking-widest text-xs">点击以</span>
+                                                <span className="text-white font-black tracking-widest text-sm">取消</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* 缩小后才展示法术名字，避免抢戏 */}
+                                    {!isCasting && (
+                                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-black/80 border border-white/10 text-white text-[20px] px-4 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50 shadow-lg scale-50 origin-top">
+                                            {card.name}
+                                        </div>
+                                    )}
+                                </div>
+                            </motion.div>
+                        );
+                    });
+                })()}
+            </div>
             {/* ========================================================================= */}
 
             {/* 5. 游戏主界面 */}
@@ -824,11 +1470,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         {/* 2. 敌方备战席 - 绝对定位在核心战场顶部，不占用文档流空间 */}
                         <div className="absolute top-0 left-0 w-full h-21 flex justify-center items-center gap-6 transition-all z-10">
                             {enemyBench.map(c => (
+                                // [修复 Bug 1] 补上 contents 伪装盒与雷达事件绑定
+                                <div key={c.id} className="contents" {...bindGazeEvents(c)}>
                                 <Card
-                                    key={c.id}
                                     data={c}
                                     location="enemy_bench"
-                                    titanCount={[...playerBench, ...enemyBench].filter(tc => tc.keywords.includes('Titan')).length}
+                                    skinId={skinOverrides[c.key] || 0} // [新增]
                                     canBeChallenged={game.phase === 'attack_declare' && game.selectedChallengerId !== null}
                                     onClick={() => {
 
@@ -849,40 +1496,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     isTargetable={spellSystem.checkIsTargetable(c, 'enemy')}
                                     isTargeted={spellSystem.selectedIds.includes(c.id)}
                                 />
+                                </div>
                             ))}
                         </div>
 
                         {/* 战场内容容器 - 永远垂直居中，不受备战席有无卡牌影响 */}
                         <div className="h-full flex flex-col justify-center">
 
-                            {/* [新增] 预提交法术 (Pending Spell) 悬浮层 */}
-                            {game.pendingSpell && (
-                                <div className="absolute inset-0 flex items-center justify-center mt-10 z-30 pointer-events-none">
-                                    <div className="pointer-events-auto cursor-pointer hover:scale-105 transition-transform duration-300 relative group"
-                                         onClick={() => {
-                                             eventBus.emit(GameEvents.CANCEL_SPELL);
-                                             actions.cancelPendingSpell();
-                                         }}
-                                    >
-
-                                         {/* [核心修复] 将 location 改为 spell_stack，唤醒精巧的圆形法术阵UI */}
-                                         <Card data={game.pendingSpell.card} location="spell_stack" onViewArt={setViewCard} />
-                                    </div>
-                                </div>
-                            )}
-
-                            {game.spellStack.length > 0 && (
-                                <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
-                                    <div className="flex gap-2 pointer-events-auto">
-                                        {/* [修正] 去掉没用的自定义 prop */}
-                                        {game.spellStack.map((item) => <Card key={item.card.id} data={item.card} location="spell_stack" onViewArt={setViewCard} />)}
-                                    </div>
-                                </div>
-                            )}
-
                             <Battlefield
                                 combatField={combatField}
                                 phase={game.phase}
+                                skinOverrides={skinOverrides} // [新增] 喂给战场组件！
                                 turnOwner={game.turnOwner}
                                 selectedBlockerId={game.selectedBlockerId}
                                 onCombatClick={(i) => {
@@ -923,7 +1547,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                      }
                                      else if (l === 'combat' && o === 'enemy') {
                                          const idx = combatField.findIndex(f => f.blocker?.id === c.id);
-                                         if (idx !== -1) {
+                                         // [核心修复] 严格守卫：只有在玩家自己宣告进攻的阶段，才能撤销自己用“挑战者”拉上来的敌军！
+                                         // 绝对禁止在敌方分配格挡时，或战斗响应期间，跨权限踢回敌军。
+                                         if (idx !== -1 && game.phase === 'attack_declare' && combatField[idx].owner === 'player') {
                                              eventBus.emit(GameEvents.RECALL_UNIT);
                                              actions.recallBlocker(idx);
                                          }
@@ -937,20 +1563,35 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 selectedChallengerId={game.selectedChallengerId}
                                 onChallengerClick={actions.selectChallenger}
                                 cardBackUrl={currentCardBackUrl}
+                                onCombatPointerDown={onCombatPointerDown} // [新增] 战场→备战席拖拽
+                                // [补漏修复] 将 GameSession 计算好的雷达数据传递给 Battlefield 组件
+                                dragPreviewSlots={dragPreviewSlots}
+                                previewAttackerCount={previewAttackerCount}
+                                // [新增] 战场悬停预览
+                                cardGazeEvents={bindGazeEvents}
                             />
                         </div>
 
                         {/* 4. 我方备战席 - 绝对定位在核心战场底部，不占用文档流空间 */}
-                        <div className="absolute bottom-0 left-0 w-full h-11 flex justify-center items-center gap-6 z-10 transition-all">
-                            {playerBench.map(c => (
-                                <Card
-                                    key={c.id}
-                                    data={c}
-                                    location="bench"
-                                    titanCount={[...playerBench, ...enemyBench].filter(tc => tc.keywords.includes('Titan')).length}
-                                    isSelected={game.selectedBlockerId === c.id || game.spellCasting?.allyId === c.id}
-                                    highlightTarget={(game.phase === 'attack_declare' && game.turnOwner === 'player') || (game.phase === 'block_declare' && game.turnOwner === 'player')}
-                                    isBlocking={game.phase === 'block_declare'}
+                        <div
+                            className="absolute bottom-0 left-0 w-full h-11 flex justify-center items-center gap-6 z-10 transition-all"
+                            style={{ touchAction: 'none' }}
+                            onPointerDown={onBenchPointerDown}
+                        >
+                            {/* [新增] 判定：是否在主阶段且有攻击标识 */}
+                            {(() => {
+                                const canAttackPhase = game.phase === 'main' && game.attackToken.player !== null && game.turnOwner === 'player';
+                                return playerBench.map(c => (
+                                    <div key={c.id} className="contents" {...bindGazeEvents(c)}>
+                                    <Card
+                                        data={c}
+                                        location="bench"
+                                        skinId={skinOverrides[c.key] || 0} // [新增] 给我方备战席穿皮肤
+                                        titanCount={[...playerBench, ...enemyBench].filter(tc => tc.keywords.includes('Titan')).length}
+                                        isSelected={game.selectedBlockerId === c.id || game.spellCasting?.allyId === c.id}
+                                        // [修改] 主阶段持有攻击标识时，所有单位高亮发蓝光！
+                                        highlightTarget={(game.phase === 'attack_declare' && game.turnOwner === 'player') || (game.phase === 'block_declare' && game.turnOwner === 'player') || canAttackPhase}
+                                        isBlocking={game.phase === 'block_declare'}
                                     onClick={() => {
                                         if (spellSystem.isCasting) {
                                             spellSystem.handleTargetClick(c, 'player');
@@ -971,11 +1612,38 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     isSpeaking={c.id === speakingCardId}
                                     isTargetable={spellSystem.checkIsTargetable(c, 'player')}
                                     isTargeted={spellSystem.selectedIds.includes(c.id)}
-                                />
+                                    />
+                                    </div>
+                                ));
+                            })()}
+
+                            {/* [新增] 撤回预示：当我们往下拖拽撤回时，备战席亮起等量的全息蓝光底座！ */}
+                            {isDraggingToBench && dragGroupRef.current.map((_, idx) => (
+                                <div key={`preview-bench-${idx}`} className="w-[120px] h-[162px] border-2 border-cyan-400 bg-cyan-500/30 rounded-md shadow-[0_0_30px_rgba(34,211,238,0.8)] animate-pulse"></div>
                             ))}
+
+                            {/* [新增] 手牌部署预示：悬停/拖拽可打出的单位牌时，备战席末尾出现高亮空位 */}
+                            {isHoveringPlayableUnit && !isDraggingToBench && (
+                                <div className="w-[120px] h-[162px] border-2 border-cyan-400 border-dashed bg-cyan-500/20 rounded-md shadow-[0_0_20px_rgba(34,211,238,0.6)] animate-pulse flex items-center justify-center transition-all duration-300">
+                                    <span className="text-cyan-300 font-bold tracking-widest text-sm drop-shadow-md">部署位</span>
+                                </div>
+                            )}
                         </div>
                     </div>
 
+                        {/* 替身 GhostCard（多卡队列，Portal 渲染到 document.body） */}
+                        {ghostState && (
+                            <DragGhostCard
+                                cards={ghostState.cards}
+                                x={ghostState.x}
+                                y={ghostState.y}
+                                scale={ghostState.scale ?? GHOST_CARD_SCALE}
+                                location={ghostState.location}
+                                w={ghostState.w}
+                                h={ghostState.h}
+                                skinOverrides={skinOverrides} // [核心修复] 把皮肤数据传给拖拽替身组件！
+                            />
+                        )}
 
                     {/* 5. 底部占位 (为抽出的全屏手牌预留空间) */}
                     <div className="h-32 w-full flex-shrink-0"></div>
@@ -1131,6 +1799,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 hand={playerHand}
                                 game={game}
                                 cardBackUrl={currentCardBackUrl}
+                                skinOverrides={skinOverrides} // [新增] 喂给手牌区！
                                 onCardClick={(c) => handleCardClick(c, 'hand', 'player')}
                                 onHover={setHoveredCard}
                                 onViewArt={setViewCard}
@@ -1142,6 +1811,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 </div>
 
             </div>
+
+            {/* [新增] 战场/备战席悬停预览 — Portal 越狱跟随鼠标 */}
+            <FloatingCardPreview mode="follow"  gazeTarget={gazeTarget} skinId={skinOverrides[gazeTarget?.card.key || ''] || 0} /> {/* [新增] 给悬停大图穿皮肤 */}
         </div>
     );
 }

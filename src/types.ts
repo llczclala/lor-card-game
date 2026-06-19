@@ -1,4 +1,4 @@
-export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'TEST';
+export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'TEST';
 export type CardType = 'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow';
 // 完整的 36 个关键词定义
 export type Keyword =
@@ -187,6 +187,9 @@ export interface UserProfile {
   avatarConfig?: AvatarConfig; // [新增] 自定义裁剪头像配置
   createdAt: number;     // 注册时间戳
   lastLoginAt: number;   // 最后登录时间
+  pityCounter?: number;  // [新增] 兼容性：常规抽卡保底计数
+  skinPityCounter?: number; // [核心新增] 皮肤抽卡保底计数 (30抽保底)
+  gachaTarget?: string | null; // [新增] 兼容性：抽卡定轨目标
 }
 
 export interface UserSettings {
@@ -201,6 +204,7 @@ export interface UserSettings {
   };
   unlockedCardBacks: number[];    // 已解锁的卡背列表
   unlockedDesks: number[];        // 已解锁的牌桌列表
+  videoResolution?: '1k' | '2k' | '4k';
 }
 
 export interface UserResources {
@@ -213,6 +217,8 @@ export interface UserResources {
 export interface UserCollection {
   // Key = 卡牌ID, Value = 拥有数量
   ownedCards: Record<string, number>;
+  // [皮肤] Key = 卡牌Key, Value = 已拥有的皮肤ID列表 (skinId 0即默认皮肤，默认拥有)
+  ownedSkins: Record<string, number[]>;
   resources: UserResources;
 }
 
@@ -223,6 +229,7 @@ export interface SavedDeck {
   name: string;          // 卡组名称
   hero: string;          // 封面英雄
   cards: Record<string, number>; // 卡牌构成 { 'lyfe': 3 ... }
+  skinOverrides?: Record<string, number>; // [皮肤] Key=卡牌Key, Value=当前选用的skinId
   createdAt: number;
   updatedAt: number;
   cardBackIndex?: number;
@@ -244,6 +251,101 @@ export interface CardCropData {
     hand_lv2?: CropConfig;   // [新增] 2级手牌
     bench_lv2?: CropConfig;  // [新增] 2级备战席
     combat_lv2?: CropConfig; // [新增] 2级战场
+}
+
+// ==========================================
+// [核心新增] 战区军功与审计系统底层类型 (Mission & Logger)
+// ==========================================
+
+// --- 1. 日志事件类型 (Log Events) ---
+export type LogActionType =
+    | 'play_card'      // 打出卡牌
+    | 'attack'         // 发起攻击
+    | 'nexus_damage'   // 对水晶造成伤害
+    | 'level_up'       // 英雄升级
+    | 'game_end';      // 对局结束
+
+export interface BaseLogEvent {
+    type: LogActionType;
+    turn: number;            // 发生回合
+    timestamp: number;       // 物理时间戳
+    isPlayerSide: boolean;   // 是否是我方(玩家)行为
+}
+
+export interface PlayCardLogEvent extends BaseLogEvent {
+    type: 'play_card';
+    cardKey: string;
+}
+
+export interface AttackLogEvent extends BaseLogEvent {
+    type: 'attack';
+    cardKey: string;
+}
+
+export interface NexusDamageLogEvent extends BaseLogEvent {
+    type: 'nexus_damage';
+    sourceCardKey: string;   // 造成伤害的来源实体
+    amount: number;          // 伤害数值
+}
+
+export interface LevelUpLogEvent extends BaseLogEvent {
+    type: 'level_up';
+    cardKey: string;
+}
+
+export interface GameEndLogEvent extends BaseLogEvent {
+    type: 'game_end';
+    result: 'win' | 'loss' | 'draw';
+}
+
+// 日志联合类型
+export type LogEvent =
+    | PlayCardLogEvent
+    | AttackLogEvent
+    | NexusDamageLogEvent
+    | LevelUpLogEvent
+    | GameEndLogEvent;
+
+export type LogEventPayload = Omit<LogEvent, 'timestamp'>;
+
+
+// --- 2. 军功任务类型 (Mission System) ---
+export type MissionCategory = 'daily' | 'weekly' | 'achievement';
+export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack';
+export type MissionConditionType = 'game_end' | 'play_card' | 'attack' | 'nexus_damage' | 'level_up_and_win';
+export type MissionStatus = 'ongoing' | 'completed' | 'claimed';
+
+export interface MissionDef {
+    id: string;
+    category: MissionCategory;
+    title: string;
+    description: string;
+    targetCount: number;
+    reward: {
+        type: MissionRewardType;
+        amount?: number;
+        cosmeticId?: string;
+    };
+    condition: {
+        type: MissionConditionType;
+        targetKey?: string;
+    };
+}
+
+export interface MissionProgress {
+    id: string;
+    current: number;
+    target: number;
+    status: MissionStatus;
+}
+
+export interface MissionUpdateResult {
+    missionId: string;
+    addedAmount: number;
+    current: number;
+    target: number;
+    justCompleted: boolean;
+    title: string;
 }
 
 export const GAME_VERSION = '1.4.0';

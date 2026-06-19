@@ -1,0 +1,11 @@
+export type CursorState =
+    | 'DEFAULT'     // 默认发呆
+    | 'HOVER'       // 按钮悬停
+    | 'TEXT'        // 文本输入
+    | 'HAND_OPEN'   // 可抓取预示
+    | 'HAND_GRAB'   // 拖拽中
+    | 'INSPECT'     // 详情查看
+    | 'TARGET'      // 施法/挑战者瞄准
+    | 'DISABLED'    // 无法操作/非法目标
+    | 'ATTACK'      // 进攻指令
+    | 'BUSY';       // 等待/加载中

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, Plus, Trash2, Save, Download, X,
@@ -12,6 +12,9 @@ import { FullArtOverlay } from '../Overlays'; // [植入精髓] 右键大图检�
 import type { EnemyArchetype } from '../../data/enemies/archetypes';
 import type { CardData } from '../../types';
 import { HERO_IMAGES, PERSONALIZATION_ASSETS } from '../../data/imageData'; // [植入精髓]
+// [新增] 悬停预览统一方案
+import { useCardGaze } from '../../hooks/useCardGaze';
+import { FloatingCardPreview } from '../FloatingCardPreview';
 
 // ============================================================
 // 常量 & 辅助工具
@@ -40,13 +43,11 @@ const toFullCardData = (staticData: any): CardData => ({
 // ============================================================
 // [核心重构 1] 移植 2.5D 微缩景观 (DeckDiorama)
 // ============================================================
-const getDeckCovers = (arch: EnemyArchetype): string[] => {
-    const covers: string[] = [];
+const getDeckCovers = (arch: EnemyArchetype): { url: string; skinId: number; isBack: boolean }[] => {
+    const covers: { url: string; skinId: number; isBack: boolean }[] = [];
     const champ = CARD_DB[arch.champion || ''];
-    if (champ) covers.push(champ.imageUrl);
+    if (champ) covers.push({ url: champ.imageUrl, skinId: 0, isBack: false });
 
-    // 智能抓取核心池中最贵且不是英雄的卡作为副封面
-    // [关键修正] 使用 Set 进行去重，确保不会抓到重复的原画
     const uniqueCoreKeys = Array.from(new Set(arch.coreCards));
     const sorted = uniqueCoreKeys
         .filter(k => CARD_DB[k] && !CARD_DB[k].isChampion && k !== arch.champion)
@@ -54,11 +55,11 @@ const getDeckCovers = (arch: EnemyArchetype): string[] => {
 
     let i = 0;
     while (covers.length < 3 && i < sorted.length) {
-        covers.push(CARD_DB[sorted[i]]?.imageUrl || '');
+        const url = CARD_DB[sorted[i]]?.imageUrl;
+        if (url) covers.push({ url, skinId: 0, isBack: false });
         i++;
     }
-    // [策略 B 落地] 如果卡牌种类不足 3 种，不再使用里芙兜底，而是推入特殊标识 'CARD_BACK'
-    while (covers.length < 3) covers.push('CARD_BACK');
+    while (covers.length < 3) covers.push({ url: 'CARD_BACK', skinId: 0, isBack: true });
     return covers;
 };
 
@@ -83,17 +84,23 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
 
             {/* 左侧扇形核心三卡 */}
             <div className="absolute top-10 left-6 z-20 pointer-events-none">
-                {covers.map((url, i) => {
+                {covers.map((cover, i) => {
                     const rotations = [-16, 0, 16], translatesX = [0, 24, 48], translatesY = [12, 0, 12], zIndexes = [25, 23, 21];
-                    // [策略 B 落地] 识别特殊标识，渲染卡背
-                    const isBack = url === 'CARD_BACK';
-                    const renderUrl = isBack ? cardBackImg : url;
+                    const isBack = cover.isBack;
+                    const renderUrl = isBack ? cardBackImg : cover.url;
+                    const skinId = cover.skinId;
                     return (
-                        <div key={i} className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden ${isBack ? 'border-slate-800/80 bg-slate-900' : 'border-slate-950'}`}
+                        <div key={i} className={`${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} absolute rounded-xl border-2 shadow-[5px_5px_15px_rgba(0,0,0,0.6)] overflow-hidden ${isBack ? 'border-slate-800/80 bg-slate-900' : 'border-slate-800 bg-slate-950'}`}
                              style={{ transform: `translateX(${translatesX[i]}px) translateY(${translatesY[i]}px) rotate(${rotations[i]}deg)`, zIndex: zIndexes[i] }}>
-                            <img src={renderUrl} className={`w-full h-full object-cover ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt={isBack ? "Card Back Fill" : "Hero Front"} />
-                            {/* [补充] 如果是卡背，加一层极薄的暗色遮罩强化神秘感 */}
-                            {isBack && <div className="absolute inset-0 bg-black/40"></div>}
+                            {!isBack && (
+                                <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none z-0 ${
+                                    skinId > 0
+                                        ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
+                                        : 'from-gray-300/40 via-gray-200/20 to-white/5'
+                                }`}></div>
+                            )}
+                            <img src={renderUrl} className={`w-full h-full object-cover relative z-10 ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt={isBack ? "Card Back Fill" : "Hero Front"} />
+                            {isBack && <div className="absolute inset-0 bg-black/40 z-20"></div>}
                         </div>
                     )
                 })}
@@ -134,9 +141,8 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
     const [searchTerm, setSearchTerm] = useState('');
     const [category, setCategory] = useState<CategoryFilter>('ALL');
 
-    // [核心重构 3] 防卡死与悬浮大图机制接入
-    const [hoveredCardKey, setHoveredCardKey] = useState<string | null>(null);
-    const hoverTimerRef = useRef<number | null>(null);
+    // [核心重构 3] 统一悬停预览
+    const { gazeTarget, bindGazeEvents, keepAlive, scheduleDismiss } = useCardGaze({ delay: 300 });
     const [viewCard, setViewCard] = useState<CardData | null>(null);
 
     // --- 数据加载 ---
@@ -228,20 +234,6 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
         return Object.entries(map).map(([key, count]) => ({ key, count }));
     }, [selected, activeListTab]);
 
-    // --- 防卡死悬停雷达 ---
-    const handleCardEnter = useCallback((key: string) => {
-        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-        setHoveredCardKey(key);
-    }, []);
-
-    const handleCardLeave = useCallback(() => {
-        hoverTimerRef.current = window.setTimeout(() => setHoveredCardKey(null), 150);
-    }, []);
-
-    const handleContainerLeave = useCallback(() => {
-        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-        hoverTimerRef.current = window.setTimeout(() => setHoveredCardKey(null), 1000);
-    }, []);
 
     // --- 导出与保存 ---
     const saveToLocal = useCallback(() => {
@@ -543,7 +535,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                             <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
 
                             {/* 隐藏系统滚动条的丝滑列表 */}
-                            <div className="h-full overflow-y-auto px-4 py-6 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" onMouseLeave={handleContainerLeave}>
+                            <div className="h-full overflow-y-auto px-4 py-6 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                                 {groupedActivePool.map((item) => {
                                     const cardKey = item.key;
                                     const count = item.count;
@@ -552,9 +544,8 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                     return (
                                         <div key={cardKey}
                                              className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help group transition-colors"
-                                             onMouseEnter={() => isValid && handleCardEnter(cardKey)}
-                                             onMouseLeave={handleCardLeave}
-                                             onContextMenu={(e) => { e.preventDefault(); if (isValid) setViewCard(toFullCardData(card)); }}>
+                                             onContextMenu={(e) => { e.preventDefault(); if (isValid) setViewCard(toFullCardData(card)); }}
+                                             {...(isValid ? bindGazeEvents(card) : {})}>
 
                                             {/* 快速删除按钮 */}
                                             <button onClick={(e) => { e.stopPropagation(); removeCardFromPool(activeListTab, cardKey); }}
@@ -598,25 +589,16 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
 
             {/* ==================== 4. 全局悬浮与检视系统 ==================== */}
 
-            {/* 带有唯一 Key 和 1秒防卡死保险的高级悬停大图 */}
-            <AnimatePresence mode="wait">
-                {hoveredCardKey && CARD_DB[hoveredCardKey] && (
-                    <motion.div
-                        key={hoveredCardKey}
-                        className="absolute right-[430px] top-1/2 -translate-y-1/2 z-[300] pointer-events-auto"
-                        onMouseEnter={() => handleCardEnter(hoveredCardKey)}
-                        onMouseLeave={handleCardLeave}
-                        initial={{ opacity: 0, x: 20, scale: 1.1 }}
-                        animate={{ opacity: 1, x: 0, scale: 1.25 }}
-                        exit={{ opacity: 0, x: 10, transition: { duration: 0.1 } }}
-                        transition={{ type: "spring", stiffness: 300, damping: 25, opacity: { duration: 0.2 } }}
-                    >
-                        <div className="drop-shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
-                            <Card data={toFullCardData(CARD_DB[hoveredCardKey])} location="preview" isFaceUp={true} onViewArt={setViewCard} />
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* 带有缓冲动画的智能悬停大图 */}
+            <FloatingCardPreview
+                gazeTarget={gazeTarget}
+                mode="follow"
+                scale={1.25}
+                interactive
+                onMouseEnter={keepAlive}
+                onMouseLeave={scheduleDismiss}
+                onViewArt={(c) => setViewCard(c)}
+            />
 
             {/* 右键无缝下钻沉浸式检视 */}
             {viewCard && (

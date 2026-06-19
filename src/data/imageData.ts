@@ -19,6 +19,7 @@ import border_unit from '../image/cardborder/cardborder_unit.png';
 import effect_break from '../image/effect/break.png';
 import effect_broken1 from '../image/effect/broken1.png';
 import effect_broken2 from '../image/effect/broken2.png';
+import effect_be_attacked from '../image/effect/be_attacked.png'; // [核心新增] 引入全新的法术命中受击贴图
 
 // 引入里芙的原画
 import lyfe_1 from '../image/hero/里芙1.png';
@@ -40,6 +41,9 @@ import spell_03 from '../image/spells/03.png'; // 专注
 import spell_04 from '../image/spells/04.png'; // 暗箭
 import spell_05 from '../image/spells/05.png'; // 振奋
 import spell_06 from '../image/spells/06.png'; // 破坏
+
+// [新增] 梦莲无人机（临时立绘）
+import dream_lotus_drone_img from '../image/spells/abc.png';
 
 // 芬妮专属法术
 import fenny_spell_base from '../image/spells/fenny_spell.png';   // 芬妮的狂热
@@ -104,6 +108,7 @@ import button_container from '../image/icon/buttton1.png';
 import title_logo from '../image/icon/titile.png';
 import sword_icon from '../image/icon/sword.png';
 import sword_gain_icon from '../image/icon/sword_gain.png';
+import spell_container from '../image/icon/spell.png'; // [新增] 法术底托容器
 
 
 // --- 水晶资源引入 ---
@@ -141,13 +146,14 @@ import p_s_1 from '../image/icon/player_spells_1.png';
 import p_s_2 from '../image/icon/player_spells_2.png';
 import p_s_3 from '../image/icon/player_spells_3.png';
 
-// [新增] 批量引入卡背 (01-05)
+// [新增] 批量引入卡背 (1张默认 + 3张可抽取 + 3张英雄专属 = 7张满编)
 import cb_01 from '../image/card_back/01.png';
 import cb_02 from '../image/card_back/02.png';
 import cb_03 from '../image/card_back/03.png';
 import cb_04 from '../image/card_back/04.png';
-import cb_05 from '../image/card_back/05.png';
-import cb_06 from '../image/card_back/06.png';
+import cb_fenny from '../image/card_back/fenny.png';
+import cb_lyfe from '../image/card_back/lyfe.png';
+import cb_pupu from '../image/card_back/pupu_specular.png';
 
 // [新增] 批量引入牌桌 (01-05)
 import desk_01 from '../image/desk/01.png';
@@ -157,58 +163,101 @@ import desk_04 from '../image/desk/04.png';
 import desk_05 from '../image/desk/05.png';
 
 
-// [新增] 引入 Logistics (后勤) 单位图片
+// ==========================================
+// [皮肤] 批量导入 units 目录所有图片（glob模式，自动感知新增）
+// ==========================================
+const unitImageModules = import.meta.glob('../image/units/*.png', { eager: true }) as Record<string, { default: string }>;
 
-import unit_martina from '../image/units/Dream_Guardians_Squad-Martina.png';
-import unit_saikui from '../image/units/Dream_Guardians_Squad-Saikui.png';
-import unit_haifa from '../image/units/Dream_Guardians_Squad-Haifa.png';
+/** [皮肤] cardKey → { skinId → imageUrl } */
+export const SKIN_IMAGES: Record<string, Record<number, string>> = {};
+// 临时容器：cardKey → skinId=0 的图片（用于重建 UNIT_IMAGES）
+const defaultUnitImages: Record<string, string> = {};
 
-import unit_ah_hua from '../image/units/Messenger_Squad_Ah_Hua.png';
-import unit_gena from '../image/units/Messenger_Squad_Gena.png';
-import unit_wall_e from '../image/units/Messenger_Squad_WALL_E.png';
+for (const [fp, mod] of Object.entries(unitImageModules)) {
+  const fn = fp.split('/').pop()?.replace('.png', '');
+  if (!fn || fn === 'sw9h44lcpvqcp684nh493gz3qt5pjsi') continue;
+  const url = mod.default;
 
-// [新增] 引入“阿尔斯特”小队图片
-import unit_koni from '../image/units/Ulster_Squad_Koni.png';
-import unit_maeve from '../image/units/Ulster_Squad_Maeve.png';
-import unit_flamme from '../image/units/Ulster_Squad_Flamme.png';
+  // Mirror 特殊处理（无皮肤后缀）
+  if (fn === 'Mirror' || fn === 'Mirror_pupu') {
+    defaultUnitImages[fn] = url;
+    SKIN_IMAGES[fn] = { 0: url };
+    continue;
+  }
 
-// [新增] 引入“堤丰”小队图片
-import unit_flameheart from '../image/units/Typhoon_Squad_Flameheart.png';
-import unit_dornier from '../image/units/Typhoon_Squad_Dornier.png';
-import unit_613 from '../image/units/Typhoon_Squad_613.png';
+  const m = fn.match(/^(.+)_(\d{2})$/);
+  if (m) {
+    const cardKey = m[1].replace(/-/g, '_');
+    const skinId = parseInt(m[2]);
+    if (!SKIN_IMAGES[cardKey]) SKIN_IMAGES[cardKey] = {};
+    SKIN_IMAGES[cardKey][skinId] = url;
+    if (skinId === 0) defaultUnitImages[cardKey] = url;
+  }
+}
 
-// [新增] 引入“鬼怪”小队图片
-import unit_antina from '../image/units/Ghost_Squad_Antina.png';
-import unit_vez from '../image/units/Ghost_Squad_Vez.png';
-import unit_valen from '../image/units/Ghost_Squad_Valen.png';
+// [皮肤继承] 衍生物与召唤主共用同一套皮肤数据（同一张图，不同裁切坐标）
+const TOKEN_SKIN_ALIASES: Record<string, string> = {
+  'Swali_Sheep': 'Illustration_Squad_Swali',
+  'Kuranas_Crocodile': 'Illustration_Squad_Kuranas',
+  'Soline_Anubis': 'Illustration_Squad_Soline',
+  'Elice_scope_robot': 'Chongye_Squad_Elice',
+};
+for (const [tokenKey, parentKey] of Object.entries(TOKEN_SKIN_ALIASES)) {
+  if (SKIN_IMAGES[parentKey]) {
+    SKIN_IMAGES[tokenKey] = SKIN_IMAGES[parentKey];
+  }
+}
 
-// [新增] 引入“阿尔戈”小队图片
-import unit_pigeon from '../image/units/Argo_Squad_Pigeon.png';
-import unit_musician from '../image/units/Argo_Squad_Musician.png';
-import unit_arrowhead from '../image/units/Argo_Squad_Arrowhead.png';
+// 短 key → 完整 cardKey 对照表（向后兼容 cards.ts 中的 UNIT_IMAGES.xxx 引用）
+const CARD_KEY_MAP: Record<string, string> = {
+  martina: 'Dream_Guardians_Squad_Martina',
+  saikui: 'Dream_Guardians_Squad_Saikui',
+  haifa: 'Dream_Guardians_Squad_Haifa',
+  ah_hua: 'Messenger_Squad_Ah_Hua',
+  gena: 'Messenger_Squad_Gena',
+  wall_e: 'Messenger_Squad_WALL_E',
+  koni: 'Ulster_Squad_Koni',
+  maeve: 'Ulster_Squad_Maeve',
+  flamme: 'Ulster_Squad_Flamme',
+  flameheart: 'Typhoon_Squad_Flameheart',
+  dornier: 'Typhoon_Squad_Dornier',
+  unit_613: 'Typhoon_Squad_613',
+  antina: 'Ghost_Squad_Antina',
+  vez: 'Ghost_Squad_Vez',
+  valen: 'Ghost_Squad_Valen',
+  pigeon: 'Argo_Squad_Pigeon',
+  musician: 'Argo_Squad_Musician',
+  arrowhead: 'Argo_Squad_Arrowhead',
+  zhe_hao: 'Mingyi_Squad_Zhe_hao',
+  zhu_he: 'Mingyi_Squad_Zhu_He',
+  jin_lang: 'Mingyi_Squad_Jin_Lang',
+  doveil: 'Star_Bright_Squad_Doveil',
+  alivy: 'Star_Bright_Squad_Alivy',
+  dakors: 'Star_Bright_Squad_Dakors',
+  mabel: 'Chongye_Squad_Mabel',
+  elice: 'Chongye_Squad_Elice',
+  golia: 'Chongye_Squad_Golia',
 
-// [新增] 明夷小队 (Mingyi Squad)
-import unit_zhe_hao from '../image/units/Mingyi_Squad_Zhe_hao.png';
-import unit_zhu_he from '../image/units/Mingyi_Squad_Zhu_He.png';
-import unit_jin_lang from '../image/units/Mingyi_Squad_Jin_Lang.png';
-
-// [新增] 星朗小队 (Star Bright Squad)
-import unit_doveil from '../image/units/Star_Bright_Squad_Doveil.png';
-import unit_alivy from '../image/units/Star_Bright_Squad_Alivy.png';
-import unit_dakors from '../image/units/Star_Bright_Squad_Dakors.png';
-
-// [新增] 重叶小队 (Star Bright Squad)
-import unit_mabel from '../image/units/Chongye_Squad_Mabel.png';
-import unit_elice from '../image/units/Chongye_Squad_Elice.png';
-import unit_golia from '../image/units/Chongye_Squad_Golia.png';
-
-//  镜爻 卜卜
-import Mirror from '../image/units/Mirror.png';
-import Mirror_pupu from '../image/units/Mirror_pupu.png';
+  // --- Illustration Squad: 图征小队 (Mauxir) ---
+  kuranas: 'Illustration_Squad_Kuranas',
+  swali: 'Illustration_Squad_Swali',
+  soline: 'Illustration_Squad_Soline',
+};
 
 
 import PGgachaDeskImg from '../image/gacha/PermanentGachaPool/desk.png';
 import PGgachaBtnImg from '../image/gacha/PermanentGachaPool/button.png';
+
+import titan_mutant from '../image/enemy/Titan_Mutant.png';
+import titan_hybrid from '../image/enemy/Titan_Titan_Hybrid.png';
+import titan_type_b_mutant from '../image/enemy/Titan_Type_B_Mutant.png';
+import titan_hodu from '../image/enemy/Titan_Hodu.png';
+import titan_type_c_mutant from '../image/enemy/Titan_Type_C_Mutant.png';
+import titan_gonglu from '../image/enemy/Titan_Gonglu.png';
+import gonglu_support from '../image/enemy/Gonglu_support.png'
+import titan_type_d_mutant from '../image/enemy/Titan_Type_D_Mutant.png';
+import titan_gaimer from '../image/enemy/Titan_Gaimer.png';
+
 
 
 
@@ -219,7 +268,8 @@ export interface HeroImages {
 }
 
 export const PERSONALIZATION_ASSETS = {
-    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_05,cb_06],
+    // [核心修复] 按序排布 7 张卡背。索引 1/2/3 入盲盒，索引 4/5/6 锁死给未来任务系统！
+    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_fenny, cb_lyfe, cb_pupu],
     desks: [desk_01, desk_02, desk_03, desk_04, desk_05]
 };
 
@@ -234,56 +284,31 @@ export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
     fenny: { base: fenny_1, level2: fenny_2 },
     pupu_specular_soul: { base: pupu_specular_soul_1, level2: pupu_specular_soul_2 }
 };
-// [新增] 导出正式单位图片集合
-export const UNIT_IMAGES = {
-    // 守梦人小队
-    martina: unit_martina,
-    saikui: unit_saikui,
-    haifa: unit_haifa,
-    // [新增] 信使小队
-    ah_hua: unit_ah_hua,
-    gena: unit_gena,
-    wall_e: unit_wall_e,
+// [皮肤] 导出正式单位图片集合（从 glob 自动构建）
+export const UNIT_IMAGES: Record<string, string> = {};
 
-    // [新增] 阿尔斯特小队
-    koni: unit_koni,
-    maeve: unit_maeve,
-    flamme: unit_flamme,
+// 从短 key 映射构建 UNIT_IMAGES
+for (const [shortKey, cardKey] of Object.entries(CARD_KEY_MAP)) {
+  if (defaultUnitImages[cardKey]) {
+    UNIT_IMAGES[shortKey] = defaultUnitImages[cardKey];
+  }
+}
+// Mirror 特殊处理
+UNIT_IMAGES['Mirror'] = defaultUnitImages['Mirror'] || '';
+UNIT_IMAGES['Mirror_pupu'] = defaultUnitImages['Mirror_pupu'] || '';
 
-    // [新增] 堤丰小队
-    flameheart: unit_flameheart,
-    dornier: unit_dornier,
-    unit_613: unit_613,
-
-    // [新增] 鬼怪小队
-    antina: unit_antina,
-    vez: unit_vez,
-    valen: unit_valen,
-
-    // [新增] 阿尔戈小队
-    pigeon: unit_pigeon,
-    musician: unit_musician,
-    arrowhead: unit_arrowhead,
-
-    // [新增] 明夷小队
-    zhe_hao: unit_zhe_hao,
-    zhu_he: unit_zhu_he,
-    jin_lang: unit_jin_lang,
-
-    // [新增] 星朗小队
-    doveil: unit_doveil,
-    alivy: unit_alivy,
-    dakors: unit_dakors,
-
-    // [新增] 重叶小队
-    mabel: unit_mabel,
-    elice: unit_elice,
-    golia: unit_golia,
-
-    Mirror: Mirror,
-    Mirror_pupu: Mirror_pupu,
-
-};
+/**
+ * [皮肤] 根据 cardKey 和 skinId 获取对应卡面图片
+ * @param cardKey 卡牌 Key
+ * @param skinId 皮肤 ID（0=默认），省略时返回默认图片
+ * @param fallback 兜底图片
+ */
+export function getSkinImage(cardKey: string, skinId?: number, fallback?: string): string {
+  const sk = SKIN_IMAGES[cardKey];
+  if (skinId && sk && sk[skinId]) return sk[skinId];
+  if (sk && sk[0]) return sk[0];
+  return fallback || '';
+}
 
 // [新增] 导出法术图库
 export const SPELL_IMAGES = {
@@ -308,7 +333,10 @@ export const SPELL_IMAGES = {
     // 卜卜灵鉴
     pupu_specular_soul_spell: pupu_specular_soul_spell_base,
     pupu_specular_soul_rush: pupu_specular_soul_spell_01,
-    pupu_specular_soul_ultimate: pupu_specular_soul_spell_02
+    pupu_specular_soul_ultimate: pupu_specular_soul_spell_02,
+
+    // 图征小队·通用法术
+    dream_lotus_drone: dream_lotus_drone_img,
 };
 
 
@@ -372,7 +400,8 @@ export const UI_IMAGES = {
     sword: sword_icon,
     swordGain: sword_gain_icon,
     cardBack: PERSONALIZATION_ASSETS.cardBacks[0],
-    titleLogo: title_logo // [新增] 注册 Logo
+    titleLogo: title_logo, // [新增] 注册 Logo
+    spellContainer: spell_container // [新增] 注册法术底托容器
 };
 
 export const UI_ICONS = {
@@ -398,5 +427,18 @@ export const CURRENCY_ICONS = {
 export const EFFECT_IMAGES = {
     groundCrack: effect_break,     // 砸击：地面龟裂
     cardBroken1: effect_broken1,   // 死亡预备：卡牌碎裂 1
-    cardBroken2: effect_broken2    // 死亡预备：卡牌碎裂 2
+    cardBroken2: effect_broken2,   // 死亡预备：卡牌碎裂 2
+    beAttacked: effect_be_attacked // [核心新增] 法术命中：受击裂纹特效
+};
+
+export const TITAN_IMAGES = {
+    mutant: titan_mutant,
+    hybrid: titan_hybrid,
+    type_b: titan_type_b_mutant,
+    hodu: titan_hodu,
+    type_c: titan_type_c_mutant,
+    gonglu: titan_gonglu,
+    gonglu_support:gonglu_support,
+    type_d: titan_type_d_mutant,
+    gaimer: titan_gaimer,
 };

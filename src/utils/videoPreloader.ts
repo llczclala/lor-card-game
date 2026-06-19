@@ -13,7 +13,7 @@
  *   // 播放时获取缓存 URL（若未缓存则返回原 URL）
  *   video.src = getVideoUrl(originalUrl);
  */
-
+import type { VideoResolution } from '../data/movieData';
 // 全局 Blob 缓存：原始 URL → ObjectURL
 const blobCache = new Map<string, string>();
 
@@ -47,18 +47,18 @@ export const getVideoUrl = (src: string): string => {
 /**
  * 根据英雄 key 预加载升级影片
  */
-export const preloadLevelUpMovieByKey = async (heroKey: string): Promise<void> => {
+export const preloadLevelUpMovieByKey = async (heroKey: string, res: VideoResolution = '1k'): Promise<void> => {
     // 动态导入避免循环依赖
     const { getLevelUpMovie } = await import('../data/movieData');
-    const src = getLevelUpMovie(heroKey);
+    const src = getLevelUpMovie(heroKey, res); // [核心修改] 传入画质参数
     if (src) await preloadVideo(src);
 };
 
 /**
  * 根据英雄 keys 预加载胜利影片
  */
-export const preloadVictoryMovieByKeys = async (heroKeys: string[]): Promise<void> => {
+export const preloadVictoryMovieByKeys = async (heroKeys: string[], res: VideoResolution = '1k'): Promise<void> => {
     const { getVictoryMovie } = await import('../data/movieData');
-    const src = getVictoryMovie(heroKeys);
+    const src = getVictoryMovie(heroKeys, res); // [核心修改] 传入画质参数
     if (src) await preloadVideo(src);
 };

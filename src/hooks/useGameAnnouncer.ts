@@ -145,10 +145,14 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game.attackToken.player, game.attackToken.enemy]); // 拆分依赖项以确保更新
 
-    // 3. 监听 TurnOwner 变化 (保持不变)
+    // 3. 监听 TurnOwner 变化
     useEffect(() => {
         if (isOpeningSequenceRef.current) return;
-        if (game.phase === 'main' && game.turnOwner === 'player' && !hasAnnouncedTurnRef.current) {
+
+        // [核心修复] 高情商消音器：如果堆叠区有法术，或者天上挂着预提交法术，此时的控制权交替属于“法术响应博弈”，绝对不能播报回合！
+        const isSpellBattling = game.spellStack.length > 0 || game.pendingSpell !== null;
+
+        if (game.phase === 'main' && game.turnOwner === 'player' && !hasAnnouncedTurnRef.current && !isSpellBattling) {
             setAnnouncement(prev => {
                 if (prev && (prev.mainText.includes("进攻") || prev.type === 'round')) return prev;
                 return {
@@ -161,7 +165,7 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
             });
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game.turnOwner, game.phase]);
+    }, [game.turnOwner, game.phase, game.spellStack.length, game.pendingSpell]); // [修改] 注入法术状态依赖
 
 
 

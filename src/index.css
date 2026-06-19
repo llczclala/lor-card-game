@@ -314,7 +314,6 @@ html, body {
 .animate-delayed-bump-up { animation: delayed-bump-up 1s ease-out; }
 .animate-delayed-bump-down { animation: delayed-bump-down 1s ease-out; }
 
-```css
 /* --- Mana Crystal Animations --- */
 
 /* 1. 点亮动画 (Light Up) */
@@ -428,3 +427,65 @@ html, body {
 }
 
 
+/* =================================================================
+   【终极自定义指针系统：双层劫持架构】
+   ================================================================= */
+
+/* ── 第一层：基础元素自动劫持 (底层常驻，无需写JS) ── */
+
+/* 1. 默认发呆兜底 */
+html, body {
+    cursor: url('./image/icon/mouse/mouse_0.png') 0 0, default !important;
+}
+
+/* 2. 交互悬停 (自动拦截HTML原生按钮、链接，以及 Tailwind 类) */
+button, [role="button"], a, [href], summary, .cursor-pointer {
+    cursor: url('./image/icon/mouse/mouse_1.png') 0 0, pointer !important;
+}
+
+/* 3. 文本输入 (自动拦截各类输入框) */
+input, textarea, .cursor-text {
+    cursor: url('./image/icon/mouse/mouse_2.png') 12 12, text !important;
+}
+
+/* 4. 禁用状态 (自动拦截禁用按钮) */
+:disabled, [aria-disabled="true"], .cursor-not-allowed {
+    cursor: url('./image/icon/mouse/mouse_7.png') 0 0, not-allowed !important;
+}
+
+/* 5. 可抓取预示 (自动拦截可拖拽元素) */
+[draggable="true"], .cursor-grab {
+    cursor: url('./image/icon/mouse/mouse_3.png') 12 12, grab !important;
+}
+
+
+/* ── 第二层：全局游戏状态绝对压制 (顶层覆盖，无视子元素) ── */
+
+/* 拖拽中 */
+body[data-game-cursor="HAND_GRAB"],
+body[data-game-cursor="HAND_GRAB"] * {
+    cursor: url('./image/icon/mouse/mouse_4.png') 12 12, grabbing !important;
+}
+
+/* 查看详情 */
+body[data-game-cursor="INSPECT"],
+body[data-game-cursor="INSPECT"] * {
+    cursor: url('./image/icon/mouse/mouse_5.png') 0 0, help !important;
+}
+
+/* 施法/挑战瞄准 */
+body[data-game-cursor="TARGET"],
+body[data-game-cursor="TARGET"] * {
+    cursor: url('./image/icon/mouse/mouse_6.png') 16 16, crosshair !important;
+}
+
+/* 攻击冲锋指令 */
+body[data-game-cursor="ATTACK"],
+body[data-game-cursor="ATTACK"] * {
+    cursor: url('./image/icon/mouse/mouse_8.png') 16 16, crosshair !important;
+}
+
+/* 10. 处理中/等待 (鼠标9) */
+[data-game-cursor="BUSY"], .cursor-wait {
+    cursor: url('./image/icon/mouse/mouse_9.png') 16 16, wait !important;
+}

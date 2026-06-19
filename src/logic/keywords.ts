@@ -207,13 +207,26 @@ export const calculateCombatInteraction = (
             attackerDamage = blockerRealPower;
         }
 
-        // --- 3. Barrier (屏障) ---
-        // 效果：抵挡一次伤害，生效后移除
-        if (attacker.keywords.includes('Barrier') && attackerDamage > 0) {
+        // --- 3. Tough (坚韧) ---
+        // 效果：受到的所有伤害减少 1 点（最低为 0）
+        if (blocker && blocker.keywords.includes('Tough') && blockerDamage > 0) {
+            blockerDamage = Math.max(0, blockerDamage - 1);
+        }
+        if (attacker.keywords.includes('Tough') && attackerDamage > 0) {
+            attackerDamage = Math.max(0, attackerDamage - 1);
+        }
+
+        // --- 4. Barrier (屏障) ---
+        // 效果：抵挡一次伤害，生效后黯淡
+        // 判定时排除已黯淡的屏障（depletedKeywords 中有 'Barrier' 则不再生效）
+        const attackerBarrierActive = attacker.keywords.includes('Barrier') && !(attacker.depletedKeywords || []).includes('Barrier');
+        const blockerBarrierActive = blocker && blocker.keywords.includes('Barrier') && !(blocker.depletedKeywords || []).includes('Barrier');
+
+        if (attackerBarrierActive && attackerDamage > 0) {
             attackerDamage = 0;
             attackerBarrierPopped = true;
         }
-        if (blocker && blocker.keywords.includes('Barrier') && blockerDamage > 0) {
+        if (blockerBarrierActive && blockerDamage > 0) {
             blockerDamage = 0;
             blockerBarrierPopped = true;
         }

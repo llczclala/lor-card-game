@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Eye, Hexagon, Triangle, Sparkles, ChevronDown, ShoppingCart } from 'lucide-react';
 // [新增] 引入 Framer Motion
 import { motion } from 'framer-motion';
@@ -7,7 +7,7 @@ import { CARD_DB } from '../data/cards';
 import { SpeechBubble } from './SpeechBubble';
 import { SpellCard } from './SpellCard';
 import { KeywordEffects } from './KeywordEffects';
-import { CARD_BORDERS, EFFECT_IMAGES } from '../data/imageData'; // [修改] 引入特效图片
+import { CARD_BORDERS, EFFECT_IMAGES, UI_IMAGES, getSkinImage } from '../data/imageData'; // [修改] 追加引入 UI_IMAGES
 // [新增] 引入卡面坐标字典与类型
 import { CARD_CROP_CONFIG } from '../data/cardCropConfig';
 import type { CropConfig } from '../types';
@@ -56,9 +56,80 @@ const ShatterEffect = React.memo(({ isPlayerSide }: { isPlayerSide: boolean }) =
     );
 });
 
+// ==========================================
+// [新增] 裂纹覆盖层接口 (Hit Crack Overlay)
+// 支持两种模式：
+//   - 'svg': 使用内置的 SVG 裂纹图案（当前默认）
+//   - 'image': 使用外部图片贴图（未来可替换）
+// 暴露配置常量以便程后续替换
+// ==========================================
+interface CrackOverlayConfig {
+  type: 'svg' | 'image';
+  src?: string;       // 图片贴图 URL（type='image' 时使用）
+  svgPatterns?: string[]; // 自定义 SVG 图案列表（type='svg' 时使用）
+}
+
+// [配置接口] 莉莉子 ← 程：想换裂纹贴图就改这里！
+const CRACK_CONFIG: CrackOverlayConfig = {
+  type: 'svg',
+  // type: 'image',
+  // src: '/assets/crack-custom.png',   // ← 换成你自己的裂纹贴图
+};
+
+// 内置 SVG 裂纹图案库（3种风格，type='svg' 时使用）
+const CRACK_PATTERNS: string[] = [
+  // 图案1：星爆式裂纹（从中心向四周扩散）
+  `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="w-full h-full">
+    <path d="M50,50 L20,15 M50,50 L80,10 M50,50 L90,45 M50,50 L85,85 M50,50 L15,80 M50,50 L10,50 M50,50 L50,5 M50,50 L50,95" stroke="white" stroke-width="1.5" fill="none" opacity="0.8"/>
+    <path d="M50,50 L35,25 M50,50 L70,25 M50,50 L75,65 M50,50 L30,70" stroke="white" stroke-width="0.8" fill="none" opacity="0.5"/>
+  </svg>`,
+  // 图案2：蛛网式裂纹
+  `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="w-full h-full">
+    <path d="M50,50 L5,30 L12,25 M50,50 L25,5 L30,12 M50,50 L75,5 L70,12 M50,50 L95,35 L88,30 M50,50 L95,70 L88,75 M50,50 L70,95 L75,88 M50,50 L25,95 L30,88 M50,50 L5,70 L12,75" stroke="white" stroke-width="1.2" fill="none" opacity="0.7"/>
+    <path d="M30,25 L25,30 M70,25 L75,30 M75,70 L70,75 M25,70 L30,75" stroke="white" stroke-width="0.6" fill="none" opacity="0.4"/>
+    <circle cx="50" cy="50" r="8" stroke="white" stroke-width="0.8" fill="none" opacity="0.3"/>
+  </svg>`,
+  // 图案3：闪电式裂纹（凌厉的折线）
+  `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="w-full h-full">
+    <path d="M50,50 L45,40 L55,30 L48,18 L58,8 M50,50 L60,60 L52,72 L62,85 L55,95 M50,50 L38,58 L30,52 L20,62 L12,55 M50,50 L35,42" stroke="white" stroke-width="1.3" fill="none" opacity="0.75"/>
+    <path d="M48,18 L42,22 M58,8 L62,14 M52,72 L45,68 M62,85 L68,80 M30,52 L25,58 M20,62 L15,58" stroke="white" stroke-width="0.6" fill="none" opacity="0.4"/>
+  </svg>`
+];
+
+// [新增] 裂纹覆盖层组件 (HitCrackOverlay)
+// 支持 SVG 图案 和 图片贴图 两种模式
+const HitCrackOverlay = React.forwardRef<HTMLDivElement, { patternIndex: number; isTacticalMode: boolean }>(({ patternIndex, isTacticalMode }, ref) => {
+  const safeIndex = patternIndex % CRACK_PATTERNS.length;
+
+  if (CRACK_CONFIG.type === 'image' && CRACK_CONFIG.src) {
+    // 图片贴图模式 — 程可以换成自己的裂纹纹理
+    return (
+      <div
+        ref={ref}
+        className={`absolute inset-0 z-[140] pointer-events-none overflow-hidden ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'}`}
+        style={{ opacity: 0, scale: 0 }}
+      >
+        <img src={CRACK_CONFIG.src} alt="" className="w-full h-full object-cover opacity-80 mix-blend-screen" draggable={false} />
+      </div>
+    );
+  }
+
+  // SVG 图案模式 — 默认使用内置裂纹SVG
+  return (
+    <div
+      ref={ref}
+      className={`absolute inset-0 z-[140] pointer-events-none overflow-hidden ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'}`}
+      style={{ opacity: 0, scale: 0 }}
+      dangerouslySetInnerHTML={{ __html: CRACK_PATTERNS[safeIndex] }}
+    />
+  );
+});
+HitCrackOverlay.displayName = 'HitCrackOverlay';
+
 interface CardProps {
   data: CardData;
   location: 'hand' | 'bench' | 'combat' | 'enemy_bench' | 'spell_stack' | 'preview' | 'deck-builder' | 'gacha';
+  skinId?: number; // [新增] 显式接收上层传下来的皮肤 ID（0为默认，1、2为限定皮肤）
   onClick?: () => void;
   isBlocker?: boolean;
   isSelected?: boolean;
@@ -90,9 +161,11 @@ interface CardProps {
   isConditionActive?: boolean; // [新增] 动态描边变色，标识前置条件已满足
   playerNexusHealth?: number; // [新增] 透传我方水晶血量，供手牌英雄升级进度判定
   enemyNexusHealth?: number;  // [新增] 透传敌方水晶血量
+  onPointerDown?: (e: React.PointerEvent) => void; // [新增] 供战场→备战席拖拽使用
+  // [切除] 删掉这行重复的 skinId，因为接口最上面已经声明过一遍了
 }
-// [修复] 智能裁剪钩子：重构为“同步计算”以消除初次渲染的坐标闪烁与补间滑动
-const useCardCrop = (cardKey: string, location: string, level: number = 1): CropConfig => {
+// [皮肤] 智能裁剪钩子：增加 skinId 参数，支持双键索引结构
+const useCardCrop = (cardKey: string, location: string, level: number = 1, skinId: number = 0): CropConfig => {
     // 仅用于监听工作室的强制刷新事件
     const [, setUpdateTick] = useState(0);
 
@@ -110,18 +183,37 @@ const useCardCrop = (cardKey: string, location: string, level: number = 1): Crop
     // 移除未引入的 CardCropData 类型，直接作为动态属性名读取
     const mode = level === 2 ? `${baseMode}_lv2` as any : baseMode as any;
 
-    // 2. 同步读取优先级 1：热更新数据
+    // 2. 同步读取优先级 1：热更新数据（支持嵌套格式和新旧两种结构）
     try {
         const localData = localStorage.getItem('dev_crop_overrides');
         if (localData) {
             const parsed = JSON.parse(localData);
-            if (parsed[cardKey] && parsed[cardKey][mode]) {
-                return parsed[cardKey][mode];
+            if (parsed[cardKey]) {
+                // [皮肤] 新嵌套格式：parsed[cardKey][skinId][mode]
+                if (parsed[cardKey][skinId]?.[mode]) {
+                    return parsed[cardKey][skinId][mode];
+                }
+                // [皮肤] 新嵌套格式降级 skinId=0
+                if (skinId !== 0 && parsed[cardKey][0]?.[mode]) {
+                    return parsed[cardKey][0][mode];
+                }
+                // 旧平铺格式：parsed[cardKey][mode]
+                if (parsed[cardKey][mode]) {
+                    return parsed[cardKey][mode];
+                }
             }
         }
     } catch (e) { /* ignore */ }
 
-    // 3. 同步读取优先级 2：静态字典
+    // 3. 同步读取优先级 2：静态字典（双键索引：cardKey → skinId → mode）
+    if (CARD_CROP_CONFIG[cardKey] && CARD_CROP_CONFIG[cardKey][skinId]?.[mode]) {
+        return CARD_CROP_CONFIG[cardKey][skinId][mode]!;
+    }
+    // [皮肤] 向下兼容：如果指定 skinId 没找到，尝试 skinId 0
+    if (CARD_CROP_CONFIG[cardKey] && skinId !== 0 && CARD_CROP_CONFIG[cardKey][0]?.[mode]) {
+        return CARD_CROP_CONFIG[cardKey][0][mode]!;
+    }
+    // [皮肤] 继续向下兼容：老结构单层查找（局部热更新仍可能使用老格式）
     if (CARD_CROP_CONFIG[cardKey] && CARD_CROP_CONFIG[cardKey][mode]) {
         return CARD_CROP_CONFIG[cardKey][mode]!;
     }
@@ -150,7 +242,8 @@ const useNumberTicker = (targetValue: number, duration: number = 1000) => {
 };
 
 export const Card: React.FC<CardProps> = ({
-    data, location, onClick, isBlocker, isSelected, highlightTarget, onViewArt, isEnemyCombatant, attackType = 'clash',
+    data, location, skinId = 0, // [新增] 解构 skinId 并默认赋予 0 默认皮肤
+    onClick, isBlocker, isSelected, highlightTarget, onViewArt, isEnemyCombatant, attackType = 'clash',
     isSpeaking, isPlayable,
     onChallengerClick, isChallengerActive, isChallengedTarget, canBeChallenged, isFacingQuickAttack,
     isFaceUp = true,
@@ -168,7 +261,9 @@ export const Card: React.FC<CardProps> = ({
     titanCount,          // [泰坦] 场上泰坦总数
     isConditionActive = false,
     playerNexusHealth = 20, // [修复] 透传我方水晶血量，默认20
-    enemyNexusHealth = 20   // [修复] 透传敌方水晶血量，默认20
+    enemyNexusHealth = 20,   // [修复] 透传敌方水晶血量，默认20
+    onPointerDown,           // [新增] 战场拖拽
+    // [切除] 删掉这行重复的 skinId = 0，因为参数最上面已经解构过一遍了
 }) => {
     // 顶级防御
     if (!data) {
@@ -176,8 +271,20 @@ export const Card: React.FC<CardProps> = ({
         return null;
     }
 
-    // [修改] 获取当前卡牌形态的裁剪坐标，传入 data.level 从而智能区分原画
-    const crop = useCardCrop(data.key, location, data.level);
+    // [核心修复] 计算当前使用的卡面图片（皮肤绝对优先，且完美支持判断 2 级觉醒皮肤）
+    const currentImageUrl = useMemo(() => {
+        // 第一优先级：如果有皮肤，绝对优先去拿皮肤贴图（需将 2 级状态传给引擎）
+        if (skinId && skinId > 0) {
+            const skinImg = getSkinImage(data.key, skinId, data.level === 2);
+            if (skinImg) return skinImg; // 拿到了限定皮肤，直接返回！
+        }
+        // 第二优先级：兜底默认逻辑（没穿皮肤，或者皮肤资源丢失）
+        if (data.level === 2 && data.level2ImageUrl) return data.level2ImageUrl;
+        return data.imageUrl;
+    }, [data.key, data.level, data.level2ImageUrl, data.imageUrl, skinId]);
+
+    // [皮肤] 获取当前卡牌形态的裁剪坐标，传入 data.level + skinId 智能区分
+    const crop = useCardCrop(data.key, location, data.level, skinId);
 
     // [升级版] 全能数值反馈系统 (Health & Power)
     // 分别记录两个属性的变化量
@@ -202,9 +309,29 @@ export const Card: React.FC<CardProps> = ({
     const [ephemeralEmpty, setEphemeralEmpty] = useState(false); // 专用于控制瞬息最后0.3秒的数值瞬间归零
     const [isEphemeralExploded, setIsEphemeralExploded] = useState(false); // [新增] 标记 1.5s 帷幕结束，接入物理阵亡的时间点
 
+    // ==========================================
+    // [新增] 弹道延迟标记 — 必须声明在所有引用它的 useEffect 之前！
+    // ==========================================
+    const [projectileActive, setProjectileActive] = useState(false);
+
+    useEffect(() => {
+        const onStart = () => setProjectileActive(true);
+        const onEnd = () => setProjectileActive(false);
+        eventBus.on('SPELL_PROJECTILE_START', onStart);
+        eventBus.on('SPELL_PROJECTILE_END', onEnd);
+        return () => {
+            eventBus.off('SPELL_PROJECTILE_START', onStart);
+            eventBus.off('SPELL_PROJECTILE_END', onEnd);
+        };
+    }, []);
+
     useEffect(() => {
         if (data.animState === 'dying' || data.animState === 'ephemeral_dying') {
             const isEphemeral = data.animState === 'ephemeral_dying';
+
+            // [修复] 如果弹道飞行中（法术致死），暂不启动死亡计时
+            // 等弹道播完+受击播完后再死亡
+            if (projectileActive) return;
 
             if (isEphemeral) {
                 // 1. 第 1.2s：数值瞬间归零
@@ -229,7 +356,16 @@ export const Card: React.FC<CardProps> = ({
             setEphemeralEmpty(false);
             setIsEphemeralExploded(false);
         }
-    }, [data.animState]);
+    }, [data.animState, projectileActive]); // [修复] 追加 projectileActive 依赖
+
+    // ==========================================
+    // [新增] GSAP 单位受击特效 (Hit Effect)
+    // 三阶段动画：震动冲击 → 红闪+裂纹 → 恢复
+    // ==========================================
+    // 供 SpellImpactLayer 隔山打牛进行远程震荡的靶点
+    const cardInnerRef = useRef<HTMLDivElement>(null);
+    // 外层ref — 用于framer-motion
+    const cardHitRef = useRef<HTMLDivElement>(null);
 
 
     // 突破 React 失忆：获取模块级记录的上一位置
@@ -238,7 +374,10 @@ export const Card: React.FC<CardProps> = ({
 
     // 1. 同步更新模块记忆
     useEffect(() => {
-        cardLocationMemory.set(data.id, location);
+        // [修复 Bug 2] 隔离多重宇宙：严禁投影仪(preview)中的虚假实体篡改真实的物理记忆！
+        if (location !== 'preview') {
+            cardLocationMemory.set(data.id, location);
+        }
     }, [location, data.id]);
 
     // 2. 砸击特效调度器
@@ -282,7 +421,8 @@ export const Card: React.FC<CardProps> = ({
     const handleCardClick = (e: React.MouseEvent) => {
         if (isLocked) return;
 
-        if (isTacticalArea && onClick) {
+        if (isTacticalArea && onClick && !isTargetable && !isTargeted) {
+            // [修复] 施法瞄准选目标时不触发抬起动画（避免"选目标时微微抬起"的问题）
             setIsLifting(true);
             setTimeout(() => {
                 onClick();
@@ -311,7 +451,7 @@ export const Card: React.FC<CardProps> = ({
         if (currentFinalHealth !== prevHealth) {
             const diff = currentFinalHealth - prevHealth;
             if (diff < 0) {
-                // 扣血/受伤：立刻震动，立刻跳字
+                // 扣血/受伤：无视动画锁，立刻触发基础本地飘字与震荡
                 setLocalShake(true);
                 setHealthDelta(diff);
                 setTargetHealth(currentFinalHealth);
@@ -328,7 +468,7 @@ export const Card: React.FC<CardProps> = ({
             }
             prevHealthRef.current = currentFinalHealth;
         }
-    }, [currentFinalHealth]);
+    }, [currentFinalHealth, data.animState]);
 
     // [分离] 2. 检测攻击力变化
     useEffect(() => {
@@ -336,6 +476,7 @@ export const Card: React.FC<CardProps> = ({
         if (currentFinalPower !== prevPower) {
             const diff = currentFinalPower - prevPower;
             if (diff < 0) {
+                // 扣攻/虚弱：无视动画锁，立刻触发基础本地飘字与震荡
                 setLocalShake(true);
                 setPowerDelta(diff);
                 setTargetPower(currentFinalPower);
@@ -501,30 +642,6 @@ export const Card: React.FC<CardProps> = ({
         borderImg = CARD_BORDERS.spell;
     }
 
-    if (location === 'spell_stack') {
-        // 判断是否属于敌方法术
-        const isEnemySpell = data.id && data.id.includes('enemy');
-        return (
-            // [精修] 将 hover:border-red-400 和尺寸 w-24 h-24 实装
-            <div className={`relative w-24 h-24 rounded-full border-4 ${isEnemySpell ? 'border-red-500' : 'border-blue-400/80'} shadow-[0_0_20px_rgba(59,130,246,0.6)] overflow-hidden transition-transform duration-300 group-hover:scale-110 ${!isEnemySpell ? 'group-hover:border-red-400' : ''} cursor-pointer group z-30`}>
-
-                <img src={data.imageUrl} className="w-full h-full object-cover animate-pulse-slow" />
-
-                {/* 如果是我方打出的法术，在悬停时显示黑底红字的撤回提示 */}
-                {!isEnemySpell && (
-                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        <span className="text-red-300 font-black tracking-widest text-[10px]">点击以</span>
-                        <span className="text-white font-black tracking-widest text-[12px]">取消</span>
-                    </div>
-                )}
-
-                {/* 底部保留法术名称 */}
-                <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/80 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                    {data.name || 'Spell'}
-                </div>
-            </div>
-        );
-    }
 
     let animClass = '';
     // [核心修复] 同时监听 attacking 和 delayed_attacking 状态
@@ -555,9 +672,9 @@ export const Card: React.FC<CardProps> = ({
             }
         }
     }
-    // [修改] 整合震动(Shake)与闪光(Pulse)效果
+    // [修改] GSAP接手受击震动，animate-shake仅用于localShake（落地/撤回等）
     if (data.animState === 'hit' || localShake) {
-        animClass = 'animate-shake';
+        animClass = localShake ? 'animate-shake' : '';
     }
 
     const hasCantBlock = data.keywords && data.keywords.includes('CantBlock'); // 新增安全检查
@@ -613,9 +730,16 @@ export const Card: React.FC<CardProps> = ({
                 <div className="relative w-full h-full bg-black flex flex-col overflow-hidden rounded-md">
                     {/* 原画层 - 底层 (接入坐标裁剪) */}
                     <div className="absolute inset-0 z-0 overflow-hidden flex items-center justify-center">
+                        {/* [核心优化] 动态兜底背景：拥有皮肤时闪耀金色光辉，默认时保持灰白机能风 */}
+                        <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none ${
+                            skinId > 0
+                                ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
+                                : 'from-gray-300/40 via-gray-200/20 to-white/5'
+                        }`}></div>
                         <img
-                            src={data.level === 2 && data.level2ImageUrl ? data.level2ImageUrl : data.imageUrl}
+                            src={currentImageUrl}
                             alt={data.name}
+                            draggable={false}
                             // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的“瞬切”
                             className="max-w-none opacity-90 block"
                             style={{
@@ -634,7 +758,7 @@ export const Card: React.FC<CardProps> = ({
 
                     {/* 恢复原版主题边框 */}
                     <div className="absolute inset-0 z-20 pointer-events-none">
-                        <img src={borderImg} alt="Border" className="w-full h-full object-fill opacity-100 scale-[1.02]" />
+                        <img src={borderImg} alt="Border" className="w-full h-full object-fill opacity-100 scale-[1.02]" draggable={false} />
                     </div>
 
                     {/* --- 根据阵营决定镜像布局 --- */}
@@ -727,15 +851,23 @@ export const Card: React.FC<CardProps> = ({
                                 <img
                                     src={borderImg}
                                     alt="Border"
+                                    draggable={false}
                                     className="w-full h-full object-fill opacity-100"
                                 />
                             </div>
 
                     {/* 竖向模式原画层 (接入坐标裁剪) */}
                     <div className="absolute inset-0 bg-black overflow-hidden flex items-center justify-center">
+                        {/* [核心优化] 动态兜底背景：拥有皮肤时闪耀金色光辉，默认时保持灰白机能风 */}
+                        <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none ${
+                            skinId > 0
+                                ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
+                                : 'from-gray-300/40 via-gray-200/20 to-white/5'
+                        }`}></div>
                          <img
-                            src={data.level === 2 && data.level2ImageUrl ? data.level2ImageUrl : data.imageUrl}
+                            src={currentImageUrl}
                             alt={data.name}
+                            draggable={false}
                             // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的“瞬切”
                             className="max-w-none block"
                             style={{
@@ -962,6 +1094,7 @@ export const Card: React.FC<CardProps> = ({
                 src={cardBackUrl || "https://placehold.co/300x450/1e293b/ffffff?text=BACK"}
                 className="w-full h-full object-cover relative z-10"
                 alt="Card Back"
+                draggable={false}
             />
             <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none z-20"></div>
         </div>
@@ -1041,6 +1174,7 @@ export const Card: React.FC<CardProps> = ({
     return (
         <motion.div
             data-entity-id={data.id}
+            ref={cardHitRef}
 
             onClick={handleCardClick} // [核心] 接入我们写的拦截器
             onMouseEnter={handleMouseEnter}
@@ -1053,6 +1187,7 @@ export const Card: React.FC<CardProps> = ({
                     onViewArt(data);
                 }
             }}
+            onPointerDown={onPointerDown} // [新增] 战场拖拽入口
             className={`
                 relative cursor-pointer select-none group
                 ${containerClass}
@@ -1100,7 +1235,8 @@ export const Card: React.FC<CardProps> = ({
             {isShattering ? (
                 <ShatterEffect isPlayerSide={isPlayerSide} />
             ) : (
-                <>
+                // [修复] 内层 div — 提供 data-shake-target 锚点，供 SpellImpactLayer 隔山打牛做物理震荡
+                <div ref={cardInnerRef} data-shake-target={data.id} className="w-full h-full">
                     {visualFaceUp ? renderFrontFace() : renderBackFace()}
 
                     {/* [全新重构] 纯色金色高光遮罩 (Golden Overlay) - 0%到80%再到0%的快速闪爆 */}
@@ -1126,6 +1262,7 @@ export const Card: React.FC<CardProps> = ({
                                 src={isBench ? EFFECT_IMAGES.cardBroken1 : EFFECT_IMAGES.cardBroken2}
                                 className="w-full h-full object-cover opacity-90 mix-blend-overlay"
                                 alt="Shattered Glass"
+                                draggable={false}
                             />
                         </motion.div>
                     )}
@@ -1174,7 +1311,7 @@ export const Card: React.FC<CardProps> = ({
                             </div>
                         </div>
                     )}
-                </>
+                </div>
             )}
         </motion.div>
     );

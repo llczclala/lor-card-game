@@ -7,10 +7,12 @@ import { getCardLore } from '../data/loreData';
 import { ChampionLevelUp } from './ChampionLevelUp';
 import { CARD_DB } from '../data/cards';
 import { getLeveledUpCard, getCardPrice } from '../utils/gameRules';
-import { UI_ICONS, CURRENCY_ICONS } from '../data/imageData';
+import { UI_ICONS, CURRENCY_ICONS, SKIN_IMAGES, getSkinImage } from '../data/imageData'; // [皮肤]
 import { calculateGameScore } from '../logic/scoring'; // [新增] 评分逻辑
 import { STORAGE_KEYS } from '../utils/storageUtils';
 import { Card } from './Card';
+import { gameLogger } from '../utils/gameLogger'; // [核心新增] 引入黑匣子
+import { MissionToast } from './MissionUI'; // [核心新增] 引入结算滑动提示框
 
 // [新增] 自定义购买确认弹窗组件
 const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: any) => (
@@ -136,7 +138,13 @@ const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card
         </>
     );
 };
-// [新增] 扩展 Props 定义
+// [皮肤] 扩展 Props 定义
+interface SkinOverlayData {
+    ownedSkins: Record<string, number[]>; // 已拥有的皮肤
+    currentSkinId: number;                // 当前皮肤ID
+    onSkinChange: (cardKey: string, newSkinId: number) => void; // 切换回调
+}
+
 interface FullArtOverlayProps {
     card: CardData;
     onClose: () => void;
@@ -144,10 +152,12 @@ interface FullArtOverlayProps {
     onBuy?: (count: number, cost: number) => boolean;
     ownedCount?: number;
     playerSilver?: number;
+    // [皮肤] 皮肤切换相关（不传则不显示皮肤UI）
+    skinData?: SkinOverlayData;
 }
 
 
-export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver = 0 }: FullArtOverlayProps) => {
+export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSilver = 0, skinData }: FullArtOverlayProps) => {
     const [isLoreOpen, setIsLoreOpen] = useState(false);
 
     // [核心新增] 深度跳转状态接管
@@ -164,6 +174,28 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
     const [viewLevel, setViewLevel] = useState(currentCard.level);
     const [animState, setAnimState] = useState<'idle' | 'up' | 'down'>('idle');
 
+    // --- [皮肤] 皮肤浏览状态 ---
+    const availableSkins = useMemo(() => {
+        const skins = SKIN_IMAGES[currentCard.key];
+        if (!skins) return [];
+        return Object.keys(skins).map(Number).sort((a, b) => a - b);
+    }, [currentCard.key]);
+
+    // 当前正在浏览的 skinId（初始为传入的 currentSkinId，否则为 0）
+    const [browsingSkinId, setBrowsingSkinId] = useState(skinData?.currentSkinId ?? 0);
+    // 当传入 currentSkinId 变化时同步
+    useEffect(() => {
+        setBrowsingSkinId(skinData?.currentSkinId ?? 0);
+    }, [skinData?.currentSkinId]);
+
+    const currentBrowsingIdx = availableSkins.indexOf(browsingSkinId);
+    const hasPrevSkin = currentBrowsingIdx > 0;
+    const hasNextSkin = currentBrowsingIdx < availableSkins.length - 1;
+    const isSkinOwned = skinData ? (skinData.ownedSkins[currentCard.key]?.includes(browsingSkinId) ?? browsingSkinId === 0) : true;
+    const isSkinCurrent = skinData ? browsingSkinId === skinData.currentSkinId : true;
+    // 是否启用完整的皮肤切换功能（传了 onSkinChange 才启用）
+    const enableSkinUI = !!skinData;
+
     const { baseCard, leveledCard } = useMemo(() => {
         const base = CARD_DB[currentCard.key] as CardData;
         const leveled = getLeveledUpCard(base);
@@ -171,7 +203,14 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
     }, [currentCard.key]);
 
     const targetCard = !currentCard.isChampion ? currentCard : (viewLevel === 1 ? baseCard : leveledCard);
-    const displayImage = targetCard.level === 2 && targetCard.level2ImageUrl ? targetCard.level2ImageUrl : targetCard.imageUrl;
+    // [皮肤] 浏览皮肤时优先使用皮肤图片
+    const displayImage = useMemo(() => {
+        if (targetCard.level === 2 && targetCard.level2ImageUrl) return targetCard.level2ImageUrl;
+        if (enableSkinUI && browsingSkinId !== undefined && browsingSkinId !== null) {
+            return getSkinImage(currentCard.key, browsingSkinId) || targetCard.imageUrl;
+        }
+        return targetCard.imageUrl;
+    }, [targetCard, currentCard.key, browsingSkinId, enableSkinUI]);
 
     const getRegionLabel = (region: string, key: string) => {
         if (key.startsWith('test_')) return 'TEST';
@@ -271,7 +310,20 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
                     </div>
 
                     {/* 图层 2 (顶层): 完整原画展示 */}
-                    <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 z-10 flex items-center justify-center p-4"
+                        onWheel={(e) => {
+                            if (!enableSkinUI || availableSkins.length <= 1) return;
+                            e.stopPropagation();
+                            if (e.deltaY > 0 && hasNextSkin) {
+                                const idx = availableSkins.indexOf(browsingSkinId);
+                                if (idx < availableSkins.length - 1) setBrowsingSkinId(availableSkins[idx + 1]);
+                            } else if (e.deltaY < 0 && hasPrevSkin) {
+                                const idx = availableSkins.indexOf(browsingSkinId);
+                                if (idx > 0) setBrowsingSkinId(availableSkins[idx - 1]);
+                            }
+                        }}
+                    >
                         <img
                             src={displayImage} // [修改] 使用动态 displayImage
                             className="w-full h-full object-contain drop-shadow-2xl transition-all duration-300"
@@ -368,6 +420,77 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
                             <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5 object-contain" />
                             <span className="font-mono font-black text-xl text-white">{playerSilver.toLocaleString()}</span>
                         </div>
+                    )}
+
+                    {/* ============== [皮肤] 皮肤浏览/切换层 ============== */}
+                    {enableSkinUI && availableSkins.length > 1 && animState === 'idle' && (
+                        <>
+                            {/* 左右箭头（金属感半透明浮层） */}
+                            {/* 左箭头 */}
+                            {hasPrevSkin && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const idx = availableSkins.indexOf(browsingSkinId);
+                                        if (idx > 0) setBrowsingSkinId(availableSkins[idx - 1]);
+                                    }}
+                                    className="absolute left-4 top-1/2 -translate-y-1/2 z-30 w-14 h-14 rounded-full bg-black/50 hover:bg-yellow-600/60 border border-white/20 backdrop-blur-md flex items-center justify-center transition-all hover:scale-110 cursor-pointer shadow-xl group/nav"
+                                >
+                                    <span className="text-3xl font-black text-white group-hover/nav:text-yellow-300 transition-colors">‹</span>
+                                </button>
+                            )}
+                            {/* 右箭头 */}
+                            {hasNextSkin && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const idx = availableSkins.indexOf(browsingSkinId);
+                                        if (idx < availableSkins.length - 1) setBrowsingSkinId(availableSkins[idx + 1]);
+                                    }}
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 z-30 w-14 h-14 rounded-full bg-black/50 hover:bg-yellow-600/60 border border-white/20 backdrop-blur-md flex items-center justify-center transition-all hover:scale-110 cursor-pointer shadow-xl group/nav"
+                                >
+                                    <span className="text-3xl font-black text-white group-hover/nav:text-yellow-300 transition-colors">›</span>
+                                </button>
+                            )}
+
+                            {/* 底部皮肤信息栏 */}
+                            <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 flex items-center gap-4 bg-black/70 backdrop-blur-md px-5 py-2.5 rounded-full border border-white/15 shadow-xl">
+                                {/* 锁定/拥有状态 */}
+                                {!isSkinOwned ? (
+                                    <span className="text-red-400 text-xs font-bold tracking-wider mr-2">🔒 未拥有</span>
+                                ) : isSkinCurrent ? (
+                                    <span className="text-green-400 text-xs font-bold tracking-wider mr-2">✓ 当前皮肤</span>
+                                ) : null}
+
+                                {/* 皮肤编号 */}
+                                <span className="text-yellow-400 font-mono font-bold text-sm">
+                                    皮肤 {browsingSkinId}
+                                </span>
+                                <span className="text-gray-500 text-xs font-mono">
+                                    {currentBrowsingIdx + 1}/{availableSkins.length}
+                                </span>
+
+                                {/* 切换按钮 */}
+                                {!isSkinCurrent && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (isSkinOwned) {
+                                                skinData?.onSkinChange(currentCard.key, browsingSkinId);
+                                            }
+                                        }}
+                                        disabled={!isSkinOwned}
+                                        className={`px-4 py-1.5 rounded-full font-black text-xs tracking-wider transition-all ${
+                                            isSkinOwned
+                                                ? 'bg-gradient-to-r from-yellow-600 to-orange-500 hover:from-yellow-500 hover:to-orange-400 text-white shadow-[0_0_15px_rgba(234,179,8,0.4)] cursor-pointer'
+                                                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        {isSkinOwned ? '更换皮肤' : '已锁定'}
+                                    </button>
+                                )}
+                            </div>
+                        </>
                     )}
 
                     {/* 故事抽屉 (Lore Drawer) - 保持不变 */}
@@ -500,7 +623,7 @@ export const FullArtOverlay = ({ card, onClose,onBuy,ownedCount = 0,playerSilver
                             <p className="text-white text-xl font-medium italic text-center leading-relaxed max-w-[80%]">
                                 "{targetCard.name.includes('里芙') ? '此牌打击 2 次。' :
                                  (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 10。' :
-                                 (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 4 次' :'满足特定条件。'))}"
+                                 (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 3 次' :'满足特定条件。'))}"
                             </p>
                         </div>
                     )}
@@ -528,18 +651,20 @@ interface LevelUpOverlayProps {
     card: CardData;
     onClose: () => void;
     onPlayMovie: (heroKey: string, onEnd: () => void) => void;
-    onStopMovie: () => void; // [新增] 定义回调
-    popLevelUp?: () => void; // [新增] 定义出队回调
+    onPrepareMovie?: (heroKey: string) => void; // [核心新增]
+    onStopMovie: () => void;
+    popLevelUp?: () => void;
 }
 
-export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, onPlayMovie, onStopMovie, popLevelUp }) => {
+export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, onPlayMovie, onPrepareMovie, onStopMovie, popLevelUp }) => {
     return (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black">
             {/* 引入 ChampionLevelUp 组件处理所有动画流程 (旋转 -> 视频 -> 爆发) */}
             <ChampionLevelUp
                 card={card}
                 onPlayMovie={onPlayMovie}
-                onStopMovie={onStopMovie} // [新增] 透传给核心组件
+                onPrepareMovie={onPrepareMovie} // [向下透传] 交给升级动画控制器
+                onStopMovie={onStopMovie}
                 onComplete={() => {
                     if (popLevelUp) popLevelUp(); // [核心修改] 动画/视频彻底播完后，先将英雄移除队列！
                     onClose(); // 再关闭全屏弹窗，交还控制权
@@ -551,32 +676,53 @@ export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, o
 
 interface GameOverProps {
     result: 'victory' | 'defeat';
-    // [新增] 接收统计数据
     stats: GameStats;
     onExit: () => void;
     onPlayMovie?: (onEnd: () => void) => void;
+    onPrepareMovie?: () => void; // [核心新增]
+    missionSystem: any; // [核心新增] 透传任务系统大脑 ReturnType<typeof useMissionSystem>
 }
 
-export const GameOverScreen = ({ result, stats,onExit, onPlayMovie }: GameOverProps) => {
+export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMovie, missionSystem }: GameOverProps) => {
     // 阶段：init(模糊+文字) -> blackout_in -> video -> blackout_out -> menu
     const [phase, setPhase] = useState<'init' | 'blackout_in' | 'video' | 'blackout_out' | 'menu'>('init');
 
     const processedRef = useRef(false); // 防止重复入账
 
     const onPlayMovieRef = useRef(onPlayMovie);
+    const onPrepareMovieRef = useRef(onPrepareMovie); // [新增]
+
     useEffect(() => {
         onPlayMovieRef.current = onPlayMovie;
-    }, [onPlayMovie]);
+        onPrepareMovieRef.current = onPrepareMovie; // [新增]
+    }, [onPlayMovie, onPrepareMovie]);
 
     // [新增] 计算评分结果 (Memo 确保只算一次)
     const scoreResult = useMemo(() => {
         return calculateGameScore(stats, result, stats.heroLevelUps > 0);
     }, [stats, result]);
 
+    // [新增] 存储本次结算产生的任务进度更新队列
+    const [missionUpdates, setMissionUpdates] = useState<any[]>([]);
+
     useEffect(() => {
         // [关键] 在这里使用 processedRef 防止重复入账
         if ((phase === 'menu' || result === 'defeat') && !processedRef.current) {
             processedRef.current = true; // 标记为已处理
+
+            // ==========================================
+            // [军功系统接入] 抽出黑匣子日志，送入任务大脑扫描！
+            // ==========================================
+            const finalLogs = gameLogger.flushLogs();
+            if (missionSystem && missionSystem.scanLogs) {
+                const updates = missionSystem.scanLogs(finalLogs);
+                if (updates.length > 0) {
+                    setMissionUpdates(updates);
+                }
+            } else {
+                 // 兜底清理，防止中途退出产生的脏数据
+                 gameLogger.clearLogs();
+            }
 
             // 1. 获取当前用户 ID
             const currentUid = localStorage.getItem(STORAGE_KEYS.USER_ID);
@@ -602,6 +748,7 @@ export const GameOverScreen = ({ result, stats,onExit, onPlayMovie }: GameOverPr
                         // 如果没有存档（理论上不应发生），新建一个
                         newCollection = {
                             ownedCards: {},
+                            ownedSkins: {}, // [皮肤]
                             resources: { silverCoin: scoreResult.silverEarned, dataGold: 0, bitGold: 0 }
                         };
                     }
@@ -617,14 +764,18 @@ export const GameOverScreen = ({ result, stats,onExit, onPlayMovie }: GameOverPr
     }, [phase, result, scoreResult.silverEarned]);
 
 
-    // 演出流程控制 (保持原有逻辑)
+    // 演出流程控制 (融入预热机制)
     useEffect(() => {
         if (result === 'defeat') {
             setPhase('menu');
             return;
         }
 
-        // [修改 3] 移除了 sequenceTriggeredRef 检查，防止死锁
+        // [核心斩杀] 刚挂载组件、判定为胜利的瞬间，立刻让放映机后台装弹热车！
+        // 此时距离真正切入黑屏(blackout_in)还有 1.5 秒，足够视频解码器把第一帧牢牢锁进显存！
+        if (onPrepareMovieRef.current) {
+            onPrepareMovieRef.current();
+        }
 
         const t1 = setTimeout(() => setPhase('blackout_in'), 1500);
         const t2 = setTimeout(() => {
@@ -754,6 +905,14 @@ export const GameOverScreen = ({ result, stats,onExit, onPlayMovie }: GameOverPr
                         </button>
                     </div>
                 </div>
+            )}
+
+            {/* [核心挂载] 军功进度滑出提示仪 (悬浮在最上层) */}
+            {missionUpdates.length > 0 && (
+                <MissionToast
+                    updates={missionUpdates}
+                    onFinish={() => setMissionUpdates([])} // 播完后销毁队列
+                />
             )}
         </div>
     );

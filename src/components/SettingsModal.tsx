@@ -14,6 +14,9 @@ interface SettingsModalProps {
         movie: number;
     };
     onVolumeChange: (type: 'bgm' | 'sfx' | 'voice' | 'movie', value: number) => void;
+    // [新增] 画质控制回调
+    videoResolution?: '1k' | '2k' | '4k';
+    onResolutionChange?: (res: '1k' | '2k' | '4k') => void;
 }
 
 const VolumeSlider = ({ label, icon: Icon, value, onChange }: { label: string, icon: any, value: number, onChange: (val: number) => void }) => {
@@ -76,7 +79,7 @@ const VolumeSlider = ({ label, icon: Icon, value, onChange }: { label: string, i
     );
 };
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange }) => {
 
     // ESC 键监听
     useEffect(() => {
@@ -161,8 +164,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                 />
                             </div>
 
+                            {/* [核心新增] 影片画质设置 (Video Resolution) */}
+                            {onResolutionChange && (
+                                <div className="space-y-4 pt-4 border-t border-white/5">
+                                    <div className="flex justify-between items-center px-2">
+                                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Video Quality</h3>
+                                    </div>
+                                    <div className="flex bg-black/60 p-1 rounded-xl border border-white/5">
+                                        {(['1k', '2k', '4k'] as const).map(res => (
+                                            <button
+                                                key={res}
+                                                onClick={() => {
+                                                    eventBus.emit(GameEvents.UI_CLICK);
+                                                    onResolutionChange(res);
+                                                }}
+                                                className={`flex-1 py-2.5 text-sm font-black tracking-widest rounded-lg transition-all ${videoResolution === res ? 'bg-gradient-to-b from-blue-500 to-blue-700 text-white shadow-lg shadow-blue-900/50' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
+                                            >
+                                                {res.toUpperCase()}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* 底部功能区 */}
-                            <div className="pt-6 border-t border-white/10 flex justify-between items-center">
+                            <div className="pt-6 border-t border-white/10 flex justify-between items-center mt-6">
                                 <div className="text-xs font-mono text-gray-600">
                                     Snowbreak Rivals Client<br/>
                                     v4.2 (Audio Update)

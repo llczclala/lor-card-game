@@ -29,6 +29,7 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
     // 获取保底和定轨状态 (注意：需要先在 initialUserData 里添加这两个字段，这里先用 fallback)
     // 稍后我们会去 initialUserData.ts 补上这些字段定义
     const pityCounter = (profile as any).pityCounter || 0;
+    const skinPityCounter = (profile as any).skinPityCounter || 0; // [核心新增] 获取皮肤保底进度
     const currentTarget = (profile as any).gachaTarget || null;
 
     // --- 核心操作：执行抽卡 ---
@@ -54,19 +55,29 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
 
         const results: GachaResult[] = [];
         let newPity = pityCounter;
+        let newSkinPity = skinPityCounter; // [核心新增] 初始化局部皮肤保底变量
         let newSilver = resources.silverCoin;
         let newBitGold = resources.bitGold;
 
         // 循环执行抽卡逻辑
         for (let i = 0; i < count; i++) {
-            const res = rollOne(collection!, newPity, currentTarget);
+            // [核心修复] 喂给 rollOne 皮肤保底参数，以及 userSettings 查缺补漏重复饰品
+            const res = rollOne(collection!, newPity, newSkinPity, currentTarget, userSystem.settings);
             results.push(res);
 
-            // 更新保底
-            if (res.isRare) {
-                newPity = 0; // 出货重置
+            // [核心修复] 分离双轨保底重置逻辑
+            // 常规百抽保底（仅在出金且非皮肤时重置）
+            if (res.isRare && res.type !== 'skin') {
+                newPity = 0;
             } else {
                 newPity++;
+            }
+
+            // 皮肤 30 抽保底（出皮肤时重置）
+            if (res.type === 'skin') {
+                newSkinPity = 0;
+            } else {
+                newSkinPity++;
             }
 
             // 处理转化货币 (模拟累加，实际需要写入数据库)
@@ -88,7 +99,8 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
         // [临时逻辑] 直接更新资源，假装写入了
         // 真正的写入需要在 useUserSystem.ts 里实现 updateCollection 等方法
         if (userSystem.performGacha) {
-             userSystem.performGacha(cost, results, newPity);
+             // [核心修复] 向发货中枢同步更新后的 newSkinPity
+             userSystem.performGacha(cost, results, newPity, newSkinPity);
         } else {
              console.warn("useUserSystem.performGacha not implemented yet!");
         }
@@ -235,12 +247,24 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                         <Search size={14} /> 概率查看
                     </button>
 
-                    {/* 保底计数器 */}
-                    <div className="flex flex-col gap-1">
-                        <div className="text-[10px] text-purple-300 font-black tracking-widest uppercase">累计抽取次数</div>
-                        <div className="text-4xl font-black italic text-white flex items-baseline gap-1">
-                            <span className="text-purple-400">{pityCounter}</span>
-                            <span className="text-lg text-gray-500">/ {MAX_PITY}</span>
+                    {/* 双轨保底看板 */}
+                    <div className="flex gap-8">
+                        {/* 常规保底计数器 */}
+                        <div className="flex flex-col gap-1">
+                            <div className="text-[10px] text-yellow-500 font-black tracking-widest uppercase">绝密保底进度</div>
+                            <div className="text-4xl font-black italic text-white flex items-baseline gap-1">
+                                <span className="text-yellow-400">{pityCounter}</span>
+                                <span className="text-lg text-gray-500">/ {MAX_PITY}</span>
+                            </div>
+                        </div>
+
+                        {/* 皮肤保底计数器 */}
+                        <div className="flex flex-col gap-1">
+                            <div className="text-[10px] text-purple-400 font-black tracking-widest uppercase">高定皮肤保底</div>
+                            <div className="text-4xl font-black italic text-white flex items-baseline gap-1">
+                                <span className="text-purple-400">{skinPityCounter}</span>
+                                <span className="text-lg text-gray-500">/ 30</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -308,9 +332,14 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                                 <span>Legendary (Heroes/Styles)</span>
                                 <span className="text-yellow-400 font-bold">2.00%</span>
                             </div>
+                            {/* [核心新增] 公示 4% 的独立皮肤爆率 */}
+                            <div className="flex justify-between">
+                                <span>Epic (Exclusive Skins)</span>
+                                <span className="text-purple-400 font-bold">4.00%</span>
+                            </div>
                             <div className="flex justify-between">
                                 <span>Common (Unit/Spell Cards)</span>
-                                <span className="text-white font-bold">98.00%</span>
+                                <span className="text-white font-bold">94.00%</span>
                             </div>
                             <div className="h-px bg-white/10 my-2"></div>
                             <p className="text-xs text-gray-500">

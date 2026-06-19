@@ -6,11 +6,39 @@ import { executeSpellEffect } from '../logic/spells';
 import { resolveSingleCombat} from '../logic/combat';
 import { calculateRoundStart, canAfford } from '../logic/core';
 import { eventBus, GameEvents } from '../utils/eventBus';
+// [新增] 法术弹道事件
+import { ProjectileEvents } from '../components/SpellProjectile';
 import { applyRoundStartKeywords, applyRoundEndKeywords, resolveTitanPulse } from '../logic/keywords'; // [新增] 引入回合结束扫荡 + 泰坦脉冲
 import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 import { checkCardLevelUp } from '../utils/gameRules';
+import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
+
+// ==========================================
+// [时间管理器] 等待弹道特效播完再执行游戏逻辑
+// 确保视觉顺序：瞄准线 → 弹道飞出 → 命中 → 受击 → 飘字 → 死亡
+// ==========================================
+const waitForProjectileEnd = (timeoutMs: number = 3000): Promise<void> => {
+    return new Promise((resolve) => {
+        let resolved = false;
+        const onEnd = () => {
+            if (resolved) return;
+            resolved = true;
+            eventBus.off(ProjectileEvents.END, onEnd);
+            resolve();
+        };
+        eventBus.on(ProjectileEvents.END, onEnd);
+        // 安全超时：防止弹道Bug导致游戏卡死
+        setTimeout(() => {
+            if (!resolved) {
+                resolved = true;
+                eventBus.off(ProjectileEvents.END, onEnd);
+                resolve();
+            }
+        }, timeoutMs);
+    });
+};
 
 // [修复 A] 显式断言类型，并确保 createCard 返回的是 Partial CardData 或正确的基类
 const createFullCard = (key: string): CardData => {
@@ -42,6 +70,46 @@ const shuffleDeck = <T>(array: T[]): T[] => {
         [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
     }
     return newArray;
+};
+// ==========================================
+// [特效包装器] 拦截法术伤害，强制注入受击状态 (解决 BUG 5)
+// ==========================================
+const wrapDamageHitState = (originalSetter: React.Dispatch<React.SetStateAction<CardData[]>>) => {
+    return (action: React.SetStateAction<CardData[]>) => {
+        originalSetter(prev => {
+            const next = typeof action === 'function' ? action(prev) : action;
+            return next.map(newCard => {
+                const oldCard = prev.find(c => c.id === newCard.id);
+                // 只要新状态的累计受伤值 > 旧状态，判定为受击，强制改写动画状态！
+                if (oldCard && (newCard.damageTaken || 0) > (oldCard.damageTaken || 0)) {
+                    return { ...newCard, animState: 'hit' as const };
+                }
+                return newCard;
+            });
+        });
+    };
+};
+
+const wrapCombatHitState = (originalSetter: React.Dispatch<React.SetStateAction<any[]>>) => {
+    return (action: React.SetStateAction<any[]>) => {
+        originalSetter(prev => {
+            const next = typeof action === 'function' ? action(prev) : action;
+            return next.map(newFight => {
+                const oldFight = prev.find(f => f.attacker.id === newFight.attacker.id);
+                if (!oldFight) return newFight;
+                let updatedAttacker = newFight.attacker;
+                let updatedBlocker = newFight.blocker;
+
+                if ((updatedAttacker.damageTaken || 0) > (oldFight.attacker.damageTaken || 0)) {
+                    updatedAttacker = { ...updatedAttacker, animState: 'hit' as const };
+                }
+                if (updatedBlocker && oldFight.blocker && (updatedBlocker.damageTaken || 0) > (oldFight.blocker.damageTaken || 0)) {
+                    updatedBlocker = { ...updatedBlocker, animState: 'hit' as const };
+                }
+                return { ...newFight, attacker: updatedAttacker, blocker: updatedBlocker };
+            });
+        });
+    };
 };
 
 // 1. 接收 initialDeck 参数，默认为空数组
@@ -331,6 +399,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
                 // [核心修正] 防重复触发必须同时放过 dying 和 ephemeral_dying，绝不能用普通死亡覆盖瞬息死亡！
                 if (currentHealth <= 0 && unit.animState !== 'dying' && unit.animState !== 'ephemeral_dying') {
+                    // [视觉解耦] 不再需要暂缓死刑等待 hit 状态，死亡碎裂动画与独立受击特效完美兼容，直接处决！
                     needsUpdate = true;
                     deadUnitsToBroadcast.push(unit);
                     // 缓刑：不直接删除，只挂载死亡标记下发给视图层播放特效
@@ -400,6 +469,14 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 setWinningHeroKeys(heroes);
             }
 
+            // [新增] 军功审计探针：记录对局落幕
+            gameLogger.logEvent({
+                type: 'game_end',
+                turn: game.round,
+                isPlayerSide: true,
+                result: finalResult === 'victory' ? 'win' : 'loss'
+            });
+
             setGame(prev => ({ ...prev, gameResult: finalResult }));
         }
     }, [game.playerNexus, game.enemyNexus, game.phase, game.gameResult, playerBench]);
@@ -463,6 +540,76 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         }
     // [关键依赖] 水晶血量变化、备战席人员变化，都会唤醒这套扫描引擎！
     }, [game.playerNexus, game.enemyNexus, playerBench, enemyBench, game.phase, game.gameResult]);
+
+
+    // ==========================================
+    // [新增] 自动推进引擎 (Auto-Advance Engine)
+    // ==========================================
+    const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
+
+    const canPlayerAct = (checkPhase: string) => {
+        const { playerMana, playerSpellMana } = stateRef.current.game;
+        const hand = stateRef.current.playerHand;
+        const bench = stateRef.current.playerBench;
+        const field = stateRef.current.combatField;
+
+        // 1. 格挡阶段：检查是否有能用的阻挡者
+        if (checkPhase === 'block_declare') {
+            const canBlock = bench.some(blocker => {
+                if (blocker.keywords.includes('CantBlock')) return false;
+                return field.some(fight => {
+                    // 只能挡对面的空位
+                    if (fight.blocker !== null || fight.owner !== 'enemy') return false;
+                    if (fight.attacker.keywords.includes('Elusive') && !blocker.keywords.includes('Elusive')) return false;
+                    const blockerPower = (blocker.power || 0) + (blocker.buffs?.power || 0);
+                    if (fight.attacker.keywords.includes('Fearsome') && blockerPower < 3) return false;
+                    return true;
+                });
+            });
+            if (canBlock) return true;
+
+            // [格挡确认保护] 如果玩家已经分配了格挡单位，视为"可操作"
+            // 此时玩家可以选择"格挡"按钮确认，或点击已分配的格挡者撤回
+            const hasAssignedBlockers = field.some(fight => fight.blocker !== null);
+            if (hasAssignedBlockers) return true;
+        }
+
+        // 2. 响应阶段 (包含格挡阶段)：检查是否有合规的法术可以打出
+        if (checkPhase === 'block_declare' || checkPhase === 'react_to_block') {
+            const canCast = hand.some(card => {
+                if (!card.type.includes('spell')) return false;
+                if (card.type === 'spell-slow') return false; // 战斗中绝不能打慢速法术
+                return canAfford(card, playerMana, playerSpellMana);
+            });
+            if (canCast) return true;
+        }
+
+        return false;
+    };
+
+    useEffect(() => {
+        // 不在动画期、不在结算期、不是微队列未清空期
+        if (game.phase === 'animating' || game.gameResult !== null || pendingActionsRef.current.length > 0) return;
+
+        // 仅在轮到玩家的防守/响应回合进行托管检测
+        if (game.turnOwner === 'player' && (game.phase === 'block_declare' || game.phase === 'react_to_block')) {
+            if (!canPlayerAct(game.phase)) {
+                setIsAutoAdvancing(true);
+
+                // 给予 0.8 秒的视觉缓冲期，让玩家看清敌方刚刚的操作，防晕车
+                const timer = setTimeout(() => {
+                    setIsAutoAdvancing(false);
+                    passTurn();
+                }, 800);
+
+                return () => clearTimeout(timer);
+            }
+        } else {
+            setIsAutoAdvancing(false);
+        }
+    // 注意：绝不可将 passTurn 加入依赖以避免死循环
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [game.phase, game.turnOwner, playerHand.length, playerBench.length, game.playerMana, game.playerSpellMana]);
 
 
     // --- 3. 基础操作 ---
@@ -595,9 +742,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         eventBus.emit(GameEvents.ROUND_START);
         const currentGameState = stateRef.current.game;
         const nextRoundBase = calculateRoundStart(currentGameState);
-        // [核心修复] 回合结束，不仅移除屏障，还要扣除所有“单回合临时增益 (roundBuffs)”和“临时词条 (roundKeywords)”
+        // [改造] 回合开始，将屏障标记为黯淡（而非移除），为后续刷新法术做准备
         const clearRoundBuffsAndBarrier = (cards: CardData[]) => cards.map(c => {
-            const nextCard = { ...c, keywords: c.keywords.filter(k => k !== 'Barrier') };
+            const nextCard = { ...c };
+            if (nextCard.keywords.includes('Barrier') && !(nextCard.depletedKeywords || []).includes('Barrier')) {
+                nextCard.depletedKeywords = [...(nextCard.depletedKeywords || []), 'Barrier'];
+            }
 
             // 1. 扣除临时数值账本
             if (nextCard.roundBuffs && (nextCard.roundBuffs.power > 0 || nextCard.roundBuffs.health > 0)) {
@@ -926,6 +1076,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             let currentFight = stateRef.current.combatField[i];
             const { attacker, blocker } = currentFight;
 
+            // [新增] 军功审计探针：记录我方发起进攻 (用于里芙卡背等任务)
+            if (currentFight.owner === 'player') {
+                gameLogger.logEvent({ type: 'attack', turn: stateRef.current.game.round, isPlayerSide: true, cardKey: attacker.key });
+            }
+
             // [核心修复 1] 将快攻情报判定提前，用于指导动画状态机分流
             const hasQuickAttack = attacker.keywords.includes('QuickAttack');
 
@@ -1023,6 +1178,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // 1. 水晶伤害
             if (result.nexusDamage && result.nexusDamage.target === 'enemy') {
                 statsDelta.nexus = result.nexusDamage.amount;
+
+                // [新增] 军功审计探针：记录对敌方水晶造成的伤害 (用于芬妮卡背等任务)
+                const dmgSource = currentFight.owner === 'player' ? currentFight.attacker : currentFight.blocker;
+                if (dmgSource) {
+                    gameLogger.logEvent({ type: 'nexus_damage', turn: stateRef.current.game.round, isPlayerSide: true, sourceCardKey: dmgSource.key, amount: result.nexusDamage.amount });
+                }
             }
 
             // 2. 击杀统计 (需判断死者归属)
@@ -1221,77 +1382,102 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const updateSpellCasting = (newState: any) => setGame(prev => ({ ...prev, spellCasting: newState }));
 
     // [修改 3：施法生命周期重塑] commitSpell 替代 finalizeSpell
-    const commitSpell = (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
-        // [新增] 在生成快照前，先拯救处于悬浮缓冲站的上一张法术！
+    // [时间管理] async：等待弹道特效播完再执行游戏逻辑
+    const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
         const existingPending = stateRef.current.game.pendingSpell;
-
-        // A. [核心修复：打破时间循环] 同步构建一份绝对干净的 Game 状态快照！
-        let cleanSnapshot = {
-            ...stateRef.current.game,
-            spellCasting: null,
-            pendingSpell: null,
-            activeCard: null
-        };
-
-        // [核心解药] 如果提供了原始阶段，就用原始阶段；如果没提供但当前是 'animating'，强制回滚到 'main'
+        let cleanSnapshot = { ...stateRef.current.game };
         const safePhase = originalPhase || (cleanSnapshot.phase === 'animating' ? 'main' : cleanSnapshot.phase);
 
-        // B. [防连环扣款] 直接在这份干净快照上扣除费用
-        if (!card.parentCard) {
-            const { newMana, newSpellMana } = calculateNewMana(
-                card.cost,
-                owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
-                owner === 'player' ? cleanSnapshot.playerSpellMana : cleanSnapshot.enemySpellMana,
-                false
-            );
-
-            if (owner === 'player') {
-                cleanSnapshot.playerMana = newMana;
-                cleanSnapshot.playerSpellMana = newSpellMana;
-            } else {
-                cleanSnapshot.enemyMana = newMana;
-                cleanSnapshot.enemySpellMana = newSpellMana;
-            }
-        }
-
-        // C. [响应机制分流] 根据法术速度决定是瞬间生效还是打包入栈
         if (card.type === 'spell-burst') {
-            // 极速法术：绕过堆叠，瞬间结算！
-            // [极其关键] 传入准备好的 cleanSnapshot，彻底杜绝 UI 旧状态(如正在瞄准)复活！
+            // [修复 BUG 1] 先行扣费，但绝不清理 spellCasting，保持红蓝瞄准线 1 秒常驻悬停！
+            if (!card.parentCard) {
+                const { newMana, newSpellMana } = calculateNewMana(
+                    card.cost,
+                    owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
+                    owner === 'player' ? cleanSnapshot.playerSpellMana : cleanSnapshot.enemySpellMana,
+                    false
+                );
+                if (owner === 'player') {
+                    cleanSnapshot.playerMana = newMana;
+                    cleanSnapshot.playerSpellMana = newSpellMana;
+                } else {
+                    cleanSnapshot.enemyMana = newMana;
+                    cleanSnapshot.enemySpellMana = newSpellMana;
+                }
+            }
+
+            setGame(cleanSnapshot);
+            setMessage("极速法术准备就绪...");
+
+            // 倒数 1 秒钟，让子弹飞一会儿
+            await wait(1000);
+
+            // [修复 BUG 2] 薛定谔的撤销 (防反悔锁校验)
+            // 校验在这 1 秒悬停期内，法术是否被玩家点击图标给撤回了
+            const currentActiveCard = stateRef.current.game.activeCard;
+            if (owner === 'player' && (!currentActiveCard || currentActiveCard.id !== card.id)) {
+                console.log("[SpellSystem] 极速法术在 1 秒悬停期内被撤回，执行链已安全熔断！");
+                return;
+            }
+
+            // 校验通过，正式清理前台的 UI 连线与图标
+            setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
+
+            // 鸣枪，发射法球特效
+            eventBus.emit(ProjectileEvents.START, { targets, cardKey: card.key });
+            await waitForProjectileEnd();
+
+            // [视觉解耦] 伤害受击特效已交由事件总线直驱，此处剥离状态拦截器，还原最纯净的结算环境！
             executeSpellEffect(card.key, owner, targets, {
-                game: cleanSnapshot,
+                game: stateRef.current.game, // 使用 1 秒后的最新状态
                 setGame,
                 playerBench: stateRef.current.playerBench, setPlayerBench,
                 enemyBench: stateRef.current.enemyBench, setEnemyBench,
-                combatField: stateRef.current.combatField, setCombatField, // [新增] 授予交战区权限
+                combatField: stateRef.current.combatField, setCombatField,
                 playerHand: stateRef.current.playerHand, setPlayerHand,
                 triggerShake
             });
 
-            // [修正] 结算后必须留在当前阶段（主阶段或格挡响应阶段），绝不能无脑回 main
             setGame(prev => ({ ...prev, phase: safePhase, lastActionTimestamp: Date.now() }));
             setMessage("极速法术生效");
         } else {
+            // 慢速 / 快速法术同理，扣费并立刻清理 UI
+            if (!card.parentCard) {
+                const { newMana, newSpellMana } = calculateNewMana(
+                    card.cost,
+                    owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
+                    owner === 'player' ? cleanSnapshot.playerSpellMana : cleanSnapshot.enemySpellMana,
+                    false
+                );
+                if (owner === 'player') {
+                    cleanSnapshot.playerMana = newMana;
+                    cleanSnapshot.playerSpellMana = newSpellMana;
+                } else {
+                    cleanSnapshot.enemyMana = newMana;
+                    cleanSnapshot.enemySpellMana = newSpellMana;
+                }
+            }
+
+            cleanSnapshot.spellCasting = null;
+            cleanSnapshot.activeCard = null;
+
             const stackItem: SpellStackItem = { card, owner, targets };
             if (owner === 'player') {
-                // [核心修复：进入缓冲站] 玩家打出的法术，放入预提交区
                 setGame({
                     ...cleanSnapshot,
-                    // [多重施法引擎] 如果缓冲站原本就有法术，把它强行挤进正规堆叠区！
                     spellStack: existingPending ? [existingPending, ...cleanSnapshot.spellStack] : cleanSnapshot.spellStack,
                     pendingSpell: stackItem,
-                    phase: safePhase // [关键修复] 植入安全的时空锚点！
+                    phase: safePhase
                 });
                 setMessage("请确认是否打出该法术");
             } else {
-                // 敌方的法术直接入栈并把响应权交给我们
                 setGame({
                     ...cleanSnapshot,
                     spellStack: [stackItem, ...cleanSnapshot.spellStack],
                     turnOwner: 'player',
                     consecutivePasses: 0,
                     lastActionTimestamp: Date.now(),
-                    phase: safePhase // [关键修复] 植入安全的时空锚点！
+                    phase: safePhase
                 });
                 setMessage("敌方打出法术，请响应");
             }
@@ -1384,6 +1570,14 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 无论单位还是法术，都要从手牌移除
         if (owner === 'player') setPlayerHand(prev => prev.filter(c => c.id !== card.id));
         else setEnemyHand(prev => prev.filter(c => c.id !== card.id));
+
+        // [新增] 军功审计探针：记录成功打出卡牌 (用于 15 种常规皮肤成就)
+        gameLogger.logEvent({
+            type: 'play_card',
+            turn: stateRef.current.game.round,
+            isPlayerSide: owner === 'player',
+            cardKey: card.key
+        });
 
         // [新增] 判断如果打出的是单位，触发对应的放大展示音效
         if (isUnit) {
@@ -1672,7 +1866,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
       const stack = [...stateRefs.current.game.spellStack];
       for (const spell of stack) {
           setMessage(`结算: ${spell.card.name}`);
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 300));
+
+          // [核心修复] 在法球起飞前，将当前法术的目标清空，从而让特效层立刻切断连线！
+          setGame(prev => ({
+              ...prev,
+              spellStack: prev.spellStack.map(s => s.card.id === spell.card.id ? { ...s, targets: [] } : s)
+          }));
+
+          // [新增] 发射弹道特效信号
+          eventBus.emit(ProjectileEvents.START, { targets: spell.targets, cardKey: spell.card.key });
+
+          // [时间管理] 等待弹道播完再扣血！
+          await waitForProjectileEnd();
+
+          // [视觉解耦] 同样在栈结算中剥离状态拦截器
           executeSpellEffect(spell.card.key, spell.owner, spell.targets, {
              game: stateRefs.current.game, setGame,
              playerBench: stateRefs.current.playerBench, setPlayerBench,
@@ -1736,7 +1944,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             setCombatField(prev => [...prev, { attacker: card, blocker: null, owner: 'player' }]);
         } else {
             eventBus.emit(GameEvents.SFX_RECALL_BLOCK);
-            setCombatField(prev => prev.filter(c => c.attacker.id !== card.id));
+            setCombatField(prev => {
+                const nextField = prev.filter(c => c.attacker.id !== card.id);
+                // [Case 1 自动推进] 撤回单位后，检查战场是否已空。若空且处于进攻宣告期，自动退回主阶段
+                const hasPlayerAttackers = nextField.some(c => c.owner === 'player');
+                if (!hasPlayerAttackers && stateRef.current.game.phase === 'attack_declare') {
+                    setGame(g => ({ ...g, phase: 'main', lastActionTimestamp: Date.now() }));
+                }
+                return nextField;
+            });
             setPlayerBench(prev => [...prev, card]);
         }
     };
@@ -1953,6 +2169,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             return;
         }
 
+        // [新增] 军功审计探针：记录英雄成功升级 (用于卜卜卡背等任务)
+        // 从战场快照中确认该英雄是否属于我方
+        const isPlayerHero = stateRef.current.playerBench.some(c => c.id === card.id) ||
+                             stateRef.current.combatField.some(f => (f.owner === 'player' && f.attacker.id === card.id) || (f.owner === 'enemy' && f.blocker?.id === card.id));
+
+        if (isPlayerHero) {
+            gameLogger.logEvent({ type: 'level_up', turn: stateRef.current.game.round, isPlayerSide: true, cardKey: card.key });
+        }
+
         setGame(prev => ({
             ...prev,
             pendingLevelUps: [...prev.pendingLevelUps, card]
@@ -1967,6 +2192,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     };
 
     return {
+        isAutoAdvancing, // [新增] 暴露出托管状态，供前台按钮实现"微反馈"补偿
         game, setGame,
         playerHand, setPlayerHand,
         enemyHand, setEnemyHand,

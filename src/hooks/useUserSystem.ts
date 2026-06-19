@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { StorageUtils, STORAGE_KEYS } from '../utils/storageUtils';
 import {
     DEFAULT_SETTINGS,
+    FULL_SETTINGS,  // [皮肤] 全卡档设置
     FULL_COLLECTION,
     STARTER_COLLECTION,
     INITIAL_USER_DECKS,
@@ -12,6 +13,8 @@ import {
 } from '../data/initialUserData';
 import type { UserProfile, UserSettings, UserCollection, SavedDeck, UserSummary } from '../types';
 import type { GachaResult } from '../logic/gachaLogic';
+import type { MissionDef } from '../data/missionData';
+import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局，用于任务奖励发货
 
 export interface UserSystemState {
     userId: string;
@@ -62,7 +65,17 @@ export const useUserSystem = () => {
 
         // 2. 设置 (Settings)
         const settingsKey = `${STORAGE_KEYS.USER_SETTINGS}_${targetUid}`;
-        const userSettings = StorageUtils.load(settingsKey, DEFAULT_SETTINGS);
+        // [皮肤] 全卡档使用 FULL_SETTINGS（解锁全部装饰），否则使用 DEFAULT_SETTINGS
+        const defaultSettings = mode === 'full' ? FULL_SETTINGS : DEFAULT_SETTINGS;
+        let userSettings = StorageUtils.load(settingsKey, defaultSettings);
+        // [皮肤] 全卡档强制覆盖解锁列表（兼容已有存档）
+        if (mode === 'full') {
+            userSettings = {
+                ...userSettings,
+                unlockedCardBacks: FULL_SETTINGS.unlockedCardBacks,
+                unlockedDesks: FULL_SETTINGS.unlockedDesks,
+            };
+        }
         setSettings(userSettings);
 
         // 3. 收藏 (Collection)
@@ -77,6 +90,8 @@ export const useUserSystem = () => {
             if (userCollection) {
                 userCollection = {
                     ...userCollection,
+                    // [皮肤] 全卡模式：强制覆盖全皮肤（兼容旧存档）
+                    ownedSkins: { ...fullData.ownedSkins },
                     // 强制覆盖卡牌列表，确保新卡加入
                     ownedCards: { ...fullData.ownedCards },
                     // 资源取最大值（防止测试用的钱被花光后回不去）
@@ -348,14 +363,90 @@ export const useUserSystem = () => {
 
         return true;
     };
+    // --- [核心新增] 比特金购买逻辑 (涵盖英雄、皮肤、饰品) ---
+    const purchaseBitGoldItem = useCallback((
+        type: 'hero' | 'skin' | 'cardBack' | 'desk',
+        key: string | number,
+        skinId: number | undefined,
+        cost: number
+    ): boolean => {
+        if (!collection || !settings) return false;
+
+        // 1. 检查余额
+        if (collection.resources.bitGold < cost) {
+            alert("比特金不足！(Insufficient Bit Gold)");
+            return false;
+        }
+
+        // 准备更新的数据副本
+        const newCollection = { ...collection };
+        const newSettings = { ...settings };
+        let success = false;
+
+        // 2 & 4. 检查持有上限与发货
+        if (type === 'hero') {
+            const cardKey = key as string;
+            const currentCount = newCollection.ownedCards[cardKey] || 0;
+            if (currentCount >= 3) {
+                alert("该英雄已达到满编上限！");
+                return false;
+            }
+            newCollection.ownedCards[cardKey] = currentCount + 1;
+            success = true;
+        } else if (type === 'skin') {
+            const cardKey = key as string;
+            const currentSkins = newCollection.ownedSkins[cardKey] || [];
+            if (skinId !== undefined && !currentSkins.includes(skinId)) {
+                newCollection.ownedSkins[cardKey] = [...currentSkins, skinId];
+                success = true;
+            } else {
+                alert("已经拥有该皮肤！");
+                return false;
+            }
+        } else if (type === 'cardBack') {
+            const idx = key as number;
+            if (!newSettings.unlockedCardBacks.includes(idx)) {
+                newSettings.unlockedCardBacks = [...newSettings.unlockedCardBacks, idx];
+                success = true;
+            } else {
+                alert("已经拥有该卡背！");
+                return false;
+            }
+        } else if (type === 'desk') {
+            const idx = key as number;
+            if (!newSettings.unlockedDesks.includes(idx)) {
+                newSettings.unlockedDesks = [...newSettings.unlockedDesks, idx];
+                success = true;
+            } else {
+                alert("已经拥有该牌桌！");
+                return false;
+            }
+        }
+
+        if (success) {
+            // 3. 扣除比特金
+            newCollection.resources.bitGold -= cost;
+
+            // 5. 更新状态与持久化保存
+            setCollection(newCollection);
+            setSettings(newSettings);
+            StorageUtils.save(`${STORAGE_KEYS.USER_ASSETS}_${userId}`, newCollection);
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return true;
+        }
+
+        return false;
+    }, [collection, settings, userId]);
 
     // --- [核心新增] 执行抽卡交易 (发货逻辑) ---
-    const performGacha = useCallback((totalCost: number, results: GachaResult[], newPity: number) => {
+    // [核心修复] 补齐 newSkinPity 参数
+    const performGacha = useCallback((totalCost: number, results: GachaResult[], newPity: number, newSkinPity: number) => {
         if (!collection || !profile || !settings) return;
 
         // 深拷贝现有状态，准备修改
+        // [核心修复] 将皮肤保底计数器一并写入档案！
+        const newProfile = { ...profile, pityCounter: newPity, skinPityCounter: newSkinPity };
         const newCollection = { ...collection };
-        const newProfile = { ...profile, pityCounter: newPity };
         const newSettings = { ...settings };
 
         // 1. 扣除数据金
@@ -375,6 +466,16 @@ export const useUserSystem = () => {
                 if (res.type === 'card') {
                     const key = res.key as string;
                     newCollection.ownedCards[key] = (newCollection.ownedCards[key] || 0) + 1;
+                } else if (res.type === 'skin') {
+                    // [核心新增] 解锁皮肤：将 skinId 推入该卡牌专属的拥有皮肤数组中
+                    const key = res.key as string;
+                    const sid = res.skinId;
+                    if (sid !== undefined) {
+                        const currentSkins = newCollection.ownedSkins[key] || [];
+                        if (!currentSkins.includes(sid)) {
+                            newCollection.ownedSkins[key] = [...currentSkins, sid];
+                        }
+                    }
                 } else if (res.type === 'cardBack') {
                     // 解锁卡背
                     const idx = res.key as number;
@@ -410,6 +511,56 @@ export const useUserSystem = () => {
         StorageUtils.save(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, newProfile);
     }, [profile, userId]);
 
+    // ==========================================
+    // [军需系统专属接口] 任务奖励提货通道
+    // 支持新皮肤解锁、重复皮肤自动转为 1 比特金、卡背解锁
+    // ==========================================
+    const grantMissionReward = useCallback((reward: MissionDef['reward']) => {
+        if (!collection || !settings) return;
+
+        const newCollection = { ...collection };
+        const newSettings = { ...settings };
+        let needsCollectionSave = false;
+        let needsSettingsSave = false;
+
+        if (reward.type === 'dataGold' && reward.amount) {
+            newCollection.resources.dataGold += reward.amount;
+            needsCollectionSave = true;
+        }
+        else if (reward.type === 'skin' && reward.cosmeticId) {
+            const skinConfig = getMissionItems('skin').find(s => s.missionId === reward.cosmeticId);
+            if (skinConfig && skinConfig.cardKey && skinConfig.skinId !== undefined) {
+                const currentSkins = newCollection.ownedSkins[skinConfig.cardKey] || [];
+                if (!currentSkins.includes(skinConfig.skinId)) {
+                    // 新皮肤 — 直接解锁
+                    newCollection.ownedSkins[skinConfig.cardKey] = [...currentSkins, skinConfig.skinId];
+                } else {
+                    // 重复皮肤 → 自动转为 1 比特金
+                    newCollection.resources.bitGold += 1;
+                }
+                needsCollectionSave = true;
+            }
+        }
+        else if (reward.type === 'cardBack' && reward.cosmeticId) {
+            const cbConfig = getMissionItems('cardBack').find(s => s.missionId === reward.cosmeticId);
+            if (cbConfig && cbConfig.index !== undefined) {
+                if (!newSettings.unlockedCardBacks.includes(cbConfig.index)) {
+                    newSettings.unlockedCardBacks = [...newSettings.unlockedCardBacks, cbConfig.index];
+                    needsSettingsSave = true;
+                }
+                // 重复卡背暂不转换
+            }
+        }
+
+        if (needsCollectionSave) {
+            setCollection(newCollection);
+            StorageUtils.save(`${STORAGE_KEYS.USER_ASSETS}_${userId}`, newCollection);
+        }
+        if (needsSettingsSave) {
+            setSettings(newSettings);
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+        }
+    }, [collection, settings, userId]);
 
 
     // 暴露给全局以便调试
@@ -438,6 +589,7 @@ export const useUserSystem = () => {
         updateProfile, // [新增] 暴露更新名片的方法
 
         purchaseCard,
+        purchaseBitGoldItem, // [核心新增] 导出高级货币购买接口
         switchUserMode, // [新增] 导出切换函数
         createNewUser,
         deleteUser,
@@ -447,6 +599,9 @@ export const useUserSystem = () => {
         // Gacha Actions
         performGacha,   // [新增]
         setGachaTarget, // [新增]
+
+        // Mission Actions
+        grantMissionReward, // [军需提货专属口]
 
         // Helpers
         setCardBack: (index: number) => updateSettings({ customization: { ...settings.customization, currentCardBackIndex: index } }),
