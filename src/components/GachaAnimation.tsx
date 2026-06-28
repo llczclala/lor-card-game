@@ -205,7 +205,7 @@ const GachaItem: React.FC<GachaItemProps> = ({ result, index, isFlipped, onFlip,
                                         transition={{ type: "spring", stiffness: 200, damping: 15 }}
                                         src={result.convertedCurrency.type === 'silverCoin' ? CURRENCY_ICONS.silverCoin : CURRENCY_ICONS.bitGold}
                                         className="w-16 h-16 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]"
-                                        alt="Currency"
+                                        alt="货币"
                                     />
 
                                     {/* 数量文本 */}
@@ -242,7 +242,7 @@ const GachaItem: React.FC<GachaItemProps> = ({ result, index, isFlipped, onFlip,
                 ) : (
                     // 卡背
                     <div className="w-full h-full rounded-xl overflow-hidden border-2 border-blue-400/30 shadow-[0_0_20px_rgba(59,130,246,0.3)] bg-slate-900 relative">
-                        <img src={defaultBack} className="w-full h-full object-cover" alt="Card Back" />
+                        <img src={defaultBack} className="w-full h-full object-cover" alt="卡背" />
                         <div className="absolute inset-0 border-4 border-blue-400/0 rounded-xl animate-pulse-border box-border"></div>
                     </div>
                 )}

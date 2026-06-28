@@ -259,15 +259,15 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
             >
                 <div className="flex items-center gap-2">
-                    <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5" alt="Silver" />
+                    <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5" alt="银币" />
                     <span className="font-mono font-bold text-gray-200">{resources.silverCoin.toLocaleString()}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5" alt="Gold" />
+                    <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5" alt="数据金" />
                     <span className="font-mono font-bold text-purple-300">{resources.dataGold.toLocaleString()}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <img src={CURRENCY_ICONS.bitGold} className="w-5 h-5" alt="Bit" />
+                    <img src={CURRENCY_ICONS.bitGold} className="w-5 h-5" alt="比特金" />
                     <span className="font-mono font-bold text-yellow-300">{resources.bitGold.toLocaleString()}</span>
                 </div>
             </motion.div>
@@ -306,9 +306,9 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
 
                         <div className="flex flex-col gap-2 relative z-20">
                             {/* [清理] 移除 onClick 中的 setCurrentPage(0) */}
-                            <TabButton id="cards" active={activeTab} icon={<Layers size={18} />} label="CARDS" labelCn="数据卡带" onClick={() => setActiveTab('cards')} />
-                            <TabButton id="skins" active={activeTab} icon={<ImageIcon size={18} />} label="SKINS" labelCn="高定工坊" onClick={() => setActiveTab('skins')} />
-                            <TabButton id="cosmetics" active={activeTab} icon={<CreditCard size={18} />} label="COSMETICS" labelCn="个性涂装" onClick={() => setActiveTab('cosmetics')} />
+                            <TabButton id="cards" active={activeTab} icon={<Layers size={18} />} label="数据卡带" labelCn="数据卡带" onClick={() => setActiveTab('cards')} />
+                            <TabButton id="skins" active={activeTab} icon={<ImageIcon size={18} />} label="高定工坊" labelCn="高定工坊" onClick={() => setActiveTab('skins')} />
+                            <TabButton id="cosmetics" active={activeTab} icon={<CreditCard size={18} />} label="个性涂装" labelCn="个性涂装" onClick={() => setActiveTab('cosmetics')} />
                         </div>
 
                         {/* 卡牌专属筛选面板 */}
@@ -543,7 +543,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                                     {purchaseModal.type === 'card' || purchaseModal.type === 'hero' ? (
                                         <div className="scale-75 origin-center"><Card data={purchaseModal.data} location="collection" isFaceUp={true} /></div>
                                     ) : (
-                                        <img src={purchaseModal.image} className="w-full h-full object-cover" alt="Item" />
+                                        <img src={purchaseModal.image} className="w-full h-full object-cover" alt="商品" />
                                     )}
                                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none"></div>
                                 </div>

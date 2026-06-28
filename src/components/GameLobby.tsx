@@ -245,7 +245,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
             );
         }
         const fallbackSrc = fallbackId ? HERO_IMAGES[fallbackId as keyof typeof HERO_IMAGES]?.base : HERO_IMAGES['lyfe'].base;
-        return <img src={fallbackSrc} alt="Avatar" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />;
+        return <img src={fallbackSrc} alt="头像" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />;
     };
 
 
@@ -336,7 +336,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                         className="absolute inset-0 z-[5] bg-black"
                     >
                         {previewBg.type === 'pic' ? (
-                            <img src={previewBg.url} className="w-full h-full object-cover" alt="Preview BG" />
+                            <img src={previewBg.url} className="w-full h-full object-cover" alt="预览背景" />
                         ) : (
                             <video src={previewBg.url} autoPlay loop muted className="w-full h-full object-cover" />
                         )}
@@ -363,7 +363,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             {/* 1. 通用银 (SILVER) */}
                             <div className="flex items-center gap-3 px-4 py-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-sm min-w-[140px] justify-between hover:bg-black/60 transition-colors">
                                 <div className="flex items-center gap-2">
-                                    <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5 opacity-90" alt="SILVER" />
+                                    <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5 opacity-90" alt="银币" />
                                     <span className="text-sm font-mono font-bold text-gray-200">{localRes.silverCoin}</span>
                                 </div>
                                 <div
@@ -377,7 +377,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             {/* 2. 数据金 (DATA) */}
                             <div className="flex items-center gap-3 px-4 py-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-sm min-w-[140px] justify-between hover:bg-black/60 transition-colors">
                                 <div className="flex items-center gap-2">
-                                    <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5 opacity-90" alt="DATA" />
+                                    <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5 opacity-90" alt="数据金" />
                                     <span className="text-sm font-mono font-bold text-gray-200">{localRes.dataGold}</span>
                                 </div>
                                 <div
@@ -391,7 +391,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             {/* 3. 比特金 (BIT) - 移除加号 */}
                             <div className="flex items-center gap-3 px-4 py-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-sm min-w-[120px] justify-between hover:bg-black/60 transition-colors">
                                 <div className="flex items-center gap-2">
-                                    <img src={CURRENCY_ICONS.bitGold} className="w-5 h-5 opacity-90" alt="BIT" />
+                                    <img src={CURRENCY_ICONS.bitGold} className="w-5 h-5 opacity-90" alt="比特金" />
                                     <span className="text-sm font-mono font-bold text-yellow-100">{localRes.bitGold}</span>
                                 </div>
                             </div>
@@ -445,17 +445,17 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     <GlassButton
                         onClick={() => setShowUI(!showUI)}
                         className={`w-16 h-12 rounded-sm transition-opacity duration-500 ${showUI ? 'opacity-100' : 'opacity-30 hover:opacity-100'}`}
-                        label={showUI ? "HIDE" : "SHOW"}
+                        label={showUI ? "隐藏" : "显示"}
                     >
                         {showUI ? <Eye size={20} /> : <EyeOff size={20} />}
                     </GlassButton>
 
                     <div className={`flex flex-row gap-4 transition-all duration-500 ${showUI ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-10 pointer-events-none'}`}>
                         {/* [修改] 将原先单纯的 onSwitchVideo 替换为智能切换 handleNextBg */}
-                        <GlassButton onClick={handleNextBg} className="w-16 h-12 rounded-sm" label="NEXT">
+                        <GlassButton onClick={handleNextBg} className="w-16 h-12 rounded-sm" label="下一张">
                             <RefreshCw size={20} />
                         </GlassButton>
-                        <GlassButton onClick={handleOpenBgSelect} className="w-16 h-12 rounded-sm" label="BG">
+                        <GlassButton onClick={handleOpenBgSelect} className="w-16 h-12 rounded-sm" label="背景">
                             <ImageIcon size={20} />
                         </GlassButton>
                         {/* [撤销] 移除左侧违和的任务按钮，让辅助功能区保持纯粹 */}
@@ -484,7 +484,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             <GlassButton
                                 onClick={onOpenMission}
                                 className="w-20 h-20 rounded-sm bg-blue-900 border-blue-500/30 hover:bg-blue-800 text-blue-200"
-                                label="TASK"
+                                label="任务"
                             >
                                 <div className="relative">
                                     <ClipboardList size={24} className="text-blue-300" />
@@ -498,8 +498,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                 <GlassButton
                                     onClick={() => {eventBus.emit(GameEvents.LOBBY_START_BATTLE);onStartBattle();}}
                                     className="w-48 h-30 rounded-sm bg-orange-700 border-orange-500/50 hover:bg-orange-600 text-orange-100"
-                                    label="COMBAT"
-                                    subLabel="OPERATION START"
+                                    label="战斗"
+                                    subLabel="行动开始"
                                 >
                                     <Sword size={40} className="text-orange-200 mb-2" />
                                 </GlassButton>
@@ -507,11 +507,11 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                 <GlassButton
                                     onClick={onGachaClick}
                                     className="w-64 h-20 rounded-sm bg-purple-900 border-purple-500/50 hover:bg-purple-800 text-purple-100"
-                                    label="RESONANCE"
+                                    label="共鸣"
                                 >
                                     <div className="flex items-center gap-3">
                                         <Hexagon size={24} className="text-purple-300" />
-                                        <span className="text-xs text-purple-100/60 font-mono">NEW ARRIVAL</span>
+                                        <span className="text-xs text-purple-100/60 font-mono">新人入队</span>
                                     </div>
                                 </GlassButton>
                             </div>
@@ -537,16 +537,16 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             setShowUI(false);
                         }}
                         className="w-32 h-12 rounded-sm flex-row gap-2"
-                        label="GALLERY"
+                        label="图鉴"
                     >
                         <ClipboardList size={18} />
                     </GlassButton>
 
-                    <GlassButton onClick={onOpenShop} className="w-32 h-12 rounded-sm flex-row gap-2" label="SHOP">
+                    <GlassButton onClick={onOpenShop} className="w-32 h-12 rounded-sm flex-row gap-2" label="商店">
                         <ShoppingBag size={18} />
                     </GlassButton>
 
-                    <GlassButton onClick={onOpenDeck} className="w-32 h-12 rounded-sm flex-row gap-2" label="SQUAD">
+                    <GlassButton onClick={onOpenDeck} className="w-32 h-12 rounded-sm flex-row gap-2" label="编队">
                         <Users size={18} />
                     </GlassButton>
                 </div>
@@ -558,7 +558,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     <button
                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsStudioOpen(true); setShowUI(false); }}
                         className="w-16 h-16 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shadow-[0_0_30px_rgba(37,99,235,0.6)] border-2 border-blue-300 transition-all hover:scale-110 hover:rotate-12 group"
-                        title="GM Studio"
+                        title="开发者工作室"
                     >
                         <Wrench size={28} className="text-white drop-shadow-md group-hover:text-yellow-300 transition-colors" />
                     </button>
@@ -585,7 +585,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             <div className="flex items-center gap-8 my-4">
                                 {/* 消耗图标 */}
                                 <div className={`relative w-20 h-20 border-2 ${exchangeConfig.sourceColor} bg-transparent flex items-center justify-center rounded-sm`}>
-                                    <img src={exchangeConfig.sourceIcon} className="w-12 h-12 object-contain" alt="source" />
+                                    <img src={exchangeConfig.sourceIcon} className="w-12 h-12 object-contain" alt="来源" />
                                     <span className="absolute bottom-1 left-1 text-white text-xs font-mono">{exchangeAmount * exchangeConfig.costPerUnit}</span>
                                 </div>
 
@@ -594,7 +594,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
                                 {/* 获得图标 */}
                                 <div className={`relative w-20 h-20 border-2 ${exchangeConfig.targetColor} bg-transparent flex items-center justify-center rounded-sm`}>
-                                    <img src={exchangeConfig.targetIcon} className="w-12 h-12 object-contain" alt="target" />
+                                    <img src={exchangeConfig.targetIcon} className="w-12 h-12 object-contain" alt="目标" />
                                     <span className="absolute bottom-1 left-1 text-white text-xs font-mono">{exchangeAmount * exchangeConfig.gainPerUnit}</span>
                                 </div>
                             </div>
@@ -677,7 +677,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
                             <div className="flex flex-col items-center gap-4">
                                 <div className={`w-32 h-32 border-2 ${successData.color} bg-transparent flex items-center justify-center rounded-sm shadow-[0_0_30px_rgba(255,255,255,0.1)]`}>
-                                    <img src={successData.icon} className="w-20 h-20 object-contain drop-shadow-xl" alt="reward" />
+                                    <img src={successData.icon} className="w-20 h-20 object-contain drop-shadow-xl" alt="奖励" />
                                 </div>
                                 <span className="text-2xl font-mono text-white tracking-widest">
                                     + {successData.amount}
@@ -716,7 +716,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                     {bg.type === 'movie' ? (
                                         <video src={bg.url} preload="metadata" className="w-full h-full object-cover" />
                                     ) : (
-                                        <img src={bg.url} className="w-full h-full object-cover" alt="bg option" />
+                                        <img src={bg.url} className="w-full h-full object-cover" alt="背景选项" />
                                     )}
                                     {/* 视频中间的播放图标 */}
                                     {bg.type === 'movie' && (
@@ -760,7 +760,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                     {bg.type === 'movie' ? (
                                         <video src={bg.url} preload="metadata" className="w-full h-full object-cover opacity-80" />
                                     ) : (
-                                        <img src={bg.url} className="w-full h-full object-cover opacity-80" alt="bg option" />
+                                        <img src={bg.url} className="w-full h-full object-cover opacity-80" alt="背景选项" />
                                     )}
                                     {bg.type === 'movie' && (
                                         <div className="absolute inset-0 flex items-center justify-center bg-black/10">
@@ -895,7 +895,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
                             {/* 关闭按钮 */}
                             <div className="flex justify-end mt-4">
-                                <GlassButton onClick={() => { setIsProfileOpen(false); setShowUI(true); }} className="w-32 h-12 rounded-sm" label="CLOSE" />
+                                <GlassButton onClick={() => { setIsProfileOpen(false); setShowUI(true); }} className="w-32 h-12 rounded-sm" label="关闭" />
                             </div>
                         </div>
                     </motion.div>
@@ -995,7 +995,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                              onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}
                              onWheel={e => e.stopPropagation()} // 防止滑块区域滚轮穿透
                         >
-                            <span className="text-white/50 font-mono text-xs">ZOOM</span>
+                            <span className="text-white/50 font-mono text-xs">缩放</span>
                             <input
                                 type="range" min="0.5" max="3" step="0.05" value={cropScale}
                                 onChange={(e) => setCropScale(parseFloat(e.target.value))}
@@ -1005,7 +1005,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
                         {/* 操作按钮 (z-20，阻止冒泡) */}
                         <div className="flex gap-6 mt-8 z-20" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
-                            <GlassButton onClick={() => { setIsCropperOpen(false); setIsGalleryOpen(true); }} className="w-32 h-14" label="CANCEL"><X size={18}/></GlassButton>
+                            <GlassButton onClick={() => { setIsCropperOpen(false); setIsGalleryOpen(true); }} className="w-32 h-14" label="取消"><X size={18}/></GlassButton>
                             <GlassButton
                                 onClick={() => {
                                     // 保存时直接提交当前的百分比
@@ -1015,7 +1015,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                     setIsCropperOpen(false);
                                     setIsProfileOpen(true);
                                 }}
-                                className="w-32 h-14 bg-blue-600 border-blue-400" label="APPLY"><Check size={18}/></GlassButton>
+                                className="w-32 h-14 bg-blue-600 border-blue-400" label="应用"><Check size={18}/></GlassButton>
                         </div>
                     </motion.div>
                 )}

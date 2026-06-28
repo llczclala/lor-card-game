@@ -3,7 +3,7 @@ import { motion, AnimatePresence, type Variants, useMotionValue, useVelocity, us
 import { Check, RefreshCw } from 'lucide-react'; // [加回] 图标
 import type { CardData } from '../types';
 import { Card } from './Card';
-import { canAffordCard, checkCardConditionActive } from '../utils/gameRules'; // [修改] 引入前置侦察兵
+import { canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp } from '../utils/gameRules'; // [修改] 引入前置侦察兵与升级待命判断
 import { useDrawingQueue } from '../hooks/useDrawingQueue';
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
@@ -16,6 +16,7 @@ interface PlayerHandProps {
     combatField: any[];      // [新增] 需要传入交战区供条件扫描
     cardBackUrl: string;
     skinOverrides?: Record<string, number>; // [核心新增] 接收皮肤配置字典
+    isCastingForHand?: boolean; // [新增] 施法选择手牌模式雷达
 }
 // [新增] 景深缩放配置常量，方便随时微调手感
 const HOVER_SCALE = 2.5;
@@ -132,15 +133,16 @@ const AnimatedHandCard = ({
                     }
                     return false;
                 })()}
-                isConditionActive={checkCardConditionActive(c, playerBench, combatField)} // [新增] 调用侦察兵，点亮橙色描边！
+                isConditionActive={checkCardConditionActive(c, playerBench, combatField) || checkCardReadyToLevelUp(c)} // [新增] 调用侦察兵，点亮橙色描边！
                 cardBackUrl={cardBackUrl} isNew={isNew} delay={myDelay} isDragging={isDragging}
             />
         </motion.div>
     );
 };
 
+// 修改后的新的代码片段
 export const PlayerHand: React.FC<PlayerHandProps> = ({
-    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, skinOverrides // [新增解构]
+    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, skinOverrides, isCastingForHand // [核心解构]
 }) => {
     const validHand = hand.filter(c => c && c.key && c.type);
 
@@ -191,7 +193,8 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
 
                     // [彻底纯数字化的 Y 轴逻辑] (假设卡牌高度约200px)
                     // 170px 约等于 85% 下沉；20px 约等于 10% 上浮
-                    let translateY = 170;
+                    // [核心修复] 如果法术正在向手牌索敌，默认基准高度直接设为 20（全体手牌浮出待命），不再死板下沉 170！
+                    let translateY = isCastingForHand ? 20 : 170;
                     // [新增] 阵列待命：只要有牌被拖拽，手牌区强制保持上浮弹出状态
                     if (isAreaHover || draggingId !== null) translateY = 20;
                     if (isHovered || isDragging) translateY = 0;
@@ -475,4 +478,52 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
             </div>
         </div>
     );
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  🎴 新动画接口 — 由动画合作伙伴（小伙伴）负责实现
+//  主项目占位组件 — 实现在 sandbox 中开发，完成后替换这里
+// ═══════════════════════════════════════════════════════════════
+
+interface CardAnimProps {
+    card: CardData;
+    isPlaying: boolean;
+    onComplete?: () => void;
+    children?: React.ReactNode;
+}
+
+// ==========================================
+// 🏜️ 动画 1：风沙消散（瞬逝）
+// 触发时机：回合结束 Ephemeral 卡牌从手牌弃置
+// 进度：TODO — 待小伙伴在 sandbox 中实现
+// ==========================================
+export const EphemeralDissolve: React.FC<CardAnimProps> = ({
+    card, isPlaying, onComplete, children
+}) => {
+    if (!isPlaying) return null;
+    return <>{children}</>;
+};
+
+// ==========================================
+// 💥 动画 2：卡牌碎掉（法术碎裂）
+// 触发时机：法术效果导致卡牌被摧毁/弃置
+// 进度：TODO — 待小伙伴在 sandbox 中实现
+// ==========================================
+export const CardShatter: React.FC<CardAnimProps> = ({
+    card, isPlaying, onComplete, children
+}) => {
+    if (!isPlaying) return null;
+    return <>{children}</>;
+};
+
+// ==========================================
+// 💫 动画 3：半空碎裂（满手牌爆牌）
+// 触发时机：手牌已满时抽卡，卡牌在半空中碎裂
+// 进度：TODO — 待小伙伴在 sandbox 中实现
+// ==========================================
+export const MidAirShatter: React.FC<CardAnimProps> = ({
+    card, isPlaying, onComplete, children
+}) => {
+    if (!isPlaying) return null;
+    return <>{children}</>;
 };

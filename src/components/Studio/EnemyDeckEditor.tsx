@@ -78,7 +78,7 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
         <div className={`relative ${DIORAMA_SIZE.containerWidth} ${DIORAMA_SIZE.containerHeight} transition-all duration-500 scale-100 opacity-100 z-40 filter drop-shadow-[0_15px_35px_rgba(0,0,0,0.7)]`}>
             {/* 底层大棋盘背景 (压暗处理) */}
             <div className={`${DIORAMA_SIZE.boardWidth} ${DIORAMA_SIZE.boardHeight} absolute top-8 left-1/2 -translate-x-1/2 rounded-xl overflow-hidden border border-slate-700/80 shadow-2xl z-0`}>
-                <img src={boardImg} className="w-full h-full object-cover opacity-50 grayscale-[40%]" alt="Board" />
+                <img src={boardImg} className="w-full h-full object-cover opacity-50 grayscale-[40%]" alt="棋盘" />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
             </div>
 
@@ -112,7 +112,7 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
                     <div key={i} className="absolute inset-0 bg-slate-950 rounded-xl border border-slate-900 shadow-md" style={{ transform: `translate(-${i * 3}px, -${i * 3}px)`, zIndex: i === 0 ? 10 : 5 - i }}></div>
                 ))}
                 <div className="absolute inset-0 rounded-xl border-2 border-red-900/50 shadow-2xl overflow-hidden z-10">
-                    <img src={cardBackImg} className="w-full h-full object-cover" alt="Card Back" />
+                    <img src={cardBackImg} className="w-full h-full object-cover" alt="卡背" />
                     <div className="absolute inset-0 bg-red-900/20 mix-blend-overlay"></div>
                 </div>
             </div>
@@ -204,7 +204,24 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
     const addCardToPool = useCallback((cardKey: string) => {
         if (!selectedId || !selected) return;
         const currentCount = getCardCountInTargetPool(cardKey);
-        const wantToAdd = 3 - currentCount;
+        // [解除枷锁] 将单卡上限从 3 解锁至 99，允许构建极端的纯净法术轰炸卡组！
+        const wantToAdd = 1;
+        if (currentCount >= 40) return;
+
+        const current = [...selected[targetPool]];
+        for (let i = 0; i < wantToAdd; i++) {
+            current.push(cardKey);
+        }
+        updateArchetype({ [targetPool]: current });
+        if (activeListTab !== targetPool) setActiveListTab(targetPool);
+    }, [selectedId, selected, targetPool, activeListTab, updateArchetype, getCardCountInTargetPool]);
+
+    // [新增补偿] 实现刚才漏掉的快速加入函数 (一键加满3张)
+    const quickAddToPool = useCallback((cardKey: string) => {
+        if (!selectedId || !selected) return;
+        const currentCount = getCardCountInTargetPool(cardKey);
+        // 快速加入只加到 3 张为止，如果想超过 3 张，需要手动点击添加
+        const wantToAdd = Math.max(0, 3 - currentCount);
         if (wantToAdd <= 0) return;
 
         const current = [...selected[targetPool]];
@@ -214,6 +231,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
         updateArchetype({ [targetPool]: current });
         if (activeListTab !== targetPool) setActiveListTab(targetPool);
     }, [selectedId, selected, targetPool, activeListTab, updateArchetype, getCardCountInTargetPool]);
+
 
     const removeCardFromPool = useCallback((field: 'coreCards' | 'preferredPool', cardKey: string) => {
         if (!selectedId || !selected) return;
@@ -247,7 +265,17 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
     const exportToClipboard = useCallback(() => {
         const lines: string[] = [ `import type { EnemyArchetype } from './archetypes';`, '', `export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {` ];
         for (const [id, arch] of Object.entries(archetypes)) {
-            lines.push(`    '${id}': {`, `        id: '${id}',`, `        name: '${arch.name}',`, `        champion: '${arch.champion}',`, `        description: '${arch.description}',`, `        coreCards: [${arch.coreCards.map(c => `'${c}'`).join(', ')}],`, `        preferredPool: [${arch.preferredPool.map(c => `'${c}'`).join(', ')}],`, `        apocalypseTags: [${arch.apocalypseTags.map(t => `'${t}'`).join(', ')}],`, `        aiPersonality: '${arch.aiPersonality}',`, `    },`);
+            // [核心新增] 将散装的 string[] 聚合为工业级的 { key, count } 格式
+            const coreMap: Record<string, number> = {};
+            arch.coreCards.forEach((k: string) => coreMap[k] = (coreMap[k] || 0) + 1);
+            const coreCardsExport = Object.entries(coreMap)
+                .map(([k, count]) => `{ key: '${k}', count: ${count} }`)
+                .join(', ');
+
+            // [核心新增] 智能判定 exactDeck 锁：核心池>=40张时自动上锁
+            const isExact = arch.coreCards.length >= 40;
+
+            lines.push(`    '${id}': {`, `        id: '${id}',`, `        name: '${arch.name}',`, `        champion: '${arch.champion}',`, `        description: '${arch.description}',`, `        coreCards: [${coreCardsExport}],`, `        exactDeck: ${isExact},`, `        preferredPool: [${arch.preferredPool.map(c => `'${c}'`).join(', ')}],`, `        apocalypseTags: [${arch.apocalypseTags.map(t => `'${t}'`).join(', ')}],`, `        aiPersonality: '${arch.aiPersonality}',`, `    },`);
         }
         lines.push('};');
         navigator.clipboard.writeText(lines.join('\n')).then(() => {
@@ -293,8 +321,8 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                 <p className="text-gray-300 whitespace-pre-line leading-relaxed">{confirmModal.message}</p>
                             </div>
                             <div className="flex gap-4 justify-center">
-                                <button onClick={() => setConfirmModal(null)} className="flex-1 py-3 rounded-lg border border-white/10 hover:bg-white/5 text-gray-300 font-bold transition-colors">CANCEL</button>
-                                <button onClick={confirmModal.onConfirm} className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all hover:scale-105">CONFIRM</button>
+                                <button onClick={() => setConfirmModal(null)} className="flex-1 py-3 rounded-lg border border-white/10 hover:bg-white/5 text-gray-300 font-bold transition-colors">取消</button>
+                                <button onClick={confirmModal.onConfirm} className="flex-1 py-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all hover:scale-105">确认</button>
                             </div>
                         </motion.div>
                     </div>

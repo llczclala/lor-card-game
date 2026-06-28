@@ -551,6 +551,14 @@ export const useUserSystem = () => {
                 // 重复卡背暂不转换
             }
         }
+        // [fix] 卡牌奖励：将 cardKeys 中的每张卡各 +1 加入收藏
+        else if (reward.type === 'card' && reward.cardKeys) {
+            newCollection.ownedCards = { ...newCollection.ownedCards };
+            for (const cardKey of reward.cardKeys) {
+                newCollection.ownedCards[cardKey] = (newCollection.ownedCards[cardKey] || 0) + 1;
+            }
+            needsCollectionSave = true;
+        }
 
         if (needsCollectionSave) {
             setCollection(newCollection);

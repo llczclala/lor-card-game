@@ -44,7 +44,7 @@ export const SystemLoadingScreen: React.FC<SystemLoadingScreenProps> = ({ onComp
             <div className="absolute inset-0 z-0">
                 <img
                     src={bgImage}
-                    alt="Loading..."
+                    alt="加载中..."
                     className="w-full h-full object-cover opacity-80"
                 />
                 {/* 黑色遮罩，确保底部文字清晰 */}

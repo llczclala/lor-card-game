@@ -1,5 +1,6 @@
 import React, { useState, useEffect,useRef } from 'react';
 import { TitleScreen } from './components/TitleScreen';
+import { SplashScreen } from './components/SplashScreen'; // [哨兵] 免责启动画面
 import { ModeSelectScreen } from './components/ModeSelectScreen'; // [新增]
 import { DeckBuilder } from './components/DeckBuilder';
 import { useAudio } from './hooks/useAudio';
@@ -33,14 +34,20 @@ import { getHallBgmByIndex } from './data/movieData'; // [新增] 引入大厅�
 import { motion, AnimatePresence } from 'framer-motion';
 
 // [核心修复] AppState 增加 'shop' 状态
-type AppState = 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha'
+type AppState = 'splash' | 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha'
     | 'tutorial_mode_select' | 'tutorial_stage_select' | 'tutorial_game' | 'shop';
 export default function App() {
-  const [appState, setAppState] = useState<AppState>('title');
+  const [appState, setAppState] = useState<AppState>('splash'); // [哨兵] 初始状态改为 splash
   const [pendingAppState, setPendingAppState] = useState<AppState | null>(null);
   const [lobbyVideoIndex, setLobbyVideoIndex] = useState(0);
   const userSystem = useUserSystem();
-  const missionSystem = useMissionSystem(userSystem.userId); // [核心挂载] 实例化军功大脑
+  const registerTime = React.useMemo(() => {
+    if (userSystem.profile?.createdAt) {
+      return new Date(userSystem.profile.createdAt).toISOString().split('T')[0];
+    }
+    return undefined;
+  }, [userSystem.profile?.createdAt]);
+  const missionSystem = useMissionSystem(userSystem.userId, registerTime); // [核心挂载] 实例化军功大脑
   const [isMissionOpen, setIsMissionOpen] = useState(false); // [新增] 军需面板开关状态
   const [gameId, setGameId] = useState(0);
   const [deckBuilderSource, setDeckBuilderSource] = useState<'lobby' | 'mode_select'>('mode_select');
@@ -127,6 +134,11 @@ export default function App() {
   };
 
   // --- 状态流转控制器 (The Chain of Command) ---
+
+  // [哨兵] Splash -> Title
+  const handleSplashComplete = () => {
+    setAppState('title');
+  };
 
   // 1. [Title -> SystemLoading -> Lobby]
   const handleTitleStart = () => {
@@ -367,21 +379,43 @@ export default function App() {
           const stage = TUTORIAL_STAGES[tutorialStageId];
           if (stage && stage.enemyArchetypeId) {
               const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
+              // [核心升级] 智能回退：如果没统帅，就抓核心池第一张牌当代言人！
               if (archetype && archetype.champion) {
                   return archetype.champion;
+              } else if (archetype && archetype.coreCards.length > 0) {
+                  const firstCore = typeof archetype.coreCards[0] === 'string' ? archetype.coreCards[0] : (archetype.coreCards[0] as any).key;
+                  return firstCore;
               }
           }
       } else if (standardEncounter) {
           // [核心修正] 标准模式直接从刚刚提前生成的配置中读取！
-          return standardEncounter.heroConfig.heroKey;
+          if (standardEncounter.heroConfig.heroKey) {
+              return standardEncounter.heroConfig.heroKey;
+          } else if (standardEncounter.deck && standardEncounter.deck.length > 0) {
+              return standardEncounter.deck[0];
+          }
       }
       // 兜底防崩溃
       return 'fenny';
   };
 
-  // [新增] 如果用户数据还没加载好，显示简单的加载中
+  // [核心新增] 获取敌方加载界面的显示名称
+  const getEnemyDisplayName = (): string => {
+      if (tutorialStageId) {
+          const stage = TUTORIAL_STAGES[tutorialStageId];
+          if (stage && stage.enemyArchetypeId) {
+              const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
+              if (archetype) return archetype.name;
+          }
+      } else if (standardEncounter && standardEncounter.heroConfig) {
+          return standardEncounter.heroConfig.customName;
+      }
+      return 'ENEMY';
+  };
+
+  // [哨兵] 静默加载：用户数据加载中显示纯黑屏（隐藏 "LOADING PROFILE..."）
   if (!userSystem.isReady) {
-      return <div className="w-full h-full bg-black flex items-center justify-center text-white font-mono">LOADING PROFILE...</div>;
+      return <div className="w-full h-full bg-black" />;
   }
 
 
@@ -391,6 +425,11 @@ export default function App() {
     <div className="relative w-full h-full bg-slate-950 overflow-hidden">
 
 
+
+      {/* 0. 免责启动画面 (哨兵) */}
+      {appState === 'splash' && (
+        <SplashScreen onComplete={handleSplashComplete} />
+      )}
 
       {/* 1. 标题界面 (纯净版) */}
       {appState === 'title' && (
@@ -483,6 +522,7 @@ export default function App() {
           <LoadingScreen
               heroKey={getDisplayHero()}
               enemyHeroKey={getEnemyDisplayHero()} // [核心修复] 动态传入敌方真实英雄
+              enemyName={getEnemyDisplayName()} // [核心修复] 下发指挥部赋予的真实姓名！
               onComplete={handleLoadingComplete} // [Link 6]
               skinOverrides={userSystem.activeDeck?.skinOverrides}
               onMatchFound={stopBgm}
@@ -571,7 +611,7 @@ export default function App() {
                   className="absolute inset-0 z-[1] bg-black pointer-events-none"
               >
                   {customBg.type === 'pic' ? (
-                      <img src={customBg.url} className="w-full h-full object-cover" alt="Custom BG" />
+                      <img src={customBg.url} className="w-full h-full object-cover" alt="自定义背景" />
                   ) : (
                       <video src={customBg.url} autoPlay loop muted className="w-full h-full object-cover" />
                   )}

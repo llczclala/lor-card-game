@@ -7,7 +7,8 @@ import { CARD_DB } from '../data/cards';
 import { SpeechBubble } from './SpeechBubble';
 import { SpellCard } from './SpellCard';
 import { KeywordEffects } from './KeywordEffects';
-import { CARD_BORDERS, EFFECT_IMAGES, UI_IMAGES, getSkinImage } from '../data/imageData'; // [修改] 追加引入 UI_IMAGES
+// [核心新增] 引入 LEVELUP_ICONS
+import { CARD_BORDERS, EFFECT_IMAGES, UI_IMAGES, LEVELUP_ICONS, getSkinImage } from '../data/imageData';
 // [新增] 引入卡面坐标字典与类型
 import { CARD_CROP_CONFIG } from '../data/cardCropConfig';
 import type { CropConfig } from '../types';
@@ -288,7 +289,9 @@ export const Card: React.FC<CardProps> = ({
 
     // [升级版] 全能数值反馈系统 (Health & Power)
     // 分别记录两个属性的变化量
-    const [healthDelta, setHealthDelta] = useState<number | null>(null);
+    // [修复] healthDelta 改为 hitQueue 队列，支持连续多段伤害各自独立飘字
+    const [hitQueue, setHitQueue] = useState<{ id: number; amount: number }[]>([]);
+    const hitIdRef = useRef(0);
     const [powerDelta, setPowerDelta] = useState<number | null>(null);
 
     // 控制震动 (受伤/削弱时触发)
@@ -434,12 +437,16 @@ export const Card: React.FC<CardProps> = ({
     };
 
     // 计算当前的最终面板数值
+    // [修复] currentFinalPower 不加 roundBuffs.power：因为 ROUND 类 Buff 同时记入了 buffs 和 roundBuffs，
+    // 显示时再加 roundBuffs 会导致双倍显示（health 正确是因为它根本没读 roundBuffs.health）
     const currentFinalHealth = (data.health || 0) + (data.buffs?.health || 0) - (data.damageTaken || 0);
-    const currentFinalPower = (data.power || 0) + (data.buffs?.power || 0);
+    const currentFinalPower = (data.power || 0) + (data.buffs?.power || 0) + (data.roundBuffs?.power || 0);
+    // [maxPower] 攻击力上限 clamp（底座专用）
+    const clampedPower = data.maxPower !== undefined ? Math.min(currentFinalPower, data.maxPower) : currentFinalPower;
 
     // [核心重构] 拦截器状态：用于在闪光结束后再更新底部的数字
     const [targetHealth, setTargetHealth] = useState(currentFinalHealth);
-    const [targetPower, setTargetPower] = useState(currentFinalPower);
+    const [targetPower, setTargetPower] = useState(clampedPower);
 
     // 使用 Ref 记录上一帧的数值
     const prevHealthRef = useRef(currentFinalHealth);
@@ -453,17 +460,24 @@ export const Card: React.FC<CardProps> = ({
             if (diff < 0) {
                 // 扣血/受伤：无视动画锁，立刻触发基础本地飘字与震荡
                 setLocalShake(true);
-                setHealthDelta(diff);
+                const newId = hitIdRef.current++;
+                setHitQueue(prev => [...prev, { id: newId, amount: diff }]);
                 setTargetHealth(currentFinalHealth);
-                setTimeout(() => { setHealthDelta(null); setLocalShake(false); }, 1000);
+                setTimeout(() => {
+                    setHitQueue(prev => prev.filter(h => h.id !== newId));
+                    setLocalShake(false);
+                }, 1000);
             } else if (diff > 0) {
                 // 增益：先高光，延迟后跳字
                 setLocalFlash(true);
+                const newId = hitIdRef.current++;
                 setTimeout(() => {
                     setLocalFlash(false); // 高光结束 (0.4秒)
-                    setHealthDelta(diff); // 弹出飘字
+                    setHitQueue(prev => [...prev, { id: newId, amount: diff }]); // 弹出飘字
                     setTargetHealth(currentFinalHealth); // 底部数字开始滚动
-                    setTimeout(() => setHealthDelta(null), 1500); // 飘字在空中存活 1.5 秒
+                    setTimeout(() => {
+                        setHitQueue(prev => prev.filter(h => h.id !== newId));
+                    }, 1500); // 飘字在空中存活 1.5 秒
                 }, 1000);
             }
             prevHealthRef.current = currentFinalHealth;
@@ -479,7 +493,7 @@ export const Card: React.FC<CardProps> = ({
                 // 扣攻/虚弱：无视动画锁，立刻触发基础本地飘字与震荡
                 setLocalShake(true);
                 setPowerDelta(diff);
-                setTargetPower(currentFinalPower);
+                setTargetPower(clampedPower);
                 setTimeout(() => { setPowerDelta(null); setLocalShake(false); }, 1000);
             } else if (diff > 0) {
                 // [泰坦] 泰坦脉冲的特效由 KeywordEffects 的 animState:'buff' 独立处理，不触发通用的金色高光
@@ -489,7 +503,7 @@ export const Card: React.FC<CardProps> = ({
                 setTimeout(() => {
                     setLocalFlash(false);
                     setPowerDelta(diff);
-                    setTargetPower(currentFinalPower);
+                    setTargetPower(clampedPower);
                     setTimeout(() => setPowerDelta(null), 1500);
                 }, 1000);
             }
@@ -721,7 +735,14 @@ export const Card: React.FC<CardProps> = ({
         {/* [修复] 强制置于 z-10，确保实体背景盖住 z-0 的贴花，让贴花只从边缘溢出！ */}
         {/* [核心机制] 将外层容器改为 motion.div，严格控制仅隐秘单位在场上时执行 [1, 0.3, 1] 的实体呼吸 */}
         <motion.div
-            className={`w-full h-full absolute inset-0 bg-slate-900 overflow-hidden ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'} z-10`}
+            className={`w-full h-full absolute inset-0 overflow-hidden ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'} z-10 ${
+                data.region === 'Lyfe' ? 'bg-gradient-to-b from-gray-950 via-blue-950 to-gray-950'
+                : data.region === 'Fenny' ? 'bg-gradient-to-b from-gray-950 via-orange-950 to-gray-950'
+                : data.region === 'Pupu' ? 'bg-gradient-to-b from-gray-950 via-red-950 to-gray-950'
+                : data.region === 'Mauxir' ? 'bg-gradient-to-b from-gray-950 via-purple-950 to-gray-950'
+                : data.region === 'Logistics' ? 'bg-gradient-to-b from-gray-950 via-gray-800 to-gray-950'
+                : 'bg-slate-900'
+            }`}
             animate={isElusiveOnBoard ? { opacity: [0.5, 1, 0.5] } : { opacity: 1 }}
             transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
         >
@@ -730,10 +751,14 @@ export const Card: React.FC<CardProps> = ({
                 <div className="relative w-full h-full bg-black flex flex-col overflow-hidden rounded-md">
                     {/* 原画层 - 底层 (接入坐标裁剪) */}
                     <div className="absolute inset-0 z-0 overflow-hidden flex items-center justify-center">
-                        {/* [核心优化] 动态兜底背景：拥有皮肤时闪耀金色光辉，默认时保持灰白机能风 */}
+                        {/* [核心优化] 动态兜底背景：拥有皮肤时闪耀金色光辉，默认时按阵营配色 */}
                         <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none ${
                             skinId > 0
                                 ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
+                                : data.region === 'Lyfe' ? 'from-blue-600/40 via-blue-500/20 to-blue-300/5'
+                                : data.region === 'Fenny' ? 'from-orange-600/40 via-orange-500/20 to-orange-300/5'
+                                : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
+                                : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
                         <img
@@ -758,7 +783,7 @@ export const Card: React.FC<CardProps> = ({
 
                     {/* 恢复原版主题边框 */}
                     <div className="absolute inset-0 z-20 pointer-events-none">
-                        <img src={borderImg} alt="Border" className="w-full h-full object-fill opacity-100 scale-[1.02]" draggable={false} />
+                        <img src={borderImg} alt="边框" className="w-full h-full object-fill opacity-100 scale-[1.02]" draggable={false} />
                     </div>
 
                     {/* --- 根据阵营决定镜像布局 --- */}
@@ -843,14 +868,21 @@ export const Card: React.FC<CardProps> = ({
                         transform: `scale(${scale})`,
                         transformOrigin: 'top left'
                     }}
-                    className="absolute top-0 left-0 bg-slate-900 overflow-hidden rounded-2xl"
+                    className={`absolute top-0 left-0 overflow-hidden rounded-2xl ${
+                        data.region === 'Lyfe' ? 'bg-gradient-to-b from-gray-950 via-blue-950 to-gray-950'
+                        : data.region === 'Fenny' ? 'bg-gradient-to-b from-gray-950 via-orange-950 to-gray-950'
+                        : data.region === 'Pupu' ? 'bg-gradient-to-b from-gray-950 via-red-950 to-gray-950'
+                        : data.region === 'Mauxir' ? 'bg-gradient-to-b from-gray-950 via-purple-950 to-gray-950'
+                        : data.region === 'Logistics' ? 'bg-gradient-to-b from-gray-950 via-gray-800 to-gray-950'
+                        : 'bg-slate-900'
+                    }`}
                 >
                     {/* [新增] 边框层 (竖向模式) - z-10 (位于原画之上) */}
                             {/* 注意：如果边框是透明通带，它会透出下面的原画。pointer-events-none 确保不阻挡交互 */}
                             <div className="absolute inset-0 z-10 pointer-events-none">
                                 <img
                                     src={borderImg}
-                                    alt="Border"
+                                    alt="边框"
                                     draggable={false}
                                     className="w-full h-full object-fill opacity-100"
                                 />
@@ -858,10 +890,14 @@ export const Card: React.FC<CardProps> = ({
 
                     {/* 竖向模式原画层 (接入坐标裁剪) */}
                     <div className="absolute inset-0 bg-black overflow-hidden flex items-center justify-center">
-                        {/* [核心优化] 动态兜底背景：拥有皮肤时闪耀金色光辉，默认时保持灰白机能风 */}
+                        {/* [核心优化] 动态兜底背景：拥有皮肤时闪耀金色光辉，默认时按阵营配色 */}
                         <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none ${
                             skinId > 0
                                 ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
+                                : data.region === 'Lyfe' ? 'from-blue-600/40 via-blue-500/20 to-blue-300/5'
+                                : data.region === 'Fenny' ? 'from-orange-600/40 via-orange-500/20 to-orange-300/5'
+                                : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
+                                : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
                          <img
@@ -879,99 +915,50 @@ export const Card: React.FC<CardProps> = ({
                     </div>
 
                     {location !== 'deck-panel' && (
-                        <div className={`absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/95 via-black/40 to-transparent px-4 ${isBench ? 'pb-2' : 'pb-4'}`}>
+                        // [UI重构 4] 重心压低遮罩层高度，使用更密集的渐变阈值，让上半部画幅彻底干净！
+                        <div className={`absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/100 via-black/80 to-transparent px-4 pb-0`} style={{ backgroundSize: '100% 60%', backgroundRepeat: 'no-repeat', backgroundPosition: 'bottom' }}>
 
                              <div className={`absolute top-4 left-4 rounded-full bg-blue-600 border-2 border-yellow-400 flex items-center justify-center text-white font-black shadow-lg z-10 ${isBench ? 'w-16 h-16 text-4xl' : 'w-12 h-12 text-2xl'}`}>
                                 {data.cost}
                              </div>
 
                              {!isBench && (
-                                 <>
+                                 // [UI重构 3] 主文本区块：使用 mt-auto 强行顶到底部！
+                                 <div className="mt-auto pb-1 flex flex-col">
                                     {/*名字渲染区 */}
-                                <div className="flex flex-col items-center justify-center mb-2">
-                                    {data.name && data.name.includes('\n') ? ( // 新增 data.name 检查
-                                        <>
-                                            <span className="text-white/80 font-bold text-[25px] tracking-widest uppercase drop-shadow-md leading-none mb-1">
-                                                {data.name.split('\n')[0]}
-                                            </span>
-                                            <div className="text-center font-black text-3xl text-transparent bg-clip-text bg-gradient-to-r from-yellow-100 to-yellow-500 drop-shadow-sm tracking-wide leading-none">
-                                                {data.name.split('\n')[1]}
+                                    <div className="flex flex-col items-center justify-center mb-1">
+                                        {data.name && data.name.includes('\n') ? ( // 新增 data.name 检查
+                                            <>
+                                                <span className="text-white/80 font-bold text-[22px] tracking-widest uppercase drop-shadow-md leading-none mb-1">
+                                                    {data.name.split('\n')[0]}
+                                                </span>
+                                                <div className="text-center font-black text-3xl text-transparent bg-clip-text bg-gradient-to-r from-yellow-100 to-yellow-500 drop-shadow-sm tracking-wide leading-none">
+                                                    {data.name.split('\n')[1]}
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="text-center font-black text-3xl text-transparent bg-clip-text bg-gradient-to-r from-yellow-100 to-yellow-500 drop-shadow-sm tracking-wide">
+                                                {data.name || 'Unknown Card'} {/* 兜底：name 为空时显示默认值 */}
                                             </div>
-                                        </>
-                                    ) : (
-                                        <div className="text-center font-black text-3xl text-transparent bg-clip-text bg-gradient-to-r from-yellow-100 to-yellow-500 drop-shadow-sm tracking-wide">
-                                            {data.name || 'Unknown Card'} {/* 兜底：name 为空时显示默认值 */}
-                                        </div>
-                                    )}
-                                </div>
+                                        )}
+                                    </div>
                                     {(data.keywords && data.keywords.length > 0 || (data.ability && data.abilityState && data.abilityState !== 'hidden')) && (
-                                        <div className="flex justify-center mb-2">
+                                        <div className="flex justify-center mb-1">
                                             {/* [替换] 竖向手牌模式也统一使用智能卡槽，自带六边形黑底，视觉更加统一和规整 */}
                                             <KeywordTray
                                                 keywords={data.keywords}
                                                 animState={data.animState}
                                                 depletedKeywords={data.depletedKeywords}
                                                 titanCount={titanCount}
-                                                className="scale-125"
+                                                className="scale-110" // 微缩以适配紧凑布局
                                                 isOnBoard={false}
                                             />
                                         </div>
                                     )}
-                                    <div className={`text-center text-gray-200 text-lg leading-snug font-medium drop-shadow-md px-2 min-h-[3rem] flex items-center justify-center ${data.isChampion && data.level === 1 && ['hand', 'preview', 'gacha', 'deck-builder'].includes(location) ? 'mb-2' : 'mb-5'}`}>
+                                    <div className={`text-center text-gray-200 text-[16px] leading-snug font-medium drop-shadow-md px-1 flex items-center justify-center min-h-[3rem]`}>
                                         {data.description}
                                     </div>
-                                    {/* [核心新增] 英雄升级条件与进度面板 (仅手牌中 1 级英雄可见) */}
-                                    {data.isChampion && data.level === 1 && ['hand', 'preview', 'gacha', 'deck-builder'].includes(location) && data.levelUpCondition && (
-                                        <div className="flex flex-col items-center w-full px-4 mb-4 opacity-95">
-                                            {/* 1. 金色分割线 */}
-                                            <div className="text-yellow-500/80 font-black tracking-widest text-[15px] mb-1 flex items-center gap-2">
-                                                <span className="w-10 h-px bg-gradient-to-r from-transparent to-yellow-500/50"></span>
-                                                —·—升级—·—
-                                                <span className="w-10 h-px bg-gradient-to-l from-transparent to-yellow-500/50"></span>
-                                            </div>
-
-                                            {/* 2. 动态进度计算逻辑 */}
-                                            {(() => {
-                                                let currentProgress = 0;
-                                                const target = data.levelUpTarget || 1;
-
-                                                // 智能路由：根据英雄机制提取进度
-                                                if (data.key === 'fenny') {
-                                                    // 芬妮：依赖透传的全局血量，只要任意血量 <= 10，进度直接满 1
-                                                    const pHealth = playerNexusHealth ?? 20;
-                                                    const eHealth = enemyNexusHealth ?? 20;
-                                                    if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
-                                                } else if (data.key === 'lyfe') {
-                                                    currentProgress = data.strikeCount || 0;
-                                                } else if (data.key === 'pupu_specular_soul') {
-                                                    currentProgress = data.customProgress || 0;
-                                                }
-
-                                                // 进度封顶
-                                                const displayProgress = Math.min(currentProgress, target);
-                                                const progressPercentage = Math.min((displayProgress / target) * 100, 100);
-
-                                                return (
-                                                    <>
-                                                        {/* 3. 白色条件文案与数值 */}
-                                                        <div className="text-white text-sm font-medium text-center leading-tight drop-shadow-md mb-2">
-                                                            {data.levelUpCondition}<br/>
-                                                            <span className="font-mono text-blue-300 font-bold text-sm">({displayProgress}/{target})</span>
-                                                        </div>
-
-                                                        {/* 4. 图形化椭圆进度条 */}
-                                                        <div className="w-3/4 h-1.5 bg-gray-700/80 rounded-full overflow-hidden shadow-inner border border-white/10 mt-1 mb-1">
-                                                            <div
-                                                                className="h-full bg-blue-500 transition-all duration-500 ease-out shadow-[0_0_8px_rgba(59,130,246,0.8)]"
-                                                                style={{ width: `${progressPercentage}%` }}
-                                                            />
-                                                        </div>
-                                                    </>
-                                                );
-                                            })()}
-                                        </div>
-                                    )}
-                                 </>
+                                 </div>
                              )}
 
                              {isBench && (data.keywords && data.keywords.length > 0 || (data.ability && data.abilityState && data.abilityState !== 'hidden')) && (
@@ -988,24 +975,72 @@ export const Card: React.FC<CardProps> = ({
                                  </div>
                              )}
 
-
+                             {/* [UI重构 2] 英雄升级条件下沉，与攻防数值处于同一视平线 */}
                              {data.type && data.type.includes('unit') ? ( // 新增安全检查
-                                <div className="flex justify-between items-center px-2 pt-2 border-t border-white/20">
-                                    <div className={`font-black drop-shadow-md ${powerColor} ${isBench ? 'text-7xl' : 'text-4xl'}`}>
+                                <div className="relative flex justify-between items-end px-2 pb-2 h-20 border-t border-white/20 mt-1">
+                                    <div className={`font-black drop-shadow-md ${powerColor} ${isBench ? 'text-7xl' : 'text-4xl'} z-10`}>
                                         {ephemeralEmpty ? <span className="transition-none">0</span> : displayPower}
                                     </div>
-                                    <div className="text-orange-500 drop-shadow-lg filter">
-                                        {data.isChampion ?
-                                            <Hexagon size={isBench ? 60 : 40} fill="rgba(249, 115, 22, 0.2)" strokeWidth={2.5} /> :
-                                            <Triangle size={isBench ? 60 : 40} fill="rgba(249, 115, 22, 0.2)" strokeWidth={2.5} />
-                                        }
-                                    </div>
-                                    <div className={`font-black drop-shadow-md transition-all duration-300 ease-out origin-center ${healthColor} ${isBench ? 'text-7xl' : 'text-4xl'} ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>
+
+                                    {/* [UI重构 1] 删除了无用的多边形，将升级面板直接嵌入在这两个数字中间！ */}
+                                    {data.isChampion && data.level === 1 && ['hand', 'preview', 'gacha', 'deck-builder'].includes(location) && data.levelUpCondition ? (
+                                        <div className="absolute inset-x-0 bottom-6 flex flex-col items-center justify-end z-0 pointer-events-none opacity-95">
+                                            {/* 金色分割线 */}
+                                            <div className="text-yellow-500/90 font-black tracking-widest text-[12px] flex items-center gap-1 leading-none mb-0.5">
+                                                <span className="w-6 h-px bg-gradient-to-r from-transparent to-yellow-500/60"></span>
+                                                — 升级 —
+                                                <span className="w-6 h-px bg-gradient-to-l from-transparent to-yellow-500/60"></span>
+                                            </div>
+
+                                            {/* 动态进度计算逻辑 */}
+                                            {(() => {
+                                                let currentProgress = 0;
+                                                const target = data.levelUpTarget || 1;
+
+                                                if (data.key === 'fenny') {
+                                                    const pHealth = playerNexusHealth ?? 20;
+                                                    const eHealth = enemyNexusHealth ?? 20;
+                                                    if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
+                                                } else if (data.key === 'lyfe') {
+                                                    currentProgress = data.strikeCount || 0;
+                                                } else if (data.key === 'pupu_specular_soul') {
+                                                    currentProgress = data.customProgress || 0;
+                                                } else if (data.key === 'mauxir_lotus_drive') {
+                                                    currentProgress = data.customProgress || 0;
+                                                }
+
+                                                const displayProgress = Math.min(currentProgress, target);
+                                                const progressPercentage = Math.min((displayProgress / target) * 100, 100);
+
+                                                return (
+                                                    <>
+                                                        <div className="text-white/90 text-[11px] font-bold text-center leading-tight drop-shadow-md px-8 whitespace-nowrap overflow-visible">
+                                                            {data.levelUpCondition}
+                                                            <div className="font-mono text-blue-300 font-black text-[10px] mt-0.5 leading-none">
+                                                                ({displayProgress}/{target})
+                                                            </div>
+                                                        </div>
+                                                        <div className="w-24 h-1.5 bg-gray-800/80 rounded-full overflow-hidden shadow-inner mt-1 mb-0.5 border border-black/40">
+                                                            <div
+                                                                className="h-full bg-blue-500 transition-all duration-500 ease-out shadow-[0_0_5px_rgba(59,130,246,0.8)]"
+                                                                style={{ width: `${progressPercentage}%` }}
+                                                            />
+                                                        </div>
+                                                    </>
+                                                );
+                                            })()}
+                                        </div>
+                                    ) : (
+                                        /* 兜底占位：非英雄单位只渲染一条隐形的横线以保持排版重心 */
+                                        <div className="w-1/3 h-px"></div>
+                                    )}
+
+                                    <div className={`font-black drop-shadow-md transition-all duration-300 ease-out origin-center ${healthColor} ${isBench ? 'text-7xl' : 'text-4xl'} z-10 ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>
                                         {ephemeralEmpty ? <span className="transition-none">0</span> : displayHealth}
                                     </div>
                                 </div>
                              ) : (
-                                <div className="flex justify-center pb-2 text-white/50 text-sm font-mono uppercase tracking-widest">SPELL</div>
+                                <div className="flex justify-center pb-2 text-white/50 text-sm font-mono uppercase tracking-widest border-t border-white/20 mt-1 pt-2">SPELL</div>
                              )}
                         </div>
                     )}
@@ -1051,16 +1086,17 @@ export const Card: React.FC<CardProps> = ({
                 </motion.div>
             )}
 
-            {/* [极致重构] 生命值飘字 (Health Floater) - 右侧双向爆裂 */}
-            {!isPreview && healthDelta !== null && (
+            {/* [极致重构] 生命值飘字队列 (Health Floater Queue) - 右侧双向爆裂 */}
+            {!isPreview && hitQueue.length > 0 && hitQueue.map((hit, index) => (
                 <motion.div
+                    key={hit.id}
                     // [锚点微调] 贴紧右侧(right-4)和上下边界(top-2/bottom-2)
                     className={`absolute right-4 ${isPlayerSide ? 'top-2' : 'bottom-2'} ${isTacticalMode ? 'text-3xl' : 'text-5xl'} font-black z-[100] whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] stroke-black
-                        ${healthDelta > 0 ? 'text-green-400' : 'text-red-500'}`}
+                        ${hit.amount > 0 ? 'text-green-400' : 'text-red-500'}`}
                     initial={{ x: 0, y: 0, scale: 1, opacity: 1 }}
                     animate={{
                         x: 40,  // 无论是增益还是减益，右侧数值统一向右扩
-                        y: healthDelta > 0 ? -50 : 50, // 增益上浮，减益下沉
+                        y: (hit.amount > 0 ? -50 : 50) + (isPlayerSide ? -index * 45 : index * 45), // 多段纵轴错开
                         scale: [1, 1.5, 2],
                         opacity: [1, 1, 0]
                     }}
@@ -1070,9 +1106,10 @@ export const Card: React.FC<CardProps> = ({
                         times: [0, 0.5, 1]
                     }}
                 >
-                    {healthDelta > 0 ? `+${healthDelta}` : healthDelta}
+                    {hit.amount > 0 ? `+${hit.amount}` : hit.amount}
                 </motion.div>
-            )}
+            ))}
+
 
             {/* Enemy Selection Arrow (敌方被选中箭头) */}
             {!isPreview && (location === 'combat' && isEnemyCombatant && isSelected) && (
@@ -1093,7 +1130,7 @@ export const Card: React.FC<CardProps> = ({
             <img
                 src={cardBackUrl || "https://placehold.co/300x450/1e293b/ffffff?text=BACK"}
                 className="w-full h-full object-cover relative z-10"
-                alt="Card Back"
+                alt="卡背"
                 draggable={false}
             />
             <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none z-20"></div>
@@ -1201,7 +1238,13 @@ export const Card: React.FC<CardProps> = ({
                 ${isLifting ? 'z-[100]' : ''} /* [新增] 捏起时强制置于顶层 */
                 /* [修正] 阵亡第一幕：普通死亡直接褪色，瞬息死亡必须等黄幕结束(Exploded)才褪色 */
                 ${(data.animState === 'dying' || isEphemeralExploded) ? 'grayscale transition-all duration-300' : ''}
-                border-0
+                border-2
+                ${data.region === 'Lyfe' ? 'border-blue-500/20'
+                    : data.region === 'Fenny' ? 'border-orange-500/20'
+                    : data.region === 'Pupu' ? 'border-red-500/20'
+                    : data.region === 'Mauxir' ? 'border-purple-500/20'
+                    : data.region === 'Logistics' ? 'border-white/10'
+                    : 'border-transparent'}
             `}
             initial={dynamicInitial}
             animate={dynamicAnimate}
@@ -1261,7 +1304,7 @@ export const Card: React.FC<CardProps> = ({
                                 // 根据所处位置智能读取对应的碎裂贴图
                                 src={isBench ? EFFECT_IMAGES.cardBroken1 : EFFECT_IMAGES.cardBroken2}
                                 className="w-full h-full object-cover opacity-90 mix-blend-overlay"
-                                alt="Shattered Glass"
+                                alt="碎裂"
                                 draggable={false}
                             />
                         </motion.div>
@@ -1270,34 +1313,53 @@ export const Card: React.FC<CardProps> = ({
                     {/* [新增] 挂载购物车图标 */}
                     {renderShopIcon()}
 
-                    {/* [新增] 面板微缩状态专属：左上角升级进度气泡 (通过 group/levelup 悬停触发) */}
-                    {location === 'deck-panel' && data.isChampion && data.level === 1 && data.levelUpCondition && (
-                        <div className="absolute -top-3 -left-3 w-8 h-8 z-[200] group/levelup cursor-help">
-                            {/* 等你有真实素材了，把这里换成 <img src={icon_levelup} /> */}
-                            <div className="w-full h-full bg-blue-900 border-2 border-yellow-500 rounded-full flex items-center justify-center shadow-lg">
-                                <span className="text-yellow-400 text-xs font-black drop-shadow-md">⬆</span>
-                            </div>
+                    {/* [核心重构] 面板微缩状态专属：天启者左上角动态升级进度气泡 */}
+                    {/* 动作 1：放开 data.level === 1 的限制，允许 2 级英雄展示 */}
+                    {location === 'deck-panel' && data.isChampion && data.levelUpCondition && (
+                        <div className="absolute -top-3 -left-3 w-8 h-8 z-[200] group/levelup cursor-help transition-transform hover:scale-110">
+                            {(() => {
+                                // 动作 2：提取进度数据
+                                let currentProgress = 0;
+                                const target = data.levelUpTarget || 1;
+                                if (data.key === 'fenny') {
+                                    const pHealth = playerNexusHealth ?? 20;
+                                    const eHealth = enemyNexusHealth ?? 20;
+                                    if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
+                                } else if (data.key === 'lyfe') {
+                                    currentProgress = data.strikeCount || 0;
+                                } else if (data.key === 'pupu_specular_soul') {
+                                    currentProgress = data.customProgress || 0;
+                                } else if (data.key === 'mauxir_lotus_drive') {
+                                    currentProgress = data.customProgress || 0;
+                                }
 
-                            {/* 悬浮弹出的进阶信息黑框 */}
-                            <div className="absolute left-1/2 bottom-full mb-2 -translate-x-1/2 w-48 bg-slate-900/95 border border-yellow-600/50 rounded p-3 opacity-0 group-hover/levelup:opacity-100 pointer-events-none transition-all duration-200 shadow-2xl z-[300] scale-95 group-hover/levelup:scale-100">
-                                <div className="text-white text-[10px] text-center mb-1 font-bold whitespace-nowrap">{data.levelUpCondition}</div>
-                                {(() => {
-                                    let currentProgress = 0;
-                                    const target = data.levelUpTarget || 1;
-                                    if (data.key === 'fenny') {
-                                        const pHealth = playerNexusHealth ?? 20;
-                                        const eHealth = enemyNexusHealth ?? 20;
-                                        if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
-                                    } else if (data.key === 'lyfe') {
-                                        currentProgress = data.strikeCount || 0;
-                                    } else if (data.key === 'pupu_specular_soul') {
-                                        currentProgress = data.customProgress || 0;
-                                    }
-                                    return (
-                                        <div className="text-blue-300 font-bold text-center text-xs tracking-widest">({Math.min(currentProgress, target)}/{target})</div>
-                                    );
-                                })()}
-                            </div>
+                                const cappedProgress = Math.min(currentProgress, target);
+
+                                // 动作 3：四段式瀑布流判断法则
+                                const getIconType = () => {
+                                    if (data.level === 2) return LEVELUP_ICONS.full;
+                                    if (cappedProgress === 0) return LEVELUP_ICONS.empty;
+                                    if (cappedProgress === target - 1) return LEVELUP_ICONS.almost;
+                                    return LEVELUP_ICONS.half;
+                                };
+
+                                // 动作 4：DOM 替换，植入质感贴图
+                                return (
+                                    <>
+                                        <div className="w-full h-full bg-slate-900 rounded-full flex items-center justify-center shadow-lg overflow-hidden border border-yellow-500/30">
+                                            <img src={getIconType()} className="w-full h-full object-cover" alt="升级进度" />
+                                        </div>
+
+                                        {/* 悬浮弹出的进阶信息黑框 (保留原貌) */}
+                                        <div className="absolute left-1/2 bottom-full mb-2 -translate-x-1/2 w-48 bg-slate-900/95 border border-yellow-600/50 rounded p-3 opacity-0 group-hover/levelup:opacity-100 pointer-events-none transition-all duration-200 shadow-2xl z-[300] scale-95 group-hover/levelup:scale-100">
+                                            <div className="text-white text-[10px] text-center mb-1 font-bold whitespace-nowrap">{data.levelUpCondition}</div>
+                                            <div className="text-blue-300 font-bold text-center text-xs tracking-widest">
+                                                {data.level === 2 ? '(MAX)' : `(${cappedProgress}/${target})`}
+                                            </div>
+                                        </div>
+                                    </>
+                                );
+                            })()}
                         </div>
                     )}
 

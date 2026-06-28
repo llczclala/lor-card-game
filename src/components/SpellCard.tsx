@@ -24,25 +24,32 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
     const isFenny = data.region === 'Fenny';
     const isLyfe = data.region === 'Lyfe';
     const isPupu = data.region === 'Pupu';
+    const isMauxir = data.region === 'Mauxir';
     const isLogistics = data.region === 'Logistics';
 
     const borderColor = isFenny
         ? 'border-orange-900'
-        : isPupu ? 'border-red-900':((isLogistics ? 'border-white-900' : (isLyfe ? 'border-blue-900' : 'border-grey-900')));
+        : isPupu ? 'border-red-900'
+        : isMauxir ? 'border-purple-900'
+        : isLogistics ? 'border-white-900'
+        : isLyfe ? 'border-blue-900'
+        : 'border-gray-700';
 
     const bgGradient = isFenny
         ? 'bg-gradient-to-b from-gray-900 via-orange-950 to-gray-900'
-        : (isLogistics
-            ? 'bg-gradient-to-b from-gray-900 via-white-950 to-gray-900'
-            :  (isLyfe
-                 ? 'bg-gradient-to-b from-gray-900 via-blue-950 to-gray-900'
-                 : 'bg-gradient-to-b from-gray-900 via-red-950 to-gray-900'));
+        : isPupu ? 'bg-gradient-to-b from-gray-900 via-red-950 to-gray-900'
+        : isMauxir ? 'bg-gradient-to-b from-gray-900 via-purple-950 to-gray-900'
+        : isLogistics ? 'bg-gradient-to-b from-gray-900 via-white-950 to-gray-900'
+        : isLyfe ? 'bg-gradient-to-b from-gray-900 via-blue-950 to-gray-900'
+        : 'bg-gradient-to-b from-gray-900 via-gray-950 to-gray-900';
 
-    const costColor = data.region === 'Fenny'
-                                       ? 'bg-orange-800 border-orange-500'
-                                       : ('Lyfe'
-                                          ? 'bg-blue-600 border-blue-400'
-                                          : 'bg-red-600 border-red-400');
+    const costColor = isFenny
+        ? 'bg-orange-800 border-orange-500'
+        : isPupu ? 'bg-red-600 border-red-400'
+        : isMauxir ? 'bg-purple-600 border-purple-400'
+        : isLogistics ? 'bg-gray-600 border-gray-400'
+        : isLyfe ? 'bg-blue-600 border-blue-400'
+        : 'bg-blue-600 border-blue-400';
     return (
         <div className={`w-full h-full relative overflow-hidden rounded-2xl border-[4px] ${borderColor} ${bgGradient} flex flex-col items-center pt-6 ${className}`}>
 

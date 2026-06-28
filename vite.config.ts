@@ -19,7 +19,7 @@ export default defineConfig(({ command }) => {
       // 基于 Sharp 引擎，安装快，不报错
       isBuild && ViteImageOptimizer({
         test: /\.(jpe?g|png|gif|tiff|webp|svg|avif)$/i,
-        exclude: undefined,
+        exclude: /CQWRSZDSA432/, // [fix] 排除校验图片（插件只判断文件名不含目录路径！）
         include: undefined,
         includePublic: true,
         logStats: true, // 构建完成后在终端显示压缩了多少体积
@@ -74,7 +74,7 @@ export default defineConfig(({ command }) => {
           rotateStringArray: true,
           debugProtection: true,
           debugProtectionInterval: 2000,
-          disableConsoleOutput: true,
+          disableConsoleOutput: true, // [调试] 临时关闭，排查黑屏问题
           selfDefending: true,
           deadCodeInjection: true,
           deadCodeInjectionThreshold: 0.4,

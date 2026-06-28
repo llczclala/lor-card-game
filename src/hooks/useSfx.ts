@@ -30,6 +30,9 @@ import defeatSound from '../music/music/被击败.mp3';
 import pupuUltSound from '../music/music/卜卜 灵鉴/卜卜大招.mp3';
 import pupuSkillSound from '../music/music/卜卜 灵鉴/卜卜小技能.mp3';
 import pupuSkillUpSound from '../music/music/卜卜 灵鉴/卜卜小技能强化.mp3';
+import mauxirSummonSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_summon.mp3';
+import mauxirRushAttackSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_attack.mp3';
+import mauxirRushHitSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_be_attack.mp3';
 // ==========================================================
 export const useSfx = () => {
     // [新增] 全局音效音量 Ref (默认 0.6)
@@ -99,6 +102,9 @@ export const useSfx = () => {
         const playPupuUlt = () => playSound(pupuUltSound, 0.9);
         const playPupuSkill = () => playSound(pupuSkillSound, 0.8);
         const playPupuSkillUp = () => playSound(pupuSkillUpSound, 0.9);
+        const playMauxirSummon = () => playSound(mauxirSummonSound, 0.8);
+        const playMauxirRushAttack = () => playSound(mauxirRushAttackSound, 0.8);
+        const playMauxirRushHit = () => playSound(mauxirRushHitSound, 0.8);
         // ==============================================================
 
         // --- 注册事件监听 ---
@@ -137,6 +143,9 @@ export const useSfx = () => {
         eventBus.on(GameEvents.SFX_BLOCK, playBlock);
         eventBus.on(GameEvents.SFX_CARD_HOVER, playCardHover);
         eventBus.on(GameEvents.SFX_SHUFFLE, playShuffle);
+        eventBus.on(GameEvents.SFX_MAUXIR_SUMMON, playMauxirSummon);
+        eventBus.on(GameEvents.SFX_MAUXIR_RUSH_ATTACK, playMauxirRushAttack);
+        eventBus.on(GameEvents.SFX_MAUXIR_RUSH_HIT, playMauxirRushHit);
         eventBus.on(GameEvents.SFX_SELECT_UNIT, playSelectUnit);
         eventBus.on(GameEvents.SFX_SUMMON, playSummon);
         eventBus.on(GameEvents.UNIT_DIE, playDefeat);
@@ -168,6 +177,9 @@ export const useSfx = () => {
             eventBus.off(GameEvents.SFX_RECALL_BLOCK, playRecallBlock);
             eventBus.off(GameEvents.SFX_ENEMY_PLAY_UNIT, playEnemyPlayUnit);
             eventBus.off(GameEvents.SFX_PLAYER_PLAY_UNIT, playPlayerPlayUnit);
+            eventBus.off(GameEvents.SFX_MAUXIR_SUMMON, playMauxirSummon);
+            eventBus.off(GameEvents.SFX_MAUXIR_RUSH_ATTACK, playMauxirRushAttack);
+            eventBus.off(GameEvents.SFX_MAUXIR_RUSH_HIT, playMauxirRushHit);
             eventBus.off(GameEvents.SFX_BLOCK, playBlock);
             eventBus.off(GameEvents.SFX_CARD_HOVER, playCardHover);
             eventBus.off(GameEvents.SFX_SHUFFLE, playShuffle);

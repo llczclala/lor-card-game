@@ -7,6 +7,8 @@ import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 引入事�
 // [新增] 单次战斗结果接口
 export interface SingleCombatResult {
     updatedFight: { attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy' };
+    attackerDamage: number;  // [修复] 攻击者承受的伤害（用于发射 unit_damage 事件）
+    blockerDamage: number;   // [修复] 阻挡者承受的伤害（用于发射 unit_damage 事件）
     nexusDamage?: { target: 'player' | 'enemy', amount: number };
     levelUpUpdate?: CardData;
     killedUnits: CardData[];
@@ -22,7 +24,8 @@ export interface CombatResult {
     levelUpCards: CardData[];
 }
 
-const getCurrentHP = (c: CardData) => c.health + (c.buffs?.health || 0) - (c.damageTaken || 0);
+// [核心解锁] 将生命值探针暴露给外部，用于多段随机伤害的动态存活校验
+export const getCurrentHP = (c: CardData) => c.health + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
 
 // [新增] 计算单个槽位的战斗结果
 export const resolveSingleCombat = (
@@ -32,10 +35,30 @@ export const resolveSingleCombat = (
 ): SingleCombatResult => {
     const { attacker, blocker, owner, isGhostBlocked } = fight;
 
+    // [核心防爆锁] 绝生死关：核验单位在物理碰撞前是否已死亡！
+    const isAttackerDead = attacker.animState === 'dying' || attacker.animState === 'ephemeral_dying' || attacker.isDead || getCurrentHP(attacker) <= 0;
+    const isBlockerDead = blocker && (blocker.animState === 'dying' || blocker.animState === 'ephemeral_dying' || blocker.isDead || getCurrentHP(blocker) <= 0);
+
+    // 如果攻击者已死，直接终止其物理判定，不产生任何伤害与升级！
+    if (isAttackerDead) {
+        return {
+            updatedFight: { ...fight },
+            attackerDamage: 0,   // [修复] 补全接口字段
+            blockerDamage: 0,    // [修复] 补全接口字段
+            nexusDamage: undefined,
+            killedUnits: [] // 已经在法术结算时记录过死亡，不再重复宣告
+        };
+    }
+
     // 初始化状态
-    // [核心修复] 移除 damageTaken: 0，让 ...attacker 和 ...blocker 自然继承之前的旧伤！
     let newAttacker = { ...attacker, strikeCount: attacker.strikeCount + 1 };
-    let newBlocker = blocker ? { ...blocker, strikeCount: blocker.strikeCount + 1 } : null;
+    let newBlocker = blocker ? { ...blocker, strikeCount: isBlockerDead ? blocker.strikeCount : blocker.strikeCount + 1 } : null;
+
+    // [僵尸缴械] 如果阻挡者已死，强制将其攻击力归零，确保无法挥出反击伤害！
+    if (isBlockerDead && newBlocker) {
+        newBlocker.power = -9999;
+        if (newBlocker.buffs) newBlocker.buffs.power = 0;
+    }
 
     let nexusDmgInfo = undefined;
     const killedUnits: CardData[] = [];
@@ -44,7 +67,7 @@ export const resolveSingleCombat = (
     // 1. 调用关键词逻辑计算伤害
     const interaction = calculateCombatInteraction(newAttacker, newBlocker);
 
-    // [改造] 物理破盾法则：如果护盾抵挡了伤害，将 'Barrier' 标记为黯淡而非移除
+    // 物理破盾：屏障抵挡伤害后标记为黯淡（保留在关键词列表中用于视觉）
     if (interaction.attackerBarrierPopped) {
         newAttacker.depletedKeywords = [...(newAttacker.depletedKeywords || []), 'Barrier'];
     }
@@ -76,7 +99,7 @@ export const resolveSingleCombat = (
     }
 
     // 4. 升级判定 (简化版，仅检查攻击者)
-    if (checkCardLevelUp(newAttacker, game.playerNexus, game.enemyNexus)) {
+    if (checkCardLevelUp(newAttacker, game.playerNexus, game.enemyNexus) && getCurrentHP(newAttacker) > 0) {
         const leveled = getLeveledUpCard(newAttacker);
         // [核心修复] 彻底删除 health 覆盖，并完美继承所有的运行时状态！
         newAttacker = {
@@ -126,6 +149,8 @@ export const resolveSingleCombat = (
 
     return {
         updatedFight: { ...fight, attacker: newAttacker, blocker: newBlocker },
+        attackerDamage: interaction.attackerDamage,   // [修复] 透传受伤数据，供外层发射 unit_damage 事件
+        blockerDamage: interaction.blockerDamage,     // [修复] 透传受伤数据，供外层发射 unit_damage 事件
         nexusDamage: nexusDmgInfo,
         levelUpUpdate,
         killedUnits
@@ -148,6 +173,18 @@ export const calculateCombatOutcome = (
     // 1. 计算每一路战斗
     const nextField = combatField.map(fight => {
         const { attacker, blocker, owner } = fight;
+
+        // [核心修复] 法术预击杀：攻击者在战斗结算前已被法术打死，不参与战斗
+        // 不造成伤害、不承受反击；阻挡者解除任务，存活归位
+        if (attacker.animState === 'dying' || attacker.animState === 'ephemeral_dying') {
+            if (blocker) {
+                const blockerSurvivor = { ...blocker, damageTaken: blocker.damageTaken || 0, animState: 'idle' as const };
+                if (owner === 'player') survivorsEnemy.push(blockerSurvivor);
+                else survivorsPlayer.push(blockerSurvivor);
+            }
+            return { ...fight, attacker: { ...attacker }, blocker: null };
+        }
+
         // 深拷贝防止引用污染
         // [核心修复] 同样移除 damageTaken: 0，保留卡牌进入战斗前的真实血量状态！
         let newAttacker = { ...attacker, animState: 'hit', strikeCount: attacker.strikeCount + 1 };
@@ -173,23 +210,23 @@ export const calculateCombatOutcome = (
         if (result.attackerDamage > 0) {
             newAttacker.damageTaken = (newAttacker.damageTaken || 0) + result.attackerDamage;
         }
-        // [改造] 如果屏障破碎，标记黯淡而非移除
+        // 屏障破碎，从关键词列表中移除
         if (result.attackerBarrierPopped) {
-            newAttacker.depletedKeywords = [...(newAttacker.depletedKeywords || []), 'Barrier'];
+            newAttacker.keywords = newAttacker.keywords.filter((k: string) => k !== 'Barrier');
         }
 
         if (newBlocker) {
             if (result.blockerDamage > 0) {
                 newBlocker.damageTaken = (newBlocker.damageTaken || 0) + result.blockerDamage;
             }
-            // [改造] 如果屏障破碎，标记黯淡而非移除
+            // 屏障破碎，从关键词列表中移除
             if (result.blockerBarrierPopped) {
-                newBlocker.depletedKeywords = [...(newBlocker.depletedKeywords || []), 'Barrier'];
+                newBlocker.keywords = newBlocker.keywords.filter((k: string) => k !== 'Barrier');
             }
         }
 
         // 升级检查
-        if (checkCardLevelUp(newAttacker, pNexus, eNexus)) {
+        if (checkCardLevelUp(newAttacker, pNexus, eNexus) && getCurrentHP(newAttacker) > 0) {
             const leveled = getLeveledUpCard(newAttacker);
             levelUpCards.push(leveled);
             // [核心修复] 让 2 级英雄使用自身的满额最大血量，并完美继承所有运行时状态
@@ -202,7 +239,7 @@ export const calculateCombatOutcome = (
                 strikeCount: newAttacker.strikeCount
             };
         }
-        if (newBlocker && checkCardLevelUp(newBlocker, pNexus, eNexus)) {
+        if (newBlocker && checkCardLevelUp(newBlocker, pNexus, eNexus) && getCurrentHP(newBlocker) > 0) {
             const leveled = getLeveledUpCard(newBlocker);
             levelUpCards.push(leveled);
             // [核心修复] 阻挡者同理

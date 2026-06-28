@@ -25,8 +25,8 @@ const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: an
                 <div className="font-bold text-white mt-1 text-xl">"{cardName}"</div>
             </div>
             <div className="flex gap-4 justify-center">
-                <button onClick={onCancel} className="px-6 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold border border-white/10 transition-colors">CANCEL</button>
-                <button onClick={onConfirm} className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white font-bold shadow-[0_0_20px_rgba(22,163,74,0.4)] transition-all hover:scale-105">CONFIRM</button>
+                <button onClick={onCancel} className="px-6 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold border border-white/10 transition-colors">取消</button>
+                <button onClick={onConfirm} className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white font-bold shadow-[0_0_20px_rgba(22,163,74,0.4)] transition-all hover:scale-105">确认</button>
             </div>
         </div>
     </div>
@@ -282,7 +282,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                             animate={{ y: '-100%' }} // 向上移出
                             transition={{ duration: 0.8, ease: "easeInOut" }}
                         >
-                            <img src={UI_ICONS.levelup} className="w-32 h-32 opacity-80 animate-pulse drop-shadow-lg" alt="Level Up" />
+                            <img src={UI_ICONS.levelup} className="w-32 h-32 opacity-80 animate-pulse drop-shadow-lg" alt="升级" />
                         </motion.div>
                     )}
                     {animState === 'down' && (
@@ -292,7 +292,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                             animate={{ y: '100%' }}  // 向下移出
                             transition={{ duration: 0.8, ease: "easeInOut" }}
                         >
-                            <img src={UI_ICONS.leveldown} className="w-32 h-32 opacity-80 animate-pulse drop-shadow-lg" alt="Level Down" />
+                            <img src={UI_ICONS.leveldown} className="w-32 h-32 opacity-80 animate-pulse drop-shadow-lg" alt="降级" />
                         </motion.div>
                     )}
                 </AnimatePresence>
@@ -305,7 +305,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                         <img
                             src={displayImage} // [修改] 使用动态 displayImage
                             className="w-full h-full object-cover blur-2xl opacity-60 scale-110 transition-all duration-300"
-                            alt="Background Blur"
+                            alt="背景模糊"
                         />
                     </div>
 
@@ -327,7 +327,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                         <img
                             src={displayImage} // [修改] 使用动态 displayImage
                             className="w-full h-full object-contain drop-shadow-2xl transition-all duration-300"
-                            alt="Full Art"
+                            alt="全屏原画"
                         />
                     </div>
 
@@ -344,7 +344,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                             <img
                                 src={viewLevel === 1 ? UI_ICONS.levelup : UI_ICONS.leveldown}
                                 className="w-12 h-12 object-contain group-hover/btn:brightness-125 transition-all"
-                                alt="Toggle Level"
+                                alt="切换等级"
                             />
                         </motion.button>
                     )}
@@ -623,7 +623,8 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                             <p className="text-white text-xl font-medium italic text-center leading-relaxed max-w-[80%]">
                                 "{targetCard.name.includes('里芙') ? '此牌打击 2 次。' :
                                  (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 10。' :
-                                 (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 3 次' :'满足特定条件。'))}"
+                                 (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 3 次' :
+                                 (targetCard.name.includes('猫汐尔 莲驱') ? '召唤师和召唤衍生物累计造成30点伤害' :'满足特定条件。')))}"
                             </p>
                         </div>
                     )}
@@ -835,7 +836,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                                 transition={{ delay: 0.5, type: "spring" }}
                                 className="mt-8 flex items-center gap-6 bg-white/10 px-8 py-4 rounded-2xl border border-white/20"
                             >
-                                <img src={CURRENCY_ICONS.silverCoin} className="w-16 h-16 drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]" alt="Silver" />
+                                <img src={CURRENCY_ICONS.silverCoin} className="w-16 h-16 drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]" alt="银币" />
                                 <div className="flex flex-col">
                                     <span className="text-sm font-bold text-gray-400 tracking-widest uppercase">战斗奖励</span>
                                     <span className="text-5xl font-black text-white font-mono">

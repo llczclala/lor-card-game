@@ -134,7 +134,7 @@ export const AttackToken: React.FC<AttackTokenProps> = ({ type, isEnemy = false 
             <motion.div ref={scope} className="w-[80px] h-[80px] flex items-center justify-center">
                 <img
                     src={imgSrc}
-                    alt="Attack Token"
+                    alt="攻击指示物"
                     className="w-full h-auto object-contain"
                 />
             </motion.div>

@@ -194,9 +194,9 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                         </div>
                         {/* 类别单选 */}
                         <div className="flex gap-1 bg-slate-800 p-1 rounded-md">
-                            <button onClick={()=>setCategory('HERO')} className={`p-1.5 rounded-sm ${category==='HERO'?'bg-yellow-600 text-white':'text-gray-400'}`} title="Heroes"><User size={16}/></button>
+                            <button onClick={()=>setCategory('HERO')} className={`p-1.5 rounded-sm ${category==='HERO'?'bg-yellow-600 text-white':'text-gray-400'}`} title="英雄"><User size={16}/></button>
                             {/* [修改] 移除了法术 (Zap) 按钮 */}
-                            <button onClick={()=>setCategory('UNIT')} className={`p-1.5 rounded-sm ${category==='UNIT'?'bg-orange-600 text-white':'text-gray-400'}`} title="Units"><Box size={16}/></button>
+                            <button onClick={()=>setCategory('UNIT')} className={`p-1.5 rounded-sm ${category==='UNIT'?'bg-orange-600 text-white':'text-gray-400'}`} title="单位"><Box size={16}/></button>
                         </div>
                     </div>
 
@@ -210,7 +210,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                         <button
                             onClick={resetFilters} disabled={!isFilterActive}
                             className={`p-1.5 rounded-md transition-colors ${isFilterActive ? 'bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
-                            title="Reset Filters"
+                            title="重置筛选"
                         >
                             <X size={18} />
                         </button>
@@ -350,7 +350,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                             <button
                                 onClick={handleSaveCrop}
                                 className="w-16 h-16 rounded-full bg-green-600 hover:bg-green-500 text-white flex items-center justify-center shadow-[0_0_30px_rgba(22,163,74,0.5)] transition-all hover:scale-110 active:scale-95"
-                                title="Save to Workspace"
+                                title="保存到工作区"
                             >
                                 <Check size={32} />
                             </button>
@@ -370,7 +370,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                         <button
                             onClick={onClose}
                             className="absolute top-4 right-4 z-50 bg-black/60 hover:bg-red-600 text-white px-3 py-1.5 rounded-md flex items-center gap-2 transition-colors border border-white/20 font-bold text-xs"
-                            title="Exit Studio"
+                            title="退出工作室"
                         >
                             <X size={16}/> EXIT
                         </button>

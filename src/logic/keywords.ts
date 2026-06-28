@@ -52,8 +52,46 @@ export const applyRoundStartKeywords = (cards: CardData[]): CardData[] => {
  * @param blocker 阻挡者 (可能为 null)
  */
 // [新增] 辅助函数：获取包含 Buff 和损血计算在内的“真实面板数值”
-const getPower = (c: CardData) => (c.power || 0) + (c.buffs?.power || 0);
-const getHealth = (c: CardData) => (c.health || 0) + (c.buffs?.health || 0) - (c.damageTaken || 0);
+// [核心修复] 补回遗漏的 roundBuffs (临时账本)！否则冻结和临时增益在战斗中将完全失效！
+// (将其 export 导出，供 effectProcessor 等外部组件共用，避免重复造轮子)
+export const getPower = (c: CardData) => {
+    const raw = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
+    // [maxPower] 如有攻击力上限，clamp 到该值（底座专用）
+    if (c.maxPower !== undefined && raw > c.maxPower) return c.maxPower;
+    return raw;
+};
+export const getHealth = (c: CardData) => (c.health || 0) + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
+
+// ==========================================
+// [新增] 冻结 (Frostbite) 专属绝对零度处理器
+// ==========================================
+/**
+ * 应用【冻结】效果：动态计算当前真实攻击力，并向 roundBuffs 注入等额负数对冲清零
+ */
+export const applyFrostbite = (card: CardData): CardData => {
+    // 1. 获取当前真实攻击力 (包含永久和临时 Buff)
+    const currentPower = getPower(card);
+
+    // 2. 如果攻击力已经 <= 0，不需要再减；否则产生等额的负数对冲
+    const offset = currentPower > 0 ? -currentPower : 0;
+
+    // 3. 记入临时词条账本，确保回合结束能被全局清理机制自动销毁
+    let newRoundKeywords = card.roundKeywords || [];
+    if (!newRoundKeywords.includes('Frostbite')) {
+        newRoundKeywords = [...newRoundKeywords, 'Frostbite'];
+    }
+
+    return {
+        ...card,
+        keywords: Array.from(new Set([...card.keywords, 'Frostbite'])),
+        roundKeywords: newRoundKeywords,
+        roundBuffs: {
+            power: (card.roundBuffs?.power || 0) + offset,
+            health: card.roundBuffs?.health || 0
+        },
+        animState: 'buff' as const // 借用 buff 动画状态触发前端光晕
+    };
+};
 
 /**
  * 处理回合结束时的关键词效果 (如 Ephemeral)
@@ -151,7 +189,11 @@ export const calculateCombatInteraction = (
     let quickAttackEphemeralDeath = false;
 
     // [核心修复] 战斗引擎重见光明：读取攻击者的真实战斗力！
-    const attackerRealPower = getPower(attacker);
+    let attackerRealPower = getPower(attacker);
+    // [CantAttack] 无法攻击：战斗中攻击力强制为 0，无论面板显示多少
+    if (attacker.keywords.includes('CantAttack')) {
+        attackerRealPower = 0;
+    }
 
     if (!blocker) {
         // --- 情况 A: 直接攻击 (Direct Attack) ---
@@ -217,10 +259,9 @@ export const calculateCombatInteraction = (
         }
 
         // --- 4. Barrier (屏障) ---
-        // 效果：抵挡一次伤害，生效后黯淡
-        // 判定时排除已黯淡的屏障（depletedKeywords 中有 'Barrier' 则不再生效）
-        const attackerBarrierActive = attacker.keywords.includes('Barrier') && !(attacker.depletedKeywords || []).includes('Barrier');
-        const blockerBarrierActive = blocker && blocker.keywords.includes('Barrier') && !(blocker.depletedKeywords || []).includes('Barrier');
+        // 效果：抵挡一次伤害，生效后消失
+        const attackerBarrierActive = attacker.keywords.includes('Barrier');
+        const blockerBarrierActive = blocker && blocker.keywords.includes('Barrier');
 
         if (attackerBarrierActive && attackerDamage > 0) {
             attackerDamage = 0;

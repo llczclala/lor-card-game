@@ -8,7 +8,11 @@ import icon_silver from '../image/icon/silverCoin.png';
 import icon_data from '../image/icon/dataGold.png';
 import icon_bit from '../image/icon/bitGold.png';
 
-import icon_levelup from '../image/icon/levelup.png';
+// [核心替换] 引入四阶状态升级图标
+import icon_levelup_0 from '../image/icon/levelup_0.png';
+import icon_levelup_1 from '../image/icon/levelup_1.png';
+import icon_levelup_2 from '../image/icon/levelup_2.png';
+import icon_levelup_full from '../image/icon/levelup.png';
 import icon_leveldown from '../image/icon/leveldown.png';
 
 import border_hero from '../image/cardborder/cardborder_hero.png';
@@ -20,6 +24,8 @@ import effect_break from '../image/effect/break.png';
 import effect_broken1 from '../image/effect/broken1.png';
 import effect_broken2 from '../image/effect/broken2.png';
 import effect_be_attacked from '../image/effect/be_attacked.png'; // [核心新增] 引入全新的法术命中受击贴图
+import mauxir_rush_attack from '../image/effect/mauxir_lotus_rush_attack.png';
+import mauxir_rush_be_attacked from '../image/effect/mauxir_lotus_rush_be_attacked.png';
 
 // 引入里芙的原画
 import lyfe_1 from '../image/hero/里芙1.png';
@@ -33,6 +39,10 @@ import fenny_2 from '../image/hero/芬妮2.png';
 import pupu_specular_soul_1 from '../image/hero/卜卜灵鉴1.png';
 import pupu_specular_soul_2 from '../image/hero/卜卜灵鉴2.png';
 
+// [新增] 引入猫汐尔 莲驱的原画
+import mauxir_lotus_drive_1 from '../image/hero/猫汐尔莲驱1.png';
+import mauxir_lotus_drive_2 from '../image/hero/猫汐尔莲驱2.png';
+
 // --- 法术卡面 (Spells) ---
 // 通用法术
 import spell_01 from '../image/spells/01.png'; // 单挑
@@ -41,24 +51,44 @@ import spell_03 from '../image/spells/03.png'; // 专注
 import spell_04 from '../image/spells/04.png'; // 暗箭
 import spell_05 from '../image/spells/05.png'; // 振奋
 import spell_06 from '../image/spells/06.png'; // 破坏
+// [新增] 5 大新法术的图片载入
+import spell_07 from '../image/spells/07.png'; // 活力再生
+import spell_08 from '../image/spells/08.png'; // 全力净化
+// [新增] 第 4 批通用法术原画
+import spell_09 from '../image/spells/09.png'; // 暗箱操作
+import spell_10 from '../image/spells/10.png'; // 生机补充
+import spell_11 from '../image/spells/11.png'; // 能量补充
+import spell_12 from '../image/spells/12.png'; // 巴德尔试剂
 
-// [新增] 梦莲无人机（临时立绘）
-import dream_lotus_drone_img from '../image/spells/abc.png';
+// [新增] 梦莲无人机原画
+import dream_lotus_drone_img from '../image/spells/mauxir_lotus_robot.png';
 
 // 芬妮专属法术
 import fenny_spell_base from '../image/spells/fenny_spell.png';   // 芬妮的狂热
 import fenny_spell_01 from '../image/spells/fenny_spell01.png';  // 星光之途
 import fenny_spell_02 from '../image/spells/fenny_spell02.png';  // 绝对主角
+import fenny_spell_03 from '../image/spells/fenny_spell03.png';  // [新增] 激励之声
 
 // 里芙专属法术
 import lyfe_spell_base from '../image/spells/lyfe_spell.png';    // 里芙的决意
 import lyfe_spell_01 from '../image/spells/lyfe_spell01.png';   // 无尽霜刃
 import lyfe_spell_02 from '../image/spells/lyfe_spell02.png';   // 吞噬神座
+import lyfe_spell_03 from '../image/spells/lyfe_spell03.png';   // [新增] 冻沙激流
 
 // 卜卜灵鉴专属法术
 import pupu_specular_soul_spell_base from '../image/spells/pupu_specular_soul_spell.png';    // 卜卜的卜卦
 import pupu_specular_soul_spell_01 from '../image/spells/pupu_specular_soul_spell01.png';   // 镜涌万象
 import pupu_specular_soul_spell_02 from '../image/spells/pupu_specular_soul_spell02.png';   // 吉煞映照
+import pupu_specular_soul_spell_03 from '../image/spells/pupu_specular_soul_spell03.png';   // [新增] 异镜来物
+
+// [新增] 猫汐尔莲驱专属法术
+import mauxir_lotus_spell_base from '../image/spells/mauxir_lotus_spell.png';    // 猫汐尔的战术演算
+import mauxir_lotus_spell_01 from '../image/spells/mauxir_lotus_spell01.png';   // 千莲叠绽
+import mauxir_lotus_spell_02 from '../image/spells/mauxir_lotus_spell02.png';   // 顷刻莲潮
+import mauxir_lotus_spell_03 from '../image/spells/mauxir_lotus_spell03.png';   // 伴泽而生
+
+// [新增] 臆莲基座原画
+import placeholder_pedestal from '../image/units/mauxir_lotus_pedestal.png';
 
 // --- 测试单位原画 (0_01 ~ 0_36) ---
 // 1-10
@@ -146,7 +176,7 @@ import p_s_1 from '../image/icon/player_spells_1.png';
 import p_s_2 from '../image/icon/player_spells_2.png';
 import p_s_3 from '../image/icon/player_spells_3.png';
 
-// [新增] 批量引入卡背 (1张默认 + 3张可抽取 + 3张英雄专属 = 7张满编)
+// [新增] 批量引入卡背 (1张默认 + 3张可抽取 + 3张英雄专属 + 6张永恒之约 = 13张满编)
 import cb_01 from '../image/card_back/01.png';
 import cb_02 from '../image/card_back/02.png';
 import cb_03 from '../image/card_back/03.png';
@@ -154,6 +184,12 @@ import cb_04 from '../image/card_back/04.png';
 import cb_fenny from '../image/card_back/fenny.png';
 import cb_lyfe from '../image/card_back/lyfe.png';
 import cb_pupu from '../image/card_back/pupu_specular.png';
+import cb_05 from '../image/card_back/05.png';
+import cb_06 from '../image/card_back/06.png';
+import cb_07 from '../image/card_back/07.png';
+import cb_08 from '../image/card_back/08.png';
+import cb_09 from '../image/card_back/09.png';
+import cb_10 from '../image/card_back/10.png';
 
 // [新增] 批量引入牌桌 (01-05)
 import desk_01 from '../image/desk/01.png';
@@ -269,7 +305,7 @@ export interface HeroImages {
 
 export const PERSONALIZATION_ASSETS = {
     // [核心修复] 按序排布 7 张卡背。索引 1/2/3 入盲盒，索引 4/5/6 锁死给未来任务系统！
-    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_fenny, cb_lyfe, cb_pupu],
+    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_fenny, cb_lyfe, cb_pupu, cb_05, cb_06, cb_07, cb_08, cb_09, cb_10],
     desks: [desk_01, desk_02, desk_03, desk_04, desk_05]
 };
 
@@ -282,7 +318,8 @@ export const gacha_icon = {
 export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
     lyfe: { base: lyfe_1, level2: lyfe_2 },
     fenny: { base: fenny_1, level2: fenny_2 },
-    pupu_specular_soul: { base: pupu_specular_soul_1, level2: pupu_specular_soul_2 }
+    pupu_specular_soul: { base: pupu_specular_soul_1, level2: pupu_specular_soul_2 },
+    mauxir_lotus_drive: { base: mauxir_lotus_drive_1, level2: mauxir_lotus_drive_2 }
 };
 // [皮肤] 导出正式单位图片集合（从 glob 自动构建）
 export const UNIT_IMAGES: Record<string, string> = {};
@@ -319,24 +356,42 @@ export const SPELL_IMAGES = {
     hidden_arrow: spell_04,
     inspire: spell_05,
     destruction: spell_06,
+    // [新增] 通用新法术导出
+    vitality_regen: spell_07,
+    full_purification: spell_08,
+    // [新增] 第 4 批通用法术
+    backroom_deal: spell_09,
+    vitality_supplement: spell_10,
+    energy_supplement: spell_11,
+    bader_reagent: spell_12,
 
     // 芬妮
     fenny_spell: fenny_spell_base,
     fenny_strike: fenny_spell_01,
     fenny_ultimate: fenny_spell_02,
+    fenny_support: fenny_spell_03, // [新增] 激励之声
 
     // 里芙
     lyfe_spell: lyfe_spell_base,
     lyfe_rush: lyfe_spell_01,
     lyfe_ultimate: lyfe_spell_02,
+    lyfe_support: lyfe_spell_03, // [新增] 冻沙激流
 
     // 卜卜灵鉴
     pupu_specular_soul_spell: pupu_specular_soul_spell_base,
     pupu_specular_soul_rush: pupu_specular_soul_spell_01,
     pupu_specular_soul_ultimate: pupu_specular_soul_spell_02,
+    pupu_specular_soul_support: pupu_specular_soul_spell_03, // [新增] 异镜来物
 
     // 图征小队·通用法术
     dream_lotus_drone: dream_lotus_drone_img,
+
+    // [新增] 猫汐尔莲驱
+    mauxir_lotus_spell: mauxir_lotus_spell_base,
+    mauxir_lotus_rush: mauxir_lotus_spell_01,
+    mauxir_lotus_ultimate: mauxir_lotus_spell_02,
+    mauxir_lotus_support: mauxir_lotus_spell_03,
+    mauxir_lotus_pedestal: placeholder_pedestal,
 };
 
 
@@ -405,9 +460,18 @@ export const UI_IMAGES = {
 };
 
 export const UI_ICONS = {
-    levelup: icon_levelup,
+    levelup: icon_levelup_full, // 保持兼容性
     leveldown: icon_leveldown
 };
+
+// [新增] 导出四阶英雄升级状态图标池
+export const LEVELUP_ICONS = {
+    empty: icon_levelup_0,
+    half: icon_levelup_1,
+    almost: icon_levelup_2,
+    full: icon_levelup_full
+};
+
 // [新增] 导出卡牌边框集合
 export const CARD_BORDERS = {
     hero: border_hero,   // 金色 (英雄)
@@ -428,7 +492,9 @@ export const EFFECT_IMAGES = {
     groundCrack: effect_break,     // 砸击：地面龟裂
     cardBroken1: effect_broken1,   // 死亡预备：卡牌碎裂 1
     cardBroken2: effect_broken2,   // 死亡预备：卡牌碎裂 2
-    beAttacked: effect_be_attacked // [核心新增] 法术命中：受击裂纹特效
+    beAttacked: effect_be_attacked, // [核心新增] 法术命中：受击裂纹特效
+    mauxirRushAttack: mauxir_rush_attack,
+    mauxirRushBeAttacked: mauxir_rush_be_attacked
 };
 
 export const TITAN_IMAGES = {

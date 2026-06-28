@@ -153,7 +153,7 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                                     <div className="absolute inset-0 z-0 overflow-hidden bg-slate-950 flex">
                                         {/* 左侧：我方 (蓝色) */}
                                         <div className="relative w-1/2 h-full bg-blue-950 overflow-hidden">
-                                            {playerImg && <img src={playerImg} className="absolute inset-0 w-full h-full object-cover opacity-70" style={{ objectPosition: 'top 20% center' }} alt="Player" />}
+                                            {playerImg && <img src={playerImg} className="absolute inset-0 w-full h-full object-cover opacity-70" style={{ objectPosition: 'top 20% center' }} alt="玩家" />}
                                             <div className="absolute inset-0 bg-gradient-to-r from-blue-900/60 to-transparent mix-blend-overlay"></div>
                                             {/* 将文字移至顶部，为底部简报内容让出空间 */}
                                             <div className="absolute top-10 left-10 z-10">
@@ -166,7 +166,7 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
 
                                         {/* 右侧：敌方 (红色) */}
                                         <div className="relative w-1/2 h-full bg-red-950 overflow-hidden">
-                                            {enemyImg && <img src={enemyImg} className="absolute inset-0 w-full h-full object-cover opacity-70" style={{ objectPosition: 'top 20% center' }} alt="Enemy" />}
+                                            {enemyImg && <img src={enemyImg} className="absolute inset-0 w-full h-full object-cover opacity-70" style={{ objectPosition: 'top 20% center' }} alt="敌人" />}
                                             <div className="absolute inset-0 bg-gradient-to-l from-red-900/60 to-transparent mix-blend-overlay"></div>
                                             <div className="absolute top-10 right-10 z-10 text-right">
                                                 <div className="text-xs font-mono text-red-400 font-bold tracking-widest flex items-center justify-end gap-1"><Sword size={12}/> ENEMY</div>

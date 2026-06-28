@@ -10,7 +10,11 @@ export interface EnemyArchetype {
     description: string;   // 描述文本
 
     // 核心卡牌: 无论随机过程如何，这些牌一定会出现在卡组里
-    coreCards: string[];
+    // [核心升级] 支持 { key, count } 的工业级压缩写法，兼容旧版 string[] 写法
+    coreCards: string[] | { key: string; count: number }[];
+
+    // [核心新增] 绝对纯净锁：若开启，系统将放弃 40 张自动填充底线，严禁任何杂牌混入！
+    exactDeck?: boolean;
 
     // 倾向性填充池: 生成器会优先从这里抽取卡牌来填充卡组
     // 如果这里不够，再去公共池(Logistics)捞
@@ -33,8 +37,9 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         name: '绝对压力',
         champion: 'fenny',
         description: '以芬妮为核心，携带大量高攻击与打击法术，试图快速通过碾压伤害击溃防线。',
-        coreCards: ['fenny', 'fenny', 'fenny', 'destruction', 'destruction', 'destruction', 'inspire', 'inspire', 'inspire', 'hidden_arrow', 'hidden_arrow', 'hidden_arrow'],
-        preferredPool: ['Typhoon_Squad_Dornier', 'Ghost_Squad_Valen', 'Ghost_Squad_Vez', 'Ghost_Squad_Antina', 'Messenger_Squad_WALL_E', 'Messenger_Squad_Gena', 'Messenger_Squad_Ah_Hua', 'Typhoon_Squad_613', 'Typhoon_Squad_Flameheart', 'Argo_Squad_Arrowhead', 'Argo_Squad_Musician', 'Argo_Squad_Pigeon', 'Star_Bright_Squad_Dakors', 'Mingyi_Squad_Zhe_hao', 'Mingyi_Squad_Zhu_He', 'Mingyi_Squad_Jin_Lang', 'Star_Bright_Squad_Doveil', 'Star_Bright_Squad_Alivy', 'Ulster_Squad_Flamme', 'Ulster_Squad_Maeve', 'Ulster_Squad_Koni', 'Dream_Guardians_Squad_Haifa', 'Dream_Guardians_Squad_Saikui', 'Dream_Guardians_Squad_Martina'],
+        coreCards: [{ key: 'fenny', count: 6 }, { key: 'destruction', count: 3 }, { key: 'inspire', count: 3 }, { key: 'hidden_arrow', count: 3 }, { key: 'test_overwhelm', count: 3 }, { key: 'Ghost_Squad_Valen', count: 3 }, { key: 'Ghost_Squad_Vez', count: 3 }, { key: 'Ghost_Squad_Antina', count: 3 }, { key: 'Argo_Squad_Arrowhead', count: 3 }, { key: 'Ulster_Squad_Flamme', count: 3 }, { key: 'test_challenger', count: 3 }, { key: 'fenny_support', count: 4 }],
+        exactDeck: true,
+        preferredPool: [],
         apocalypseTags: ['effect_overwhelm_aura'],
         aiPersonality: 'aggressive',
     },
@@ -43,8 +48,9 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         name: '速战速决',
         champion: 'lyfe',
         description: '以里芙为核心，利用低费单位铺场和快速攻击特性，在前期建立优势。',
-        coreCards: ['lyfe', 'lyfe', 'lyfe', 'prayer', 'prayer', 'prayer', 'focus', 'focus', 'focus', 'single_combat', 'single_combat', 'single_combat'],
-        preferredPool: ['Dream_Guardians_Squad_Saikui', 'Dream_Guardians_Squad_Haifa', 'Ulster_Squad_Koni', 'Ulster_Squad_Maeve', 'Ulster_Squad_Flamme', 'Star_Bright_Squad_Alivy', 'Star_Bright_Squad_Doveil', 'Mingyi_Squad_Jin_Lang', 'Mingyi_Squad_Zhu_He', 'Mingyi_Squad_Zhe_hao', 'Star_Bright_Squad_Dakors', 'Argo_Squad_Pigeon', 'Argo_Squad_Musician', 'Argo_Squad_Arrowhead', 'Typhoon_Squad_Flameheart', 'Typhoon_Squad_Dornier', 'Typhoon_Squad_613', 'Messenger_Squad_Ah_Hua', 'Messenger_Squad_Gena', 'Messenger_Squad_WALL_E', 'Ghost_Squad_Valen', 'Ghost_Squad_Vez', 'Ghost_Squad_Antina'],
+        coreCards: [{ key: 'lyfe', count: 6 }, { key: 'prayer', count: 3 }, { key: 'focus', count: 3 }, { key: 'single_combat', count: 3 }, { key: 'lyfe_support', count: 3 }, { key: 'Ulster_Squad_Maeve', count: 3 }, { key: 'Ulster_Squad_Koni', count: 3 }, { key: 'Ulster_Squad_Flamme', count: 3 }, { key: 'test_regeneration', count: 3 }, { key: 'test_barrier', count: 3 }, { key: 'Messenger_Squad_WALL_E', count: 3 }, { key: 'Messenger_Squad_Ah_Hua', count: 3 }, { key: 'Messenger_Squad_Gena', count: 1 }],
+        exactDeck: true,
+        preferredPool: [],
         apocalypseTags: ['effect_quick_attack_aura'],
         aiPersonality: 'control',
     },
@@ -53,8 +59,53 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         name: '抓不到我',
         champion: 'pupu_specular_soul',
         description: '分身？召唤物？得到新装甲的卜卜如有神助，你能顶住她狂风骤雨般的进攻吗？',
-        coreCards: ['pupu_specular_soul', 'pupu_specular_soul', 'pupu_specular_soul', 'Chongye_Squad_Mabel', 'Chongye_Squad_Mabel', 'Chongye_Squad_Mabel', 'Chongye_Squad_Elice', 'Chongye_Squad_Elice', 'Chongye_Squad_Elice', 'Chongye_Squad_Golia', 'Chongye_Squad_Golia', 'Chongye_Squad_Golia'],
-        preferredPool: ['Ghost_Squad_Valen', 'Ghost_Squad_Vez', 'Ghost_Squad_Antina', 'Messenger_Squad_WALL_E', 'Messenger_Squad_Gena', 'Messenger_Squad_Ah_Hua', 'Typhoon_Squad_613', 'Typhoon_Squad_Dornier', 'Typhoon_Squad_Flameheart', 'Argo_Squad_Arrowhead', 'Argo_Squad_Musician', 'Argo_Squad_Pigeon', 'Star_Bright_Squad_Dakors', 'Star_Bright_Squad_Alivy', 'Star_Bright_Squad_Doveil', 'Mingyi_Squad_Jin_Lang', 'Mingyi_Squad_Zhu_He', 'Mingyi_Squad_Zhe_hao', 'Ulster_Squad_Flamme', 'Ulster_Squad_Maeve', 'Ulster_Squad_Koni', 'Dream_Guardians_Squad_Haifa', 'Dream_Guardians_Squad_Saikui'],
+        coreCards: [{ key: 'pupu_specular_soul', count: 6 }, { key: 'Chongye_Squad_Mabel', count: 3 }, { key: 'Chongye_Squad_Elice', count: 3 }, { key: 'Chongye_Squad_Golia', count: 3 }, { key: 'test_quickattack', count: 3 }, { key: 'test_elusive', count: 3 }, { key: 'Argo_Squad_Musician', count: 3 }, { key: 'Ghost_Squad_Antina', count: 3 }, { key: 'Messenger_Squad_Ah_Hua', count: 3 }, { key: 'Ulster_Squad_Koni', count: 3 }, { key: 'Ulster_Squad_Maeve', count: 3 }, { key: 'Ulster_Squad_Flamme', count: 3 }, { key: 'pupu_specular_soul_support', count: 1 }],
+        exactDeck: true,
+        preferredPool: [],
+        apocalypseTags: [],
+        aiPersonality: 'balanced',
+    },
+    'new_archetype_1781936210296': {
+        id: 'new_archetype_1781936210296',
+        name: '倒计时7回合',
+        champion: '',
+        description: '七个回合后，不是你死就是我亡，会赢吗？会赢的',
+        coreCards: [{ key: 'destruction', count: 40 }],
+        exactDeck: true,
+        preferredPool: [],
+        apocalypseTags: [],
+        aiPersonality: 'aggressive',
+    },
+    'new_archetype_1781936294028': {
+        id: 'new_archetype_1781936294028',
+        name: '泰坦降临',
+        champion: '',
+        description: '流派描述...',
+        coreCards: [{ key: 'titan_mutant', count: 20 }, { key: 'titan_hodu', count: 10 }, { key: 'titan_type_c_mutant', count: 10 }],
+        exactDeck: true,
+        preferredPool: [],
+        apocalypseTags: [],
+        aiPersonality: 'balanced',
+    },
+    'new_archetype_1781945593790': {
+        id: 'new_archetype_1781945593790',
+        name: '肆意开火',
+        champion: '',
+        description: '流派描述...',
+        coreCards: [{ key: 'hidden_arrow', count: 40 }],
+        exactDeck: true,
+        preferredPool: [],
+        apocalypseTags: [],
+        aiPersonality: 'balanced',
+    },
+    'new_archetype_1782607204289': {
+        id: 'new_archetype_1782607204289',
+        name: '坚强',
+        champion: '',
+        description: '流派描述...',
+        coreCards: [{ key: 'fenny', count: 3 }, { key: 'Ulster_Squad_Koni', count: 3 }, { key: 'Ulster_Squad_Maeve', count: 3 }, { key: 'Ulster_Squad_Flamme', count: 3 }, { key: 'Dream_Guardians_Squad_Martina', count: 3 }, { key: 'Dream_Guardians_Squad_Saikui', count: 3 }, { key: 'Dream_Guardians_Squad_Haifa', count: 3 }, { key: 'Ghost_Squad_Vez', count: 3 }, { key: 'Ghost_Squad_Valen', count: 3 }, { key: 'Ghost_Squad_Antina', count: 3 }, { key: 'test_regeneration', count: 3 }, { key: 'test_tough', count: 3 }, { key: 'test_barrier', count: 3 }, { key: 'destruction', count: 1 }],
+        exactDeck: true,
+        preferredPool: [],
         apocalypseTags: [],
         aiPersonality: 'balanced',
     },

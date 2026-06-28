@@ -51,7 +51,7 @@ const PreviewDiorama = ({ covers, cardBackImg, boardImg, isEnemy }: any) => {
         <div className="relative w-64 h-64 transition-all duration-500 scale-100 opacity-100 z-40 filter drop-shadow-[0_15px_35px_rgba(0,0,0,0.7)]">
             {/* 棋盘底垫 */}
             <div className="w-[220px] h-[120px] absolute top-8 left-1/2 -translate-x-1/2 rounded-xl overflow-hidden border border-slate-700/80 shadow-2xl z-0">
-                <img src={boardImg} className={`w-full h-full object-cover opacity-60 ${isEnemy ? 'grayscale-[60%] hue-rotate-180' : ''}`} alt="Board" />
+                <img src={boardImg} className={`w-full h-full object-cover opacity-60 ${isEnemy ? 'grayscale-[60%] hue-rotate-180' : ''}`} alt="棋盘" />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
             </div>
 
@@ -88,7 +88,7 @@ const PreviewDiorama = ({ covers, cardBackImg, boardImg, isEnemy }: any) => {
                     <div key={i} className="absolute inset-0 bg-slate-950 rounded-xl border border-slate-900 shadow-md" style={{ transform: `translate(-${i * 3}px, -${i * 3}px)`, zIndex: i === 0 ? 10 : 5 - i }}></div>
                 ))}
                 <div className={`absolute inset-0 rounded-xl border-2 ${isEnemy ? 'border-red-900/50' : 'border-slate-600'} shadow-2xl overflow-hidden z-10`}>
-                    <img src={cardBackImg} className="w-full h-full object-cover" alt="Card Back" />
+                    <img src={cardBackImg} className="w-full h-full object-cover" alt="卡背" />
                     {isEnemy && <div className="absolute inset-0 bg-red-900/20 mix-blend-overlay"></div>}
                 </div>
             </div>

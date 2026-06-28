@@ -2,13 +2,20 @@
  * Snowbreak Rivals - 法术效果注册表
  */
 
+import type { Race } from '../types';
+
 export type EffectClass =
-    | 'STRIKE' | 'SUMMON' | 'BUFF' | 'FATES_CHOICE' | 'RALLY' | 'CLONE_AND_SUMMON'; // [新增] CLONE_AND_SUMMON 克隆并召唤指令
+    | 'STRIKE' | 'SUMMON' | 'BUFF' | 'FATES_CHOICE' | 'RALLY' | 'CLONE_AND_SUMMON'
+    | 'RECALL' | 'TUTOR'
+    // [核心新增] 本次 5 大新法术所需的 3 个全新机制底层分类！
+    | 'HEAL'               // 治疗类 (操作 damageTaken)
+    | 'BUFF_EVERYWHERE'    // 全域光环类 (操作手牌/牌库/召唤事件)
+    | 'RECALL_AND_REPLACE' // 撤回并替身替换类
+    // [2026-06-27 暗箱操作] 两个独立基础机制
+    | 'DISCARD'            // 弃牌类：从手牌移除指定卡牌
+    | 'DRAW';              // 抽牌类：从牌库抽 N 张到手上
 
 export type EffectTiming =
-    | 'ON_PLAY' | 'ON_ATTACK' | 'ON_BLOCK' | 'ROUND_START' | 'ON_SEEN' | 'ON_ATTACK_DECLARE'; // [新增] ON_ATTACK_DECLARE 攻击宣告钩子
-
-export type EffectSpeed =
     | 'BURST' | 'FAST' | 'SLOW';
 
 // [核心修改] 目标类型定义
@@ -20,6 +27,7 @@ export type TargetType =
     | 'ENEMY_NEXUS'     // 敌方水晶
     | 'ANY_TARGET'      // 任意可被指定的单位或水晶
     | 'ALLY_CHAMPION'   // 我方特定英雄
+    | 'HAND_CARD'       // [2026-06-27] 手牌中的卡牌（用于弃牌、检索等）
     | 'ALL_ALLIES'
     | 'SELF';
 
@@ -28,6 +36,7 @@ export interface TargetRequirement {
     count: number;      // 需要选几个 (通常是 1)
     label: string;      // 播报给玩家的提示文字 (如 "选择一个敌方单位")
     filterKey?: string; // 额外过滤器，例如仅限 key='fenny'
+    raceFilter?: Race[]; // [新增] 种族过滤器，例如 ['summoner', 'summon']
 }
 
 // [修改] 扁平化参数结构，移除 buffs 嵌套，与 Processor 对齐
@@ -43,12 +52,38 @@ export interface EffectParams {
     summonZone?: 'bench' | 'combat'; // [新增] 召唤的降落点（备战席 或 交战区）
     presenceRequirement?: string[];  // [新增] 通用在场条件扫描名单 (写入需要的卡牌 Key)
     targetKeyRequirement?: string[]; // [新增] 定向发牌白名单：只给拥有这些 Key 的单位发放 Buff
+    raceFilter?: Race[];             // [新增] 种族过滤器：只给指定种族的单位发放效果
 
     // =====================================
     // [新增] 动态溅射引擎参数 (Splash Strike Engine)
     // =====================================
     splashAdjacent?: boolean;    // 是否开启相邻左右单位的溅射伤害
     bonusValue?: number;         // 当满足特定 condition 时，主目标替换的强化伤害值
+    // =====================================
+    // [新增] 进阶目标筛选与光环参数
+    // =====================================
+    targetCondition?: string;    // 目标前置筛选条件 (例如: 'injured', 'power_less_than_3', 'in_combat')
+    everywhere?: boolean;        // 标记该 BUFF 是否具有【各处】(Everywhere) 传染性
+    onDamagedGenerate?: string;  // [新增] 受伤时生成的卡牌 Key
+    buffTag?: string;            // [2026-06-27] Buff 标签，用于 buffRules 过滤匹配
+    roundEndAttack?: boolean;    // [新增] 回合结束时是否触发基于攻击力的随机打击
+    summonCount?: number;        // [新增] 亡语/效果生成卡牌的数量（默认1）
+
+    // =====================================
+    // [新增] 猫汐尔专属：牌库光环与回合末鞭策
+    // =====================================
+    deckAuraSummon?: string;     // [新增] 库效召唤：回合开始时，若场上没有该Key的单位，则召唤一个
+    roundEndSelfDamageBuff?: {   // [新增] 回合末鞭策：对我方指定单位造成伤害并强化
+        targetKey: string;
+        damage: number;
+        power: number;
+        health: number;
+        hitAll?: boolean;        // [新增] Lv2: 若为 true，则命中所有符合条件的单位而非随机一个
+    };
+    roundEndBuff?: boolean;      // [新增] 回合结束时执行群体BUFF（如清泉医疗鳄）
+    buffCounterKey?: string;     // [新增] BUFF计数器的归属卡牌Key（用于累计BUFF次数）
+    buffThreshold?: number;      // [新增] 达到多少次BUFF后触发奖励
+    buffRewardKey?: string;      // [新增] 达到阈值后生成的奖励卡牌Key
 }
 
 export interface EffectDefinition {
@@ -284,7 +319,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         targetRequirements: [
             { type: 'ALL_ALLIES', count: 0, label: '全体友军' } // [修正] 使用自动目标
         ],
-        params: { power: 3, health: 3, duration: 'PERMANENT' } // [修正] 扁平化
+        params: { power: 2, health: 1, duration: 'ROUND' } // [修正] 扁平化 (削弱：永久+3+3→本回合+3/+0)
     },
     'effect_destruction': {
         id: 'effect_destruction',
@@ -367,14 +402,24 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
 
     // --- 清泉医疗鳄 回合结束 ---
     'effect_Kuranas_Crocodile_round_end': {
-        id: 'effect_Kuranas_Crocodile_round_end',
-        name: '清泉抚慰',
-        description: '【回合结束时】：给予我方所有召唤单位和拉美西斯 +0/+1。',
-        class: 'BUFF',
-        timing: 'ROUND_START',
-        speed: 'BURST',
-        targetRequirements: [{ type: 'ALL_ALLIES', count: 0, label: '全体友军' }],
-        params: { power: 0, health: 1, duration: 'PERMANENT' }
+          id: 'effect_Kuranas_Crocodile_round_end',
+          name: '清泉抚慰',
+          description: '【回合结束时】：赋予我方其他召唤单位和拉美西斯 +0/+1，随后对自己造成1点伤害。',
+          class: 'BUFF',
+          timing: 'ROUND_END',
+          speed: 'BURST',
+          targetRequirements: [{ type: 'ALL_ALLIES', count: 0, label: '全体友军' }],
+          params: {
+              power: 0, health: 1, duration: 'PERMANENT',
+              raceFilter: ['summoner', 'summon'],
+              excludeSelf: true,
+              excludeKeys: ['Kuranas_Crocodile'],  // ← 新增：不吃任何医疗鳄的BUFF
+              selfDamage: 1,                        // ← 新增：BUFF完后自伤1血
+              roundEndBuff: true,
+              buffCounterKey: 'Kuranas_Crocodile',
+              buffThreshold: 5,
+              buffRewardKey: 'dream_lotus_drone'
+          }
     },
 
     // --- 斯瓦莉 入场召唤 ---
@@ -393,12 +438,16 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_Swali_Sheep_deathrattle': {
         id: 'effect_Swali_Sheep_deathrattle',
         name: '营养补给',
-        description: '【亡语】：在手牌中生成一张【梦莲无人机】。',
-        class: 'BUFF',
-        timing: 'ON_PLAY',
+        description: '【亡语】：在手牌中生成两张【梦莲无人机】。',
+        class: 'SUMMON',             // [核心修复] 必须是 SUMMON 类，处理器才能调用 SUMMON 逻辑
+        timing: 'LAST_BREATH',       // [核心修复] 必须是 LAST_BREATH，微队列才知道什么时候触发
         speed: 'BURST',
         targetRequirements: [],
-        params: { condition: 'last_breath_generate_card', summonKey: 'dream_lotus_drone' }
+        params: {
+            summonKey: 'dream_lotus_drone',
+            summonCount: 2,          // 生成数量：2
+            summonZone: 'hand'       // 目标地：手牌
+        }
     },
 
     // --- 索莉妮 入场召唤 ---
@@ -418,25 +467,309 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         id: 'effect_Soline_Anubis_strike',
         name: '精准索敌',
         description: '打击时，在手牌中生成一张易逝的【梦莲无人机】。',
-        class: 'BUFF',
+        class: 'SUMMON',
         timing: 'ON_ATTACK',
         speed: 'BURST',
         targetRequirements: [],
-        params: { condition: 'strike_generate_fleeting', summonKey: 'dream_lotus_drone' }
+         params: { summonKey: 'dream_lotus_drone', summonZone: 'hand' }
     },
 
     // --- 梦莲无人机 ---
     'effect_dream_lotus_drone': {
         id: 'effect_dream_lotus_drone',
         name: '梦莲无人机',
-        description: '赋予一个单位 +1/+0，若该单位是召唤单位，则再赋予 +1/+0。',
+        description: '赋予一个【召唤衍生物】或【召唤师】+2/+0。',
         class: 'BUFF',
         timing: 'ON_PLAY',
         speed: 'BURST',
+        targetRequirements: [{ type: 'ALLY_UNIT', count: 1, label: '选择一个【召唤衍生物】或【召唤师】', raceFilter: ['summoner', 'summon'] }],
+        params: { power: 2, health: 0, duration: 'PERMANENT', buffTag: 'drone_power', raceFilter: ['summoner', 'summon'] }
+    },
+    // ==========================================
+    // [新增] 第 3 批通用法术与支援技注册
+    // ==========================================
+
+    // --- 1. 活力再生 ---
+    'effect_vitality_regen': {
+        id: 'effect_vitality_regen',
+        name: '活力再生',
+        description: '快速：治疗一个受伤的我方单位2点生命值。',
+        class: 'HEAL',  // [新增] 专属治疗类
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个受伤的我方单位' }
+        ],
+        params: {
+            value: 2,
+            targetCondition: 'injured' // 埋入暗号：必须掉血才能被选中
+        }
+    },
+
+    // --- 2. 全力净化 ---
+    'effect_full_purification': {
+        id: 'effect_full_purification',
+        name: '全力净化',
+        description: '快速：赋予我方各处的【环境净化无人机】+1/+1。',
+        class: 'BUFF_EVERYWHERE', // [新增] 全域光环类
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            // 全局法术无需手动点选目标，引擎底层直接扫描
+            { type: 'ALL_ALLIES', count: 0, label: '我方各处' }
+        ],
+        params: {
+            power: 1,
+            health: 1,
+            duration: 'PERMANENT',
+            targetKeyRequirement: ['Elice_scope_robot'], // 必须是这把钥匙
+            everywhere: true // 开启传染性
+        }
+    },
+
+    // --- 3. 激励之声 (芬妮支援技) ---
+    'effect_fenny_support': {
+        id: 'effect_fenny_support',
+        name: '激励之声',
+        description: '快速：本回合给予我方一个单位 +1/+0，若此后本回合该单位击杀敌人，则备战。',
+        class: 'BUFF', // 前置动作是 BUFF
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个我方单位' }
+        ],
+        params: {
+            power: 1,
+            health: 0,
+            duration: 'ROUND', // 仅限本回合
+            // [核心机制] 发放一个系统监听专属词条，战斗引擎看到它杀了人就会发攻击代币
+            keywords: ['Listening_KillToRally'] as Keyword[]
+        }
+    },
+
+    // --- 4. 冻沙激流 (里芙支援技) ---
+    'effect_lyfe_support': {
+        id: 'effect_lyfe_support',
+        name: '冻沙激流',
+        description: '极速：本回合给予一个攻击力小于3的单位【冻结】。',
+        class: 'BUFF', // 冻结本质是覆盖攻击力的专属负面 Buff
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ANY_UNIT', count: 1, label: '选择一个攻击力小于3的单位' }
+        ],
+        params: {
+            duration: 'ROUND',
+            keywords: ['Frostbite'] as Keyword[],
+            targetCondition: 'power_less_than_3' // 埋入前台射线拦截暗号
+        }
+    },
+
+    // --- 5. 异镜来物 (卜卜支援技) ---
+    'effect_pupu_specular_soul_support': {
+        id: 'effect_pupu_specular_soul_support',
+        name: '异镜来物',
+        description: '快速：撤回一个交战中的我方单位，以【镜爻】代替其原本的战场位置。',
+        class: 'RECALL_AND_REPLACE', // [新增] 缝合怪指令
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个交战中的我方单位' }
+        ],
+        params: {
+            summonKey: 'Mirror', // 指定替身
+            targetCondition: 'in_combat' // 埋入前台射线拦截暗号：必须在战场槽位上
+        }
+    },
+    'effect_mauxir_lotus_drive_lv1': {
+        id: 'effect_mauxir_lotus_drive_lv1',
+        name: '感知补全',
+        description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方随机一个【臆莲基座】造成1点伤害，之后赋予其+0 +1。',
+        // 这是系统底层被动机制，class 和 timing 只是占位，主要靠 useGameState 扫描提取
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            // 写入真实的机器指令
+            deckAuraSummon: 'mauxir_lotus_pedestal',
+            roundEndSelfDamageBuff: {
+                targetKey: 'mauxir_lotus_pedestal',
+                damage: 1,
+                power: 0,
+                health: 1
+            }
+        }
+    },
+    'effect_mauxir_lotus_rush': {
+        id: 'effect_mauxir_lotus_rush',
+        name: '千莲叠绽',
+        description: '若猫汐尔未处于格挡状态，召唤一个【臆莲基座】；若处于格挡状态，则与一个【臆莲基座】调换位置，代替其格挡并给予其+0/+2。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [{ type: 'ALLY_UNIT', count: 1, label: '选择基座（格挡时替换）' }],
+        params: { summonKey: 'mauxir_lotus_pedestal' }
+    },
+    'effect_mauxir_lotus_ultimate': {
+        id: 'effect_mauxir_lotus_ultimate',
+        name: '顷刻莲潮',
+        description: '立刻使全场所有友方【臆莲基座】造成一次双倍打击，完成后各基座攻击力减半。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: {}
+    },
+    'effect_mauxir_lotus_support': {
+        id: 'effect_mauxir_lotus_support',
+        name: '伴泽而生',
+        description: '极速 [支援技]：对目标造成1点伤害，若目标受伤后生命等于1则给予冻结。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
         targetRequirements: [{ type: 'ANY_UNIT', count: 1, label: '选择一个单位' }],
-        params: { power: 1, health: 0, duration: 'PERMANENT', condition: 'bonus_if_summon' }
+        params: {
+            value: 1,
+            condition: 'freeze_if_health_equals_1'
+        }
+    },
+    'effect_mauxir_lotus_pedestal': {
+        id: 'effect_mauxir_lotus_pedestal',
+        name: '臆莲基座',
+        description: '受伤时生成梦莲无人机，回合结束造成X次1点伤害。',
+        class: 'BUFF', // TODO: 替换为受伤触发+回合结束触发
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            onDamagedGenerate: 'dream_lotus_drone',      // [新增] 受伤生成暗号
+            presenceRequirement: ['mauxir_lotus_drive'], // [新增] 前置条件：猫汐尔必须在场
+            roundEndAttack: true                         // [新增] 激活回合结束随机打击机制
+        }
+    },
+    'effect_mauxir_lotus_drive_lv2': {
+        id: 'effect_mauxir_lotus_drive_lv2',
+        name: '感知补全+',
+        description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方所有【臆莲基座】造成1点伤害，之后赋予其+0 +2，【臆莲基座】可以以敌方水晶为目标。',
+        class: 'BUFF', // TODO: 替换为完整Lv2逻辑
+        timing: 'ON_PLAY_AND_ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            deckAuraSummon: 'mauxir_lotus_pedestal',
+            roundEndSelfDamageBuff: {
+                targetKey: 'mauxir_lotus_pedestal',
+                damage: 1,
+                power: 0,
+                health: 2,
+                hitAll: true,   // [新增] Lv2: 命中所有基座而非随机一个
+            }
+        }
+    },
+
+    // ==========================================
+    // [新增] 第 4 批通用法术效果
+    // ==========================================
+
+    // --- 1. 暗箱操作（拆分为弃牌 + 抽牌两个独立机制）---
+    'effect_backroom_deal_discard': {
+        id: 'effect_backroom_deal_discard',
+        name: '暗箱操作·弃牌',
+        description: '丢弃一张手牌。',
+        class: 'DISCARD',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'HAND_CARD', count: 1, label: '选择一张手牌丢弃' }
+        ],
+        params: {}
+    },
+    'effect_backroom_deal_draw': {
+        id: 'effect_backroom_deal_draw',
+        name: '暗箱操作·抽牌',
+        description: '抽两张卡牌。',
+        class: 'DRAW',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 2 // 抽牌数量
+        }
+    },
+
+    // --- 2. 生机补充 ---
+    'effect_vitality_supplement': {
+        id: 'effect_vitality_supplement',
+        name: '生机补充',
+        description: '极速：治疗任意一个我方单位或水晶3点生命值。',
+        class: 'HEAL',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ANY_TARGET', count: 1, label: '选择一个我方单位或水晶' }
+        ],
+        params: {
+            value: 3,
+            targetCondition: 'ally_only'
+        }
+    },
+
+    // --- 3. 能量补充 ---
+    'effect_energy_supplement': {
+        id: 'effect_energy_supplement',
+        name: '能量补充',
+        description: '极速：选取一个天启者，抽取一张该天启者的英雄法术。',
+        class: 'TUTOR',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择一个天启者' }
+        ],
+        params: {
+            // 动态检索：由 effectProcessor TUTOR 引擎按"重复天启者→支援法术"优先级搜牌库
+        }
+    },
+
+    // --- 4. 巴德尔试剂（治疗 + 全域Buff）---
+    'effect_bader_reagent_heal': {
+        id: 'effect_bader_reagent_heal',
+        name: '巴德尔试剂·治疗',
+        description: '治疗我方所有单位与水晶1点生命值。',
+        class: 'HEAL',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ALL_ALLIES', count: 0, label: '全体友方' }
+        ],
+        params: {
+            value: 1,
+            targetCondition: 'all_allies_include_nexus'
+        }
+    },
+    'effect_bader_reagent_buff': {
+        id: 'effect_bader_reagent_buff',
+        name: '巴德尔试剂·强化',
+        description: '给予我方所有单位 +0/+1。',
+        class: 'BUFF_EVERYWHERE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ALL_ALLIES', count: 0, label: '全体友方单位' }
+        ],
+        params: {
+            power: 0,
+            health: 1,
+            duration: 'PERMANENT'
+        }
     }
 };
+
+// ==========================================
+// [新增] 猫汐尔 莲驱 效果存根（逻辑待实现）
+// ==========================================
+
+
 
 export const getEffectDef = (effectId: string): EffectDefinition | null => {
     return EFFECT_DB[effectId] || null;

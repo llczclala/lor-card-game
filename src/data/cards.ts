@@ -4,7 +4,7 @@ import { HERO_IMAGES, TEST_IMAGES, SPELL_IMAGES, UNIT_IMAGES, TITAN_IMAGES } fro
 export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'animState' | 'damageTaken' | 'buffs'>> = {
   // --- 英雄：里芙 (Lyfe) ---
   lyfe: {
-    key: 'lyfe', name: '里芙', cost: 1, power: 2, health: 4, maxHealth: 4,isChampion: true, level: 1, region: 'Lyfe',
+    key: 'lyfe', name: '里芙', cost: 1, power: 2, health: 5, maxHealth: 5,isChampion: true, level: 1, region: 'Lyfe',
     description: '', type: 'unit', keywords: ['Regeneration'],
     imageUrl: HERO_IMAGES.lyfe.base,
     level2ImageUrl: HERO_IMAGES.lyfe.level2,
@@ -38,6 +38,21 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: SPELL_IMAGES.lyfe_ultimate,
     effects: ['effect_lyfe_ultimate'],
     isCollectible: false
+  },
+  lyfe_support: {
+    key: 'lyfe_support',
+    name: '冻沙激流',
+    cost: 3,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Lyfe',
+    description: '极速 [支援技]：本回合给予一个攻击力小于3的单位[冻结]。',
+    type: 'spell-burst',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.lyfe_support,
+    effects: ['effect_lyfe_support'],
+    associatedChampionKey: 'lyfe',
   },
 
    // --- 英雄：芬妮 (Fenny) ---
@@ -77,9 +92,24 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
       effects: ['effect_fenny_ultimate'],
       isCollectible: false
   },
+  fenny_support: {
+    key: 'fenny_support',
+    name: '激励之声',
+    cost: 4,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Fenny',
+    description: '快速 [支援技]：本回合给予我方一个单位 +1/+0，若此后本回合该单位击杀敌人，则备战。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.fenny_support,
+    effects: ['effect_fenny_support'],
+    associatedChampionKey: 'fenny',
+  },
   // --- 英雄：卜卜 灵鉴(pupu_specular_soul) ---
   pupu_specular_soul: {
-    key: 'pupu_specular_soul', name: '卜卜 灵鉴', cost: 2, power: 4, health: 3, maxHealth: 3,isChampion: true, level: 1, region: 'Pupu',
+    key: 'pupu_specular_soul', name: '卜卜 灵鉴', cost: 2, power: 4, health: 3, maxHealth: 3,isChampion: true, level: 1, region: 'Pupu', race: ['summoner'],
     description: '进攻时：召唤一个进攻状态的 “镜爻”。', type: 'unit', keywords: ['QuickAttack', 'Ability'],
     ability: { id: 'pupu_lv1_mirror_summon', label: '灵鉴之冲', description: '进攻时：召唤一个进攻状态的\"镜爻\"。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
     imageUrl: HERO_IMAGES.pupu_specular_soul.base,
@@ -113,6 +143,82 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_pupu_specular_soul_ultimate'],
     isCollectible: false
   },
+  pupu_specular_soul_support: {
+    key: 'pupu_specular_soul_support',
+    name: '异镜来物',
+    cost: 3,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Pupu',
+    description: '快速 [支援技]：撤回一个交战中的我方单位，以“镜爻”代替其原本的战场位置。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.pupu_specular_soul_support,
+    effects: ['effect_pupu_specular_soul_support'],
+    associatedChampionKey: 'pupu_specular_soul',
+  },
+    // ==========================================
+  // [新增] 猫汐尔 莲驱 (Mauxir - Lotus Drive)
+  // ==========================================
+  mauxir_lotus_drive: {
+    key: 'mauxir_lotus_drive', name: '猫汐尔 莲驱', cost: 4, power: 1, health: 4, maxHealth: 4,
+    isChampion: true, level: 1, region: 'Mauxir', race: ['summoner'],
+    description: '【库效】回合开始时，若己方备战席没有“臆莲基座”，则召唤一个。回合结束：对我方随机一个“臆莲基座”造成1点伤害，之后赋予其+0 +1。',
+    type: 'unit', keywords: ['Tough','Aura'],
+    imageUrl: HERO_IMAGES.mauxir_lotus_drive.base,
+    level2ImageUrl: HERO_IMAGES.mauxir_lotus_drive.level2,
+    associatedSpellKey: 'mauxir_lotus_spell',
+    levelUpCondition: '我方召唤者和召唤物累计造成 30 点伤害',
+    levelUpTarget: 30,
+    effects: ['effect_mauxir_lotus_drive_lv1'],
+  },
+  mauxir_lotus_spell: {
+    key: 'mauxir_lotus_spell', name: '猫汐尔的演算', cost: 0, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '抉择：“千莲叠绽” 或 “顷刻莲潮”', type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.mauxir_lotus_spell,
+    associatedChampionKey: 'mauxir_lotus_drive',
+    isLevel2Choice: true,
+    choices: ['mauxir_lotus_rush', 'mauxir_lotus_ultimate'],
+    isCollectible: false,
+  },
+  mauxir_lotus_rush: {
+    key: 'mauxir_lotus_rush', name: '千莲叠绽', cost: 2, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '若猫汐尔莲驱未处于格挡状态，召唤一个“臆莲基座”；若处于格挡状态，则选择一个“臆莲基座”交换位置，代替其格挡并给予其+0/+2。',
+    type: 'spell-fast', keywords: [],
+    imageUrl: SPELL_IMAGES.mauxir_lotus_rush,
+    effects: ['effect_mauxir_lotus_rush'],
+    isCollectible: false,
+  },
+  mauxir_lotus_ultimate: {
+    key: 'mauxir_lotus_ultimate', name: '顷刻莲潮', cost: 6, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '立刻使全场所有友方“臆莲基座”造成一次伤害翻倍的打击，打击结束后攻击力减半。',
+    type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.mauxir_lotus_ultimate,
+    effects: ['effect_mauxir_lotus_ultimate'],
+    isCollectible: false,
+  },
+  mauxir_lotus_support: {
+    key: 'mauxir_lotus_support', name: '伴泽而生', cost: 2, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '极速 [支援技]：对目标造成1点伤害，若目标受伤后生命值等于1，则本回合给予其[冻结]。',
+    type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.mauxir_lotus_support,
+    effects: ['effect_mauxir_lotus_support'],
+    associatedChampionKey: 'mauxir_lotus_drive',
+  },
+  mauxir_lotus_pedestal: {
+    key: 'mauxir_lotus_pedestal', name: '臆莲基座', cost: 0, power: 0, maxPower: 10, health: 3, maxHealth: 3, maxPerSide: 3, buffRules: { power: { allowedTags: ['drone_power'] } },
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '受伤时：若”猫汐尔 莲驱”在场，在手牌生成一张”梦莲无人机”。回合结束：对随机敌方单位造成X次1点伤害。【攻击力最多为10】',
+    type: 'unit', keywords: ['CantAttack'], race: ['summon'],
+    imageUrl: SPELL_IMAGES.mauxir_lotus_pedestal,
+    effects: ['effect_mauxir_lotus_pedestal'],
+    isCollectible: false,
+  },
  // 镜爻
   Mirror: {
     key: 'Mirror',
@@ -124,6 +230,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     maxHealth: 1,
     isChampion: false,
     level: 0,
+    race: ['summon'],
     type: 'unit',
     keywords: ['Ephemeral'],
     description: '', // 白板无需描述
@@ -142,6 +249,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     maxHealth: 1,
     isChampion: false,
     level: 0,
+    race: ['summon'],
     type: 'unit',
     keywords: ['Ephemeral'],
     description: '入场：复制 卜卜 灵鉴 的面板和关键词。',
@@ -631,6 +739,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     maxHealth: 4,
     isChampion: false,
     level: 0,
+    race: ['summoner'],
     type: 'unit',
     keywords: [],
     ability: { id: 'elice_robot_engine', label: '无人机调度程序', description: '入场：召唤一个\"环境净化无人机\"。回合开始：若上回合我方打击过敌方水晶，则召唤一个\"环境净化无人机\"。', trigger: 'on_play', maxCharges: -1, postTriggerState: 'recharge' },
@@ -650,6 +759,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     maxHealth: 1,
     isChampion: false,
     level: 0,
+    race: ['summon'],
     type: 'unit',
     keywords: ['Elusive','Ephemeral'],
     description: '',
@@ -663,7 +773,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'Chongye_Squad_Golia',
     name: '“重叶”\n歌莉娅 ',
     region: 'Pupu',
-    cost: 1,
+    cost: 6,
     power: 3,
     health: 4,
     maxHealth: 4,
@@ -672,7 +782,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     type: 'unit',
     keywords: [],
     ability: { id: 'golia_buff', label: '高能碳水补给', description: '入场：本回合给予我方所有单位 +2/+0 和 [碾压]。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
-    description: ' 入场：若我方场上有【卜卜·灵鉴】，本回合给予我方所有单位 +2/+0 和 [碾压]',
+    description: ' 入场：若我方场上有“卜卜 灵鉴”，本回合给予我方所有单位 +2/+0 和 [碾压]',
     imageUrl: UNIT_IMAGES.golia,
     effects: ['effect_golia_buff']
   },
@@ -683,19 +793,18 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 库兰娅丝 ---
   'Illustration_Squad_Kuranas': {
-    key: 'Illustration_Squad_Kuranas', name: '库兰娅丝', cost: 1, power: 1, health: 2, maxHealth: 2,
-    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: [],
-    description: '入场：召唤一个【清泉医疗鳄】。清泉医疗鳄提供的加成视为其造成的伤害，可以计入猫汐尔的升级进度。',
+    key: 'Illustration_Squad_Kuranas', name: '库兰娅丝', cost: 1, power: 1, health: 1, maxHealth: 1,
+    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
+    description: '入场：召唤一个“清泉医疗鳄”。清泉医疗鳄提供的加成视为其造成的伤害，可以计入猫汐尔的升级进度。',
     imageUrl: UNIT_IMAGES.kuranas,
     effects: ['effect_Illustration_Squad_Kuranas_summon'],
-    isCollectible: false,
   },
 
   // --- 衍生物：清泉医疗鳄 ---
   'Kuranas_Crocodile': {
     key: 'Kuranas_Crocodile', name: '清泉医疗鳄', cost: 2, power: 0, health: 2, maxHealth: 2,
-    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Tough'],
-    description: '【回合结束时】：给予我方所有召唤单位和拉美西斯 +0/+1。',
+    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: [], race: ['summon'],
+    description: '【回合结束时】：赋予我方所有召唤单位和库兰娅丝 +0/+1，随后对自己造成1点伤害（医疗鳄不受其他医疗鳄的加成，每累计BUFF 5 次生成一张“梦莲无人机”）。',
     imageUrl: UNIT_IMAGES.kuranas,
     effects: ['effect_Kuranas_Crocodile_round_end'],
     isCollectible: false,
@@ -703,19 +812,18 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 斯瓦莉 ---
   'Illustration_Squad_Swali': {
-    key: 'Illustration_Squad_Swali', name: '斯瓦莉', cost: 3, power: 1, health: 4, maxHealth: 4,
-    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: [],
-    description: '入场：召唤一个【珍馐绵羊】。珍馐绵羊死亡时受到的伤害加溢出伤害会视作其造成的伤害，可以计入猫汐尔的升级进度。',
+    key: 'Illustration_Squad_Swali', name: '斯瓦莉', cost: 3, power: 1, health: 3, maxHealth: 4,
+    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
+    description: '入场：召唤一个“珍馐绵羊”。每目睹使用一个“梦莲无人机”，增加猫汐尔 3 点升级进度。',
     imageUrl: UNIT_IMAGES.swali,
     effects: ['effect_Illustration_Squad_Swali_summon'],
-    isCollectible: false,
   },
 
   // --- 衍生物：珍馐绵羊 ---
   'Swali_Sheep': {
     key: 'Swali_Sheep', name: '珍馐绵羊', cost: 1, power: 3, health: 1, maxHealth: 1,
-    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Last Breath', 'Reborn'],
-    description: '【亡语】：在手牌中生成一张【梦莲无人机】。',
+    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Last Breath', 'Challenger'], race: ['summon'],
+    description: '[亡语]：在手牌中生成两张“梦莲无人机”。',
     imageUrl: UNIT_IMAGES.swali,
     effects: ['effect_Swali_Sheep_deathrattle'],
     isCollectible: false,
@@ -723,21 +831,28 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 索莉妮 ---
   'Illustration_Squad_Soline': {
-    key: 'Illustration_Squad_Soline', name: '索莉妮', cost: 4, power: 2, health: 4, maxHealth: 4,
-    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: [],
-    description: '入场：召唤一个【搜救阿努比斯】。搜救阿努比斯造成的伤害会额外翻倍后再计入猫汐尔的升级进度。',
+    key: 'Illustration_Squad_Soline', name: '索莉妮', cost: 5, power: 2, health: 3, maxHealth: 4,
+    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
+    description: '入场：召唤一个“搜救阿努比斯”。“搜救阿努比斯”造成的伤害会额外翻倍后再计入猫汐尔的升级进度。',
     imageUrl: UNIT_IMAGES.soline,
     effects: ['effect_Illustration_Squad_Soline_summon'],
-    isCollectible: false,
   },
 
   // --- 衍生物：搜救阿努比斯 ---
   'Soline_Anubis': {
     key: 'Soline_Anubis', name: '搜救阿努比斯', cost: 2, power: 4, health: 2, maxHealth: 2,
-    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['QuickAttack', 'Challenger'],
-    description: '打击时，在手牌中生成一张易逝的【梦莲无人机】。',
+    isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['QuickAttack', 'Challenger', 'Ability'], race: ['summon'],
+    description: '打击时，在手牌中生成一张“梦莲无人机”',
     imageUrl: UNIT_IMAGES.soline,
     effects: ['effect_Soline_Anubis_strike'],
+    ability: {
+      id: 'soline_anubis_strike',
+      label: '精准索敌',
+      description: '打击时，在手牌中生成一张“梦莲无人机”。',
+      trigger: 'on_attack_declare',
+      maxCharges: -1,
+      postTriggerState: 'recharge'
+    },
     isCollectible: false,
   },
 
@@ -745,11 +860,13 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   'dream_lotus_drone': {
     key: 'dream_lotus_drone', name: '梦莲无人机', cost: 1, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Mauxir', type: 'spell-burst', keywords: [],
-    description: '赋予一个单位 +1/+0，若该单位是召唤单位，则再赋予 +1/+0。',
+    description: '赋予一个”召唤衍生物”或”召唤师”+2/+0。',
     imageUrl: SPELL_IMAGES.dream_lotus_drone,
     effects: ['effect_dream_lotus_drone'],
     isCollectible: false,
   },
+
+
 
   // 1. 单挑 (Single Combat)
   single_combat: {
@@ -765,7 +882,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // 2. 祈愿 (Prayer)
   prayer: {
     key: 'prayer', name: '祈愿', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
-    description: '极速：+1/+1', type: 'spell-burst', keywords: [],
+    description: '慢速：赋予一个单位 +1/+1', type: 'spell-slow', keywords: [],
     effects: ['effect_prayer'],
     imageUrl: SPELL_IMAGES.prayer
   },
@@ -789,7 +906,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // 5. 振奋 (Inspire)
   inspire: {
     key: 'inspire', name: '振奋', cost: 5, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
-    description: '快速：我方全体单位获得+3/+3', type: 'spell-fast', keywords: [],
+    description: '慢速：本回合给予我方全体单位+2/+1', type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.inspire,
     effects: ['effect_inspire']
   },
@@ -800,6 +917,169 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '慢速：对敌方水晶造成4点伤害', type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.destruction,
     effects: ['effect_destruction']
+  },
+  // ==========================================
+    // [新增] 第 3 批法术包实装
+    // ==========================================
+
+  vitality_regen: {
+    key: 'vitality_regen',
+    name: '活力再生',
+    cost: 1,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Pupu',
+    description: '快速：治疗一个受伤的我方单位2点生命值。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.vitality_regen,
+    effects: ['effect_vitality_regen'],
+  },
+
+  full_purification: {
+    key: 'full_purification',
+    name: '全力净化',
+    cost: 4,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Pupu',
+    description: '快速：赋予我方各处的“环境净化无人机”+1/+1。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.full_purification,
+    effects: ['effect_full_purification'],
+  },
+
+  // ==========================================
+  // [新增] 第 4 批通用法术
+  // ==========================================
+
+  // 1. 暗箱操作
+  backroom_deal: {
+    key: 'backroom_deal',
+    name: '暗箱操作',
+    cost: 2,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Logistics',
+    description: '极速：丢弃一张卡牌以抽两张卡牌。',
+    type: 'spell-burst',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.backroom_deal,
+    effects: ['effect_backroom_deal_discard', 'effect_backroom_deal_draw'],
+    isCollectible: false,
+  },
+
+  // 2. 生机补充
+  vitality_supplement: {
+    key: 'vitality_supplement',
+    name: '生机补充',
+    cost: 2,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Logistics',
+    description: '极速：治疗任意一个我方单位或水晶3点生命值。',
+    type: 'spell-burst',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.vitality_supplement,
+    effects: ['effect_vitality_supplement'],
+    isCollectible: false,
+  },
+
+  // 3. 能量补充
+  energy_supplement: {
+    key: 'energy_supplement',
+    name: '能量补充',
+    cost: 2,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Logistics',
+    description: '极速：选取一个天启者，抽取一张该天启者的英雄法术。',
+    type: 'spell-burst',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.energy_supplement,
+    effects: ['effect_energy_supplement'],
+    isCollectible: false,
+  },
+
+  // 4. 巴德尔试剂
+  bader_reagent: {
+    key: 'bader_reagent',
+    name: '巴德尔试剂',
+    cost: 3,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Logistics',
+    description: '极速：治疗我方所有单位与水晶1点生命值，并赋予我方所有单位 +0/+1。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.bader_reagent,
+    effects: ['effect_bader_reagent_heal', 'effect_bader_reagent_buff'],
+    isCollectible: false,
+  },
+
+  // ==========================================
+  // 泰坦生态系 (Titan Units)
+  // ==========================================
+  titan_mutant: {
+    key: 'titan_mutant', name: '异化人', cost: 1, power: 0, health: 2, maxHealth: 2, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
+    description: '基础的泰坦战斗单元。', type: 'unit', keywords: ['Titan'],
+    imageUrl: TITAN_IMAGES.mutant,
+    isCollectible: false
+  },
+  titan_hybrid: {
+    key: 'titan_hybrid', name: '融合体', cost: 2, power: 0, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
+    description: '被侵蚀的活体，受到攻击时会反伤敌人。', type: 'unit', keywords: ['Titan', 'Thorns'],
+    imageUrl: TITAN_IMAGES.hybrid,
+    isCollectible: false
+  },
+  titan_type_b_mutant: {
+    key: 'titan_type_b_mutant', name: '乙型异化人', cost: 2, power: 1, health: 4, maxHealth: 4, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
+    description: '【转化】：无法获得泰坦攻击力加成。每获得一层泰坦加成，狙击充能冷却时间减少 1 回合。', type: 'unit', keywords: ['Titan', 'Sniper'],
+    imageUrl: TITAN_IMAGES.type_b,
+    isCollectible: false
+  },
+  titan_hodu: {
+    key: 'titan_hodu', name: '祸斗', cost: 3, power: 2, health: 2, maxHealth: 2, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
+    description: '高速突进的机械猎犬。', type: 'unit', keywords: ['Titan', 'QuickAttack'],
+    imageUrl: TITAN_IMAGES.hodu,
+    isCollectible: false
+  },
+  titan_type_c_mutant: {
+    key: 'titan_type_c_mutant', name: '丙型异化人', cost: 3, power: 0, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
+    description: '【转化】：无法获得泰坦攻击力加成，每层加成会转化为最大与当前生命值 +1。', type: 'unit', keywords: ['Titan', 'Tough'],
+    imageUrl: TITAN_IMAGES.type_c,
+    isCollectible: false
+  },
+  titan_gonglu: {
+    key: 'titan_gonglu', name: '贡露', cost: 4, power: 1, health: 4, maxHealth: 4, isChampion: false, level: 0, region: 'Titan', race: ['titan', 'summoner'],
+    description: '【转化】：无法获得攻击力加成。每获得1层加成召唤一个“辅助无人机”协同进攻(上限4个)。若加成超过6层，每溢出1层使本体与无人机获得 +1|+0 (至多+4)。', type: 'unit', keywords: ['Titan', 'Elusive'],
+    imageUrl: TITAN_IMAGES.gonglu,
+    isCollectible: false
+  },
+  titan_gonglu_drone: {
+    key: 'titan_gonglu_drone', name: '贡露·辅助无人机', cost: 0, power: 1, health: 1, maxHealth: 1, isChampion: false, level: 0, region: 'Titan', race: ['summon'],
+    description: '无法获得除“贡露”以外的任何增益效果。', type: 'unit', keywords: ['Elusive', 'Ephemeral'],
+    imageUrl: TITAN_IMAGES.gonglu_support, // [注] 暂时复用贡露原画，有专图可替换
+    isCollectible: false // 衍生卡不可直接放入牌组
+  },
+  titan_type_d_mutant: {
+    key: 'titan_type_d_mutant', name: '丁型异化人', cost: 6, power: 3, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
+    description: '【特化】：当挑战的敌人是敌方备战席中生命值最高的单位时，本回合获得[碾压]与【亡语：对在场的所有单位与水晶造成2点伤害】。', type: 'unit', keywords: ['Titan', 'Challenger'],
+    imageUrl: TITAN_IMAGES.type_d,
+    isCollectible: false
+  },
+  titan_gaimer: {
+    key: 'titan_gaimer', name: '盖弥尔', cost: 5, power: 2, health: 8, maxHealth: 8, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
+    description: '【转化】：无法获得泰坦攻击力加成。每获得一层泰坦加成，获得一层【屏障充能】。当进行格挡时，消耗一层充能并获得[屏障]。', type: 'unit', keywords: ['Titan', 'Barrier'],
+    imageUrl: TITAN_IMAGES.gaimer,
+    isCollectible: false
   },
 
   // --- 测试专用卡 ---
@@ -881,7 +1161,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 11. Frostbite (冻结) ---
   test_frostbite: {
     key: 'test_frostbite', name: '测试：冻结', cost: 1, power: 3, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'TEST',
-    description: '本回合将敌人攻击变为0。', type: 'unit', keywords: ['Frostbite'],
+    description: '入场本回合将自己攻击变为0。', type: 'unit', keywords: ['Frostbite'],
     imageUrl: TEST_IMAGES.frostbite,
     isCollectible: false
   },
@@ -1065,63 +1345,6 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'test_titan', name: '测试：泰坦', cost: 1, power: 2, health: 4, maxHealth: 4, isChampion: false, level: 0, region: 'TEST',
     description: '回合结束脉冲+攻，然后黯淡。', type: 'unit', keywords: ['Titan'],
     imageUrl: TEST_IMAGES.titan,
-    isCollectible: false
-  },
-  // ==========================================
-  // 泰坦生态系 (Titan Units)
-  // ==========================================
-  titan_mutant: {
-    key: 'titan_mutant', name: '异化人', cost: 1, power: 0, health: 2, maxHealth: 2, isChampion: false, level: 0, region: 'Titan',
-    description: '基础的泰坦战斗单元。', type: 'unit', keywords: ['Titan'],
-    imageUrl: TITAN_IMAGES.mutant,
-    isCollectible: false
-  },
-  titan_hybrid: {
-    key: 'titan_hybrid', name: '融合体', cost: 2, power: 0, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'Titan',
-    description: '被侵蚀的活体，受到攻击时会反伤敌人。', type: 'unit', keywords: ['Titan', 'Thorns'],
-    imageUrl: TITAN_IMAGES.hybrid,
-    isCollectible: false
-  },
-  titan_type_b_mutant: {
-    key: 'titan_type_b_mutant', name: '乙型异化人', cost: 2, power: 1, health: 4, maxHealth: 4, isChampion: false, level: 0, region: 'Titan',
-    description: '【转化】：无法获得泰坦攻击力加成。每获得一层泰坦加成，狙击充能冷却时间减少 1 回合。', type: 'unit', keywords: ['Titan', 'Sniper'],
-    imageUrl: TITAN_IMAGES.type_b,
-    isCollectible: false
-  },
-  titan_hodu: {
-    key: 'titan_hodu', name: '祸斗', cost: 3, power: 2, health: 2, maxHealth: 2, isChampion: false, level: 0, region: 'Titan',
-    description: '高速突进的机械猎犬。', type: 'unit', keywords: ['Titan', 'QuickAttack'],
-    imageUrl: TITAN_IMAGES.hodu,
-    isCollectible: false
-  },
-  titan_type_c_mutant: {
-    key: 'titan_type_c_mutant', name: '丙型异化人', cost: 3, power: 0, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'Titan',
-    description: '【转化】：无法获得泰坦攻击力加成，每层加成会转化为最大与当前生命值 +1。', type: 'unit', keywords: ['Titan', 'Tough'],
-    imageUrl: TITAN_IMAGES.type_c,
-    isCollectible: false
-  },
-  titan_gonglu: {
-    key: 'titan_gonglu', name: '贡露', cost: 4, power: 1, health: 4, maxHealth: 4, isChampion: false, level: 0, region: 'Titan',
-    description: '【转化】：无法获得攻击力加成。每获得1层加成召唤一个【辅助无人机】协同进攻(上限4个)。若加成超过6层，每溢出1层使本体与无人机获得 +1|+0 (至多+4)。', type: 'unit', keywords: ['Titan', 'Elusive'],
-    imageUrl: TITAN_IMAGES.gonglu,
-    isCollectible: false
-  },
-  titan_gonglu_drone: {
-    key: 'titan_gonglu_drone', name: '贡露·辅助无人机', cost: 0, power: 1, health: 1, maxHealth: 1, isChampion: false, level: 0, region: 'Titan',
-    description: '无法获得除【贡露】以外的任何增益效果。', type: 'unit', keywords: ['Elusive', 'Ephemeral'],
-    imageUrl: TITAN_IMAGES.gonglu_support, // [注] 暂时复用贡露原画，有专图可替换
-    isCollectible: false // 衍生卡不可直接放入牌组
-  },
-  titan_type_d_mutant: {
-    key: 'titan_type_d_mutant', name: '丁型异化人', cost: 6, power: 3, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'Titan',
-    description: '【特化】：当挑战的敌人是敌方备战席中生命值最高的单位时，本回合获得【碾压】与【亡语：对在场的所有单位与水晶造成2点伤害】。', type: 'unit', keywords: ['Titan', 'Challenger'],
-    imageUrl: TITAN_IMAGES.type_d,
-    isCollectible: false
-  },
-  titan_gaimer: {
-    key: 'titan_gaimer', name: '盖弥尔', cost: 5, power: 2, health: 8, maxHealth: 8, isChampion: false, level: 0, region: 'Titan',
-    description: '【转化】：无法获得泰坦攻击力加成。每获得一层泰坦加成，获得一层【屏障充能】。当进行格挡时，消耗一层充能并获得【屏障】。', type: 'unit', keywords: ['Titan', 'Barrier'],
-    imageUrl: TITAN_IMAGES.gaimer,
     isCollectible: false
   },
 };

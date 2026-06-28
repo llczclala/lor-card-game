@@ -11,11 +11,12 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Check, Target, Calendar, Zap, Award, Gift, CheckCircle, Sparkles } from 'lucide-react';
+import { X, Check, Target, Calendar, Zap, Award, Gift, CheckCircle, Sparkles, Clock } from 'lucide-react';
 import { MISSIONS, type MissionCategory } from '../data/missionData';
 import type { MissionUpdateResult, MissionProgress } from '../hooks/useMissionSystem';
-import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS } from '../data/imageData'; // [新增] 引入外观图库
+import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS, HERO_IMAGES } from '../data/imageData'; // [新增] 引入外观图库
 import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局 API
+import { CARD_DB } from '../data/cards'; // [新增] 用于卡牌奖励名称查询
 import { eventBus, GameEvents } from '../utils/eventBus';
 
 // ============================================================================
@@ -23,10 +24,11 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 // ============================================================================
 interface RewardPopupData {
     title: string;
-    type: 'dataGold' | 'skin' | 'cardBack';
+    type: 'dataGold' | 'skin' | 'cardBack' | 'card';
     amount?: number;
     imageSrc?: string;
     itemName?: string;
+    cards?: Array<{ imageSrc: string; name: string; count: number }>;
 }
 
 // ============================================================================
@@ -50,7 +52,11 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
     if (!isOpen) return null;
 
     // 筛选当前标签页的任务
-    const displayMissions = MISSIONS.filter(m => m.category === activeTab);
+    // [fix] 由 missionSystem 决定哪些任务存在（showCondition 已在初始化时处理）
+    const displayMissions = MISSIONS.filter(m => {
+        if (m.category !== activeTab) return false;
+        return !!missionSystem.progress[m.id]; // 不在 progress 中的任务不显示
+    });
 
     // 领取奖励的业务封装
     const handleClaim = (mission: typeof MISSIONS[0]) => {
@@ -69,6 +75,17 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
             const popup: RewardPopupData = { title: mission.title, type: reward.type };
             if (reward.type === 'dataGold' && reward.amount) {
                 popup.amount = reward.amount;
+            } else if (reward.type === 'card' && reward.cardKeys) {
+                popup.cards = reward.cardKeys.map(cardKey => {
+                    let imageSrc = '';
+                    if (cardKey === 'mauxir_lotus_drive') {
+                        imageSrc = HERO_IMAGES.mauxir_lotus_drive?.base || '';
+                    } else {
+                        imageSrc = getSkinImage(cardKey) || '';
+                    }
+                    const cardDef = CARD_DB[cardKey];
+                    return { imageSrc, name: cardDef?.name || cardKey, count: 1 };
+                });
             } else if (reward.cosmeticId) {
                 const config = getMissionItems().find(item => item.missionId === reward.cosmeticId);
                 if (config) {
@@ -120,7 +137,8 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                     <div className="flex flex-col gap-3">
                         <TabButton id="daily" active={activeTab} icon={<Calendar size={18} />} label="每日委派" onClick={() => { setActiveTab('daily'); eventBus.emit(GameEvents.UI_CLICK); }} />
                         <TabButton id="weekly" active={activeTab} icon={<Zap size={18} />} label="每周清剿" onClick={() => { setActiveTab('weekly'); eventBus.emit(GameEvents.UI_CLICK); }} />
-                        <TabButton id="achievement" active={activeTab} icon={<Award size={18} />} label="生涯成就" onClick={() => { setActiveTab('achievement'); eventBus.emit(GameEvents.UI_CLICK); }} />
+                        <TabButton id="achievement" active={activeTab} icon={<Award size={18} />} label="生涯成就" onClick={() => { setActiveTab('achievement'); }} />
+								<TabButton id="version" active={activeTab} icon={<Sparkles size={18} />} label="版本活动" onClick={() => { setActiveTab('version'); eventBus.emit(GameEvents.UI_CLICK); }} />
                     </div>
                 </div>
 
@@ -132,8 +150,10 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                     </button>
 
                     <h3 className="text-2xl font-black text-white mb-6 border-b border-white/10 pb-4">
-                        {activeTab === 'daily' ? '每日委派 (DAILY)' : activeTab === 'weekly' ? '每周清剿 (WEEKLY)' : '生涯成就 (ACHIEVEMENT)'}
+                        {activeTab === 'daily' ? '每日委派 (DAILY)' : activeTab === 'weekly' ? '每周清剿 (WEEKLY)' : activeTab === 'version' ? '版本活动 (VERSION)' : '生涯成就 (ACHIEVEMENT)'}
                     </h3>
+
+                    {activeTab !== 'achievement' && activeTab !== 'version' && <CountdownTimer category={activeTab as 'daily' | 'weekly'} />}
 
                     <div className="flex-1 overflow-y-auto custom-scrollbar pr-4 space-y-4">
                         {displayMissions.map(mission => {
@@ -154,6 +174,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                         <h4 className={`text-lg font-bold ${isCompleted && !isClaimed ? 'text-yellow-400' : 'text-white'}`}>{mission.title}</h4>
                                         <p className="text-sm text-gray-400 font-medium">{mission.description}</p>
 
+                                        {!mission.rewardDirect && (<>
                                         {/* 进度条 */}
                                         <div className="mt-2 w-full max-w-md h-2 bg-black/50 rounded-full overflow-hidden border border-white/10 relative">
                                             <motion.div
@@ -166,6 +187,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                         <span className="text-[10px] font-mono text-gray-500 mt-1">
                                             PROGRESS: {prog.current} / {prog.target}
                                         </span>
+                                        </>)}
                                     </div>
 
                                     {/* 右侧奖励与按钮 */}
@@ -173,10 +195,41 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                         {/* 奖励展示 */}
                                         <div className="flex flex-col items-center justify-center">
                                             {(() => {
+                                                if (mission.reward.type === 'card') {
+                                                    const cardKeys = mission.reward.cardKeys || [];
+                                                    const firstKey = cardKeys[0];
+                                                    const previewSrc = firstKey === 'mauxir_lotus_drive'
+                                                        ? HERO_IMAGES.mauxir_lotus_drive?.base || ''
+                                                        : getSkinImage(firstKey);
+                                                    return (
+                                                        <div
+                                                            className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-green-500/30 min-w-[120px] cursor-pointer"
+                                                            onMouseEnter={(e) => {
+                                                                if (previewSrc) {
+                                                                    const rect = e.currentTarget.getBoundingClientRect();
+                                                                    setHoverPreview({ src: previewSrc, x: rect.right + 12, y: rect.top - 30 });
+                                                                }
+                                                            }}
+                                                            onMouseMove={(e) => {
+                                                                setHoverPreview(prev => prev ? { ...prev, x: e.clientX + 18, y: e.clientY - 10 } : null);
+                                                            }}
+                                                            onMouseLeave={() => setHoverPreview(null)}
+                                                        >
+                                                            <div className="w-8 h-8 rounded border border-green-500/50 overflow-hidden shrink-0 bg-slate-900">
+                                                                <img src={previewSrc} className="w-full h-full object-cover" alt="卡牌" />
+                                                            </div>
+                                                            <div className="flex flex-col items-start overflow-hidden">
+                                                                <span className="text-[8px] font-bold text-green-500/80 tracking-widest uppercase">CARD</span>
+                                                                <span className="font-bold text-xs text-green-300 max-w-[90px] truncate">{cardKeys.length} 张</span>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
                                                 if (mission.reward.type === 'dataGold') {
                                                     return (
                                                         <div className="flex items-center gap-1.5 bg-black/40 px-3 py-1.5 rounded-lg border border-purple-500/30">
-                                                            <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5" alt="Data Gold" />
+                                                            <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5" alt="数据金" />
                                                             <span className="font-mono font-bold text-purple-300">{mission.reward.amount}</span>
                                                         </div>
                                                     );
@@ -231,7 +284,14 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                         </div>
 
                                         {/* 状态按钮 */}
-                                        {isClaimed ? (
+                                        {mission.rewardDirect && !isClaimed ? (
+                                            <button
+                                                onClick={() => handleClaim(mission)}
+                                                className="px-6 py-2.5 rounded-lg bg-green-500 hover:bg-green-400 text-black font-black text-sm shadow-[0_0_15px_rgba(34,197,94,0.5)] transition-all animate-pulse-slow active:scale-95"
+                                            >
+                                                领取奖励
+                                            </button>
+                                        ) : isClaimed ? (
                                             <div className="px-6 py-2.5 rounded-lg bg-black/50 text-gray-500 font-bold text-sm border border-gray-700 flex items-center gap-2">
                                                 <CheckCircle size={16} /> 已领取
                                             </div>
@@ -302,6 +362,27 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                     <img src={CURRENCY_ICONS.dataGold} className="w-20 h-20" alt="dataGold" />
                                     <span className="text-5xl font-black text-purple-300">+{rewardPopup.amount}</span>
                                     <span className="text-sm text-gray-400 font-mono tracking-widest">数据金</span>
+                                </div>
+                            ) : rewardPopup.type === 'card' && rewardPopup.cards ? (
+                                <div className="flex flex-col items-center gap-4 px-4">
+                                    <span className="text-3xl font-black text-green-400 tracking-widest drop-shadow-[0_0_15px_rgba(34,197,94,0.5)]">
+                                        ✦ 卡牌解锁 ✦
+                                    </span>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {rewardPopup.cards.map((card, i) => (
+                                            <div key={i} className="relative w-36 h-48 rounded-xl overflow-hidden border-2 border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.2)] bg-slate-900 group">
+                                                <img src={card.imageSrc} className="w-full h-full object-cover" alt={card.name} />
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                <div className="absolute bottom-0 left-0 right-0 p-1.5 bg-gradient-to-t from-black/80 to-transparent">
+                                                    <span className="text-[10px] font-bold text-green-300 truncate block">{card.name}</span>
+                                                </div>
+                                                <div className="absolute top-1 right-1 bg-green-600/90 text-white text-[10px] font-black px-1.5 py-0.5 rounded-md shadow-lg">
+                                                    x{card.count}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <span className="text-xs text-gray-400 font-mono tracking-widest">已加入收藏</span>
                                 </div>
                             ) : rewardPopup.imageSrc ? (
                                 <div className="flex flex-col items-center gap-4">
@@ -460,6 +541,43 @@ export const MissionToast: React.FC<MissionToastProps> = ({ updates, onFinish })
                     </div>
                 </motion.div>
             </AnimatePresence>
+        </div>
+    );
+};
+
+const CountdownTimer = ({ category }: { category: 'daily' | 'weekly' }) => {
+    const [timeLeft, setTimeLeft] = useState('');
+    useEffect(() => {
+        const calc = () => {
+            const now = new Date();
+            let target;
+            if (category === 'daily') {
+                target = new Date(now);
+                target.setHours(now.getHours() >= 6 ? 24 + 6 : 6, 0, 0, 0);
+            } else {
+                target = new Date(now);
+                const d = now.getDay();
+                const add = d === 0 ? 1 : d === 1 && now.getHours() < 6 ? 0 : 8 - d;
+                target.setDate(now.getDate() + add);
+                target.setHours(6, 0, 0, 0);
+            }
+            const diff = target.getTime() - now.getTime();
+            if (diff <= 0) return '即将重置...';
+            const h = Math.floor(diff / 3600000);
+            const m = Math.floor((diff % 3600000) / 60000);
+            const s = Math.floor((diff % 60000) / 1000);
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        };
+        setTimeLeft(calc());
+        const t = setInterval(() => setTimeLeft(calc()), 1000);
+        return () => clearInterval(t);
+    }, [category]);
+    return (
+        <div className="flex items-center gap-2 text-blue-400/80 mb-4 pb-2 border-b border-white/5">
+            <Clock size={14} />
+            <span className="text-xs font-mono tracking-wider">
+                {category === 'daily' ? '每日重置倒计时' : '每周重置倒计时'}：<span className="text-white font-bold">{timeLeft}</span>
+            </span>
         </div>
     );
 };

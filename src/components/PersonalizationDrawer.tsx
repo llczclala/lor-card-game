@@ -60,7 +60,7 @@ export const PersonalizationDrawer: React.FC<PersonalizationDrawerProps> = ({
                         onClick={() => setSelectorType('cardBack')}
                     >
                         <div className="w-16 h-24 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
-                            <img src={cardBackImg} className="w-full h-full object-cover" alt="Card Back" />
+                            <img src={cardBackImg} className="w-full h-full object-cover" alt="卡背" />
                         </div>
                         <div className="text-[10px] text-center mt-2 text-gray-400 font-mono group-hover:text-orange-400">CARD BACK</div>
                     </div>
@@ -73,7 +73,7 @@ export const PersonalizationDrawer: React.FC<PersonalizationDrawerProps> = ({
                         onClick={() => setSelectorType('desk')}
                     >
                         <div className="w-24 h-14 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:-rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
-                            <img src={deskImg} className="w-full h-full object-cover" alt="Desk" />
+                            <img src={deskImg} className="w-full h-full object-cover" alt="棋盘" />
                         </div>
                         <div className="text-[10px] text-center mt-2 text-gray-400 font-mono group-hover:text-orange-400">BOARD</div>
                     </div>
@@ -93,7 +93,7 @@ export const PersonalizationDrawer: React.FC<PersonalizationDrawerProps> = ({
                             <img
                                 src={hoverItem === 'cardBack' ? cardBackImg : deskImg}
                                 className="w-full h-full object-cover"
-                                alt="Preview"
+                                alt="预览"
                             />
                             <div className="absolute bottom-0 w-full bg-black/60 text-white text-center text-xs py-1 font-mono tracking-widest backdrop-blur-sm">
                                 PREVIEW

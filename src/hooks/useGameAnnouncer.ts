@@ -23,6 +23,8 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
 
     // [新增] 记录当前回合是否已经播报过"你的回合"
     const hasAnnouncedTurnRef = useRef(false);
+    // [新增] 追踪上一帧的 phase，用于检测 animating → main 的跃迁
+    const prevPhaseRef = useRef(game.phase);
     // [新增] 用于打断机制的定时器缓存引用，确保能精准捕获并杀死悬空定时器
     const announcerTimeoutRef = useRef<any>(null);
     const sequenceTimeoutRef = useRef<any>(null);
@@ -118,11 +120,10 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
             if (announcerTimeoutRef.current) clearTimeout(announcerTimeoutRef.current);
             if (sequenceTimeoutRef.current) clearTimeout(sequenceTimeoutRef.current);
             setAnnouncement(null); // 强制抹除屏幕中央文字
-        } else {
-            if (!isOpeningSequenceRef.current && !announcement) {
-                showPhaseHint();
-            }
         }
+        // [核心修复] 彻底砸碎这里的 else 兜底分支！
+        // 动画结束回到 main 阶段时，绝不能擅自重新唤起 showPhaseHint！
+        // 攻守提示必须严格只在回合初或攻守令牌真正转换时触发！
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game.phase, game.lastActionTimestamp]); // 注入动作时间戳依赖，实现动态实时打断！
 
@@ -149,10 +150,18 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
     useEffect(() => {
         if (isOpeningSequenceRef.current) return;
 
-        // [核心修复] 高情商消音器：如果堆叠区有法术，或者天上挂着预提交法术，此时的控制权交替属于“法术响应博弈”，绝对不能播报回合！
+        // [新增] 法术结算后 phase 从 animating 弹回 main 时不播报”你的回合”
+        // 条件：已经播报过 + 刚从 animating 切回 main = 法术/战斗结算的副作用
+        if (prevPhaseRef.current === 'animating' && game.phase === 'main' && hasAnnouncedTurnRef.current) {
+            prevPhaseRef.current = game.phase;
+            return;
+        }
+
+        // [核心修复] 高情商消音器：如果堆叠区有法术，或者天上挂着预提交法术，此时的控制权交替属于”法术响应博弈”，绝对不能播报回合！
         const isSpellBattling = game.spellStack.length > 0 || game.pendingSpell !== null;
 
-        if (game.phase === 'main' && game.turnOwner === 'player' && !hasAnnouncedTurnRef.current && !isSpellBattling) {
+        // [追加修复 BUG 2] 增加 game.consecutivePasses === 0 检查，防止法术结算后 AI Pass 导致抢麦！
+        if (game.phase === 'main' && game.turnOwner === 'player' && !hasAnnouncedTurnRef.current && !isSpellBattling && game.consecutivePasses === 0) {
             setAnnouncement(prev => {
                 if (prev && (prev.mainText.includes("进攻") || prev.type === 'round')) return prev;
                 return {
@@ -163,9 +172,13 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
                     duration: 1500
                 };
             });
+            // [核心修复] 硬件级单向锁！本回合只要喊过一次”你的回合”，死死锁住，绝不重复播报！
+            hasAnnouncedTurnRef.current = true;
         }
+
+        prevPhaseRef.current = game.phase;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game.turnOwner, game.phase, game.spellStack.length, game.pendingSpell]); // [修改] 注入法术状态依赖
+    }, [game.turnOwner, game.phase, game.spellStack.length, game.pendingSpell, game.consecutivePasses]); // [修改] 追加 consecutivePasses 依赖
 
 
 

@@ -253,7 +253,7 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                             </p>
 
                             <div className="w-full h-32 rounded-lg overflow-hidden border border-white/10 mb-6 bg-black">
-                                <img src={selectedItemDetail.image} className="w-full h-full object-cover opacity-80" alt="Preview" />
+                                <img src={selectedItemDetail.image} className="w-full h-full object-cover opacity-80" alt="预览" />
                             </div>
 
                             <div className="flex gap-3 w-full">

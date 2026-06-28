@@ -1,5 +1,6 @@
 export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'TEST';
 export type CardType = 'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow';
+export type Race = 'summoner' | 'summon' | 'titan'; // [新增] 种族：召唤师/召唤物/泰坦
 // 完整的 36 个关键词定义
 export type Keyword =
     | 'Overwhelm' | 'QuickAttack' | 'Regeneration' | 'Elusive' | 'Challenger' | 'CantBlock'
@@ -7,7 +8,7 @@ export type Keyword =
     | 'Scout' | 'Ephemeral' | 'Stun' | 'Double Attack' | 'Support' | 'Deadly'
     | 'SpellShield' | 'Silence' | 'Berserk' | 'Cleave' | 'Thorns' | 'Vanguard'
     | 'Ambush' | 'Plunder' | 'Exposed' | 'Shroud' | 'Immobile' | 'Reborn'
-    | 'Execute' | 'Sniper' | 'Volatile' | 'Echo' | 'Impact' | 'Channel' | 'Titan' | 'Ability';
+    | 'Execute' | 'Sniper' | 'Volatile' | 'Echo' | 'Impact' | 'Channel' | 'Titan' | 'Ability' | 'CantAttack' | 'Aura';
 
 export interface CardData {
   id: string;
@@ -15,11 +16,13 @@ export interface CardData {
   name: string;
   cost: number;
   power: number;
+  maxPower?: number; // [新增] 攻击力上限（如有则 clamp 到该值，底座专用）
   health: number;
   maxHealth: number;
   isChampion: boolean;
   level: number;
   region: Region;
+  race?: Race[]; // [新增] 种族标签（数组支持双种族，如贡露=['titan','summoner']）
   description: string;
   keywords: Keyword[];
   effects?: string[];
@@ -37,6 +40,7 @@ export interface CardData {
   levelUpTarget?: number;    // [新增] 英雄升级进度的目标上限值
 
   // 运行时状态
+  isDead?: boolean;         // [SBA] 逻辑死亡标记。true=已死，索敌/碰撞无视
   strikeCount: number;
   roundStrikes?: number; // [新增] 本回合打击次数记账本，用于法术动态增伤判定
   customProgress?: number; // [新增] 私人记账本：专门用于记录卡牌在场上“目睹”等局部任务的进度
@@ -55,6 +59,15 @@ export interface CardData {
   // [能力] 运行时状态——由通用状态机驱动
   abilityState?: AbilityRuntimeState;
   abilityCharges?: number;
+
+  // [2026-06-27] 场上每方最大数量限制（超过时入场被拦截）
+  maxPerSide?: number;
+  // [2026-06-27] 收到的 Buff 过滤规则
+  buffRules?: {
+    power?: {
+      allowedTags?: string[];
+    };
+  };
 }
 
 // ==========================================

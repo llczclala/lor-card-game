@@ -718,5 +718,24 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
                 ]
             }
         ]
+    },
+    'CantAttack': {
+        id: 'CantAttack', nameEn: "CAN'T ATTACK", nameCn: '无法攻击', availableModes: ['bench', 'combat'],
+        sections: [
+            {
+                heading: '机制解密 // EFFECT',
+                paragraphs: [
+                    '该单位的武器系统被彻底锁定，无法主动发起进攻。',
+                    '但依然可以部署至防线中执行格挡任务——格挡时不会造成伤害。'
+                ]
+            },
+            {
+                heading: '战术指引 // TACTICS',
+                paragraphs: [
+                    '「臆莲基座」的核心特征，使其成为一个纯粹的功能性防御节点。',
+                    '虽然无法主动输出，但其回合结束时的自动打击能力让它即使站在防守位置也能持续对敌方造成威胁。'
+                ]
+            }
+        ]
     }
 };

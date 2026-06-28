@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 import { Card } from './Card';
+import { eventBus, GameEvents } from '../utils/eventBus';
 
 const useNumberTicker = (targetValue: number, duration: number = 1000) => {
     const [displayValue, setDisplayValue] = useState(targetValue);
@@ -39,7 +40,7 @@ export const ManaDisplay = ({ current, max, spellMana, label, align }: { current
     </div>
 );
 
-// --- [移入] 智能水晶组件 (SmartNexus) ---
+// --- [重构] 智能水晶组件 (SmartNexus) 事件驱动飘字 ---
 export const SmartNexus = ({
     health,
     isEnemy,
@@ -55,31 +56,49 @@ export const SmartNexus = ({
     // 1. 数值滚动
     const displayHealth = useNumberTicker(health, 800);
 
-    // 2. 状态监听 (飘字与震动)
-    const [delta, setDelta] = useState<number | null>(null);
+    // 2. 飘字队列：每次独立打击对应一个飘字
+    const [hitQueue, setHitQueue] = useState<{ id: number; amount: number }[]>([]);
+    // [2026-06-27 巴德尔试剂] 回血飘字队列
+    const [healQueue, setHealQueue] = useState<{ id: number; amount: number }[]>([]);
+    const hitIdRef = useRef(0);
+
+    // 3. 震动状态
     const [shake, setShake] = useState(false);
-    const prevHealthRef = useRef(health);
 
+    // 4. 监听 NEXUS_STRIKED 事件驱动独立飘字
     useEffect(() => {
-        const diff = health - prevHealthRef.current;
-        if (diff !== 0) {
-            setDelta(diff);
-            if (diff < 0) setShake(true); // 仅扣血震动
+        const handleNexusHit = (payload: { target: string; amount: number }) => {
+            if ((isEnemy && payload.target === 'enemy') || (!isEnemy && payload.target === 'player')) {
+                const newId = hitIdRef.current++;
+                setHitQueue(prev => [...prev, { id: newId, amount: payload.amount }]);
 
-            const timer = setTimeout(() => {
-                setDelta(null);
-                setShake(false);
-            }, 1200);
+                setShake(true);
+                setTimeout(() => {
+                    setShake(false);
+                    setHitQueue(prev => prev.filter(h => h.id !== newId));
+                }, 1200);
+            }
+        };
 
-            prevHealthRef.current = health;
-            return () => clearTimeout(timer);
-        }
-    }, [health]);
+        eventBus.on(GameEvents.NEXUS_STRIKED, handleNexusHit);
+        return () => eventBus.off(GameEvents.NEXUS_STRIKED, handleNexusHit);
+    }, [isEnemy]);
 
-    // 计算颜色
-    const floatColor = (delta || 0) > 0 ? 'text-green-400' : 'text-red-500';
-    const floatAnim = (delta || 0) > 0 ? 'animate-float-up' : 'animate-float-damage';
-    const sign = (delta || 0) > 0 ? '+' : '';
+    // [2026-06-27 巴德尔试剂] 监听 NEXUS_HEALED 事件驱动回血飘字
+    useEffect(() => {
+        const handleNexusHeal = (payload: { target: string; amount: number }) => {
+            if ((isEnemy && payload.target === 'enemy') || (!isEnemy && payload.target === 'player')) {
+                const newId = hitIdRef.current++;
+                setHealQueue(prev => [...prev, { id: newId, amount: payload.amount }]);
+                setTimeout(() => {
+                    setHealQueue(prev => prev.filter(h => h.id !== newId));
+                }, 1200);
+            }
+        };
+
+        eventBus.on(GameEvents.NEXUS_HEALED, handleNexusHeal);
+        return () => eventBus.off(GameEvents.NEXUS_HEALED, handleNexusHeal);
+    }, [isEnemy]);
 
     return (
         <div
@@ -93,12 +112,31 @@ export const SmartNexus = ({
             `}
             onClick={onClick}
         >
-            {/* 飘字层 */}
-            {delta !== null && (
-                <div className={`absolute left-1/2 -translate-x-1/2 -top-16 text-6xl font-black z-[100] whitespace-nowrap drop-shadow-[0_4px_4px_rgba(0,0,0,1)] stroke-white ${floatColor} ${floatAnim}`}>
-                    {sign}{delta}
+            {/* 飘字层：多个独立打击各自飘字 */}
+            {hitQueue.map((hit, index) => (
+                <div key={hit.id}
+                    className={`absolute left-1/2 -translate-x-1/2 text-6xl font-black z-[100] whitespace-nowrap drop-shadow-[0_4px_4px_rgba(0,0,0,1)] stroke-white text-red-500 animate-float-damage`}
+                    style={isEnemy
+                        ? { top: `${4 + index * 3.5}rem` }   // 敌方水晶在顶部，飘字往下
+                        : { top: `${-4 - index * 3.5}rem` }  // 玩家水晶在底部，飘字往上
+                    }
+                >
+                    -{hit.amount}
                 </div>
-            )}
+            ))}
+
+            {/* [2026-06-27 巴德尔试剂] 回血飘字层 */}
+            {healQueue.map((heal, index) => (
+                <div key={heal.id}
+                    className="absolute left-1/2 -translate-x-1/2 text-5xl font-black z-[100] whitespace-nowrap drop-shadow-[0_4px_4px_rgba(0,0,0,1)] text-green-400 animate-float-damage"
+                    style={isEnemy
+                        ? { top: `${7 + index * 3.5}rem` }
+                        : { top: `${-7 - index * 3.5}rem` }
+                    }
+                >
+                    +{heal.amount}
+                </div>
+            ))}
 
             {/* 复用现有的 NexusDisplay 进行基础渲染 */}
             <NexusDisplay
@@ -187,7 +225,7 @@ export const Deck = ({
 
                     {/* 2. 顶部卡背 (封面) */}
                     <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-[#1a1a1a]">
-                        <img src={cardBackImg} alt="Deck" className="w-full h-full object-cover" />
+                        <img src={cardBackImg} alt="牌库" className="w-full h-full object-cover" />
                         <div className={`absolute inset-0 bg-white transition-opacity duration-300 pointer-events-none ${isHovered ? 'opacity-20' : 'opacity-0'}`}></div>
                     </div>
                 </div>

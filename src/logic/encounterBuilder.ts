@@ -23,6 +23,26 @@ const getLogisticsPool = (): string[] => {
 };
 
 /**
+ * [核心新增] 辅助：解析核心卡组配置
+ * 能够将 { key, count } 展开为平铺数组，同时向下兼容旧版 string[]
+ */
+const parseCoreCards = (coreCards: any[]): string[] => {
+    if (!coreCards || coreCards.length === 0) return [];
+    // 兼容旧版写法
+    if (typeof coreCards[0] === 'string') {
+        return coreCards as string[];
+    }
+    // 工业级解压
+    const expanded: string[] = [];
+    (coreCards as { key: string; count: number }[]).forEach(item => {
+        for (let i = 0; i < item.count; i++) {
+            expanded.push(item.key);
+        }
+    });
+    return expanded;
+};
+
+/**
  * 核心逻辑：填充卡组直到 40 张
  */
 const fillDeckToSize = (initialDeck: string[], preferredPool: string[], targetSize: number = 40): string[] => {
@@ -62,8 +82,12 @@ export const buildStandardEncounter = (): EncounterData => {
     const archetype = ENEMY_ARCHETYPES[randomKey];
 
     // 2. 生成卡组
-    // 标准模式固定 40 张
-    const fullDeck = fillDeckToSize(archetype.coreCards, archetype.preferredPool, 40);
+    const parsedCoreCards = parseCoreCards(archetype.coreCards);
+
+    // [核心升级] 尊重 exactDeck 绝对纯净锁！如果加锁，或者初始配置已满 40 张，直接发货并物理洗牌
+    const fullDeck = (archetype as any).exactDeck || parsedCoreCards.length >= 40
+        ? parsedCoreCards.sort(() => Math.random() - 0.5)
+        : fillDeckToSize(parsedCoreCards, archetype.preferredPool, 40);
 
     // 3. 返回配置
     return {
@@ -118,8 +142,12 @@ export const buildTutorialEncounter = (tutorialId: string): EncounterData => {
         };
     }
 
-    // 否则用标准填充逻辑生成 40 张卡组
-    const fullDeck = fillDeckToSize(archetype.coreCards, archetype.preferredPool, 40);
+    // [核心升级] 否则走流水线生成，同样注入纯净锁逻辑
+    const parsedCoreCards = parseCoreCards(archetype.coreCards);
+    const fullDeck = (archetype as any).exactDeck || parsedCoreCards.length >= 40
+        ? parsedCoreCards.sort(() => Math.random() - 0.5)
+        : fillDeckToSize(parsedCoreCards, archetype.preferredPool, 40);
+
     return {
         deck: fullDeck,
         heroConfig: {

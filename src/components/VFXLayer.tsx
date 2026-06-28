@@ -13,6 +13,7 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import gsap from 'gsap';
 import { DrawSVGPlugin } from 'gsap/DrawSVGPlugin';
+import { eventBus } from '../utils/eventBus'; // [新增] 引入事件总线通信能力
 
 gsap.registerPlugin(DrawSVGPlugin);
 
@@ -167,6 +168,15 @@ const getElementCenter = (elOrId: string | HTMLElement | null, svg: SVGSVGElemen
     return getLocalPos(svg, rect.left + rect.width / 2, rect.top + rect.height / 2);
 };
 
+// [核心新增] 获取元素的顶部偏下位置（距顶部 15%）。专门作为基座等卡牌的“炮口”，完美避开中心立绘遮挡！
+const getElementTopCenter = (elOrId: string | HTMLElement | null, svg: SVGSVGElement | null): { x: number; y: number } | null => {
+    if (!svg || !elOrId) return null;
+    const el = typeof elOrId === 'string' ? document.querySelector(`[data-entity-id="${elOrId}"]`) : elOrId;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    // X轴依然在正中间，Y轴上移至距顶部 15% 的位置
+    return getLocalPos(svg, rect.left + rect.width / 2, rect.top + rect.height * 0.15);
+};
 
 // ==========================================
 // 主组件
@@ -185,6 +195,24 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
     const mousePosRef = useRef({ x: 0, y: 0 });
     const centerRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const prevTargetCountRef = useRef(0);
+
+    // ==========================================
+    // [新增] 临时瞄准线雷达 (用于回合结束或技能锁定预演)
+    // ==========================================
+    const [tempLines, setTempLines] = useState<PersistentLine[]>([]);
+
+    useEffect(() => {
+        const handleShowTempLines = (payload: PersistentLine[]) => setTempLines(payload);
+        const handleHideTempLines = () => setTempLines([]);
+
+        eventBus.on('SHOW_TEMP_LINES', handleShowTempLines);
+        eventBus.on('HIDE_TEMP_LINES', handleHideTempLines);
+
+        return () => {
+            eventBus.off('SHOW_TEMP_LINES', handleShowTempLines);
+            eventBus.off('HIDE_TEMP_LINES', handleHideTempLines);
+        };
+    }, []);
 
     // 屏幕中心 fallback
     useEffect(() => {
@@ -328,13 +356,16 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
             className="absolute inset-0 w-full h-full pointer-events-none z-[90]"
             style={{ overflow: 'visible' }}
         >
-            {/* A. 持久化连线 */}
-            {isMounted && persistentLines.map((line, li) => {
-                const sourcePos = getElementCenter(line.sourceId, svgRef.current);
+            {/* A. 持久化连线 & 临时瞄准线 */}
+            {/* [核心修复] 将系统下发的临时红线与常驻连线合并渲染！ */}
+            {isMounted && [...persistentLines, ...tempLines].map((line, li) => {
+                // [视觉重构] 起点改用 TopCenter（炮口算法），彻底解决红线糊脸遮挡卡面的问题！
+                const sourcePos = getElementTopCenter(line.sourceId, svgRef.current);
                 if (!sourcePos) return null;
                 return (
                     <g key={`persistent-${li}`}>
                         {line.targets.map((target, ti) => {
+                            // 终点依然打向敌方中心
                             const targetPos = getElementCenter(target.id, svgRef.current);
                             if (!targetPos) return null;
                             // 传入 sourceId，开启动态口径测算！

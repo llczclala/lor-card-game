@@ -21,7 +21,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
     const [previewIndex, setPreviewIndex] = useState(currentSelected);
 
     const assets = type === 'cardBack' ? PERSONALIZATION_ASSETS.cardBacks : PERSONALIZATION_ASSETS.desks;
-    const title = type === 'cardBack' ? 'CARD BACK SELECTION' : 'BATTLEFIELD SELECTION';
+    const title = type === 'cardBack' ? '卡背选择' : '牌桌选择';
 
     // 鼠标滚轮切换逻辑
     const handleWheel = (e: React.WheelEvent) => {
@@ -112,7 +112,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                             key={previewIndex}
                             src={assets[previewIndex]}
                             className="w-full h-full object-cover animate-fade-in"
-                            alt="Preview"
+                            alt="预览"
                         />
 
                         {/* [新增] 未解锁时的全屏遮罩/提示 */}
@@ -135,7 +135,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                     {/* 底部操作栏 */}
                     <div className="mt-12 flex gap-8 items-center">
                         <div className="text-xl font-mono text-gray-400">
-                            STYLE {String(previewIndex + 1).padStart(2, '0')} / {String(assets.length).padStart(2, '0')}
+                            风格 {String(previewIndex + 1).padStart(2, '0')} / {String(assets.length).padStart(2, '0')}
                         </div>
 
 
@@ -159,12 +159,12 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                             `}
                         >
                             {!isPreviewUnlocked ? (
-                                <><Lock size={20} /> LOCKED</>
+                                <><Lock size={20} /> 锁定</>
                             ) : (
                                 currentSelected === previewIndex ? (
-                                    <><Check /> EQUIPPED</>
+                                    <><Check /> 装备中</>
                                 ) : (
-                                    'SELECT STYLE'
+                                    '风格选择'
                                 )
                             )}
                         </button>

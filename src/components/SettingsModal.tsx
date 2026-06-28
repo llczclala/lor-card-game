@@ -139,25 +139,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Audio Volume</h3>
 
                                 <VolumeSlider
-                                    label="MUSIC"
+                                    label="音乐"
                                     icon={Music}
                                     value={volumes.bgm}
                                     onChange={(v) => onVolumeChange('bgm', v)}
                                 />
                                 <VolumeSlider
-                                    label="SOUND FX"
+                                    label="音效"
                                     icon={Volume2}
                                     value={volumes.sfx}
                                     onChange={(v) => onVolumeChange('sfx', v)}
                                 />
                                 <VolumeSlider
-                                    label="VOICE"
+                                    label="语音"
                                     icon={Mic}
                                     value={volumes.voice}
                                     onChange={(v) => onVolumeChange('voice', v)}
                                 />
                                 <VolumeSlider
-                                    label="MOVIES"
+                                    label="过场"
                                     icon={Film}
                                     value={volumes.movie}
                                     onChange={(v) => onVolumeChange('movie', v)}

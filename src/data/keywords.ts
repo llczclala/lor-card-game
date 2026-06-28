@@ -39,6 +39,8 @@ import icon34 from '../image/keyword/34.png'; // Echo
 import icon35 from '../image/keyword/35.png'; // Impact
 import icon36 from '../image/keyword/36.png'; // Channel
 import icon37 from '../image/keyword/37.png'; // Titan
+import icon38 from '../image/keyword/38.png'; // CantAttack
+import icon39 from '../image/keyword/39.png'; // Aura
 
 export interface KeywordConfig {
     label: string;
@@ -198,6 +200,12 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
         color: 'stone',
         icon: icon29
     },
+    'CantAttack': {
+        label: '无法攻击',
+        description: '进入战场时攻击力归零，无法造成伤害。',
+        color: 'gray',
+        icon: icon38
+    },
 
     // --- 4. 战术/资源 (Tactical) ---
     'Elusive': {
@@ -285,6 +293,13 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
         description: '卡牌持有的独特能力，区别于关键词。',
         color: 'amber',
         icon: icon0
+    },
+    // --- 7. 光环 (Aura) ---
+    'Aura': {
+        label: '光环',
+        description: '单位在场时持续生效的被动效果。',
+        color: 'purple',
+        icon: icon39
     }
 };
 // ==========================================

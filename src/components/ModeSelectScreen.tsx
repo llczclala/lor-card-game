@@ -100,8 +100,10 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
                     </div>
                 </div>
 
-                {/* 5. 右下角: Tutorial (教程) */}
+                {/* 5. 右下角: Tutorial (教程) — [禁用] 教程尚未开发完成 */}
                 <div className="col-start-3 row-start-3 w-full h-full flex justify-start items-start">
+                    {/*
+                    // ✦ 原可点击代码（保留不删，等教程开发完成后恢复）
                     <div
                         onClick={() => {
                             eventBus.emit(GameEvents.UI_CLICK);
@@ -109,13 +111,18 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
                         }}
                         className="w-64 h-40 group relative bg-gradient-to-br from-amber-900/60 to-slate-900/60 border border-amber-400/30 rounded-2xl overflow-hidden hover:border-amber-400 hover:bg-amber-900/80 transition-all hover:scale-105 hover:shadow-[0_0_30px_rgba(250,204,21,0.4)] cursor-pointer flex flex-col items-center justify-center gap-2"
                     >
-                        <BookOpen size={40} className="text-amber-400 group-hover:text-white transition-colors" />
+                    */}
+                    <div
+                        className="w-64 h-40 group relative bg-slate-800/40 border border-white/5 rounded-2xl overflow-hidden grayscale opacity-60 cursor-not-allowed flex flex-col items-center justify-center gap-2 hover:opacity-80 transition-opacity"
+                    >
+                        <BookOpen size={40} className="text-amber-400" />
                         <div className="text-center">
-                            <h3 className="text-xl font-black tracking-widest text-amber-100 group-hover:text-white">战术考核</h3>
-                            <p className="text-[10px] font-mono text-amber-300/60">学习各种操作战术技巧</p>
+                            <h3 className="text-xl font-black tracking-widest text-gray-400">战术考核</h3>
+                            <p className="text-[10px] font-mono text-gray-600">学习各种操作战术技巧</p>
                         </div>
-                        {/* 装饰角标 */}
-                        <div className="absolute top-0 left-0 w-full h-1 bg-amber-500/50 transform origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                            <span className="text-xs font-mono font-bold text-white/80">LOCKED</span>
+                        </div>
                     </div>
                 </div>
 

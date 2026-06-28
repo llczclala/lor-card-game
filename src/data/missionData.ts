@@ -9,19 +9,21 @@
  * ==============================================================================
  */
 
-// 任务类型：每日(次日6点重置) | 每周(周一6点重置) | 永久成就(不重置)
-export type MissionCategory = 'daily' | 'weekly' | 'achievement';
+// 任务类型：每日(次日6点重置) | 每周(周一6点重置) | 永久成就(不重置) | 版本活动(不重置)
+export type MissionCategory = 'daily' | 'weekly' | 'achievement' | 'version';
 
-// 奖励类型：数据金 | 皮肤 | 卡背
-export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack';
+// 奖励类型：数据金 | 皮肤 | 卡背 | 卡牌
+export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack' | 'card';
 
-// 监听条件类型 (与 gameLogger 中的 LogActionType 及衍生逻辑对应)
+// 监听条件类型
 export type MissionConditionType =
     | 'game_end'           // 基础对局结算
     | 'play_card'          // 打出指定卡牌
     | 'attack'             // 指定单位发起攻击
     | 'nexus_damage'       // 指定单位对水晶造成伤害
-    | 'level_up_and_win';  // 指定英雄升级且该局获胜 (复合条件)
+    | 'level_up_and_win'   // 指定英雄升级且该局获胜 (复合条件)
+    | 'win_with_champion'  // [2026-06-27] 携带指定英雄获胜
+    | 'direct_claim';      // [2026-06-27] 无需条件，直接领取
 
 export interface MissionDef {
     id: string;
@@ -33,10 +35,16 @@ export interface MissionDef {
         type: MissionRewardType;
         amount?: number;         // 货币数量 (如 1600, 4800)
         cosmeticId?: string;     // 对应 skinData.ts 中的 missionId
+        cardKeys?: string[];     // [新增] 卡牌奖励：要发放的卡牌 key 列表
     };
     condition: {
         type: MissionConditionType;
-        targetKey?: string;      // 监听的具体卡牌标识 (如 'lyfe', 'Ghost_Squad_Antina')
+        targetKey?: string;      // 监听的具体卡牌标识
+    };
+    // [2026-06-27] 版本任务专用字段
+    rewardDirect?: boolean;      // 是否直接领取（无需进度）
+    showCondition?: {
+        accountCreatedBefore?: string; // 注册时间早于此日期才显示
     };
 }
 
@@ -197,5 +205,51 @@ export const MISSIONS: MissionDef[] = [
         category: 'achievement', title: '夜幕巨兽', description: '在对局中累计打出「重夜-歌利亚」5 次',
         targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_chongye_golia_01' },
         condition: { type: 'play_card', targetKey: 'Chongye_Squad_Golia' }
+    },
+
+    // --- 图征小队 (Illustration Squad) ---
+    {
+        id: 'mission_illustration_kuranas_01',
+        category: 'achievement', title: '医疗支援', description: '在对局中累计打出「图征-库兰娅丝」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_illustration_kuranas_01' },
+        condition: { type: 'play_card', targetKey: 'Illustration_Squad_Kuranas' }
+    },
+    {
+        id: 'mission_illustration_swali_01',
+        category: 'achievement', title: '丰盛宴席', description: '在对局中累计打出「图征-斯瓦莉」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_illustration_swali_01' },
+        condition: { type: 'play_card', targetKey: 'Illustration_Squad_Swali' }
+    },
+    {
+        id: 'mission_illustration_soline_01',
+        category: 'achievement', title: '荒漠裁决', description: '在对局中累计打出「图征-索琳」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_illustration_soline_01' },
+        condition: { type: 'play_card', targetKey: 'Illustration_Squad_Soline' }
+    },
+
+    // ==========================================
+    // 🏆 2.0 版本活动 (Version 2.0)
+    // ==========================================
+    {
+        id: 'version_old_friend',
+        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给老玩家的回馈礼包！',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'dataGold', amount: 8000 },
+        condition: { type: 'direct_claim' },
+        showCondition: { accountCreatedBefore: '2026-06-27' }
+    },
+    {
+        id: 'version_new_start',
+        category: 'version', title: '新版本启航', description: '迎接新版本，获得猫汐尔莲驱与图征小队全员！',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'card', cardKeys: ['mauxir_lotus_drive', 'Illustration_Squad_Kuranas', 'Illustration_Squad_Swali', 'Illustration_Squad_Soline'] },
+        condition: { type: 'direct_claim' }
+    },
+    {
+        id: 'version_cat_win',
+        category: 'version', title: '是猫猫的胜利', description: '携带猫汐尔 莲驱赢得一场对局胜利',
+        targetCount: 1,
+        reward: { type: 'dataGold', amount: 4800 },
+        condition: { type: 'win_with_champion', targetKey: 'mauxir_lotus_drive' }
     }
 ];

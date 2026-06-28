@@ -38,6 +38,13 @@ import pupu_levelup_4k from '../movie/level up/卜卜灵鉴_level up/4k.webm';
 import pupu_win_1k from '../movie/win/卜卜灵鉴_win/1k.webm';
 import pupu_win_2k from '../movie/win/卜卜灵鉴_win/2k.webm';
 import pupu_win_4k from '../movie/win/卜卜灵鉴_win/4k.webm';
+// 猫汐尔莲驱
+import mauxir_levelup_1k from '../movie/level up/猫汐尔莲驱_level up/1k.webm';
+import mauxir_levelup_2k from '../movie/level up/猫汐尔莲驱_level up/2k.webm';
+import mauxir_levelup_4k from '../movie/level up/猫汐尔莲驱_level up/猫汐尔_level_up_4k.webm';
+import mauxir_win_1k from '../movie/win/猫汐尔莲驱_win/1k.webm';
+import mauxir_win_2k from '../movie/win/猫汐尔莲驱_win/2k.webm';
+import mauxir_win_4k from '../movie/win/猫汐尔莲驱_win/4k.webm';
 
 // 定义视频类型
 export type MovieType = 'title' | 'levelup' | 'win';
@@ -63,14 +70,16 @@ export const MOVIE_DB = {
     levelup: {
         lyfe: { '1k': lyfe_levelup_1k, '2k': lyfe_levelup_2k, '4k': lyfe_levelup_4k },
         fenny: { '1k': fenny_levelup_1k, '2k': fenny_levelup_2k, '4k': fenny_levelup_4k },
-        pupu_specular_soul: { '1k': pupu_levelup_1k, '2k': pupu_levelup_2k, '4k': pupu_levelup_4k }
+        pupu_specular_soul: { '1k': pupu_levelup_1k, '2k': pupu_levelup_2k, '4k': pupu_levelup_4k },
+        mauxir_lotus_drive: { '1k': mauxir_levelup_1k, '2k': mauxir_levelup_2k, '4k': mauxir_levelup_4k }
     } as Record<string, MovieSource>,
 
     // 胜利动画映射 (升级为多分辨率聚合对象)
     win: {
         lyfe: [{ '1k': lyfe_win_1k, '2k': lyfe_win_2k, '4k': lyfe_win_4k }],
         fenny: [{ '1k': fenny_win_1k, '2k': fenny_win_2k, '4k': fenny_win_4k }],
-        pupu_specular_soul: [{ '1k': pupu_win_1k, '2k': pupu_win_2k, '4k': pupu_win_4k }]
+        pupu_specular_soul: [{ '1k': pupu_win_1k, '2k': pupu_win_2k, '4k': pupu_win_4k }],
+        mauxir_lotus_drive: [{ '1k': mauxir_win_1k, '2k': mauxir_win_2k, '4k': mauxir_win_4k }]
     } as Record<string, MovieSource[]>
 };
 

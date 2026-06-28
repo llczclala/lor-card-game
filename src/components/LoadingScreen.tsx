@@ -7,6 +7,7 @@ import { CARD_DB } from '../data/cards';
 interface LoadingScreenProps {
     heroKey: string;
     enemyHeroKey?: string;
+    enemyName?: string; // [新增] 接收指挥部传来的真实姓名
     onComplete: () => void;
     onMatchFound?: () => void; // [新增] 匹配成功回调
     skinOverrides?: Record<string, number>; // [核心新增]
@@ -17,7 +18,8 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
     enemyHeroKey = 'fenny',
     onComplete,
     onMatchFound, // [新增]
-    skinOverrides = {} // [核心新增]
+    skinOverrides = {}, // [核心新增]
+    enemyName
 }) => {
     // 阶段控制: 'matching'(匹配中) -> 'found'(匹配成功) -> 'vs'(碰撞展示) -> 'loading'(读条) -> 'end'(结束)
     const [phase, setPhase] = useState<'matching' | 'found' | 'vs' | 'loading' | 'end'>('matching');
@@ -177,7 +179,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
                     animate-[hero-slide-in-left_0.8s_cubic-bezier(0.2,0.8,0.2,1)_forwards]
                 `}>
                     {/* [修改] 使用自适应组件替换原本的 img */}
-                    <AdaptiveImage src={myHeroImg} alt="Player" className="w-full h-full rounded-r-3xl overflow-hidden" />
+                    <AdaptiveImage src={myHeroImg} alt="玩家" className="w-full h-full rounded-r-3xl overflow-hidden" />
 
                     <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-transparent to-transparent pointer-events-none"></div>
                     <div className="absolute bottom-10 left-10 text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-white italic tracking-tighter opacity-80 drop-shadow-lg z-10">
@@ -194,11 +196,11 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
                     animate-[hero-slide-in-right_0.8s_cubic-bezier(0.2,0.8,0.2,1)_forwards]
                 `}>
                     {/* [修改] 使用自适应组件 */}
-                    <AdaptiveImage src={enemyHeroImg} alt="Enemy" className="w-full h-full rounded-l-3xl overflow-hidden" />
+                    <AdaptiveImage src={enemyHeroImg} alt="敌人" className="w-full h-full rounded-l-3xl overflow-hidden" />
 
                     <div className="absolute inset-0 bg-gradient-to-l from-black/80 via-transparent to-transparent pointer-events-none"></div>
                     <div className="absolute bottom-10 right-10 text-6xl font-black text-transparent bg-clip-text bg-gradient-to-l from-red-400 to-white italic tracking-tighter opacity-80 drop-shadow-lg z-10">
-                        ENEMY
+                        {enemyName || 'ENEMY'}
                     </div>
                 </div>
 

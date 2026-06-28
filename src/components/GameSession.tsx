@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef,useMemo } from 'react';
 import { Clock, Home } from 'lucide-react';
 import type { CardData } from '../types';
 import { Card } from './Card';
@@ -11,7 +11,8 @@ import { Battlefield } from './Battlefield';
 import { CARD_DB } from '../data/cards';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { useVoice } from '../hooks/useVoice';
-import { UI_IMAGES, PERSONALIZATION_ASSETS, getSkinImage } from '../data/imageData';
+// [核心引入] 引入 LEVELUP_ICONS
+import { UI_IMAGES, PERSONALIZATION_ASSETS, getSkinImage, LEVELUP_ICONS } from '../data/imageData';
 import { ManaGemSystem } from './ManaGemSystem';
 import { calculateNewMana } from '../utils/gameRules';
 import { getCardBackUrl} from '../utils/styleUtils';
@@ -107,6 +108,7 @@ interface GameSessionProps {
     enemyHeroConfig?: EnemyHeroConfig;
     onVictory?: () => void;
     onDefeat?: () => void;
+    missionSystem?: any;
 }
 
 export const GameSession: React.FC<GameSessionProps> = ({
@@ -116,6 +118,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     enemyDeck,
     enemyHeroConfig: _enemyHeroConfig,
     onVictory,
+    missionSystem,
     onDefeat
 }) => {
 
@@ -166,10 +169,112 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
     });
 
+    // ==========================================
+    // [核心修复] 活体数据提取器：替换死板的初始英雄快照
+    // ==========================================
+    const playerLiveHeroes = useMemo(() => {
+        if (!playerInitialDeckInfo?.heroes) return [];
+        return playerInitialDeckInfo.heroes.map(initialHero => {
+            // 按优先级寻找该英雄最新鲜的「活体」状态！
+            return (
+                playerBench.find(c => c.key === initialHero.key) ||
+                playerHand.find(c => c.key === initialHero.key) ||
+                (combatField.find(f => f.owner === 'player' && f.attacker?.key === initialHero.key)?.attacker) ||
+                (combatField.find(f => f.owner === 'enemy' && f.blocker?.key === initialHero.key)?.blocker) ||
+                playerDeck.find(c => c.key === initialHero.key) ||
+                initialHero // 兜底：如果全都找不到（比如死了），用死前的最后遗照
+            );
+        });
+    }, [playerInitialDeckInfo, playerBench, playerHand, combatField, playerDeck]);
+
+    const enemyLiveHeroes = useMemo(() => {
+        if (!enemyInitialDeckInfo?.heroes) return [];
+        return enemyInitialDeckInfo.heroes.map(initialHero => {
+            return (
+                enemyBench.find(c => c.key === initialHero.key) ||
+                enemyHand.find(c => c.key === initialHero.key) ||
+                (combatField.find(f => f.owner === 'enemy' && f.attacker?.key === initialHero.key)?.attacker) ||
+                (combatField.find(f => f.owner === 'player' && f.blocker?.key === initialHero.key)?.blocker) ||
+                enemyDeckState.find(c => c.key === initialHero.key) ||
+                initialHero
+            );
+        });
+    }, [enemyInitialDeckInfo, enemyBench, enemyHand, combatField, enemyDeckState]);
+
+    // ==========================================
+    // [核心新增] 天启者阶跃反馈仪 (Level-up Progress Watchdog)
+    // ==========================================
+    const prevHeroIconsRef = useRef<Record<string, string>>({});
+    // [修复 BUG 1] 增加 isEnemy 标识，以便在渲染时区分是从上方弹出还是下方弹出
+    const [levelUpToast, setLevelUpToast] = useState<{ hero: CardData, oldIcon: string, newIcon: string, isEnemy: boolean } | null>(null);
+
+    useEffect(() => {
+        let triggered = false;
+
+        // [修复 BUG 1] 合并敌我双方的存活天启者，实现全域监听！
+        const allHeroes = [
+            ...playerLiveHeroes.map(h => ({ hero: h, isEnemy: false })),
+            ...enemyLiveHeroes.map(h => ({ hero: h, isEnemy: true }))
+        ];
+
+        allHeroes.forEach(({ hero, isEnemy }) => {
+            if (!hero.isChampion) return;
+
+            let currentProgress = 0;
+            const target = hero.levelUpTarget || 1;
+
+            if (hero.key === 'fenny') {
+                const pHealth = game.playerNexus ?? 20;
+                const eHealth = game.enemyNexus ?? 20;
+                if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
+            } else if (hero.key === 'lyfe') {
+                currentProgress = hero.strikeCount || 0;
+            } else if (hero.key === 'pupu_specular_soul') {
+                currentProgress = hero.customProgress || 0;
+            } else if (hero.key === 'mauxir_lotus_drive') {
+                currentProgress = hero.customProgress || 0;
+            }
+
+            const cappedProgress = Math.min(currentProgress, target);
+
+            const getIconType = () => {
+                if (hero.level === 2) return LEVELUP_ICONS.full;
+                if (cappedProgress === 0) return LEVELUP_ICONS.empty;
+                if (cappedProgress === target - 1) return LEVELUP_ICONS.almost;
+                return LEVELUP_ICONS.half;
+            };
+
+            const newIcon = getIconType();
+            // [细致修复] 为防止敌我同名英雄（镜像对局）状态串线，加上 isEnemy 作为记忆后缀
+            const memoryKey = `${hero.key}_${isEnemy}`;
+            const oldIcon = prevHeroIconsRef.current[memoryKey];
+
+            if (oldIcon && oldIcon !== newIcon && newIcon !== LEVELUP_ICONS.empty && !triggered) {
+                setLevelUpToast({ hero, oldIcon, newIcon, isEnemy });
+                triggered = true;
+            }
+
+            prevHeroIconsRef.current[memoryKey] = newIcon;
+        });
+
+        // [修复 BUG 4] 删除了这里的 setTimeout，移交给下方独立的守护者处理！
+    }, [playerLiveHeroes, enemyLiveHeroes, game.playerNexus, game.enemyNexus]); // 追加 enemyLiveHeroes 依赖
+
+    // [修复 BUG 4] 独立的销毁守护者：只受 levelUpToast 变化影响，绝不被误杀！
+    useEffect(() => {
+        if (!levelUpToast) return;
+        const timer = setTimeout(() => {
+            setLevelUpToast(null);
+        }, 2200);
+        return () => clearTimeout(timer);
+    }, [levelUpToast]);
+
     // [新增] 悬停卡牌状态与法力预览计算
     const [hoveredCard, setHoveredCard] = useState<CardData | null>(null);
 
+    // 新增的代码内容
     const currentCardBackUrl = getCardBackUrl(cardBackIndex);
+
 
     const isMulliganPhase = mulligan.isActive;
 
@@ -196,6 +301,21 @@ export const GameSession: React.FC<GameSessionProps> = ({
             actions.finalizeSpell(card, 'player', targets);
         }
     });
+    // ==========================================
+    // [核心新增] 手牌索敌预瞄侦察兵 (Hand Target Watchdog)
+    // 实时查阅当前生效法术的效果基因库，判断其是否有针对手牌（HAND_CARD）的战术契约
+    // ==========================================
+    const isCastingForHand = useMemo(() => {
+        // [2026-06-27] 同时检查 spellSystem 和 game.spellCasting，消除一帧延迟
+        const isActive = spellSystem.isCasting || !!game.spellCasting;
+        if (!isActive) return false;
+        // 抓取当前正在施放的法术实体
+        const cCard = game.activeCard || playerHand.find(c => c.id === game.spellCasting?.cardId);
+        if (!cCard || !cCard.effects) return false;
+        const effectDef = EFFECT_DB[cCard.effects[0]];
+        return effectDef?.targetRequirements?.some(req => req.type === 'HAND_CARD') || false;
+    }, [spellSystem.isCasting, game.spellCasting, game.activeCard, playerHand]);
+
     const finalAnnouncement = announcement;
 
     // [核心新增] 提取玩家当前激活卡组的皮肤配置字典！
@@ -206,6 +326,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
     useEffect(() => {
         // 1. 如果底层要求选目标，且前台还没开始瞄准
         if (game.spellCasting && game.spellCasting.step !== 'choose_mode' && !spellSystem.isCasting) {
+            // [SBA] 如果 spellCasting 已预填目标 → 敌方自动施法，不启动玩家瞄准 UI
+            if (game.spellCasting.targets && game.spellCasting.targets.length > 0) return;
             // 这张法术可能在 activeCard 里 (英雄法术变身而来)，也可能在手牌里
             const targetCard = game.activeCard || playerHand.find(c => c.id === game.spellCasting!.cardId);
             if (targetCard) {
@@ -433,7 +555,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 const f = combatFieldRef.current[checkIdx];
                                 if (f.blocker !== null || usedSlots.has(checkIdx)) continue;
                                 if (f.attacker.keywords.includes('Elusive') && !c.keywords.includes('Elusive')) continue;
-                                const cPower = (c.power || 0) + (c.buffs?.power || 0);
+                                const cPower = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
                                 if (f.attacker.keywords.includes('Fearsome') && cPower < 3) continue;
                                 foundIdx = checkIdx;
                                 break;
@@ -578,7 +700,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     if (f.blocker !== null || usedSlots.has(checkIdx)) continue;
                                     if (f.attacker.keywords.includes('Elusive') && !c.keywords.includes('Elusive')) continue;
 
-                                    const cPower = (c.power || 0) + (c.buffs?.power || 0);
+                                    const cPower = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
                                     if (f.attacker.keywords.includes('Fearsome') && cPower < 3) continue;
 
                                     foundIdx = checkIdx;
@@ -929,7 +1051,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
         if (game.phase === 'animating' || game.gameResult) return false;
 
         if (spellSystem.isCasting) {
-            spellSystem.handleTargetClick(card, owner as 'player' | 'enemy');
+            // [2026-06-27 暗箱操作] 传 location 区分手牌点击 vs 场上点击
+            spellSystem.handleTargetClick(card, owner as 'player' | 'enemy', location as 'hand' | 'field');
             return false;
         }
 
@@ -998,7 +1121,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
 
     // [新增] 判断是否可以发起进攻
-    const canInitiateAttack = game.phase === 'main' && game.attackToken.player !== null && playerBench.length > 0 && game.spellStack.length === 0;
+    const canInitiateAttack = game.phase === 'main' && game.attackToken.player !== null && game.turnOwner === 'player' && playerBench.length > 0 && game.spellStack.length === 0;
 
     // [新增] 撤回进攻宣言 (Cancel Attack)
     const handleCancelAttack = () => {
@@ -1080,7 +1203,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     // [修改] 使用选定的牌桌图片
                     src={PERSONALIZATION_ASSETS.desks[deskIndex]}
                     className="w-full h-full object-cover"
-                    alt="Game Board"
+                    alt="棋盘"
                 />
                 <div className="absolute inset-0 bg-black/20"></div>
             </div>
@@ -1164,6 +1287,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     }}
                     onPlayMovie={handleVictorySequence}
                     onPrepareMovie={handlePrepareVictorySequence} // [核心新增] 下发胜利预热！
+                    missionSystem={missionSystem}
                 />
             )}
             {game.levelUpCard && (
@@ -1347,7 +1471,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 }}
                             >
                                 <div className="relative w-48 h-48 flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
-                                    <img src={UI_IMAGES.spellContainer} alt="Container" className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-all duration-300 ${isEnemy ? 'drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]'} ${!isEnemy ? 'group-hover:drop-shadow-[0_0_40px_rgba(239,68,68,0.5)]' : ''}`} />
+                                    <img src={UI_IMAGES.spellContainer} alt="容器" className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-all duration-300 ${isEnemy ? 'drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]'} ${!isEnemy ? 'group-hover:drop-shadow-[0_0_40px_rgba(239,68,68,0.5)]' : ''}`} />
 
                                     {/* 物理锚点：使用 data-entity-id 供特效层绝对追踪 */}
                                     <div ref={isCasting ? spellCenterRef : undefined} data-entity-id={card.id} className="relative w-[110px] h-[110px] rounded-full overflow-hidden z-10 bg-black">
@@ -1378,7 +1502,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
             <div className={`w-full h-full relative ${game.screenShake ? 'animate-shake' : ''}`}>
 
                 {/* --- A. 左侧 UI 层 (绝对定位) --- */}
-                <div className={`absolute top-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all`}>
+                {/* [核心修复] 修正信标暗号！必须与逻辑层的 nexus_enemy 完美对齐！ */}
+                <div data-entity-id="nexus_enemy" className={`absolute top-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all`}>
                     <SmartNexus
                         health={game.enemyNexus}
                         maxHealth={game.enemyMaxMana} // 借用一下 MaxMana 或者写死 20，这里主要用于展示
@@ -1398,14 +1523,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         cardBackIndex={cardBackIndex}
                         deckCount={enemyDeckState.length}
                         handCount={enemyHand.length}
-                        initialHeroes={enemyInitialDeckInfo?.heroes || []}
+                        initialHeroes={enemyLiveHeroes} // [核心替换] 注入活体数据
                         regions={enemyInitialDeckInfo?.regions || []}
                         onViewArt={setViewCard}
                         deckTransform="scale(1.35) rotate(169deg)" // [新增] 将缩放和旋转作为参数传给内部实体
                     />
                 </div>
 
-                <div className={`absolute bottom-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all`}>
+                {/* [核心修复] 修正信标暗号！必须与逻辑层的 nexus_player 完美对齐！ */}
+                <div data-entity-id="nexus_player" className={`absolute bottom-[33.5%] left-[5%] w-20 h-20 flex items-center justify-center z-20 rounded-full transition-all`}>
                     <SmartNexus
                         health={game.playerNexus}
                         maxHealth={game.playerMaxMana}
@@ -1414,6 +1540,59 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         onClick={() => spellSystem.isCasting && spellSystem.handleTargetClick('nexus', 'player')}
                     />
                 </div>
+
+                {/* [核心新增] 天启者阶跃反馈弹窗 (悬挂在牌库上方) */}
+                <AnimatePresence>
+                    {levelUpToast && (
+                        <motion.div
+                            className="absolute z-50 flex flex-col items-center pointer-events-none"
+                            // [修复 BUG 1] 根据敌我阵营，动态决定挂载在敌方牌库下方，还是我方牌库上方
+                            style={{
+                                ...(levelUpToast.isEnemy ? { top: '28%', left: '14%' } : { bottom: '28%', left: '14%' }),
+                                marginLeft: '10px'
+                            }}
+                            // [修复 BUG 1] 敌方从上往下弹 (y从负到正)，我方从下往上弹 (y从正到负)
+                            initial={{ opacity: 0, y: levelUpToast.isEnemy ? -40 : 40, scale: 0.5 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: levelUpToast.isEnemy ? -20 : 20, scale: 0.8 }}
+                            transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+                        >
+                            {/* [修复 BUG 2 & 3] 矩形展示，金色光晕脉冲，边框加粗发亮！ */}
+                            <div className="relative w-[72px] h-[112px] rounded-lg border-2 border-yellow-400 shadow-[0_0_30px_rgba(255,215,0,0.6)] bg-slate-900 overflow-hidden bg-gradient-to-b from-yellow-500/20 to-transparent">
+                                <img
+                                    // 完美继承皮肤系统的渲染规则
+                                    src={skinOverrides[levelUpToast.hero.key] ? getSkinImage(levelUpToast.hero.key, skinOverrides[levelUpToast.hero.key], levelUpToast.hero.level === 2) || levelUpToast.hero.imageUrl : levelUpToast.hero.imageUrl}
+                                    className="w-full h-full object-cover opacity-90"
+                                    alt="英雄头像"
+                                />
+
+                                {/* 阶跃特效容器：左上角箭头 */}
+                                <div className="absolute -top-1 -left-1 w-8 h-8 rounded-full bg-slate-900 shadow-md border-2 border-yellow-400 overflow-hidden flex items-center justify-center">
+                                    {/* 旧状态：延迟 0.3s 后淡出 */}
+                                    <motion.img
+                                        src={levelUpToast.oldIcon}
+                                        className="absolute inset-0 w-full h-full object-cover"
+                                        animate={{ opacity: 0 }}
+                                        transition={{ duration: 0.4, delay: 0.3 }}
+                                    />
+                                    {/* 新状态：延迟 0.3s 后，瞬间爆闪至 2.5倍 亮度，放大 1.5 倍，再完美落位！ */}
+                                    <motion.img
+                                        src={levelUpToast.newIcon}
+                                        className="absolute inset-0 w-full h-full object-cover"
+                                        initial={{ opacity: 0, scale: 0.5, filter: 'brightness(1)' }}
+                                        animate={{
+                                            opacity: 1,
+                                            scale: [0.8, 1.5, 1],
+                                            filter: ['brightness(1)', 'brightness(2.5)', 'brightness(1)']
+                                        }}
+                                        transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
+                                    />
+                                </div>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
                 {/* 4. 我方牌库 (左下偏右) */}
                 <div
                     className="absolute z-40 hover:z-[60] origin-center drop-shadow-2xl transition-all"
@@ -1424,7 +1603,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         cardBackIndex={cardBackIndex}
                         deckCount={playerDeck.length}
                         handCount={playerHand.length}
-                        initialHeroes={playerInitialDeckInfo?.heroes || []}
+                        initialHeroes={playerLiveHeroes} // [核心替换] 注入活体数据
                         regions={playerInitialDeckInfo?.regions || []}
                         onViewArt={setViewCard}
                         playerNexusHealth={game.playerNexus}
@@ -1719,7 +1898,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             <img
                                 src={UI_IMAGES.buttonContainer}
                                 className="w-[275px] max-w-none h-auto object-contain opacity-100 drop-shadow-2xl"
-                                alt="Control Panel"
+                                alt="控制面板"
                                 style={{ transform: 'translateX(30px) translateY(0px)' }}
                             />
 
@@ -1805,6 +1984,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 onViewArt={setViewCard}
                                 playerBench={playerBench}
                                 combatField={combatField}
+                                isCastingForHand={isCastingForHand} // [核心修复] 将索敌状态精准打通至手牌组件！
                             />
                         )}
                     </div>

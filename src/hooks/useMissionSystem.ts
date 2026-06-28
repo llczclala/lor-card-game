@@ -58,7 +58,7 @@ const getLogicalWeek = (timestamp: number): number => {
     return startOfWeek.getTime();
 };
 
-export const useMissionSystem = (userId: string) => {
+export const useMissionSystem = (userId: string, registerTime?: string) => {
     const [progress, setProgress] = useState<Record<string, MissionProgress>>({});
     const [isReady, setIsReady] = useState(false);
 
@@ -87,10 +87,30 @@ export const useMissionSystem = (userId: string) => {
 
         // 1. 将新版本 missionData 里的任务动态合入玩家存档
         MISSIONS.forEach(m => {
+            // [fix] 不满足 showCondition 的任务直接跳过，不入 progress
+            if (m.showCondition?.accountCreatedBefore && registerTime) {
+                const regDate = new Date(registerTime);
+                const cutoff = new Date(m.showCondition.accountCreatedBefore);
+                if (regDate >= cutoff) {
+                    if (saved[m.id]) needsSave = true; // 清除旧存档中的隐藏任务
+                    return; // 跳过此任务，不给它分配 progress 槽位
+                }
+            }
+
             if (saved[m.id]) {
                 merged[m.id] = saved[m.id];
+                // [fix] 对已有存档也强制修正：direct_claim 任务若尚未领取，直接变为已完成
+                if (m.condition.type === 'direct_claim' && merged[m.id].status !== 'claimed') {
+                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed' };
+                    needsSave = true;
+                }
             } else {
-                merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing' };
+                // [fix] direct_claim 任务无需对局，初始化即完成
+                if (m.condition.type === 'direct_claim') {
+                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed' };
+                } else {
+                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing' };
+                }
                 needsSave = true;
             }
         });
@@ -131,7 +151,7 @@ export const useMissionSystem = (userId: string) => {
 
         setProgress(merged);
         setIsReady(true);
-    }, [userId]);
+    }, [userId, registerTime]);
 
     // ==========================================
     // 核心审计算法：扫描对局日志，累加进度
@@ -169,13 +189,24 @@ export const useMissionSystem = (userId: string) => {
                     break;
                 case 'nexus_damage':
                     logs.filter(l => l.type === 'nexus_damage' && l.isPlayerSide && (l as NexusDamageLogEvent).sourceCardKey === mission.condition.targetKey).forEach(l => {
-                        added += (l as NexusDamageLogEvent).amount; // 累加真实造成的伤害量
+                        added += (l as NexusDamageLogEvent).amount;
                     });
                     break;
                 case 'level_up_and_win':
                     if (isWin && mission.condition.targetKey && levelUpCards.has(mission.condition.targetKey)) {
                         added += 1;
                     }
+                    break;
+                // [2026-06-27] 携带指定英雄获胜：检查对局中是否打出过该英雄且获胜
+                case 'win_with_champion':
+                    if (isWin && mission.condition.targetKey) {
+                        const playedChampion = logs.some(l => l.type === 'play_card' && l.isPlayerSide && (l as PlayCardLogEvent).cardKey === mission.condition.targetKey);
+                        if (playedChampion) added += 1;
+                    }
+                    break;
+                // [2026-06-27] 直接领取：无需条件，初始即完成
+                case 'direct_claim':
+                    if (prog.current === 0) added = 1;
                     break;
             }
 

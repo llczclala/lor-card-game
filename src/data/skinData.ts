@@ -95,6 +95,14 @@ export const COSMETIC_REGISTRY: CosmeticConfig[] = [
     { type: 'skin', name: '阶段二', cardKey: 'Chongye_Squad_Golia', skinId: 1, source: 'MISSION', missionId: 'mission_chongye_golia_01' },
     { type: 'skin', name: '休息一刻', cardKey: 'Chongye_Squad_Golia', skinId: 2, source: 'BOTH', price: 1 },
 
+    // Mauxir (猫汐尔) · 图征小队
+    { type: 'skin', name: '阶段二', cardKey: 'Illustration_Squad_Kuranas', skinId: 1, source: 'MISSION', missionId: 'mission_illustration_kuranas_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Illustration_Squad_Kuranas', skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Illustration_Squad_Swali', skinId: 1, source: 'MISSION', missionId: 'mission_illustration_swali_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Illustration_Squad_Swali', skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Illustration_Squad_Soline', skinId: 1, source: 'MISSION', missionId: 'mission_illustration_soline_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Illustration_Squad_Soline', skinId: 2, source: 'BOTH', price: 1 },
+
     // ==========================================
     // 🎴 饰品资产区 (Cosmetics)
     // ==========================================
@@ -105,6 +113,13 @@ export const COSMETIC_REGISTRY: CosmeticConfig[] = [
     { type: 'cardBack', index: 4, name: '芬妮', source: 'MISSION', missionId: 'mission_cb_fenny' },
     { type: 'cardBack', index: 5, name: '里芙', source: 'MISSION', missionId: 'mission_cb_lyfe' },
     { type: 'cardBack', index: 6, name: '卜卜灵鉴', source: 'MISSION', missionId: 'mission_cb_pupu' },
+    // 永恒之约系列 (商店 10 比特金)
+    { type: 'cardBack', index: 7, name: '永恒之约·里芙', source: 'SHOP', price: 10 },
+    { type: 'cardBack', index: 8, name: '永恒之约·芬妮', source: 'SHOP', price: 10 },
+    { type: 'cardBack', index: 9, name: '永恒之约·肴', source: 'SHOP', price: 10 },
+    { type: 'cardBack', index: 10, name: '永恒之约·晨星', source: 'SHOP', price: 10 },
+    { type: 'cardBack', index: 11, name: '永恒之约·凯西娅', source: 'SHOP', price: 10 },
+    { type: 'cardBack', index: 12, name: '永恒之约·苔丝', source: 'SHOP', price: 10 },
 
     // 牌桌 (Desks)
     { type: 'desk', index: 1, name: '富丽堂皇', source: 'BOTH', price: 5 },

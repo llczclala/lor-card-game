@@ -19,7 +19,8 @@ const PRIORITY_MAP: Record<VoiceEventType, number> = {
     enemy_spawn: 1,
     kill: 2,
     spell_small: 1,
-    spell_ultimate: 1
+    spell_ultimate: 1,
+    spell_support: 1
 };
 
 export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
@@ -133,9 +134,11 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
         const handleUnitDie = (card: CardData) => playVoice(card, 'die');
         const handleHeroFirstAction = (card: CardData) => playVoice(card, 'attack_block');
         const handleKill = (card: CardData) => playVoice(card, 'kill');
-        const handleSpellChoice = (payload: { hero: CardData, choice: 'small' | 'ultimate' }) => {
+        const handleSpellChoice = (payload: { hero: CardData, choice: 'small' | 'ultimate' | 'support' }) => {
             if (payload.choice === 'ultimate') {
                 playVoice(payload.hero, 'spell_ultimate');
+            } else if (payload.choice === 'support') {
+                playVoice(payload.hero, 'spell_support');
             } else {
                 playVoice(payload.hero, 'spell_small');
             }

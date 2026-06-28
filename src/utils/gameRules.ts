@@ -48,6 +48,9 @@ export const checkCardLevelUp = (card: CardData, playerNexusHealth: number, enem
     if (card.key === 'pupu_specular_soul' && (card.customProgress || 0) >= 3) return true;
 //     if (card.key === 'pupu_specular_soul' && card.strikeCount >= 2) return true;
 
+    // [新增] 猫汐尔莲驱：我方召唤者和召唤物累计造成 30 点伤害（customProgress 追踪）
+    if (card.key === 'mauxir_lotus_drive' && (card.customProgress || 0) >= 30) return true;
+
     return false;
 };
 
@@ -105,6 +108,24 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             description: '进攻时：召唤一个进攻状态的 “镜爻 卜卜” ',
             effects: ['effect_pupu_level2_attack'],
             ability: { id: 'pupu_lv2_clone_summon', label: '镜爻·复刻', description: '进攻时：召唤一个完全复制自身的”镜爻 卜卜”参与进攻。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
+            abilityState: 'breathing' as const,
+            abilityCharges: -1,
+        } as CardData;
+    }
+
+    // [新增] 猫汐尔莲驱 Lv2：感知补全+
+    if (card.key === 'mauxir_lotus_drive') {
+        return {
+            ...card,
+            level: 2,
+            power: card.power,
+            health: card.health + 1,
+            maxHealth: card.maxHealth + 1,
+            level2ImageUrl: card.level2ImageUrl,
+            description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方所有【臆莲基座】造成1点伤害，之后赋予其+0 +2，【臆莲基座】可以以敌方水晶为目标。',
+            keywords: [],
+            effects: ['effect_mauxir_lotus_drive_lv2'],
+            ability: { id: 'mauxir_lv2_aura', label: '莲华庇佑', description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方所有【臆莲基座】造成1点伤害，之后赋予其+0 +3，【臆莲基座】可以以敌方水晶为目标。', trigger: 'round_start', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
             abilityState: 'breathing' as const,
             abilityCharges: -1,
         } as CardData;
@@ -200,4 +221,76 @@ export const checkCardConditionActive = (card: CardData, playerBench: CardData[]
         }
     }
     return false;
+};
+// ==========================================
+// [新增] UI 侦察兵：检测卡牌是否已满足升级条件但还未升级（用于手牌橙色高光）
+// ==========================================
+
+/**
+ * 检查冠军卡是否已满经验（customProgress 达标），但仍是 Lv1 待升级状态。
+ * 用于手牌橙色高光提示"蓄势待发"。
+ */
+export const checkCardReadyToLevelUp = (card: CardData): boolean => {
+    if (card.level >= 2 || !card.isChampion) return false;
+    // 猫汐尔：customProgress ≥ 30 时满经验
+    if (card.key === 'mauxir_lotus_drive' && (card.customProgress || 0) >= 30) return true;
+    // 未来其他以 customProgress 追踪升级的英雄可加在这里
+    // if (card.key === 'xxx' && (card.customProgress || 0) >= N) return true;
+    return false;
+};
+
+// ==========================================
+// [新增] 猫汐尔专属：召唤体系伤害经验收集器
+// ==========================================
+
+/**
+ * 验证单位是否具有召唤系血统
+ */
+export const isSummonerOrSummon = (card: CardData): boolean => {
+    return card.race?.some(r => r === 'summoner' || r === 'summon') ?? false;
+};
+
+/**
+ * 猫汐尔升级进度累加器（全域广播版）
+ * 扫描玩家所有区域（牌库、手牌、备战席）的 Lv1 猫汐尔，为其注入召唤系造成的伤害经验。
+ */
+export const accumulateMauxirDamage = (
+    bench: CardData[],
+    field: any[], // 兼容交战区数据类型
+    amount: number,
+    setBench: (b: CardData[]) => void,
+    hand?: CardData[],
+    setHand?: (h: CardData[]) => void,
+    deck?: CardData[],
+    setDeck?: (d: CardData[]) => void
+): boolean => {
+    if (amount <= 0) return false;
+
+    let needsUpdate = false;
+
+    // 辅助函数：扫描单个区域，更新 Lv1 猫汐尔的 customProgress
+    const accumulateInZone = (zone: CardData[]): CardData[] => {
+        return zone.map(card => {
+            if (card.key === 'mauxir_lotus_drive' && card.level === 1) {
+                const currentProgress = card.customProgress || 0;
+                if (currentProgress < 30) {
+                    needsUpdate = true;
+                    return { ...card, customProgress: Math.min(30, currentProgress + amount) };
+                }
+            }
+            return card;
+        });
+    };
+
+    // 全域广播：扫描所有可访问的区域
+    const nextBench = accumulateInZone(bench);
+    if (hand && setHand) setHand(accumulateInZone(hand));
+    if (deck && setDeck) setDeck(accumulateInZone(deck));
+
+    // 提交进度
+    if (needsUpdate) {
+        setBench(nextBench);
+    }
+
+    return false; // 不越权触发升级
 };

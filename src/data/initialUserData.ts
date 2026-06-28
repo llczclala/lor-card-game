@@ -57,7 +57,7 @@ export const FULL_COLLECTION = {
 // [皮肤] 全卡档专用设置：解锁所有卡背和棋盘
 export const FULL_SETTINGS = {
     ...DEFAULT_SETTINGS,
-    unlockedCardBacks: [0, 1, 2, 3, 4, 5, 6], // [核心新增] 解锁全部 7 款卡背 (包含英雄专属)
+    unlockedCardBacks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], // [新增] 解锁全部 13 款卡背 (含永恒之约系列)
     unlockedDesks: [0, 1, 2, 3, 4],           // 全部 5 款棋盘
 };
 

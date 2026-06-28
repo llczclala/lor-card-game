@@ -96,7 +96,7 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
             {/* 1. Barrier (屏障) - 动态能量护盾 (向上生长 + 中心宣告 + 破裂爆散) */}
             {/* 利用 AnimatePresence 监听词条。无论是打出还是法术赋予，只要获得屏障，立刻触发华丽展开！ */}
             <AnimatePresence>
-                {isOnBoard && data.keywords.includes('Barrier') && KEYWORD_DB['Barrier'] && (
+                {isOnBoard && data.keywords.includes('Barrier') && !data.depletedKeywords?.includes('Barrier') && KEYWORD_DB['Barrier'] && (
                     <motion.div key="barrier-wrapper" className="absolute inset-0 z-40 pointer-events-none">
 
                         {/* A. 护盾本体 (origin-bottom: 从底部向上撑开，碎裂时膨胀爆散) */}
@@ -408,7 +408,7 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                 >
                     <img
                         src={KEYWORD_DB['Challenger'].icon}
-                        alt="Challenge"
+                        alt="挑战"
                         className={`w-full h-full object-contain filter drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] ${isChallengerActive ? 'animate-pulse brightness-150 scale-110' : 'opacity-90'}`}
                     />
                 </div>

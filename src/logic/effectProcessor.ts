@@ -1,8 +1,9 @@
-import type { CardData, GameState, Keyword } from '../types'; // [修改] 新增 Keyword 的引入
+import type { CardData, GameState, Keyword, Race } from '../types'; // [修改] 新增 Keyword 的引入
 import { EFFECT_DB } from '../data/effectRegistry';
 import { createCard } from '../data/cards';
-import { cloneUnitState } from '../utils/gameRules'; // [新增] 引入我们的完美复印机
+import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon } from '../utils/gameRules'; // [新增] 引入完美复印机与猫汐尔经验收集器
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { applyFrostbite } from './keywords'; // [新增] 引入绝对零度处理器
 
 /**
  * 上下文接口：描述执行法术时所需的全部游戏状态
@@ -29,9 +30,22 @@ export interface EffectParams {
     relatedCardKey?: string;
     keywords?: Keyword[]; // [新增] 补全缺失的关键词参数，这是粉碎 TS 类型拓宽报错的核心
     summonKey?: string;              // [新增] 召唤物的卡牌 Key
-    summonZone?: 'bench' | 'combat'; // [新增] 召唤的降落点（备战席 或 交战区）
+    summonZone?: 'bench' | 'combat' | 'hand'; // [修改] 增加 hand 选项，支持生成衍生卡到手牌
+    summonCount?: number;            // [新增] 生成数量，支持一次性召唤/生成多张
     presenceRequirement?: string[];
     targetKeyRequirement?: string[];
+    raceFilter?: Race[];
+    // === 👇 新增以下参数，给新机制上户口 ===
+    roundEndBuff?: boolean;
+    buffCounterKey?: string;
+    buffThreshold?: number;
+    buffRewardKey?: string;
+    excludeSelf?: boolean; // [新增] 是否排除施法者自身（防止鳄鱼奶自己）
+    excludeKeys?: string[]; // [新增] 黑名单：按 key 排除目标单位（防止医疗鳄互刷）
+    selfDamage?: number;    // [新增] 反噬契约：效果执行后对施法者自身造成 N 点伤害
+    condition?: string;
+    bonusValue?: number;
+    splashAdjacent?: boolean;
 }
 
 /**
@@ -127,11 +141,14 @@ export const processEffect = (
         effect.targetRequirements.forEach(req => {
             // 自动填充敌方水晶
             if (req.type === 'ENEMY_NEXUS') {
-                finalTargets.push({ type: context.owner === 'player' ? 'enemy_nexus' : 'player_nexus' });
+                const t = context.owner === 'player' ? 'enemy_nexus' : 'player_nexus';
+                // [核心修复] 补上 id 参数！如果不传 id，法球组件在全屏索敌时会变成瞎子，导致不发射特效！
+                finalTargets.push({ type: t, id: t });
             }
             // 自动填充我方水晶
             else if (req.type === 'PLAYER_NEXUS') {
-                finalTargets.push({ type: context.owner === 'player' ? 'player_nexus' : 'enemy_nexus' });
+                const t = context.owner === 'player' ? 'player_nexus' : 'enemy_nexus';
+                finalTargets.push({ type: t, id: t });
             }
             // SELF 目标
             else if (String(req.type) === 'SELF') {
@@ -148,6 +165,26 @@ export const processEffect = (
     if (effect.targetRequirements.some(req => req.type === 'ALL_ALLIES')) {
         const bench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
         bench.forEach(c => finalTargets.push({ type: 'ally', id: c.id }));
+
+        // [修复] 同时收集交战区中属于己方的单位，防止BUFF法术遗漏战场单位
+        if (nextCombatField) {
+            nextCombatField.forEach(fight => {
+                // 攻击者属于 fight.owner 方
+                if (fight.attacker && fight.owner === context.owner) {
+                    finalTargets.push({ type: 'ally', id: fight.attacker.id });
+                }
+                // 阻挡者属于 fight.owner 的对方
+                if (fight.blocker && fight.owner !== context.owner) {
+                    finalTargets.push({ type: 'ally', id: fight.blocker.id });
+                }
+            });
+        }
+
+        // [2026-06-27 巴德尔试剂] 水晶也纳入治疗范围
+        if (effect.params?.targetCondition === 'all_allies_include_nexus') {
+            const nexusType = context.owner === 'player' ? 'player_nexus' : 'enemy_nexus';
+            finalTargets.push({ type: nexusType, id: nexusType });
+        }
     }
 
     // --- 根据效能类型 (Class) 分发逻辑 ---
@@ -187,15 +224,14 @@ export const processEffect = (
                     }
                 }
 
-                const isHittingEnemyNexus = (context.owner === 'player' && target.type === 'enemy_nexus') ||
-                                          (context.owner === 'enemy' && target.type === 'player_nexus');
-                const isHittingPlayerNexus = (context.owner === 'player' && target.type === 'player_nexus') ||
-                                           (context.owner === 'enemy' && target.type === 'enemy_nexus');
-
-                if (isHittingEnemyNexus) {
+                // [修复] 直接用 target.type 绝对坐标判断，不再做二次相对转换
+                // target.type 在 auto-target 时已被解析为绝对坐标：
+                //   'enemy_nexus'  → 永远指敌方阵营的水晶
+                //   'player_nexus' → 永远指我方阵营的水晶
+                if (target.type === 'enemy_nexus') {
                     nextGame.enemyNexus -= dmg;
                     events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: dmg } });
-                } else if (isHittingPlayerNexus) {
+                } else if (target.type === 'player_nexus') {
                     nextGame.playerNexus -= dmg;
                     events.push({ type: 'nexus_damage', payload: { target: 'player', amount: dmg } });
                 } else if (target.id) {
@@ -240,13 +276,41 @@ export const processEffect = (
                     // =====================================
                     targetsToHit.forEach(hitId => {
                         const applyDmg = (c: CardData) => {
-                            // [改造] 法术不穿盾：屏障抵挡伤害后标记黯淡而非移除
-                            if (c.keywords.includes('Barrier') && !(c.depletedKeywords || []).includes('Barrier') && dmg > 0) {
+                            let nextCard = { ...c };
+                            let actualDmg = dmg;
+
+                            // 1. 结算护盾与伤害
+                            if (nextCard.keywords.includes('Barrier') && actualDmg > 0) {
                                 events.push({ type: 'sfx_shield_break', payload: null });
-                                return { ...c, depletedKeywords: [...(c.depletedKeywords || []), 'Barrier'], animState: 'hit' as const };
+                                nextCard.depletedKeywords = [...(nextCard.depletedKeywords || []), 'Barrier'];
+                                nextCard.animState = 'hit' as const;
+                                actualDmg = 0; // 伤害被抵挡
                             }
-                            if (dmg > 0) events.push({ type: 'unit_damage', payload: { id: c.id, amount: dmg } });
-                            return { ...c, damageTaken: (c.damageTaken||0) + dmg, animState: 'hit' as const };
+
+                            if (actualDmg > 0) {
+                                events.push({ type: 'unit_damage', payload: { id: nextCard.id, amount: actualDmg } });
+                                nextCard.damageTaken = (nextCard.damageTaken || 0) + actualDmg;
+                                nextCard.animState = 'hit' as const;
+
+                                // ==========================================
+                                // [新增] 埋点 B-1：猫汐尔经验收集 - 拦截数值炮击
+                                // ==========================================
+                                if (context.sourceCard && isSummonerOrSummon(context.sourceCard)) {
+                                    accumulateMauxirDamage(nextPlayerBench, nextCombatField || [], actualDmg, (newBench) => { nextPlayerBench = newBench; }, nextPlayerHand, (newHand) => { nextPlayerHand = newHand; }, nextPlayerDeck, (newDeck) => { if (newDeck) nextPlayerDeck = newDeck; });
+                                }
+                            }
+
+                            // 2. [新增] 伴泽而生：条件冻结判定 (原子化拦截)
+                            if (effect.params.condition === 'freeze_if_health_equals_1') {
+                                const remainingHealth = (nextCard.health || 0) + (nextCard.buffs?.health || 0) - (nextCard.damageTaken || 0);
+                                if (remainingHealth === 1) {
+                                    // 触发冻结，调用绝对零度处理器
+                                    nextCard = applyFrostbite(nextCard);
+                                    events.push({ type: 'sfx_buff', payload: null }); // 附加冰冻音效
+                                }
+                            }
+
+                            return nextCard;
                         };
 
                         // 盲扫更新 (利用现成的封装好的 updateCardInList)
@@ -272,8 +336,15 @@ export const processEffect = (
                 const attackerId = finalTargets.find(t => t.type?.includes('ally'))?.id;
                 const defenderId = finalTargets.find(t => t.type?.includes('enemy'))?.id;
 
-                const findUnit = (id: string) =>
-                    nextPlayerBench.find(c => c.id === id) || nextEnemyBench.find(c => c.id === id);
+                // [核心修复] 法术寻的雷达扩域！同时扫描备战席与交战区！
+                const findUnit = (id: string) => {
+                    let unit = nextPlayerBench.find(c => c.id === id) || nextEnemyBench.find(c => c.id === id);
+                    if (!unit && nextCombatField) {
+                        const fight = nextCombatField.find(f => (f.attacker && f.attacker.id === id) || (f.blocker && f.blocker.id === id));
+                        if (fight) unit = fight.attacker?.id === id ? fight.attacker : fight.blocker;
+                    }
+                    return unit;
+                };
 
                 if (attackerId && defenderId) {
                     const attacker = findUnit(attackerId);
@@ -290,8 +361,8 @@ export const processEffect = (
                             let nextKeywords = c.keywords;
                             let finalDmg = dmg;
 
-                            // [改造] 法术单挑不穿盾：屏障抵挡伤害后标记黯淡而非移除
-                            const hasActiveBarrier = c.keywords.includes('Barrier') && !(c.depletedKeywords || []).includes('Barrier');
+                            // 法术单挑：屏障抵挡伤害后从关键词移除
+                            const hasActiveBarrier = c.keywords.includes('Barrier');
                             if (hasActiveBarrier && finalDmg > 0) {
                                 events.push({ type: 'sfx_shield_break', payload: null });
                                 finalDmg = 0; // 伤害被抵挡
@@ -299,7 +370,18 @@ export const processEffect = (
 
                             // [致命 Bug 修复] 绝不减 c.health，只累加 damageTaken
                             let newDamageTaken = (c.damageTaken || 0) + finalDmg;
-                            if (finalDmg > 0) events.push({ type: 'unit_damage', payload: { id: c.id, amount: finalDmg } });
+                            if (finalDmg > 0) {
+                                events.push({ type: 'unit_damage', payload: { id: c.id, amount: finalDmg } });
+
+                                // ==========================================
+                                // [新增] 埋点 B-2：猫汐尔经验收集 - 拦截法术单挑
+                                // ==========================================
+                                // 在单挑中，如果该法术的施法者(打出这张法术牌的人，通常是英雄本身或随从) 是召唤系，计入经验。
+                                // (注意：这里追踪的是法术的来源，而不是参与单挑的两个受害者的种族。这符合LOR等游戏的通用规则：谁打出的法术，谁就是伤害来源。)
+                                if (context.sourceCard && isSummonerOrSummon(context.sourceCard)) {
+                                    accumulateMauxirDamage(nextPlayerBench, nextCombatField || [], finalDmg, (newBench) => { nextPlayerBench = newBench; }, nextPlayerHand, (newHand) => { nextPlayerHand = newHand; }, nextPlayerDeck, (newDeck) => { if (newDeck) nextPlayerDeck = newDeck; });
+                                }
+                            }
 
                             // [新增核心] 法术附带碾压 (Overwhelm) 激光穿透判定
                             if (attacker.keywords.includes('Overwhelm')) {
@@ -322,10 +404,20 @@ export const processEffect = (
                                 newDamageTaken += 9999;
                             }
 
-                            return { ...c, keywords: nextKeywords, depletedKeywords: hasActiveBarrier ? [...(c.depletedKeywords || []), 'Barrier'] : c.depletedKeywords, damageTaken: newDamageTaken, animState: 'hit' as const };
+                            // [核心修复] 补回丢失的打击计数账本！
+                            // 只要该单位在法术中挥出了武器 (didStrike)，就必须记入总打击数 (strikeCount) 和 本回合打击数 (roundStrikes)！
+                            return {
+                                ...c,
+                                keywords: hasActiveBarrier ? c.keywords.filter((k: string) => k !== 'Barrier') : c.keywords,
+                                damageTaken: newDamageTaken,
+                                animState: 'hit' as const,
+                                strikeCount: didStrike ? (c.strikeCount || 0) + 1 : (c.strikeCount || 0),
+                                roundStrikes: didStrike ? (c.roundStrikes || 0) + 1 : (c.roundStrikes || 0)
+                            };
                         };
 
                         // [致命 Bug 修复] 梳理打击逻辑，彻底移除复制粘贴导致的重复扣血！
+
                         const mode = effect.params.strikeMode || 'MUTUAL';
                         // [新增] 判定防守方是否挥出了反击
                         const defenderDidStrike = mode === 'MUTUAL';
@@ -419,6 +511,13 @@ export const processEffect = (
             // [新增] 机器 A：专属“数值改造机”
             const applyStats = (c: CardData, p: number, h: number): CardData => {
                 let actualP = p;
+                // [2026-06-27 buffTag] 如果目标有 buffRules，过滤不匹配的攻 Buff
+                if (params.buffTag && (c as any).buffRules?.power?.allowedTags) {
+                    if (!(c as any).buffRules.power.allowedTags.includes(params.buffTag)) {
+                        actualP = 0;
+                    }
+                }
+
                 let nextProgress = c.customProgress || 0;
 
                 // [芬妮专属拦截] 利用 customProgress 位运算思想记录是否触发过 (1=1级触发过, 2=2级触发过, 3=都触发过)
@@ -437,13 +536,13 @@ export const processEffect = (
                 return {
                     ...c,
                     customProgress: nextProgress, // 记录触发状态
+                    // [核心重构] 彻底实现表里分离！永久归永久，临时归临时！
                     buffs: {
-                        power: (c.buffs?.power || 0) + actualP,
-                        health: (c.buffs?.health || 0) + h
+                        power: (c.buffs?.power || 0) + (duration === 'PERMANENT' ? actualP : 0),
+                        health: (c.buffs?.health || 0) + (duration === 'PERMANENT' ? h : 0)
                     },
-                    // [核心修复] 如果是单回合持续，把增益同步记录到“临时账本 (roundBuffs)”中
                     roundBuffs: {
-                        power: (c.roundBuffs?.power || 0) + (duration === 'ROUND' ? p : 0),
+                        power: (c.roundBuffs?.power || 0) + (duration === 'ROUND' ? actualP : 0),
                         health: (c.roundBuffs?.health || 0) + (duration === 'ROUND' ? h : 0)
                     }
                 };
@@ -468,11 +567,29 @@ export const processEffect = (
                 };
             };
 
+            let successfullyBuffedCount = 0; // [新增] 记账本：记录本次到底成功 BUFF 了多少个单位
+
             finalTargets.forEach(target => {
                 if (!target.id) return; // BUFF 只能给单位，不能给水晶
 
+                let wasBuffed = false; // [新增] 标记当前目标是否真的吃到了 BUFF
+
                 // [修改] 车间调度员：显式声明返回值，并将原料卡送进两条流水线
                 const applyBuff = (c: CardData): CardData => {
+                    // =====================================
+                    // [新增] 避嫌机制：如果法术要求排除施法者，直接跳过！
+                    // =====================================
+                    if (params.excludeSelf && context.sourceCard && c.id === context.sourceCard.id) {
+                        return c;
+                    }
+
+                    // =====================================
+                    // [新增] 黑名单机制：如果目标单位的 key 命中了排除列表，直接原样退回！
+                    // =====================================
+                    if (params.excludeKeys && params.excludeKeys.some(k => c.key.includes(k))) {
+                        return c;
+                    }
+
                     // =====================================
                     // [新增] 专属发牌过滤：如果设定了白名单，核对身份证！
                     // =====================================
@@ -481,10 +598,30 @@ export const processEffect = (
                         if (!isAuthorized) return c; // 身份不符，原样退回，不发 Buff 也不亮高光
                     }
 
+                    // =====================================
+                    // [新增] 种族过滤：只有目标种族匹配才发 Buff
+                    // =====================================
+                    if (params.raceFilter && params.raceFilter.length > 0) {
+                        const isAuthorized = c.race && c.race.some(r => params.raceFilter?.includes(r));
+                        if (!isAuthorized) return c; // 种族不符，不发 Buff
+                    }
+
+                    wasBuffed = true; // [新增] 走到这里说明安检全过，确实吃到了 BUFF
+
                     let processed = { ...c };
 
                     processed = applyStats(processed, power, health);
-                    processed = applyKeywords(processed, keywords);
+
+                    // [核心修复] 拦截冻结词条，将其移交给绝对零度引擎处理动态对冲逻辑！
+                    if (keywords.includes('Frostbite')) {
+                        // 先贴上可能存在的其他普通词条
+                        const otherKeywords = keywords.filter(k => k !== 'Frostbite');
+                        processed = applyKeywords(processed, otherKeywords);
+                        // 再执行攻击力清零对冲
+                        processed = applyFrostbite(processed);
+                    } else {
+                        processed = applyKeywords(processed, keywords);
+                    }
 
                     return {
                         ...processed,
@@ -510,7 +647,107 @@ export const processEffect = (
                         return newFight;
                     });
                 }
+
+                // [新增] 核实当前目标是否被 BUFF，计入总账
+                if (wasBuffed) {
+                    successfullyBuffedCount++;
+                }
             });
+
+            // =====================================
+            // [核心新增] 结算 BUFF 计数器与发奖机制 (如：清泉医疗鳄产出无人机)
+            // =====================================
+            if (successfullyBuffedCount > 0 && context.sourceCard) {
+                const counterKey = params.buffCounterKey;
+
+                // 1. 如果字典里配置了计数器，且施法者刚好是这把计数器的持有者
+                if (counterKey && context.sourceCard.key === counterKey) {
+                    const threshold = params.buffThreshold || 5;
+                    const rewardKey = params.buffRewardKey;
+                    const sourceId = context.sourceCard.id;
+
+                    const updateProgressAndReward = (c: CardData) => {
+                        const newProgress = (c.customProgress || 0) + successfullyBuffedCount;
+                        if (newProgress >= threshold) {
+                            // 发放奖励 (生成卡牌推入手牌)
+                            if (rewardKey) {
+                                const newRewardCard = {
+                                    ...createCard(rewardKey),
+                                    id: Math.random().toString(36).substr(2, 9),
+                                    animState: 'idle' as const,
+                                    damageTaken: 0,
+                                    buffs: { power: 0, health: 0 },
+                                    roundBuffs: { power: 0, health: 0 },
+                                    keywords: []
+                                } as CardData;
+                                setEliceInitialCharge(newRewardCard); // 沿用原本的充能器安检
+
+                                if (context.owner === 'player' && nextPlayerHand.length < 10) {
+                                    nextPlayerHand.push(newRewardCard);
+                                } else if (context.owner === 'enemy' && nextEnemyHand.length < 10) {
+                                    nextEnemyHand.push(newRewardCard);
+                                }
+                            }
+                            return { ...c, customProgress: newProgress % threshold }; // 溢出补偿机制
+                        }
+                        return { ...c, customProgress: newProgress };
+                    };
+
+                    // 回写进度到施法者身上
+                    if (context.owner === 'player') {
+                        nextPlayerBench = updateCardInList(nextPlayerBench, sourceId, updateProgressAndReward);
+                    } else {
+                        nextEnemyBench = updateCardInList(nextEnemyBench, sourceId, updateProgressAndReward);
+                    }
+                }
+
+                // 2. 猫汐尔的全域经验追踪：我方的召唤系卡牌进行了群体 BUFF，计入经验！
+                // 这完美衔接了我们刚刚给 accumulateMauxirDamage 设计的 Everywhere 全域广播入参！
+                if (context.owner === 'player' && isSummonerOrSummon(context.sourceCard)) {
+                    accumulateMauxirDamage(
+                        nextPlayerBench, nextCombatField || [], successfullyBuffedCount,
+                        (newBench) => { nextPlayerBench = newBench; },
+                        nextPlayerHand, (newHand) => { nextPlayerHand = newHand; },
+                        nextPlayerDeck, (newDeck) => { if (newDeck) nextPlayerDeck = newDeck; }
+                    );
+                }
+            }
+
+            // =====================================
+            // [新增] 血魔法反噬：效果执行完毕后，要求施法者支付设定的生命代价
+            // =====================================
+            if (params.selfDamage && context.sourceCard) {
+                const dmgAmount = params.selfDamage;
+                const sourceId = context.sourceCard.id;
+
+                const applySelfHarm = (c: CardData): CardData => {
+                    events.push({ type: 'unit_damage', payload: { id: c.id, amount: dmgAmount } });
+                    return {
+                        ...c,
+                        damageTaken: (c.damageTaken || 0) + dmgAmount,
+                        animState: 'hit' as const // 触发受击红闪动画
+                    };
+                };
+
+                if (context.owner === 'player') {
+                    nextPlayerBench = updateCardInList(nextPlayerBench, sourceId, applySelfHarm);
+                } else {
+                    nextEnemyBench = updateCardInList(nextEnemyBench, sourceId, applySelfHarm);
+                }
+
+                // 顺藤摸瓜：如果施法者（虽然极少见）当前处于交战区，同步更新！
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        let newFight = { ...fight };
+                        if (newFight.owner === context.owner) {
+                            if (newFight.attacker.id === sourceId) newFight.attacker = applySelfHarm(newFight.attacker);
+                        } else {
+                            if (newFight.blocker && newFight.blocker.id === sourceId) newFight.blocker = applySelfHarm(newFight.blocker);
+                        }
+                        return newFight;
+                    });
+                }
+            }
 
             events.push({ type: 'sfx_buff', payload: null }); // 触发音效
             break;
@@ -624,11 +861,66 @@ export const processEffect = (
         }
         // =====================================
         // [新增] 机制 5：牌库检索与置顶 (The Tutor Engine)
+        // [2026-06-27 能量补充] 支持动态检索：按选中的天启者搜重复英雄 → 支援法术
         // =====================================
         case 'TUTOR': {
             const params = effect.params as EffectParams;
-            const targetKey = params.summonKey; // 我们借用 summonKey 字段来传递检索目标
+            let targetKey = params.summonKey; // 优先使用预设的静态检索目标
 
+            // 动态检索：按优先级搜索重复天启者 → 支援法术 → 抉择法术
+            if (!targetKey && finalTargets.length > 0) {
+                const selectedId = finalTargets[0].id;
+                // 遍历己方备战席和交战区，找到选中的天启者
+                const allyBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                const selectedChampion = allyBench.find(c => c.id === selectedId)
+                    || (nextCombatField ? nextCombatField.reduce((found, fight) => {
+                        if (found) return found;
+                        if (fight.attacker && fight.attacker.id === selectedId) return fight.attacker;
+                        if (fight.blocker && fight.blocker.id === selectedId) return fight.blocker;
+                        return null;
+                    }, null) : null);
+
+                if (selectedChampion) {
+                    const championKey = selectedChampion.key;
+                    const targetDeck = context.owner === 'player' ? nextPlayerDeck : nextEnemyDeck;
+
+                    if (targetDeck) {
+                        // 🥇 搜牌库中同名的重复天启者
+                        const championIdx = targetDeck.findIndex(c => c.key === championKey && c.isChampion);
+                        if (championIdx !== -1) {
+                            targetKey = championKey;
+                            console.log(`[Tutor] 动态检索：找到重复天启者 ${championKey}`);
+                        }
+
+                        // 🥈 没找到重复天启者，改搜支援法术
+                        if (!targetKey) {
+                            const supportKey = championKey + '_support';
+                            const supportIdx = targetDeck.findIndex(c => c.key === supportKey);
+                            if (supportIdx !== -1) {
+                                targetKey = supportKey;
+                                console.log(`[Tutor] 动态检索：找到支援法术 ${supportKey}`);
+                            }
+                        }
+
+                        // 🥉 还没找到，改搜天启者抉择法术
+                        if (!targetKey && selectedChampion.associatedSpellKey) {
+                            const spellIdx = targetDeck.findIndex(c => c.key === selectedChampion.associatedSpellKey);
+                            if (spellIdx !== -1) {
+                                targetKey = selectedChampion.associatedSpellKey;
+                                console.log(`[Tutor] 动态检索：找到抉择法术 ${selectedChampion.associatedSpellKey}`);
+                            }
+                        }
+
+                        if (!targetKey) {
+                            console.warn(`[Tutor] 动态检索失败：牌库中没有${championKey}的重复天启者、支援法术或抉择法术`);
+                        }
+                    } else {
+                        console.warn("[Tutor] 动态检索失败：未能在上下文中获得牌库的读写权限。");
+                    }
+                } else {
+                    console.warn("[Tutor] 动态检索失败：未在场上找到选中的天启者");
+                }
+            }
             if (targetKey) {
                 const targetDeck = context.owner === 'player' ? nextPlayerDeck : nextEnemyDeck;
 
@@ -659,6 +951,67 @@ export const processEffect = (
             const params = effect.params as EffectParams;
 
             // =====================================
+            // [新增] 千莲叠绽——条件分支：格挡替换 vs 召唤
+            // =====================================
+            if (effect.id === 'effect_mauxir_lotus_rush') {
+                // 检测己方猫汐尔是否在格挡（交战区 blocker 位置）
+                const isBlocking = nextCombatField?.some(f =>
+                    f.blocker?.key === 'mauxir_lotus_drive' && f.owner !== context.owner
+                );
+
+                if (isBlocking && nextCombatField) {
+                    // --- 格挡模式：与目标基座调换位置 ---
+                    const target = finalTargets[0];
+                    if (!target || !target.id) break; // 没有选择目标，法术无法执行
+
+                    const bench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                    const pedIndex = bench.findIndex(c => c.id === target.id);
+                    if (pedIndex === -1) break; // 目标不在备战席，终止
+
+                    const pedestal = bench[pedIndex];
+                    if (pedestal.key !== 'mauxir_lotus_pedestal') break; // 目标不是基座，终止
+
+                    // 从备战席移除基座
+                    const newBench = [...bench];
+                    newBench.splice(pedIndex, 1);
+
+                    // 找到格挡中的猫汐尔
+                    const fightIndex = nextCombatField.findIndex(f =>
+                        f.blocker?.key === 'mauxir_lotus_drive' && f.owner !== context.owner
+                    );
+                    if (fightIndex === -1) break;
+
+                    const fight = nextCombatField[fightIndex];
+                    const cat = fight.blocker;
+
+                     const buffedPedestal = {
+                            ...pedestal,
+                            buffs: {
+                                        ...(pedestal.buffs || {}),
+                                        health: (pedestal.buffs?.health || 0) + 2
+                                    }
+                     };
+                    // 互换位置：猫汐尔回备战席，基座代替格挡
+                    newBench.push({ ...cat, animState: 'idle' as const });
+                    nextCombatField[fightIndex] = {
+                        ...fight,
+                        blocker: { ...buffedPedestal, animState: 'idle' as const }
+                    };
+
+                    // 写回备战席
+                    if (context.owner === 'player') {
+                        nextPlayerBench = newBench;
+                    } else {
+                        nextEnemyBench = newBench;
+                    }
+
+                    events.push({ type: 'sfx_recall_block', payload: null });
+                    break; // 跳出 SUMMON，不执行召唤
+                }
+                // 未格挡 → 穿透到下面的正常 SUMMON 逻辑
+            }
+
+            // =====================================
             // [新增] 伊莉斯充能校验 (Elice Charge Engine)
             // =====================================
             if (params.condition === 'elice_charge_check') {
@@ -676,46 +1029,358 @@ export const processEffect = (
 
             const cardKey = params.summonKey || params.relatedCardKey;
             const zone = params.summonZone || 'bench';
+            const count = params.summonCount || 1; // [新增] 提取召唤数量，默认为 1
 
             if (cardKey) {
-                const newCard = createCard(cardKey);
-                setEliceInitialCharge(newCard);
+                // [新增] 开启循环，支持生成多张卡牌
+                for (let i = 0; i < count; i++) {
+                    let newCard = createCard(cardKey);
+                    setEliceInitialCharge(newCard);
 
-                // 动态获取当前施法者对应的备战席
-                const targetBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                    // =====================================
+                    // [全域光环安检] 确保新召唤的单位不会错失之前贴过的 Everywhere Buff
+                    // [2026-06-27 巴德尔试剂] 增加 owner 匹配，只继承己方光环
+                    // =====================================
+                    const globalAuras = (nextGame as any).everywhereBuffs || [];
+                    globalAuras.forEach((aura: any) => {
+                        if (aura.owner && aura.owner !== context.owner) return; // 不是己方的光环跳过
+                        if (aura.targetKeyRequirement && aura.targetKeyRequirement.some((req: string) => newCard.key.includes(req))) {
+                            newCard.buffs = {
+                                power: (newCard.buffs?.power || 0) + (aura.power || 0),
+                                health: (newCard.buffs?.health || 0) + (aura.health || 0)
+                            };
+                            newCard.keywords = Array.from(new Set([...newCard.keywords, ...(aura.keywords || [])]));
+                        }
+                    });
 
-                if (zone === 'combat' && nextCombatField) {
-                    // =====================================
-                    // [新增] 空降交战区逻辑与“安全气囊”
-                    // =====================================
-                    // 优先级 1: 降落交战区 (上限 6 人)
-                    if (nextCombatField.length < 6) {
-                        // [核心包装] 将新卡牌包装成具有攻击意图的战术实体！
-                        nextCombatField.push({
-                            attacker: { ...newCard, animState: 'idle' }, // 给予攻击状态动画
-                            blocker: null,
-                            owner: context.owner
-                        });
-                        events.push({ type: 'summon_combat', payload: newCard });
-                    }
-                    // 优先级 2 (安全气囊): 交战区已满，退格空降到备战席
-                    else if (targetBench.length < 6) {
-                        console.log(`[Summon] 交战区已满，${newCard.name} 退格召唤至备战席。`);
-                        targetBench.push(newCard);
-                        events.push({ type: 'summon', payload: newCard });
-                    }
-                    // 优先级 3: 全场爆满，召唤失败（灰飞烟灭），什么都不做
-                } else {
-                    // =====================================
-                    // [常规] 传统备战席召唤逻辑
-                    // =====================================
-                    if (targetBench.length < 6) {
-                        targetBench.push(newCard);
-                        events.push({ type: 'summon', payload: newCard });
+                    // 动态获取当前施法者对应的备战席和手牌
+                    const targetBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                    const targetHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+
+                    if (zone === 'hand') {
+                        // =====================================
+                        // [新增] 生成入手牌逻辑
+                        // =====================================
+                        if (targetHand.length < 10) {
+                            targetHand.push(newCard);
+                            events.push({ type: 'summon', payload: newCard }); // 复用召唤音效作为入牌音效
+                        } else {
+                            console.log(`[Summon] 手牌已满，无法将 ${newCard.name} 加入手牌。`);
+                        }
+                    } else if (zone === 'combat' && nextCombatField) {
+                        // =====================================
+                        // [新增] 空降交战区逻辑与“安全气囊”
+                        // =====================================
+                        // 优先级 1: 降落交战区 (上限 6 人)
+                        if (nextCombatField.length < 6) {
+                            // [核心包装] 将新卡牌包装成具有攻击意图的战术实体！
+                            nextCombatField.push({
+                                attacker: { ...newCard, animState: 'idle' }, // 给予攻击状态动画
+                                blocker: null,
+                                owner: context.owner
+                            });
+                            events.push({ type: 'summon_combat', payload: newCard });
+                        }
+                        // 优先级 2 (安全气囊): 交战区已满，退格空降到备战席
+                        else if (targetBench.length < 6) {
+                            console.log(`[Summon] 交战区已满，${newCard.name} 退格召唤至备战席。`);
+                            targetBench.push(newCard);
+                            events.push({ type: 'summon', payload: newCard });
+                        }
+                        // 优先级 3: 全场爆满，召唤失败（灰飞烟灭），什么都不做
+                    } else {
+                        // =====================================
+                        // [常规] 传统备战席召唤逻辑
+                        // =====================================
+                        if (targetBench.length < 6) {
+                            targetBench.push(newCard);
+                            events.push({ type: 'summon', payload: newCard });
+                        }
                     }
                 }
             }
 
+            break;
+        }
+
+        // =====================================
+        // [新增] 机制 6：治疗 (HEAL)
+        // =====================================
+        case 'HEAL': {
+            const amount = effect.params.value || 0;
+            if (amount <= 0) break;
+
+            const NEXUS_MAX_HP = 20;
+
+            finalTargets.forEach(target => {
+                // [2026-06-27 生机补充] 支持治疗水晶
+                if (target.type === 'player_nexus' || target.type === 'enemy_nexus') {
+                    const isPlayer = target.type === 'player_nexus';
+                    const currentHP = isPlayer ? nextGame.playerNexus : nextGame.enemyNexus;
+                    const actualHeal = Math.min(NEXUS_MAX_HP - currentHP, amount);
+
+                    if (actualHeal > 0) {
+                        if (isPlayer) {
+                            nextGame.playerNexus += actualHeal;
+                        } else {
+                            nextGame.enemyNexus += actualHeal;
+                        }
+                        events.push({ type: 'nexus_heal', payload: { target: isPlayer ? 'player' : 'enemy', amount: actualHeal } });
+                        console.log(`[HEAL] 治疗水晶 ${isPlayer ? 'player' : 'enemy'} +${actualHeal} (${currentHP} → ${isPlayer ? nextGame.playerNexus : nextGame.enemyNexus})`);
+                    }
+                    return;
+                }
+
+                if (!target.id) return; // 只能治疗单位
+
+                const applyHeal = (c: CardData): CardData => {
+                    const currentDamage = c.damageTaken || 0;
+                    const actualHeal = Math.min(currentDamage, amount);
+
+                    if (actualHeal > 0) {
+                        // 发送独立的治疗飘字事件 (UI 层可监听渲染绿字)
+                        events.push({ type: 'unit_heal', payload: { id: c.id, amount: actualHeal } });
+                    }
+
+                    return {
+                        ...c,
+                        // 精准扣减，下限为 0，绝对不会出现负数受伤
+                        damageTaken: Math.max(0, currentDamage - amount),
+                        animState: 'buff' as const // 借用 buff 的绿色光晕动画
+                    };
+                };
+
+                nextPlayerBench = updateCardInList(nextPlayerBench, target.id, applyHeal);
+                nextEnemyBench = updateCardInList(nextEnemyBench, target.id, applyHeal);
+
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        let newFight = { ...fight };
+                        if (newFight.attacker && newFight.attacker.id === target.id) {
+                            newFight.attacker = applyHeal(newFight.attacker);
+                        }
+                        if (newFight.blocker && newFight.blocker.id === target.id) {
+                            newFight.blocker = applyHeal(newFight.blocker);
+                        }
+                        return newFight;
+                    });
+                }
+            });
+
+            // 播放治疗音效
+            events.push({ type: 'sfx_heal', payload: null });
+            break;
+        }
+
+        // =====================================
+        // [新增] 机制 7：全域光环 (BUFF_EVERYWHERE)
+        // =====================================
+        case 'BUFF_EVERYWHERE': {
+            const params = effect.params as EffectParams;
+            const power = params.power || 0;
+            const health = params.health || 0;
+            const keywords = params.keywords || [];
+            const reqKeys = params.targetKeyRequirement || [];
+            const isOwnerBuff = params.ownerSide ?? true; // [2026-06-27] 默认只 Buff 己方
+
+            const applyEverywhereBuff = (c: CardData): CardData => {
+                // 核对身份，只有符合白名单的单位才能吃到光环
+                // [2026-06-27 buffTag] 如果目标有 buffRules，过滤不匹配的攻 Buff
+                let ewPower = power;
+                if (params.buffTag && (c as any).buffRules?.power?.allowedTags) {
+                    if (!(c as any).buffRules.power.allowedTags.includes(params.buffTag)) {
+                        ewPower = 0;
+                    }
+                }
+                if (reqKeys.length > 0 && !reqKeys.some(req => c.key.includes(req))) return c;
+                return {
+                    ...c,
+                    buffs: {
+                        power: (c.buffs?.power || 0) + ewPower,
+                        health: (c.buffs?.health || 0) + health
+                    },
+                    keywords: Array.from(new Set([...c.keywords, ...keywords])),
+                    animState: 'buff' as const // 触发一次发光动画
+                };
+            };
+
+            // [2026-06-27 巴德尔试剂] 按 owner 过滤，只 Buff 己方单位
+            // 1. 扫荡场上 (备战席 + 交战区)——只 Buff 己方
+            if (isOwnerBuff) {
+                const myBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                myBench.forEach((c, i) => {
+                    const buffed = applyEverywhereBuff(c);
+                    if (context.owner === 'player') nextPlayerBench[i] = buffed;
+                    else nextEnemyBench[i] = buffed;
+                });
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        let newFight = { ...fight };
+                        if (fight.owner === context.owner) {
+                            newFight.attacker = applyEverywhereBuff(fight.attacker);
+                        }
+                        if (fight.owner !== context.owner && fight.blocker) {
+                            newFight.blocker = applyEverywhereBuff(fight.blocker);
+                        }
+                        return newFight;
+                    });
+                }
+            } else {
+                // 旧行为：双方都 Buff（保留给需要全局光环的场景）
+                nextPlayerBench = nextPlayerBench.map(applyEverywhereBuff);
+                nextEnemyBench = nextEnemyBench.map(applyEverywhereBuff);
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => ({
+                        ...fight,
+                        attacker: applyEverywhereBuff(fight.attacker),
+                        blocker: fight.blocker ? applyEverywhereBuff(fight.blocker) : null
+                    }));
+                }
+            }
+
+            // 2. 扫荡手牌——只有 everywhere 标记才影响手牌/牌库
+            if (params.everywhere) {
+                if (context.owner === 'player') {
+                    nextPlayerHand = nextPlayerHand.map(applyEverywhereBuff);
+                } else {
+                    nextEnemyHand = nextEnemyHand.map(applyEverywhereBuff);
+                }
+            }
+
+            // 3. 扫荡牌库——只有 everywhere 标记才影响牌库
+            if (params.everywhere) {
+                if (context.owner === 'player') {
+                    if (nextPlayerDeck) nextPlayerDeck = nextPlayerDeck.map(applyEverywhereBuff);
+                } else {
+                    if (nextEnemyDeck) nextEnemyDeck = nextEnemyDeck.map(applyEverywhereBuff);
+                }
+            }
+
+            // 4. [核心] 记入全局光环账本，只记录真正"各处"生效的 Buff
+            if (params.everywhere) {
+                nextGame = {
+                    ...nextGame,
+                    everywhereBuffs: [
+                        ...((nextGame as any).everywhereBuffs || []),
+                        { power, health, keywords, targetKeyRequirement: reqKeys, owner: context.owner }
+                    ]
+                } as GameState;
+            }
+
+            events.push({ type: 'sfx_buff', payload: null });
+            break;
+        }
+
+        // =====================================
+        // [新增] 机制 8：撤回并替身替换 (RECALL_AND_REPLACE)
+        // =====================================
+        case 'RECALL_AND_REPLACE': {
+            const target = finalTargets[0];
+            if (!target || !target.id) break;
+
+            const params = effect.params as EffectParams;
+            const summonKey = params.summonKey;
+
+            if (!summonKey) {
+                console.warn("[EffectProcessor] RECALL_AND_REPLACE 缺少 summonKey");
+                break;
+            }
+
+            if (nextCombatField) {
+                const combatIdx = nextCombatField.findIndex(f => f.attacker?.id === target.id || f.blocker?.id === target.id);
+                if (combatIdx !== -1) {
+                    const fight = nextCombatField[combatIdx];
+                    const isAttacker = fight.attacker?.id === target.id;
+                    const recalledUnit = isAttacker ? fight.attacker! : fight.blocker!;
+
+                    // 1. 生成替身 (如: 镜爻)
+                    let mirrorCard = createCard(summonKey);
+                    mirrorCard.animState = 'idle';
+
+                    // [全域光环安检] 替身落地，检查是否有它的光环
+                    // [2026-06-27 巴德尔试剂] 增加 owner 匹配，只继承己方光环
+                    const globalAuras = (nextGame as any).everywhereBuffs || [];
+                    globalAuras.forEach((aura: any) => {
+                        if (aura.owner && aura.owner !== context.owner) return; // 不是己方的光环跳过
+                        if (aura.targetKeyRequirement && aura.targetKeyRequirement.some((req: string) => mirrorCard.key.includes(req))) {
+                            mirrorCard.buffs = {
+                                power: (mirrorCard.buffs?.power || 0) + (aura.power || 0),
+                                health: (mirrorCard.buffs?.health || 0) + (aura.health || 0)
+                            };
+                            mirrorCard.keywords = Array.from(new Set([...mirrorCard.keywords, ...(aura.keywords || [])]));
+                        }
+                    });
+
+                    // 2. 剥离旧单位，并原地塞入替身 (完全继承原本的攻防位置)
+                    if (isAttacker) {
+                        nextCombatField[combatIdx] = { ...fight, attacker: mirrorCard };
+                    } else {
+                        nextCombatField[combatIdx] = { ...fight, blocker: mirrorCard };
+                    }
+
+                    // 3. 将被撤回的旧单位洗除战斗状态，安全放回备战席
+                    const safeRecalledUnit = { ...recalledUnit, animState: 'idle' as const };
+                    const bench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                    bench.push(safeRecalledUnit);
+
+                    events.push({ type: 'sfx_recall_block', payload: null });
+                    events.push({ type: 'summon_combat', payload: mirrorCard });
+                    break;
+                }
+            }
+            break;
+        }
+
+        // =====================================
+        // [新增] 机制 9：弃牌 (DISCARD)
+        // [2026-06-27 暗箱操作] 从手牌移除选中卡牌
+        // =====================================
+        case 'DISCARD': {
+            if (finalTargets.length > 0) {
+                const discardId = finalTargets[0].id;
+                if (context.owner === 'player') {
+                    nextPlayerHand = nextPlayerHand.filter(c => c.id !== discardId);
+                } else {
+                    nextEnemyHand = nextEnemyHand.filter(c => c.id !== discardId);
+                }
+                events.push({ type: 'sfx_discard', payload: { id: discardId } });
+                console.log(`[Discard] 已丢弃手牌 ${discardId}`);
+            } else {
+                console.warn("[Discard] 没有指定要丢弃的手牌目标");
+            }
+            break;
+        }
+
+        // =====================================
+        // [新增] 机制 10：抽牌 (DRAW)
+        // [2026-06-27 暗箱操作] 从牌库抽 N 张到手上
+        // =====================================
+        case 'DRAW': {
+            const drawCount = effect.params.value || 1;
+            const deck = context.owner === 'player' ? nextPlayerDeck : nextEnemyDeck;
+            const HAND_MAX = 10;
+
+            if (!deck) { console.warn("[Draw] 无牌库引用，无法抽牌"); break; }
+
+            const ownerHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+
+            for (let i = 0; i < drawCount; i++) {
+                if (deck.length === 0) {
+                    console.log(`[Draw] 牌库已空，无法继续抽牌`);
+                    events.push({ type: 'sfx_draw_fatigue', payload: null });
+                    break;
+                }
+                if (ownerHand.length >= HAND_MAX) {
+                    const burnedCard = deck.shift()!;
+                    console.log(`[Draw] 手牌已满 ${HAND_MAX} 张，${burnedCard.name} 被爆牌销毁`);
+                    events.push({ type: 'sfx_draw_burn', payload: burnedCard });
+                    continue;
+                }
+                const drawnCard = deck.shift()!;
+                ownerHand.push(drawnCard);
+                events.push({ type: 'sfx_draw', payload: drawnCard });
+                console.log(`[Draw] 抽到 ${drawnCard.name}`);
+            }
             break;
         }
 
@@ -728,9 +1393,33 @@ export const processEffect = (
     // 只要本次结算往队列里塞入了 'summon' 或 'summon_combat' 事件，立刻播放召唤音效！
     // 完美覆盖法术、战吼、回合开始、攻击宣告等所有场景！
     // =====================================
-    if (events.some(e => e.type.includes('summon'))) {
-        eventBus.emit(GameEvents.SFX_SUMMON);
+    const summonEvent = events.find(e => e.type.includes('summon'));
+     if (summonEvent) {
+          const summonedKey = (summonEvent.payload as any)?.key;
+          if (summonedKey === 'mauxir_lotus_pedestal') {
+              eventBus.emit(GameEvents.SFX_MAUXIR_SUMMON);
+          } else {
+              eventBus.emit(GameEvents.SFX_SUMMON);
+          }
     }
+
+    // [2026-06-27 maxPerSide] 收束：检查双方备战席，超出上限的卡牌被拦截
+    const enforceMaxPerSide = (bench: CardData[]): CardData[] => {
+        const counts = new Map<string, number>();
+        return bench.filter(c => {
+            const max = c.maxPerSide;
+            if (!max) return true;
+            const current = counts.get(c.key) || 0;
+            if (current >= max) {
+                console.log(`[maxPerSide] ${c.name} 已达场上限 ${max}，已拦截`);
+                return false;
+            }
+            counts.set(c.key, current + 1);
+            return true;
+        });
+    };
+    nextPlayerBench = enforceMaxPerSide(nextPlayerBench);
+    nextEnemyBench = enforceMaxPerSide(nextEnemyBench);
 
     return {
         game: nextGame,

@@ -24,11 +24,14 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     // [能力] 手牌中不显示能力图标
     if (keyword === 'Ability' && !isOnBoard) return null;
 
+    // [光环] 手牌中不显示光环图标
+    if (keyword === 'Aura' && !isOnBoard) return null;
+
     // 1. 状态计算大脑：判断当前词条是否被”激活”
     let isActive = false;
     let glowColor = '';
     // [新增] 加入 shield (护盾) 类型
-    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'none' = 'none';
+    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'none' = 'none';
 
     // [新增] 最高优先级：瞬息阵亡谢幕拦截！
     if (animState === 'ephemeral_dying' && keyword === 'Ephemeral') {
@@ -41,7 +44,7 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
         isActive = true;
         glowColor = 'rgba(249, 115, 22, 0.8)'; // 保持橙色危险警告
         animType = 'stealth';
-    } else if (keyword === 'Barrier') {
+    } else if (keyword === 'Barrier' && !isDepleted) {
         isActive = true;
         glowColor = 'rgba(253, 224, 71, 0.9)'; // 金黄色高亮护盾
         animType = 'shield';
@@ -57,6 +60,12 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
         isActive = true;
         glowColor = 'rgba(59, 130, 246, 0.8)'; // 金色统一光效
         animType = 'ability_breath';
+    }
+    // [光环] 常亮灯：在场上时始终保持柔和光效，永不暗淡
+    else if (keyword === 'Aura' && isOnBoard) {
+        isActive = true;
+        glowColor = 'rgba(168, 85, 247, 0.7)'; // 紫色光环
+        animType = 'aura_constant';
     }
 
     // 进攻类词条激活判断
@@ -200,6 +209,14 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
                 `brightness(0.6) drop-shadow(0px 0px 3px ${glowColor})`,
             ],
             transition: { duration: 2.5, repeat: Infinity, ease: "easeInOut" }
+        },
+        // [光环] 紫色常亮灯：稳定柔和光晕，不做缩放
+        active_aura_constant: {
+            scale: 1,
+            filter: [
+                `brightness(1) drop-shadow(0px 0px 6px ${glowColor})`,
+            ],
+            transition: { duration: 0.5 }
         }
     };
 

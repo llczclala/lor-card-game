@@ -212,7 +212,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                         <div className="absolute top-[90px] bottom-6 left-4 right-1 block overflow-y-auto space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pb-12 pr-2 z-20">
 
                             {/* ================= 选项卡一：基础教程与档案 ================= */}
-                            <TabButton id="tutorial" active={activeTab} icon={<BookOpen size={18} />} label="TUTORIAL" labelCn="基础教程" onClick={() => setActiveTab('tutorial')} />
+                            <TabButton id="tutorial" active={activeTab} icon={<BookOpen size={18} />} label="基础教程" labelCn="基础教程" onClick={() => setActiveTab('tutorial')} />
                             <AnimatePresence>
                                 {activeTab === 'tutorial' && (
                                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 100, damping: 16 }} className="flex flex-col gap-1 overflow-hidden">
@@ -267,7 +267,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                             </AnimatePresence>
 
                             {/* ================= 选项卡二：机制档案 ================= */}
-                            <TabButton id="keywords" active={activeTab} icon={<Key size={18} />} label="KEYWORDS" labelCn="机制档案" onClick={() => setActiveTab('keywords')} />
+                            <TabButton id="keywords" active={activeTab} icon={<Key size={18} />} label="机制档案" labelCn="机制档案" onClick={() => setActiveTab('keywords')} />
                             <AnimatePresence>
                                 {activeTab === 'keywords' && (
                                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 100, damping: 16 }} className="flex flex-col gap-1 overflow-hidden pr-2 z-10 pt-2 border-l-2 border-cyan-500/30 ml-4 pl-3 mb-2">
@@ -306,7 +306,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                             </AnimatePresence>
 
                             {/* ================= 选项卡三：全图鉴 ================= */}
-                            <TabButton id="cards" active={activeTab} icon={<Layers size={18} />} label="DATABASE" labelCn="全图鉴" onClick={() => setActiveTab('cards')} />
+                            <TabButton id="cards" active={activeTab} icon={<Layers size={18} />} label="全图鉴" labelCn="全图鉴" onClick={() => setActiveTab('cards')} />
                             <AnimatePresence>
                                 {activeTab === 'cards' && (
                                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 100, damping: 16 }} className="flex flex-col gap-6 overflow-hidden pr-2 z-10 pt-4 border-l-2 border-cyan-500/30 ml-4 pl-4 mb-4">

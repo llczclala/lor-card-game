@@ -213,7 +213,7 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
 
                 {/* [修复] 还原清透的真实背景亮度 */}
                 <div className="absolute inset-0 pointer-events-none z-0">
-                    <img src={PERSONALIZATION_ASSETS.desks[0]} className="w-full h-full object-cover" alt="Game Board" />
+                    <img src={PERSONALIZATION_ASSETS.desks[0]} className="w-full h-full object-cover" alt="棋盘" />
                     <div className="absolute inset-0 bg-black/20"></div>
                 </div>
 
@@ -317,7 +317,7 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
                     {/* 2. 水晶盘底座 */}
                     <div className="absolute top-[48%] right-[5%] -translate-y-1/2 z-20 flex items-center justify-center">
                         <div className="relative">
-                            <img src={UI_IMAGES.buttonContainer} className="w-[275px] max-w-none h-auto object-contain opacity-100 drop-shadow-2xl" alt="Control Panel" style={{ transform: 'translateX(30px) translateY(0px)' }} />
+                            <img src={UI_IMAGES.buttonContainer} className="w-[275px] max-w-none h-auto object-contain opacity-100 drop-shadow-2xl" alt="控制面板" style={{ transform: 'translateX(30px) translateY(0px)' }} />
                             <div className="absolute inset-0 z-30" style={{ transform: 'translateX(30px) translateY(0px)' }}>
                                 <ManaGemSystem currentMana={game.playerMana} maxMana={game.playerMaxMana} spellMana={game.playerSpellMana} previewManaCost={0} previewSpellManaCost={0} isPlayer={true} round={game.round} />
                                 <ManaGemSystem currentMana={game.enemyMana} maxMana={game.enemyMaxMana} spellMana={game.enemySpellMana} previewManaCost={0} previewSpellManaCost={0} isPlayer={false} round={game.round} />
@@ -328,12 +328,12 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
                     {/* 3. [修复] 补回丢失的进攻令牌 (Attack Token) 图层！ */}
                     {game.attackToken.enemy && (
                         <div className="absolute z-40 animate-pulse drop-shadow-[0_0_15px_rgba(249,115,22,0.8)] top-[22.5%] right-[13%]">
-                            <img src={game.attackToken.enemy === 'rally' ? UI_IMAGES.swordGain : UI_IMAGES.sword} alt="Enemy Attack Token" className="w-[80px] h-auto object-contain transform rotate-180" />
+                            <img src={game.attackToken.enemy === 'rally' ? UI_IMAGES.swordGain : UI_IMAGES.sword} alt="敌方攻击指示物" className="w-[80px] h-auto object-contain transform rotate-180" />
                         </div>
                     )}
                     {game.attackToken.player && (
                         <div className="absolute z-40 animate-pulse drop-shadow-[0_0_15px_rgba(249,115,22,0.8)] bottom-[27.5%] right-[13%]">
-                            <img src={game.attackToken.player === 'rally' ? UI_IMAGES.swordGain : UI_IMAGES.sword} alt="Player Attack Token" className="w-[80px] h-auto object-contain" />
+                            <img src={game.attackToken.player === 'rally' ? UI_IMAGES.swordGain : UI_IMAGES.sword} alt="玩家攻击指示物" className="w-[80px] h-auto object-contain" />
                         </div>
                     )}
 

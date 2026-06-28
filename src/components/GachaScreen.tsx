@@ -140,7 +140,7 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                     <img
                         src={gacha_icon.PGgachaBtnImg}
                         className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                        alt="Standard Pool"
+                        alt="标准卡池"
                     />
                     {/* 文字叠加层 */}
                     <div className="absolute inset-0 flex flex-col justify-end p-3 bg-gradient-to-t from-black/80 to-transparent">
@@ -179,7 +179,7 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                     <img
                         src={gacha_icon.PGgachaDeskImg}
                         className="w-full h-full object-contain object-right-center p-12 translate-y-[-2.5%]"
-                        alt="Gacha Cover"
+                        alt="抽卡封面"
                     />
                 </motion.div>
             </div>
@@ -189,15 +189,15 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                 {/* 资源显示 */}
                 <div className="flex gap-6 bg-black/60 backdrop-blur-md px-6 py-3 rounded-full border border-white/10">
                     <div className="flex items-center gap-2">
-                        <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5" alt="Silver" />
+                        <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5" alt="银币" />
                         <span className="font-mono font-bold">{resources.silverCoin.toLocaleString()}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5" alt="Gold" />
+                        <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5" alt="数据金" />
                         <span className="font-mono font-bold text-purple-300">{resources.dataGold.toLocaleString()}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <img src={CURRENCY_ICONS.bitGold} className="w-5 h-5" alt="Bit" />
+                        <img src={CURRENCY_ICONS.bitGold} className="w-5 h-5" alt="比特金" />
                         <span className="font-mono font-bold text-yellow-300">{resources.bitGold.toLocaleString()}</span>
                     </div>
                 </div>

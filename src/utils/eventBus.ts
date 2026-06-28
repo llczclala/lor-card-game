@@ -39,6 +39,8 @@ export const GameEvents = {
     // [修改] 丰富水晶受击广播，明确要求携带伤害来源等详细 payload
     // Payload: { target: 'player' | 'enemy', amount: number, source?: CardData }
     NEXUS_STRIKED: 'nexus_striked',
+    // [2026-06-27 巴德尔试剂] 水晶回血飘字广播
+    NEXUS_HEALED: 'nexus_healed',
 
     // [新增] 法术打出广播，用于未来支持“打出X张法术后升级”等全局被动
     // Payload: { card: CardData, owner: 'player' | 'enemy' }
@@ -69,10 +71,22 @@ export const GameEvents = {
 
     // [新增] 回合结束特效完成信号 — 用于协调回合跳转等待动画播完
     ROUND_END_EFFECT_COMPLETE: 'round_end_effect_complete',
+    SFX_MAUXIR_SUMMON: 'sfx_mauxir_summon',
+    SFX_MAUXIR_RUSH_ATTACK: 'sfx_mauxir_rush_attack',
+    SFX_MAUXIR_RUSH_HIT: 'sfx_mauxir_rush_hit',
 } as const;
 
+// ================= [新增] 弹道编排器专属事件 =================
+export const StrikeEvents = {
+    COMMAND: 'STRIKE_COMMAND',   // 下达打击命令 (携带所有弹丸信息)
+    HIT: 'STRIKE_HIT',           // 单发命中 (向主逻辑索要扣血和派发无人机)
+    COMPLETE: 'STRIKE_COMPLETE', // 队列清空且特效播完 (解除战管锁定)
+} as const;
+// ==========================================================
+
 // 导出类型，方便 TypeScript 提示
-export type GameEventType = typeof GameEvents[keyof typeof GameEvents];
+// [修正] 合并 StrikeEvents 类型，并补充 string 兜底，防止直接使用字面量(如 'unit_damage')时 TS 报错
+export type GameEventType = typeof GameEvents[keyof typeof GameEvents] | typeof StrikeEvents[keyof typeof StrikeEvents] | string;
 
 // 定义事件回调函数类型
 type EventCallback = (payload?: any) => void;

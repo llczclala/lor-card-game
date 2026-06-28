@@ -81,7 +81,7 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                             >
                                 {/* 头像 */}
                                 <div className="w-12 h-12 rounded-full overflow-hidden border border-white/20 bg-black">
-                                    <img src={avatar} className="w-full h-full object-cover" alt="Avatar" />
+                                    <img src={avatar} className="w-full h-full object-cover" alt="头像" />
                                 </div>
 
                                 {/* 信息 */}
