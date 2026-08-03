@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import type { Keyword } from '../types';
 import { KEYWORD_DB } from '../data/keywords';
@@ -21,6 +21,9 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     const config = KEYWORD_DB[keyword];
     if (!config) return null;
 
+    // [冻结] 入场动画状态机：首次激活时播放旋转入场，完成后切换至呼吸
+    const [frostEntryDone, setFrostEntryDone] = useState(false);
+
     // [能力] 手牌中不显示能力图标
     if (keyword === 'Ability' && !isOnBoard) return null;
 
@@ -31,7 +34,7 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     let isActive = false;
     let glowColor = '';
     // [新增] 加入 shield (护盾) 类型
-    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'none' = 'none';
+    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'tough_breath' | 'frost_thaw' | 'none' = 'none';
 
     // [新增] 最高优先级：瞬息阵亡谢幕拦截！
     if (animState === 'ephemeral_dying' && keyword === 'Ephemeral') {
@@ -67,6 +70,48 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
         glowColor = 'rgba(168, 85, 247, 0.7)'; // 紫色光环
         animType = 'aura_constant';
     }
+    // [充能] 场上淡蓝呼吸：未黯淡时保持蓄能感
+    else if (keyword === 'Channel' && isOnBoard && !isDepleted) {
+        isActive = true;
+        glowColor = 'rgba(125, 211, 252, 0.7)'; // 淡蓝
+        animType = 'channel_breath';
+    }
+    // [再生] 激活时绿色呼吸
+    else if (animState === 'regenerating' && keyword === 'Regeneration') {
+        isActive = true;
+        glowColor = 'rgba(34, 197, 94, 1)'; // 翠绿
+        animType = 'pulse';
+    }
+    // [无法格挡] 场上常驻灰色脉冲
+    else if (keyword === 'CantBlock' && isOnBoard) {
+        isActive = true;
+        glowColor = 'rgba(156, 163, 175, 0.9)'; // 灰色
+        animType = 'pulse';
+    }
+    // [无法攻击] 场上常驻深灰脉冲
+    else if (keyword === 'CantAttack' && isOnBoard) {
+        isActive = true;
+        glowColor = 'rgba(107, 114, 128, 1)'; // 深灰
+        animType = 'pulse';
+    }
+    // [冻结 解冻] 检测到解冻状态时播放颤抖缩小消失动画
+    else if (keyword === 'Frostbite' && animState === 'thawing') {
+        isActive = true;
+        glowColor = 'rgba(125, 211, 252, 1)'; // 冰蓝
+        animType = 'frost_thaw';
+    }
+    // [冻结] 场上冰蓝特效 — 两阶段：入场旋转爆发 → 常驻呼吸（仅亮度变化）
+    else if (keyword === 'Frostbite' && isOnBoard) {
+        isActive = true;
+        glowColor = 'rgba(125, 211, 252, 1)'; // 冰蓝
+        animType = frostEntryDone ? 'frost_breath' : 'frost_entry';
+    }
+    // [坚韧] 场上常驻黄绿沉稳呼吸（战场/备战席都常亮）
+    else if (keyword === 'Tough' && isOnBoard) {
+        isActive = true;
+        glowColor = 'rgba(190, 143, 17, 0.85)'; // 金琥珀色
+        animType = 'tough_breath';
+    }
 
     // 进攻类词条激活判断
     if (isAttacking) {
@@ -83,14 +128,14 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
                 isActive = true; glowColor = 'rgba(6, 182, 212, 0.8)'; animType = 'flash'; break;
             case 'Impact': // 冲击：深红爆破
                 isActive = true; glowColor = 'rgba(225, 29, 72, 0.8)'; animType = 'pulse'; break;
+            case 'Fearsome': // 凶恶：紫色威吓双段爆闪
+                isActive = true; glowColor = 'rgba(147, 51, 234, 0.85)'; animType = 'fearsome'; break;
         }
     }
 
     // 防御/常驻类词条激活判断 (后续可扩展)
     if (isDefending) {
         switch (keyword) {
-            case 'Tough': // 坚韧：岩石色护甲
-                isActive = true; glowColor = 'rgba(100, 116, 139, 0.8)'; animType = 'pulse'; break;
             case 'Thorns': // 反伤：毒绿色
                 isActive = true; glowColor = 'rgba(132, 204, 22, 0.8)'; animType = 'flash'; break;
         }
@@ -200,6 +245,16 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
                 ease: "easeInOut"
             }
         },
+        // [坚韧] 黄绿沉稳呼吸：小幅度缩放 + 亮度变化，不改变透明度
+        active_tough_breath: {
+            scale: [0.75, 0.92, 0.75],
+            filter: [
+                `brightness(0.7) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(1.15) drop-shadow(0px 0px 10px ${glowColor})`,
+                `brightness(0.7) drop-shadow(0px 0px 3px ${glowColor})`,
+            ],
+            transition: { duration: 2.5, repeat: Infinity, ease: "easeInOut" }
+        },
         // [能力] 金色呼吸灯：沉稳的明暗+缩放循环
         active_ability_breath: {
             scale: [0.75, 0.95, 0.75],
@@ -217,6 +272,71 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
                 `brightness(1) drop-shadow(0px 0px 6px ${glowColor})`,
             ],
             transition: { duration: 0.5 }
+        },
+        // [充能] 淡蓝蓄能呼吸：小幅缩放 + 亮度脉动，表现蓄势待发
+        active_channel_breath: {
+            scale: [0.85, 1.05, 0.85],
+            filter: [
+                `brightness(0.7) drop-shadow(0px 0px 4px ${glowColor})`,
+                `brightness(1.2) drop-shadow(0px 0px 14px ${glowColor})`,
+                `brightness(0.7) drop-shadow(0px 0px 4px ${glowColor})`,
+            ],
+            transition: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+        },
+        // [冻结] 入场动画：从高透明度/大尺寸/高亮度 旋转缩小至正常（一次性）
+        active_frost_entry: {
+            scale: [2.5, 1],
+            opacity: [0, 1],
+            rotate: [0, 360],
+            filter: [
+                `brightness(2.5) drop-shadow(0px 0px 20px ${glowColor})`,
+                `brightness(1) drop-shadow(0px 0px 6px ${glowColor})`,
+            ],
+            transition: { duration: 0.8, ease: "easeOut" }
+        },
+        // [冻结] 常驻呼吸：仅亮度变化（不改变透明度和缩放大小）
+        active_frost_breath: {
+            scale: 1,
+            opacity: 1,
+            filter: [
+                `brightness(0.7) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(1.15) drop-shadow(0px 0px 10px ${glowColor})`,
+                `brightness(0.7) drop-shadow(0px 0px 3px ${glowColor})`,
+            ],
+            transition: { duration: 2.5, repeat: Infinity, ease: "easeInOut" }
+        },
+        // [冻结 解冻] 图标颤抖 → 缩小淡出（一次性，与卡面解冻动画同步）
+        active_frost_thaw: {
+            scale: [1, 1.15, 0.9, 1.1, 0],
+            opacity: [1, 1, 1, 0.8, 0],
+            rotate: [0, -5, 5, -3, 0],
+            filter: [
+                `brightness(1) drop-shadow(0px 0px 6px ${glowColor})`,
+                `brightness(1.5) drop-shadow(0px 0px 15px ${glowColor})`,
+                `brightness(0.8) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(0.3) drop-shadow(0px 0px 0px ${glowColor})`,
+                `brightness(0) drop-shadow(0px 0px 0px transparent)`,
+            ],
+            transition: { duration: 0.5, ease: "easeOut" }
+        },
+        // [凶恶] 两段爆闪：第一闪偏小（警告），第二闪偏大（威胁），循环周期带长休息
+        active_fearsome: {
+            scale: [0.25, 1.1, 0.25, 0.25, 1.6, 0.25, 0.25],
+            filter: [
+                `drop-shadow(0px 0px 2px ${glowColor})`,
+                `drop-shadow(0px 0px 8px ${glowColor})`,
+                `drop-shadow(0px 0px 2px ${glowColor})`,
+                `drop-shadow(0px 0px 2px ${glowColor})`,
+                `drop-shadow(0px 0px 16px ${glowColor})`,
+                `drop-shadow(0px 0px 2px ${glowColor})`,
+                `drop-shadow(0px 0px 2px ${glowColor})`,
+            ],
+            transition: {
+                duration: 3.5,
+                times: [0, 0.06, 0.12, 0.2, 0.26, 0.32, 1],
+                repeat: Infinity,
+                ease: "easeOut"
+            }
         }
     };
 
@@ -237,6 +357,10 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
             <motion.div
                 variants={variants}
                 animate={isActive ? `active_${animType}` : 'idle'}
+                onAnimationComplete={() => {
+                    // [冻结] 入场动画播完后切换到常驻呼吸
+                    if (animType === 'frost_entry') setFrostEntryDone(true);
+                }}
                 className="w-full h-full relative z-10 flex items-center justify-center"
             >
                 {config.icon ? (

@@ -1,9 +1,14 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import type { CardData } from '../types';
 import { Zap, Clock } from 'lucide-react';
+import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14] 读取效果参数替换{value}
 interface SpellCardProps {
     data: CardData;
     className?: string;
+    burnoutValue?: number; // [2026-07-09] 燃尽动态费用
+    displayParams?: Record<string, number>; // [2026-07-14] 外部传入的显示参数（缇坦妮娅增益覆盖）
+    damageColor?: 'boosted' | 'reduced' | null; // [2026-07-14] 伤害数字颜色
+    isCostReduced?: boolean; // [2026-07-28] 减费绿色标记
 }
 
 /**
@@ -11,7 +16,37 @@ interface SpellCardProps {
  * 设计基准尺寸: 288px x 448px (与 Unit Card 一致)
  * 所有内部元素尺寸均以此为基准，外部通过 transform: scale() 进行缩放
  */
-export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) => {
+export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burnoutValue, displayParams: externalDisplayParams, damageColor, isCostReduced }) => {
+
+    // [2026-07-14] 兜底计算 displayParams：从效果定义读取参数替换{value}
+    const resolvedDisplayParams = useMemo<Record<string, number> | undefined>(() => {
+        if (externalDisplayParams) return externalDisplayParams; // 外部传入优先
+        if (!data.effects || data.effects.length === 0) return undefined;
+        const effectDef = EFFECT_DB[data.effects[0]];
+        if (!effectDef?.params) return undefined;
+        const display: Record<string, number> = {};
+        for (const [key, val] of Object.entries(effectDef.params)) {
+            if (typeof val === 'number') {
+                display[key] = val;
+            }
+        }
+        return Object.keys(display).length > 0 ? display : undefined;
+    }, [externalDisplayParams, data.effects]);
+
+    // 替换描述中的 {paramName} 占位符
+    const renderDescription = (description: string): React.ReactNode => {
+        if (!resolvedDisplayParams) return description;
+        const parts = description.split(/(\{\w+\})/);
+        const colorClass = damageColor === 'boosted' ? 'text-green-400' :
+                           damageColor === 'reduced' ? 'text-red-400' : 'text-gray-100';
+        return parts.map((part, i) => {
+            const match = part.match(/^\{(\w+)\}$/);
+            if (match && match[1] in resolvedDisplayParams) {
+                return <span key={i} className={colorClass}>{resolvedDisplayParams[match[1]]}</span>;
+            }
+            return part;
+        });
+    };
 
     const getSpeedIcon = () => {
         switch (data.type) {
@@ -25,12 +60,14 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
     const isLyfe = data.region === 'Lyfe';
     const isPupu = data.region === 'Pupu';
     const isMauxir = data.region === 'Mauxir';
+    const isAcacia = data.region === 'Acacia';
     const isLogistics = data.region === 'Logistics';
 
     const borderColor = isFenny
         ? 'border-orange-900'
         : isPupu ? 'border-red-900'
         : isMauxir ? 'border-purple-900'
+        : isAcacia ? 'border-sky-900'
         : isLogistics ? 'border-white-900'
         : isLyfe ? 'border-blue-900'
         : 'border-gray-700';
@@ -39,6 +76,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
         ? 'bg-gradient-to-b from-gray-900 via-orange-950 to-gray-900'
         : isPupu ? 'bg-gradient-to-b from-gray-900 via-red-950 to-gray-900'
         : isMauxir ? 'bg-gradient-to-b from-gray-900 via-purple-950 to-gray-900'
+        : isAcacia ? 'bg-gradient-to-b from-gray-900 via-sky-950 to-gray-900'
         : isLogistics ? 'bg-gradient-to-b from-gray-900 via-white-950 to-gray-900'
         : isLyfe ? 'bg-gradient-to-b from-gray-900 via-blue-950 to-gray-900'
         : 'bg-gradient-to-b from-gray-900 via-gray-950 to-gray-900';
@@ -47,6 +85,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
         ? 'bg-orange-800 border-orange-500'
         : isPupu ? 'bg-red-600 border-red-400'
         : isMauxir ? 'bg-purple-600 border-purple-400'
+        : isAcacia ? 'bg-sky-600 border-sky-400'
         : isLogistics ? 'bg-gray-600 border-gray-400'
         : isLyfe ? 'bg-blue-600 border-blue-400'
         : 'bg-blue-600 border-blue-400';
@@ -56,7 +95,12 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
             {/* 1. 顶部费用 (放大) */}
             <div className="absolute top-4 left-4 z-30 flex flex-col items-center gap-1">
                 <div className={`w-14 h-14 rounded-full ${costColor} border-2 flex items-center justify-center shadow-xl`}>
-                    <span className="text-white font-black text-3xl drop-shadow-md pt-1">{data.cost}</span>
+                    <span className={`font-black text-3xl drop-shadow-md pt-1 ${
+                        isCostReduced ? 'text-green-400' :
+                        burnoutValue != null && burnoutValue > data.cost ? 'text-red-400' :
+                        burnoutValue != null && burnoutValue < data.cost ? 'text-green-400' :
+                        'text-white'
+                    }`}>{burnoutValue ?? data.cost}</span>
                 </div>
             </div>
 
@@ -95,7 +139,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '' }) =>
                 <div className="relative h-full flex items-center justify-center p-4 text-center overflow-hidden">
                     {/* 使用 text-base 或 text-lg 确保缩放后依然清晰 */}
                     <p className="text-gray-100 text-1xl leading-snug font-medium text-shadow-sm">
-                        {data.description}
+                        {renderDescription(data.description)}
                     </p>
                 </div>
             </div>

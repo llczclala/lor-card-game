@@ -440,12 +440,21 @@ export const useUserSystem = () => {
 
     // --- [核心新增] 执行抽卡交易 (发货逻辑) ---
     // [核心修复] 补齐 newSkinPity 参数
-    const performGacha = useCallback((totalCost: number, results: GachaResult[], newPity: number, newSkinPity: number) => {
+    // [核心修复] 多池子独立保底：接收 poolId，写入池子专属的保底 key
+    const performGacha = useCallback((totalCost: number, results: GachaResult[], newPity: number, newSkinPity: number, poolId?: string) => {
         if (!collection || !profile || !settings) return;
 
         // 深拷贝现有状态，准备修改
-        // [核心修复] 将皮肤保底计数器一并写入档案！
-        const newProfile = { ...profile, pityCounter: newPity, skinPityCounter: newSkinPity };
+        const newProfile = { ...profile };
+        // [核心修复] 按池子写入独立保底计数器
+        if (poolId) {
+            (newProfile as any)[`pityCounter_${poolId}`] = newPity;
+            (newProfile as any)[`skinPityCounter_${poolId}`] = newSkinPity;
+        } else {
+            // 向后兼容：无 poolId 时写入旧 key（常驻池）
+            (newProfile as any).pityCounter = newPity;
+            (newProfile as any).skinPityCounter = newSkinPity;
+        }
         const newCollection = { ...collection };
         const newSettings = { ...settings };
 
@@ -504,9 +513,15 @@ export const useUserSystem = () => {
     }, [collection, profile, settings, userId]);
 
     // --- [核心新增] 设置抽卡定轨 ---
-    const setGachaTarget = useCallback((target: string) => {
+    // [核心修复] 多池子独立定轨：接收 poolId
+    const setGachaTarget = useCallback((target: string, poolId?: string) => {
         if (!profile) return;
-        const newProfile = { ...profile, gachaTarget: target };
+        const newProfile = { ...profile };
+        if (poolId) {
+            (newProfile as any)[`gachaTarget_${poolId}`] = target;
+        } else {
+            (newProfile as any).gachaTarget = target;
+        }
         setProfile(newProfile);
         StorageUtils.save(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, newProfile);
     }, [profile, userId]);

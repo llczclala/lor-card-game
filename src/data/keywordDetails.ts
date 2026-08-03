@@ -187,7 +187,7 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
         ]
     },
     'Fearsome': {
-        id: 'Fearsome', nameEn: 'FEARSOME', nameCn: '威吓', testCardId: 'test_fearsome', availableModes: ['bench', 'combat'],
+        id: 'Fearsome', nameEn: 'FEARSOME', nameCn: '凶恶', testCardId: 'test_fearsome', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',
@@ -624,7 +624,7 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
         ]
     },
     'Volatile': {
-        id: 'Volatile', nameEn: 'VOLATILE', nameCn: '易碎', testCardId: 'test_volatile', availableModes: ['bench', 'combat'],
+        id: 'Volatile', nameEn: 'VOLATILE', nameCn: '瞬逝', testCardId: 'test_volatile', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',

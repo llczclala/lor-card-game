@@ -1,7 +1,7 @@
 {
   "name": "snowbreak-rivals",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.9",
   "type": "module",
   "main": "electron-main.cjs",
   "description": "Snowbreak Rivals PC Client",
@@ -52,6 +52,7 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@electron/asar": "^4.2.0",
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.4",
     "@types/react": "^19.2.5",

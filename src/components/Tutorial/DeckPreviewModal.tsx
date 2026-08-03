@@ -144,10 +144,17 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
         return countCards(deck);
     }, [stage, playerCustomDeck]);
 
-    // 敌方卡组
+    // 敌方卡组 — 优先使用关卡直接指定的 enemyDeck
     const enemyDeckList = useMemo(() => {
         if (!stage) return [];
-        const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
+
+        // ★ 教程模式：直接使用 enemyDeck
+        if (stage.enemyDeck && stage.enemyDeck.length > 0) {
+            return countCards(stage.enemyDeck);
+        }
+
+        // 兼容旧版：从 archetype 读取
+        const archetype = stage.enemyArchetypeId ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
         if (!archetype) return [];
         const fullDeck = [...archetype.coreCards, ...archetype.preferredPool];
         return countCards(fullDeck);
@@ -156,8 +163,10 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
     // [核心修复] 彻底解决 undefined[0] 白屏崩溃的 Bug
     // 加入了 ?.[0] 阻断了对空引用的属性访问，并在前面用 () 包含逻辑防止穿透！
     const playerHeroKey = stage?.playerHeroConfig?.heroKey || stage?.playerDeck?.[0] || playerCustomDeck?.[0] || 'lyfe';
-    const enemyArchetype = stage ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
-    const enemyHeroKey = enemyArchetype?.champion || 'fenny';
+    const enemyArchetype = stage?.enemyArchetypeId ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
+    // ★ 优先使用关卡指定的敌方视觉配置（取不到时回退到流派默认）
+    const enemyDisplayName = stage?.enemyVisual?.displayName || enemyArchetype?.name || 'HOSTILE';
+    const enemyHeroKey = stage?.enemyVisual?.cardKey || enemyArchetype?.champion || 'fenny';
 
     if (!stage) return null;
     return (

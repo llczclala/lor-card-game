@@ -20,6 +20,8 @@ export const GameEvents = {
     SFX_ENEMY_PLAY_UNIT: 'SFX_ENEMY_PLAY_UNIT',   // 敌方打出单位
     SFX_PLAYER_PLAY_UNIT: 'SFX_PLAYER_PLAY_UNIT', // 我方打出单位
     SFX_BLOCK: 'SFX_BLOCK',                       // 挺进交战区格挡
+    SFX_SELECT_BLOCKER_UNIT: 'SFX_SELECT_BLOCKER_UNIT', // 选中格挡单位（引导步推进用）
+    SFX_CONFIRM_BLOCK: 'SFX_CONFIRM_BLOCK',       // 确认格挡方案（子任务完成用）
     SFX_CARD_HOVER: 'SFX_CARD_HOVER',             // 卡牌悬停
     SFX_SHUFFLE: 'SFX_SHUFFLE',                   // 洗牌
     SFX_SELECT_UNIT: 'SFX_SELECT_UNIT',           // 选定目标
@@ -74,6 +76,64 @@ export const GameEvents = {
     SFX_MAUXIR_SUMMON: 'sfx_mauxir_summon',
     SFX_MAUXIR_RUSH_ATTACK: 'sfx_mauxir_rush_attack',
     SFX_MAUXIR_RUSH_HIT: 'sfx_mauxir_rush_hit',
+
+    // [安卡希雅·时之重奏] 专属音效事件 (2026-07-31)
+    SFX_ACACIA_RUSH_FOCUS: 'sfx_acacia_rush_focus',        // 圆缺有律 → 切换到集束模型
+    SFX_ACACIA_RUSH_SPREAD: 'sfx_acacia_rush_spread',      // 圆缺有律 → 切换到扩散模型
+    SFX_ACACIA_ULTIMATE: 'sfx_acacia_ultimate',            // 朔望之期
+    SFX_ACACIA_CROSS_TEMPORAL: 'sfx_acacia_cross_temporal',// 越时斩
+    SFX_ACACIA_TIMELINE: 'sfx_acacia_timeline',            // 剑痕时空
+    SFX_ACACIA_SWORD: 'sfx_acacia_sword',                  // 飞剑召唤
+    SFX_ACACIA_GREAT_SWORD: 'sfx_acacia_great_sword',      // 大飞剑召唤
+
+    // [教程] 交互模式控制：限制玩家只能使用指定操作
+    TUTORIAL_SET_INTERACTION_MODE: 'tutorial_set_interaction_mode',
+
+    // [教程] 锁死跳过按钮 / 解锁按钮
+    TUTORIAL_LOCK_SKIP: 'tutorial_lock_skip',
+    TUTORIAL_UNLOCK_SKIP: 'tutorial_unlock_skip',
+
+    // [教程] 锁死主操作按钮（格挡/确认等）/ 解锁按钮
+    TUTORIAL_LOCK_ACTION: 'tutorial_lock_action',
+    TUTORIAL_UNLOCK_ACTION: 'tutorial_unlock_action',
+
+    // [教程] 暂停 / 恢复天启者升级
+    TUTORIAL_PAUSE_UPGRADE: 'tutorial_pause_upgrade',
+    TUTORIAL_RESUME_UPGRADE: 'tutorial_resume_upgrade',
+
+    // [教程] 天启者升级动画彻底播完（用于替代固定等待时间）
+    TUTORIAL_LEVEL_UP_COMPLETE: 'tutorial_level_up_complete',
+
+    // [教程] 强制悬停卡牌预览 / 清除
+    TUTORIAL_FORCE_CARD_PREVIEW: 'tutorial_force_card_preview',
+    TUTORIAL_CLEAR_CARD_PREVIEW: 'tutorial_clear_card_preview',
+
+    // [Volatile] 手牌瞬逝弃置事件 — 回合结束时 Volatile 卡牌从手牌弃置
+    HAND_VOLATILE_DISCARD: 'hand_volatile_discard',
+
+    // ════════════════════════════════════════════════════════
+    //  🎴 抽卡动画事件链 — 事件驱动替代时间锁
+    // ════════════════════════════════════════════════════════
+
+    // [抽卡] Phase 1: 逻辑层通知动画层"开始抽卡"
+    // Payload: { animId: string, card: CardData, owner: 'player' | 'enemy' }
+    DRAW_START: 'draw_start',
+
+    // [抽卡] Phase 1 完成: 动画层通知逻辑层"卡牌已到画面中央，翻面完成"
+    // Payload: { animId: string, card: CardData, owner: 'player' | 'enemy' }
+    DRAW_AT_CENTER: 'draw_at_center',
+
+    // [抽卡] Phase 2: 逻辑层通知动画层"手牌未满，飞入"
+    // Payload: { animId: string }
+    DRAW_FLY_TO_HAND: 'draw_fly_to_hand',
+
+    // [抽卡] Phase 2: 逻辑层通知动画层"手牌已满，爆牌碎裂"
+    // Payload: { animId: string }
+    DRAW_CENTER_SHATTER: 'draw_center_shatter',
+
+    // [抽卡] Phase 3 完成: 动画层通知逻辑层"动画播完"
+    // Payload: { animId: string, card: CardData, owner: 'player' | 'enemy', isBurn: boolean }
+    DRAW_COMPLETE: 'draw_complete',
 } as const;
 
 // ================= [新增] 弹道编排器专属事件 =================

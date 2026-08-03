@@ -52,45 +52,49 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
             <div className="flex w-full h-full max-w-[1600px] p-12 gap-12">
 
                 {/* --- 左侧：缩略图列表 --- */}
-                <div className="w-64 flex flex-col gap-6 overflow-y-auto custom-scrollbar py-4 pr-4">
-                    {assets.map((img, idx) => {
-                        // 判断每一项是否解锁
-                        const isUnlocked = unlockedIndices.includes(idx);
+                <div className="w-64 flex flex-col min-h-0 py-4 pr-4">
+                    <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                        <div className="flex flex-col gap-4">
+                            {assets.map((img, idx) => {
+                                // 判断每一项是否解锁
+                                const isUnlocked = unlockedIndices.includes(idx);
 
-                        return (
-                            <div
-                                key={idx}
-                                onClick={() => setPreviewIndex(idx)}
-                                className={`
-                                    relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300 group
-                                    ${previewIndex === idx ? 'border-orange-500 scale-105 shadow-[0_0_20px_orange]' : 'border-white/10 hover:border-white/50 opacity-60 hover:opacity-100'}
-                                    ${type === 'cardBack' ? 'aspect-[2/3]' : 'aspect-video'}
-                                `}
-                            >
-                                <img
-                                    src={img}
-                                    className={`w-full h-full object-cover ${!isUnlocked ? 'grayscale' : ''}`} // 未解锁变灰
-                                    alt={`Style ${idx}`}
-                                />
+                                return (
+                                    <div
+                                        key={idx}
+                                        onClick={() => setPreviewIndex(idx)}
+                                        className={`
+                                            relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300 group
+                                            ${previewIndex === idx ? 'border-orange-500 scale-105 shadow-[0_0_20px_orange]' : 'border-white/10 hover:border-white/50 opacity-60 hover:opacity-100'}
+                                            ${type === 'cardBack' ? 'aspect-[2/3]' : 'aspect-video'}
+                                        `}
+                                    >
+                                        <img
+                                            src={img}
+                                            className={`w-full h-full object-contain ${!isUnlocked ? 'grayscale' : ''}`}
+                                            alt={`Style ${idx}`}
+                                        />
 
-                                {/* 当前生效标记 */}
-                                {currentSelected === idx && (
-                                    <div className="absolute top-2 right-2 bg-green-500 text-black p-1 rounded-full shadow-lg z-10">
-                                        <Check size={12} strokeWidth={4} />
+                                        {/* 当前生效标记 */}
+                                        {currentSelected === idx && (
+                                            <div className="absolute top-2 right-2 bg-green-500 text-black p-1 rounded-full shadow-lg z-10">
+                                                <Check size={12} strokeWidth={4} />
+                                            </div>
+                                        )}
+
+                                        {/* 未解锁标记 (锁图标) */}
+                                        {!isUnlocked && (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                                                <Lock size={24} className="text-white/80" />
+                                            </div>
+                                        )}
+
+                                        <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors"></div>
                                     </div>
-                                )}
-
-                                {/* [新增] 未解锁标记 (锁图标) */}
-                                {!isUnlocked && (
-                                    <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                        <Lock size={24} className="text-white/80" />
-                                    </div>
-                                )}
-
-                                <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors"></div>
-                            </div>
-                        );
-                    })}
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
 
 

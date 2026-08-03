@@ -3,15 +3,21 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Shield, Palette, Layout, AlertTriangle, Target } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
-import { getGachaItems } from '../data/skinData'; // [核心新增] 引入外观资产调度局
+import { getGachaItems } from '../data/skinData';
+import { POOLS, type PoolId } from '../logic/gachaLogic';
 import { eventBus, GameEvents } from '../utils/eventBus';
 
 // 例如: "hero:lyfe", "cardBack:1", "desk:2"
 
 interface GachaTargetSelectorProps {
-    currentTarget: string | null; // 当前已定轨的目标 (如果有)
+    currentTarget: string | null;
     onConfirm: (target: string) => void;
     onClose: () => void;
+    poolId: PoolId; // [新增] 当前池子，用于过滤可定轨目标
+    // 仓库检查 — 用于判断已持有的内容
+    ownedCards: Record<string, number>;
+    unlockedCardBacks: number[];
+    unlockedDesks: number[];
 }
 
 type TabType = 'hero' | 'cardBack' | 'desk';
@@ -19,46 +25,59 @@ type TabType = 'hero' | 'cardBack' | 'desk';
 export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
     currentTarget,
     onConfirm,
-    onClose
+    onClose,
+    poolId,
+    ownedCards,
+    unlockedCardBacks,
+    unlockedDesks,
 }) => {
     const [activeTab, setActiveTab] = useState<TabType>('hero');
     const [selectedId, setSelectedId] = useState<string | null>(currentTarget);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-    // --- 1. 数据准备 ---
+    const poolConfig = POOLS[poolId];
+
+    // --- 1. 数据准备（按池子过滤 + 仓库状态检查）---
     const data = useMemo(() => {
-        // A. 英雄列表
+        // A. 英雄列表 — 只显示当前池子配置的英雄
         const heroes = Object.values(CARD_DB)
-            .filter(c => c.isChampion)
+            .filter(c => c.isChampion && poolConfig.heroKeys.includes(c.key))
             .map(c => ({
                 id: `hero:${c.key}`,
                 name: c.name,
-                image: c.imageUrl, // 使用立绘
-                type: 'hero' as const
+                image: c.imageUrl,
+                type: 'hero' as const,
+                status: (ownedCards[c.key] || 0) >= 3 ? 'full' as const : 'available' as const,
             }));
 
-        // B. 卡背列表 [核心修复] 废除本地遍历，从外观资产调度局获取合法的盲盒卡背，并动态读取官方定制名称！
-        const cardBacks = getGachaItems('cardBack').map(config => ({
-            id: `cardBack:${config.index}`,
-            name: config.name, // 直接挂载调度局分配的名称 (如 1234 占位符)
-            image: PERSONALIZATION_ASSETS.cardBacks[config.index!],
-            type: 'cardBack' as const,
-            idx: config.index
-        }));
+        // B. 卡背列表 — 只显示当前池子配置的索引
+        const cardBacks = getGachaItems('cardBack')
+            .filter(config => poolConfig.cardBackIndices.includes(config.index!))
+            .map(config => ({
+                id: `cardBack:${config.index}`,
+                name: config.name,
+                image: PERSONALIZATION_ASSETS.cardBacks[config.index!],
+                type: 'cardBack' as const,
+                idx: config.index,
+                status: unlockedCardBacks.includes(config.index!) ? 'owned' as const : 'available' as const,
+            }));
 
-        // C. 牌桌列表 [核心修复] 同理，向调度局索要合法的盲盒棋盘清单与名称！
-        const desks = getGachaItems('desk').map(config => ({
-            id: `desk:${config.index}`,
-            name: config.name, // 直接挂载调度局分配的名称
-            image: PERSONALIZATION_ASSETS.desks[config.index!],
-            type: 'desk' as const,
-            idx: config.index
-        }));
+        // C. 牌桌列表 — 只显示当前池子配置的索引
+        const desks = getGachaItems('desk')
+            .filter(config => poolConfig.deskIndices.includes(config.index!))
+            .map(config => ({
+                id: `desk:${config.index}`,
+                name: config.name,
+                image: PERSONALIZATION_ASSETS.desks[config.index!],
+                type: 'desk' as const,
+                idx: config.index,
+                status: unlockedDesks.includes(config.index!) ? 'owned' as const : 'available' as const,
+            }));
 
         return { hero: heroes, cardBack: cardBacks, desk: desks };
-    }, []);
+    }, [poolId, poolConfig, ownedCards, unlockedCardBacks, unlockedDesks]);
 
-    // 获取当前选中的物品详情 (用于展示确认弹窗)
+    // 获取当前选中的物品详情
     const selectedItemDetail = useMemo(() => {
         if (!selectedId) return null;
         const [type] = selectedId.split(':');
@@ -66,7 +85,6 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
         return list.find(i => i.id === selectedId);
     }, [selectedId, data]);
 
-    // 处理最终确认
     const handleFinalConfirm = () => {
         if (selectedId) {
             eventBus.emit(GameEvents.UI_CLICK);
@@ -89,12 +107,12 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                         </div>
                         <div>
                             <h2 className="text-2xl font-black text-white tracking-widest italic">定向共鸣</h2>
-                            <p className="text-xs text-yellow-500/80 font-mono">随时更换你想要的稀有奖励</p>
+                            <p className="text-xs text-yellow-500/80 font-mono">{poolConfig.name} · 当前可定轨目标</p>
                         </div>
                     </div>
                     <button
                         onClick={() => {
-                            eventBus.emit(GameEvents.UI_BACK); // [新增] 关闭音效
+                            eventBus.emit(GameEvents.UI_BACK);
                             onClose();
                         }}
                         className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400 hover:text-white">
@@ -102,7 +120,7 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                     </button>
                 </div>
 
-                {/* 2. 内容区域 (左右布局) */}
+                {/* 2. 内容区域 */}
                 <div className="flex flex-1 overflow-hidden">
 
                     {/* 左侧：分类 Tabs */}
@@ -110,81 +128,98 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                         <TabButton
                             isActive={activeTab === 'hero'}
                             onClick={() => {
-                                eventBus.emit(GameEvents.UI_CLICK); // [新增]
+                                eventBus.emit(GameEvents.UI_CLICK);
                                 setActiveTab('hero');
                             }}
                             icon={<Shield size={18} />}
-                            label="天启者"
+                            label={`天启者 (${data.hero.length})`}
                         />
                         <TabButton
                             isActive={activeTab === 'cardBack'}
                             onClick={() => {
-                                eventBus.emit(GameEvents.UI_CLICK); // [新增]
+                                eventBus.emit(GameEvents.UI_CLICK);
                                 setActiveTab('cardBack');
                             }}
                             icon={<Palette size={18} />}
-                            label="卡背"
+                            label={`卡背 (${data.cardBack.length})`}
                         />
                         <TabButton
                             isActive={activeTab === 'desk'}
                             onClick={() => {
-                                eventBus.emit(GameEvents.UI_CLICK); // [新增]
+                                eventBus.emit(GameEvents.UI_CLICK);
                                 setActiveTab('desk');
                             }}
                             icon={<Layout size={18} />}
-                            label="牌桌"
+                            label={`牌桌 (${data.desk.length})`}
                         />
                     </div>
 
                     {/* 右侧：网格列表 */}
                     <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-gradient-to-b from-slate-900 to-black">
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                            {data[activeTab].map((item) => {
-                                const isSelected = selectedId === item.id;
-                                const isCurrentTarget = currentTarget === item.id;
+                        {data[activeTab].length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+                                该分类在当前池子中没有可定轨的目标
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                                {data[activeTab].map((item) => {
+                                    const isSelected = selectedId === item.id;
+                                    const isCurrentTarget = currentTarget === item.id;
 
-                                return (
-                                    <div
-                                        key={item.id}
-                                        onClick={() => {
-                                            eventBus.emit(GameEvents.UI_CLICK); // [新增] 选中音效
-                                            setSelectedId(item.id);
-                                        }}
-                                        className={`
-                                            relative group cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300
-                                            ${activeTab === 'hero' ? 'aspect-[3/4]' : (activeTab === 'cardBack' ? 'aspect-[2/3]' : 'aspect-video')}
-                                            ${isSelected
-                                                ? 'border-yellow-500 shadow-[0_0_20px_rgba(234,179,8,0.4)] scale-105 z-10'
-                                                : 'border-white/10 hover:border-white/30 hover:scale-105 opacity-80 hover:opacity-100'
-                                            }
-                                        `}
-                                    >
-                                        <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            onClick={() => {
+                                                eventBus.emit(GameEvents.UI_CLICK);
+                                                setSelectedId(item.id);
+                                            }}
+                                            className={`
+                                                relative group cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300
+                                                ${activeTab === 'hero' ? 'aspect-[3/4]' : (activeTab === 'cardBack' ? 'aspect-[2/3]' : 'aspect-video')}
+                                                ${isSelected
+                                                    ? 'border-yellow-500 shadow-[0_0_20px_rgba(234,179,8,0.4)] scale-105 z-10'
+                                                    : 'border-white/10 hover:border-white/30 hover:scale-105 opacity-80 hover:opacity-100'
+                                                }
+                                            `}
+                                        >
+                                            <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
 
-                                        {/* 遮罩与名字 */}
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent flex flex-col justify-end p-3">
-                                            <div className={`text-sm font-bold truncate ${isSelected ? 'text-yellow-400' : 'text-gray-300'}`}>
-                                                {item.name}
+                                            {/* 遮罩与名字 */}
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent flex flex-col justify-end p-3">
+                                                <div className={`text-sm font-bold truncate ${isSelected ? 'text-yellow-400' : 'text-gray-300'}`}>
+                                                    {item.name}
+                                                </div>
                                             </div>
+
+                                            {/* 仓库状态标记：已获取 / 已满载 — 倾斜金色方框 */}
+                                            {'status' in item && item.status !== 'available' && (
+                                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                                                    <div className="rotate-12 border-[3px] border-yellow-500 bg-black/40 px-5 py-2.5 shadow-[0_0_20px_rgba(234,179,8,0.35)] rounded-sm">
+                                                        <span className="text-yellow-400 font-black text-xl tracking-[0.2em] drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]">
+                                                            {item.status === 'full' ? '已满载' : '已获取'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* 选中标记 */}
+                                            {isSelected && (
+                                                <div className="absolute top-2 right-2 w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center shadow-lg">
+                                                    <Check size={14} className="text-black stroke-[4]" />
+                                                </div>
+                                            )}
+
+                                            {/* 当前正在生效的定轨标记 */}
+                                            {isCurrentTarget && (
+                                                <div className="absolute top-2 left-2 px-2 py-1 bg-blue-600/90 text-white text-[10px] font-black tracking-wider rounded border border-blue-400 shadow-lg">
+                                                    当前选择
+                                                </div>
+                                            )}
                                         </div>
-
-                                        {/* 选中标记 */}
-                                        {isSelected && (
-                                            <div className="absolute top-2 right-2 w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center shadow-lg">
-                                                <Check size={14} className="text-black stroke-[4]" />
-                                            </div>
-                                        )}
-
-                                        {/* 当前正在生效的定轨标记 */}
-                                        {isCurrentTarget && (
-                                            <div className="absolute top-2 left-2 px-2 py-1 bg-blue-600/90 text-white text-[10px] font-black tracking-wider rounded border border-blue-400 shadow-lg">
-                                                当前选择
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -195,7 +230,7 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                     </div>
                     <button
                         onClick={() => {
-                            eventBus.emit(GameEvents.UI_BACK); // [新增]
+                            eventBus.emit(GameEvents.UI_BACK);
                             onClose();
                         }}
                         className="px-6 py-2 rounded-full border border-white/20 text-gray-300 hover:bg-white/10 transition-colors font-bold text-sm"
@@ -204,7 +239,7 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                     </button>
                     <button
                         onClick={() => {
-                            eventBus.emit(GameEvents.UI_CLICK); // [新增]
+                            eventBus.emit(GameEvents.UI_CLICK);
                             setShowConfirmModal(true);
                         }}
                         disabled={!selectedId || selectedId === currentTarget}
@@ -230,7 +265,7 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                         exit={{ opacity: 0 }}
                         className="absolute inset-0 z-[800] flex items-center justify-center bg-black/60 backdrop-blur-sm"
                         onClick={() => {
-                            eventBus.emit(GameEvents.UI_BACK); // [新增] 点击背景关闭
+                            eventBus.emit(GameEvents.UI_BACK);
                             setShowConfirmModal(false);
                         }}
                     >
@@ -252,14 +287,20 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
                                 <span className="text-yellow-400 font-bold text-lg block mt-2">{selectedItemDetail.name}</span>
                             </p>
 
-                            <div className="w-full h-32 rounded-lg overflow-hidden border border-white/10 mb-6 bg-black">
+                            <div className={`
+                                w-full rounded-lg overflow-hidden border border-white/10 mb-6 bg-black
+                                ${selectedItemDetail.type === 'desk'
+                                    ? 'aspect-video max-h-40'
+                                    : 'w-40 aspect-[3/4] mx-auto'
+                                }
+                            `}>
                                 <img src={selectedItemDetail.image} className="w-full h-full object-cover opacity-80" alt="预览" />
                             </div>
 
                             <div className="flex gap-3 w-full">
                                 <button
                                     onClick={() => {
-                                        eventBus.emit(GameEvents.UI_BACK); // [新增]
+                                        eventBus.emit(GameEvents.UI_BACK);
                                         setShowConfirmModal(false);
                                     }}
                                     className="flex-1 py-3 rounded-lg border border-white/10 hover:bg-white/5 text-gray-300 font-bold transition-colors"
@@ -282,7 +323,6 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
     );
 };
 
-// 子组件：左侧 Tab 按钮
 const TabButton = ({ isActive, onClick, icon, label }: { isActive: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
     <button
         onClick={onClick}

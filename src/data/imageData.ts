@@ -26,6 +26,12 @@ import effect_broken2 from '../image/effect/broken2.png';
 import effect_be_attacked from '../image/effect/be_attacked.png'; // [核心新增] 引入全新的法术命中受击贴图
 import mauxir_rush_attack from '../image/effect/mauxir_lotus_rush_attack.png';
 import mauxir_rush_be_attacked from '../image/effect/mauxir_lotus_rush_be_attacked.png';
+// [新增] 程准备的差异化法术受击特效（BUFF/治疗分类专用）
+import effect_buff_all from '../image/effect/BUFF_ALL.png';
+import effect_buff_keyword from '../image/effect/BUFF_Keyword.png';
+import effect_buff_life from '../image/effect/BUFF_Life.png';
+import effect_buff_power from '../image/effect/BUFF_Power.png';
+import effect_healing from '../image/effect/Healing.png';
 
 // 引入里芙的原画
 import lyfe_1 from '../image/hero/里芙1.png';
@@ -43,6 +49,10 @@ import pupu_specular_soul_2 from '../image/hero/卜卜灵鉴2.png';
 import mauxir_lotus_drive_1 from '../image/hero/猫汐尔莲驱1.png';
 import mauxir_lotus_drive_2 from '../image/hero/猫汐尔莲驱2.png';
 
+// [新增] 引入安卡希雅 时之重奏的原画
+import acacia_chrono_echo_1 from '../image/hero/安卡希雅时之重奏1.png';
+import acacia_chrono_echo_2 from '../image/hero/安卡希雅时之重奏2.png';
+
 // --- 法术卡面 (Spells) ---
 // 通用法术
 import spell_01 from '../image/spells/01.png'; // 单挑
@@ -59,6 +69,22 @@ import spell_09 from '../image/spells/09.png'; // 暗箱操作
 import spell_10 from '../image/spells/10.png'; // 生机补充
 import spell_11 from '../image/spells/11.png'; // 能量补充
 import spell_12 from '../image/spells/12.png'; // 巴德尔试剂
+import spell_13 from '../image/spells/13.png'; // 鬼影森森
+import spell_14 from '../image/spells/14.png'; // 毁灭仪式
+import spell_15 from '../image/spells/15.png'; // 蟾鉴易纹
+import spell_16 from '../image/spells/16.png'; // 强行通讯
+import spell_17 from '../image/spells/17.png'; // 精灵祈愿
+import spell_18 from '../image/spells/18.png'; // 真实快照
+
+// [2026-07-15 梵音小队] 迷离之音 & 巨偶一瞥原画
+import spell_19 from '../image/spells/19.png'; // 迷离之音
+import spell_20 from '../image/spells/20.png'; // 巨偶一瞥
+// [2026-07-16 达努小队] 银臂乱打原画
+import spell_21 from '../image/spells/21.png'; // 银臂乱打
+// [2026-07-17 阿尔戈小队] 蓄意渗透原画
+import spell_22 from '../image/spells/22.png'; // 蓄意渗透
+// [2026-07-17 鸦眼小队] 精密操作原画
+import spell_23 from '../image/spells/23.png'; // 精密操作
 
 // [新增] 梦莲无人机原画
 import dream_lotus_drone_img from '../image/spells/mauxir_lotus_robot.png';
@@ -87,8 +113,26 @@ import mauxir_lotus_spell_01 from '../image/spells/mauxir_lotus_spell01.png';   
 import mauxir_lotus_spell_02 from '../image/spells/mauxir_lotus_spell02.png';   // 顷刻莲潮
 import mauxir_lotus_spell_03 from '../image/spells/mauxir_lotus_spell03.png';   // 伴泽而生
 
+// [新增] 安卡希雅 时之重奏专属法术
+import acacia_chrono_echo_spell_base from '../image/spells/Acacia_Chrono Echo_spell.png';     // 安卡希雅的编曲
+import acacia_chrono_echo_spell_01 from '../image/spells/Acacia_Chrono Echo_spell01.png';    // 剑咏变调
+import acacia_chrono_echo_spell_02 from '../image/spells/Acacia_Chrono Echo_spell02.png';    // 相变之力·扭转
+import acacia_chrono_echo_spell_03 from '../image/spells/Acacia_Chrono Echo_spell03.png';    // 时之协奏
+import acacia_chrono_echo_spell_m1 from '../image/spells/Acacia_Chrono Echo_spell-1.png';    // 安卡希雅的重锋
+import acacia_chrono_echo_spell_01_m1 from '../image/spells/Acacia_Chrono Echo_spell01-1.png'; // 越时斩
+import acacia_chrono_echo_spell_02_m1 from '../image/spells/Acacia_Chrono Echo_spell02-1.png'; // 剑痕时空
+import acacia_chrono_echo_spell_gen1 from '../image/spells/Acacia_Chrono Echo_spell_gen1.png'; // 灵轨月轮·扩散
+import acacia_chrono_echo_spell_gen2 from '../image/spells/Acacia_Chrono Echo_spell_gen2.png'; // 灵轨月轮·集束
+import acacia_chrono_echo_spell_gen3 from '../image/spells/Acacia_Chrono Echo_spell_gen3.png'; // 月镰剑势
+
+// [新增] 占位法术图片（用于衍生法术暂无专图）
+import abc_spell from '../image/spells/abc.png';
+
 // [新增] 臆莲基座原画
 import placeholder_pedestal from '../image/units/mauxir_lotus_pedestal.png';
+
+// [新增] 飞剑衍生物占位图
+import abc_unit from '../image/units/abc.png';
 
 // --- 测试单位原画 (0_01 ~ 0_36) ---
 // 1-10
@@ -190,6 +234,10 @@ import cb_07 from '../image/card_back/07.png';
 import cb_08 from '../image/card_back/08.png';
 import cb_09 from '../image/card_back/09.png';
 import cb_10 from '../image/card_back/10.png';
+import cb_11 from '../image/card_back/11.png';
+import cb_12 from '../image/card_back/12.png';
+import cb_13 from '../image/card_back/13.png';
+import cb_mauxir_lotus_drive from '../image/card_back/mauxir_lotus_drive.png';
 
 // [新增] 批量引入牌桌 (01-05)
 import desk_01 from '../image/desk/01.png';
@@ -197,6 +245,11 @@ import desk_02 from '../image/desk/02.png';
 import desk_03 from '../image/desk/03.png';
 import desk_04 from '../image/desk/04.png';
 import desk_05 from '../image/desk/05.png';
+import desk_06 from '../image/desk/06.png';
+import desk_07 from '../image/desk/07.png';
+import desk_08 from '../image/desk/08.png';
+import desk_09 from '../image/desk/09.png';
+import desk_10 from '../image/desk/10.png';
 
 
 // ==========================================
@@ -237,6 +290,12 @@ const TOKEN_SKIN_ALIASES: Record<string, string> = {
   'Kuranas_Crocodile': 'Illustration_Squad_Kuranas',
   'Soline_Anubis': 'Illustration_Squad_Soline',
   'Elice_scope_robot': 'Chongye_Squad_Elice',
+  'Night_Owl': 'Bridget_Squad_Valerie',
+  'Green_Spirit_Squad_LuggageBot': 'Green_Spirit_Squad_Grace',
+  // [2026-07-14 梵音] 衍生卡皮肤共享
+  'Loka_Phantom_Serpent': 'SacredChants_Squad_Loka',
+  // [2026-07-15 达努] 墓穴蜘蛛与班西共用卡面
+  'Tomb_Spider': 'Danu_Squad_Banshee',
 };
 for (const [tokenKey, parentKey] of Object.entries(TOKEN_SKIN_ALIASES)) {
   if (SKIN_IMAGES[parentKey]) {
@@ -278,11 +337,79 @@ const CARD_KEY_MAP: Record<string, string> = {
   kuranas: 'Illustration_Squad_Kuranas',
   swali: 'Illustration_Squad_Swali',
   soline: 'Illustration_Squad_Soline',
+
+  // --- 御守小队 (Amulet Squad) ---
+  scorching: 'Amulet_Squad_Scorching',
+  cattail: 'Amulet_Squad_Cattail',
+  peaches: 'Amulet_Squad_Peaches',
+
+  // --- 梵灵小队 (FanLing Squad) ---
+  lucia: 'FanLing_Squad_Lucia',
+  nafu: 'FanLing_Squad_Nafu',
+  wasi: 'FanLing_Squad_Wasi',
+
+  // --- 诗人小队 (Poet Squad) ---
+  oisin: 'Poet_Squad_Oisin',
+  caitlin: 'Poet_Squad_Caitlin',
+  kelo: 'Poet_Squad_Kelo',
+
+  // --- 锻造者小队 (The Forger Squad) ---
+  leisia: 'The_Forger_Squad_Leisia',
+  tatiana: 'The_Forger_Squad_Tatiana',
+  white_hunt: 'The_Forger_Squad_White_Hunt',
+
+  // --- 布里吉小队 (Bridget Squad) ---
+  feier: 'Bridget_Squad_Feier',
+  chinchilla: 'Bridget_Squad_Chinchilla',
+  valerie: 'Bridget_Squad_Valerie',
+
+  // --- 梵音小队 (SacredChants Squad) ---
+  loka: 'SacredChants_Squad_Loka',
+  european_angelica: 'SacredChants_Squad_European_Angelica',
+  shalo: 'SacredChants_Squad_Shalo',
+  // 衍生物
+  loka_phantom_serpent: 'Loka_Phantom_Serpent',
+  angelica_hazy_note: 'Angelica_Hazy_Note',
+  shalo_golem_glimpse: 'Shalo_Golem_Glimpse',
+
+  // --- 精灵小队 (Spirit Squad) ---
+  lusaka: 'Spirit_Squad_Lusaka',
+  snenika: 'Spirit_Squad_Snenika',
+  bonnie: 'Spirit_Squad_Bonnie',
+
+  // --- 绿灵小队 (Green Spirit Squad) ---
+  glanz: 'Green_Spirit_Squad_Glanz',
+  eva: 'Green_Spirit_Squad_Eva',
+  grace: 'Green_Spirit_Squad_Grace',
+  luggageBot: 'Green_Spirit_Squad_LuggageBot',
+
+  // --- 达努小队 (Danu Squad) ---
+  banshee: 'Danu_Squad_Banshee',
+  wendy: 'Danu_Squad_Wendy',
+  silver_arm: 'Danu_Squad_SilverArm',
+  // 衍生物
+  tomb_spider: 'Tomb_Spider',
+
+  // --- "鸦眼"小队 (Crows Eyest Squad) ---
+  crows_an: 'Crows_Eyest_Squad_An',
+  crows_mulin: 'Crows_Eyest_Squad_Mulin',
+  crows_hiki: 'Crows_Eyest_Squad_Hiki',
+
+  // --- 圣树小队 (Sacred Tree Squad) ---
+  sacred_tree_alvina: 'Sacred_Tree_Squad_Alvina',
+  sacred_tree_lumi: 'Sacred_Tree_Squad_Lumi',
+  sacred_tree_margaret: 'Sacred_Tree_Squad_Margaret',
+
+  // [安卡希雅] 飞剑衍生物
+  acacia_flying_sword: 'Acacia_Flying_Sword',
+  acacia_great_sword: 'Acacia_Great_Sword',
 };
 
 
 import PGgachaDeskImg from '../image/gacha/PermanentGachaPool/desk.png';
 import PGgachaBtnImg from '../image/gacha/PermanentGachaPool/button.png';
+import LgachaDeskImg from '../image/gacha/GachaPool1/desk.png';
+import LgachaBtnImg from '../image/gacha/GachaPool1/button.png';
 
 import titan_mutant from '../image/enemy/Titan_Mutant.png';
 import titan_hybrid from '../image/enemy/Titan_Titan_Hybrid.png';
@@ -305,13 +432,15 @@ export interface HeroImages {
 
 export const PERSONALIZATION_ASSETS = {
     // [核心修复] 按序排布 7 张卡背。索引 1/2/3 入盲盒，索引 4/5/6 锁死给未来任务系统！
-    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_fenny, cb_lyfe, cb_pupu, cb_05, cb_06, cb_07, cb_08, cb_09, cb_10],
-    desks: [desk_01, desk_02, desk_03, desk_04, desk_05]
+    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_fenny, cb_lyfe, cb_pupu, cb_05, cb_06, cb_07, cb_08, cb_09, cb_10, cb_11, cb_12, cb_13, cb_mauxir_lotus_drive],
+    desks: [desk_01, desk_02, desk_03, desk_04, desk_05, desk_06, desk_07, desk_08, desk_09, desk_10]
 };
 
 export const gacha_icon = {
-    PGgachaDeskImg,   // 1级卡面
-    PGgachaBtnImg // 2级卡面
+    PGgachaDeskImg,   // 永久池 封面
+    PGgachaBtnImg,    // 永久池 按钮
+    LgachaDeskImg,    // 烬中镜火池 封面
+    LgachaBtnImg,     // 烬中镜火池 按钮
 };
 
 // 导出英雄图库常量
@@ -319,7 +448,8 @@ export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
     lyfe: { base: lyfe_1, level2: lyfe_2 },
     fenny: { base: fenny_1, level2: fenny_2 },
     pupu_specular_soul: { base: pupu_specular_soul_1, level2: pupu_specular_soul_2 },
-    mauxir_lotus_drive: { base: mauxir_lotus_drive_1, level2: mauxir_lotus_drive_2 }
+    mauxir_lotus_drive: { base: mauxir_lotus_drive_1, level2: mauxir_lotus_drive_2 },
+    acacia_chrono_echo: { base: acacia_chrono_echo_1, level2: acacia_chrono_echo_2 }
 };
 // [皮肤] 导出正式单位图片集合（从 glob 自动构建）
 export const UNIT_IMAGES: Record<string, string> = {};
@@ -365,6 +495,11 @@ export const SPELL_IMAGES = {
     energy_supplement: spell_11,
     bader_reagent: spell_12,
 
+    // [新增] 第 5 批通用法术
+    ghostly_shadows: spell_13,      // 鬼影森森
+    destruction_ritual: spell_14,   // 毁灭仪式
+    toad_pattern: spell_15,         // 蟾鉴易纹
+
     // 芬妮
     fenny_spell: fenny_spell_base,
     fenny_strike: fenny_spell_01,
@@ -392,8 +527,49 @@ export const SPELL_IMAGES = {
     mauxir_lotus_ultimate: mauxir_lotus_spell_02,
     mauxir_lotus_support: mauxir_lotus_spell_03,
     mauxir_lotus_pedestal: placeholder_pedestal,
+
+    // [安卡希雅 时之重奏]
+    acacia_chrono_echo_spell: acacia_chrono_echo_spell_base,
+    acacia_chrono_echo_rush: acacia_chrono_echo_spell_01,
+    acacia_chrono_echo_ultimate: acacia_chrono_echo_spell_02,
+    acacia_chrono_echo_support: acacia_chrono_echo_spell_03,
+    acacia_chrono_echo_heavy: acacia_chrono_echo_spell_m1,
+    acacia_cross_temporal: acacia_chrono_echo_spell_01_m1,
+    acacia_sword_timeline: acacia_chrono_echo_spell_02_m1,
+
+    // [安卡·衍生法术] 灵轨月轮系列
+    acacia_sword_rain: acacia_chrono_echo_spell_gen1,
+    acacia_moon_focus: acacia_chrono_echo_spell_gen2,
+    acacia_sword_rain_alt: acacia_chrono_echo_spell_gen3,
+
+    // [布里吉小队] 菲儿生成的"强行通讯"
+    forced_communication: spell_16,
+
+    // [精灵小队] 精灵祈愿
+    spirit_prayer: spell_17,
+
+    // [诗人小队] 真实快照
+    true_snapshot: spell_18,
+
+    // [梵音小队] 迷离之音 & 巨偶一瞥
+    angelica_hazy_note: spell_19,
+    shalo_golem_glimpse: spell_20,
+
+    // [达努小队] 银臂乱打
+    silver_arm_smash: spell_21,
+
+    // [2026-07-17 阿尔戈小队] 蓄意渗透
+    deliberate_infiltration: spell_22,
+
+    // [2026-07-17 鸦眼小队] 精密操作
+    crows_precise_operation: spell_23,
 };
 
+// [新增] 导出占位图（飞剑等暂无专图的衍生物用）
+export const PLACEHOLDER_IMAGES = {
+    unit: abc_unit,
+    spell: abc_spell,
+};
 
 // 导出测试单位图库 (按关键词顺序索引)
 export const TEST_IMAGES = {
@@ -494,7 +670,13 @@ export const EFFECT_IMAGES = {
     cardBroken2: effect_broken2,   // 死亡预备：卡牌碎裂 2
     beAttacked: effect_be_attacked, // [核心新增] 法术命中：受击裂纹特效
     mauxirRushAttack: mauxir_rush_attack,
-    mauxirRushBeAttacked: mauxir_rush_be_attacked
+    mauxirRushBeAttacked: mauxir_rush_be_attacked,
+    // [新增] 差异化法术受击特效——程 2026-06-29
+    buffAll: effect_buff_all,         // 双维增益（+攻+血）
+    buffKeyword: effect_buff_keyword, // 关键词赋予
+    buffLife: effect_buff_life,       // 仅生命增益
+    buffPower: effect_buff_power,     // 仅攻击增益
+    healing: effect_healing,          // 治疗回血
 };
 
 export const TITAN_IMAGES = {

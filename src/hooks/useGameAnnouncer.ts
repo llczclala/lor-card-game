@@ -7,9 +7,13 @@ interface UseGameAnnouncerProps {
     drawCards: (count: number) => void;
     // [新增] 接收换牌阶段状态，用于判断何时开始第一回合
     isMulliganPhase: boolean;
+    // ★ 教程模式：跳过初始抽卡
+    disableMulligan?: boolean;
+    // [2026-07-08 新增] 开局流程结束回调 — 通知外部释放按钮锁
+    onOpeningEnd?: () => void;
 }
 
-export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAnnouncerProps) => {
+export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase, disableMulligan = false, onOpeningEnd }: UseGameAnnouncerProps) => {
     const [announcement, setAnnouncement] = useState<AnnouncementData | null>(null);
 
     // 记录状态，用于逻辑判断
@@ -80,6 +84,7 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
                 showPhaseHint();
                 // [修正] 更新 ref 为对象副本
                 prevAttackTokenRef.current = { ...game.attackToken };
+                onOpeningEnd?.(); // [2026-07-08] 通知外部释放按钮锁
             }, 2000);
         }
         prevRoundRef.current = game.round;
@@ -89,22 +94,31 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
 
     // 监听换牌结束
     useEffect(() => {
+        console.log(`[Announcer] isMulliganPhase 变化: ${isMulliganPhase}, round=${game.round}, phase=${game.phase}, turnOwner=${game.turnOwner}`);
         if (!isMulliganPhase && game.round === 1) {
+             console.log(`[Announcer] ⏰ 触发开局流程 — 800ms 后抽卡`);
              isOpeningSequenceRef.current = true;
              hasAnnouncedTurnRef.current = false;
 
              if (sequenceTimeoutRef.current) clearTimeout(sequenceTimeoutRef.current);
              sequenceTimeoutRef.current = setTimeout(() => {
-                 setMsg("第一回合", "ROUND 1", 'round', 1500);
-                 drawCards(4);
+                 console.log(`[Announcer] 🎯 800ms 到 — 执行抽卡 disableMulligan=${disableMulligan}`);
+                 // ★ 教程模式跳过初始抽卡，由 tutorialInit 布置战场
+                 if (!disableMulligan) {
+                     setMsg("第一回合", "ROUND 1", 'round', 1500);
+                     drawCards(4);
+                     console.log(`[Announcer] 📤 drawCards(4) 已调用`);
+                 }
 
                  // 继续用 sequenceTimeoutRef 接管更深层的开局令牌分发时机
                  sequenceTimeoutRef.current = setTimeout(() => {
+                     console.log(`[Announcer] 🏁 开局流程收尾 — showPhaseHint`);
                      isOpeningSequenceRef.current = false;
                      showPhaseHint();
                      // [修正] 更新 ref 为对象副本
                      prevAttackTokenRef.current = { ...game.attackToken };
-                 }, 5500);
+                     onOpeningEnd?.(); // [2026-07-08] 通知外部释放按钮锁
+                 }, disableMulligan ? 800 : 5500);
              }, 800);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,7 +132,11 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase }: UseGameAn
         // 或者检测到任何一方执行了动作（lastActionTimestamp 刷新），立刻无条件执行最高级别打断！
         if (game.phase !== 'main' || game.phase === 'animating') {
             if (announcerTimeoutRef.current) clearTimeout(announcerTimeoutRef.current);
-            if (sequenceTimeoutRef.current) clearTimeout(sequenceTimeoutRef.current);
+            if (sequenceTimeoutRef.current) {
+                console.log(`[Announcer] ⛔ 清除 sequenceTimeout — phase=${game.phase}`);
+                clearTimeout(sequenceTimeoutRef.current);
+                sequenceTimeoutRef.current = null;
+            }
             setAnnouncement(null); // 强制抹除屏幕中央文字
         }
         // [核心修复] 彻底砸碎这里的 else 兜底分支！

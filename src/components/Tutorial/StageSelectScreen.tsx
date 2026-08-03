@@ -1,15 +1,17 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Play, Eye, ChevronRight, Sword, Shield, Target, Zap } from 'lucide-react';
+import { ArrowLeft, Play, Eye, ChevronRight, Sword, Shield, Target, Zap, RotateCcw } from 'lucide-react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { getStagesByCategory, getCategoryById } from '../../data/tutorialStages';
 import type { ExamCategoryId, TutorialStage } from '../../data/tutorialStages';
 import { HERO_IMAGES } from '../../data/imageData'; // [新增]
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes'; // [新增]
 import { CARD_DB } from '../../data/cards'; // [新增]
+import { isStageCompleted } from '../../utils/tutorialProgress'; // [新增] 完成状态检测
 
 interface StageSelectScreenProps {
     categoryId: ExamCategoryId;
+    userId?: string; // [新增] 用于区分账号的完成状态
     onBack: () => void;
     onStartStage: (stageId: string) => void;
     onViewDecks: (stageId: string) => void;
@@ -25,6 +27,7 @@ const OBJECTIVE_ICONS: React.ReactNode[] = [
 
 export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
     categoryId,
+    userId,
     onBack,
     onStartStage,
     onViewDecks,
@@ -92,6 +95,7 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                         stages.map((stage, index) => {
                             const playerHeroKey = stage.playerHeroConfig?.heroKey || 'lyfe';
                             const heroImg = HERO_IMAGES[playerHeroKey as keyof typeof HERO_IMAGES]?.base || '';
+                            const completed = isStageCompleted(stage.id, userId);
 
                             return (
                                 <div
@@ -103,6 +107,7 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                                             ? 'border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.5)] scale-105 z-10'
                                             : 'border-white/10 hover:border-gray-400 opacity-70 hover:opacity-100'
                                         }
+                                        ${completed ? 'completed-stage' : ''}
                                     `}
                                 >
                                     {heroImg && <div className="absolute inset-0 bg-cover bg-top opacity-60 mix-blend-luminosity group-hover:mix-blend-normal transition-all duration-500" style={{ backgroundImage: `url(${heroImg})` }}></div>}
@@ -111,14 +116,26 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                                     <div className="absolute inset-0 px-4 py-3 flex flex-col justify-center">
                                         <div className="flex items-center justify-between mb-1 relative z-10">
                                             <div className="flex items-center gap-2">
-                                                <span className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black ${selectedStage?.id === stage.id ? 'bg-cyan-500 text-slate-900' : 'bg-slate-800 text-gray-400'}`}>
+                                                <span className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-black
+                                                    ${completed
+                                                        ? 'bg-orange-500/40 text-orange-300 border border-orange-400/50'
+                                                        : selectedStage?.id === stage.id
+                                                            ? 'bg-cyan-500 text-slate-900'
+                                                            : 'bg-slate-800 text-gray-400'
+                                                    }`}
+                                                >
                                                     {index + 1}
                                                 </span>
-                                                <span className="text-sm font-black tracking-widest text-white drop-shadow-md">{stage.name}</span>
+                                                <span className={`text-sm font-black tracking-widest drop-shadow-md ${completed ? 'text-gray-400' : 'text-white'}`}>
+                                                    {stage.name}
+                                                </span>
+                                                {completed && (
+                                                    <span className="text-green-400 text-sm font-black drop-shadow-[0_0_6px_rgba(34,197,94,0.6)]">✓</span>
+                                                )}
                                             </div>
                                         </div>
-                                        <div className="text-[10px] text-cyan-400/80 font-bold tracking-widest relative z-10 mt-1 pl-7">
-                                            {stage.objectives.length} OBJECTIVES
+                                        <div className={`text-[10px] font-bold tracking-widest relative z-10 mt-1 pl-7 ${completed ? 'text-orange-400/80' : 'text-cyan-400/80'}`}>
+                                            {completed ? 'COMPLETED' : `${stage.objectives.length} OBJECTIVES`}
                                         </div>
                                     </div>
                                 </div>
@@ -143,11 +160,20 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                         >
                             {/* [核心重构] 1. 全局视觉底座：红蓝对抗碰撞背景 (The Clash) */}
                             {(() => {
-                                const enemyArch = ENEMY_ARCHETYPES[selectedStage.enemyArchetypeId];
-                                const enemyHeroKey = enemyArch?.champion || 'fenny';
-                                const playerHeroKey = selectedStage.playerHeroConfig?.heroKey || 'lyfe';
+                                const stage = selectedStage;
+                                const enemyArch = stage.enemyArchetypeId ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
+                                const stageCompleted = isStageCompleted(stage.id, userId);
+
+                                // ★ 优先使用关卡中直接指定的敌方视觉配置
+                                const enemyVisual = stage.enemyVisual;
+                                const enemyDisplayName = enemyVisual?.displayName || enemyArch?.name || 'UNKNOWN HOSTILE';
+                                const enemyCardKey = enemyVisual?.cardKey || '';
+                                const enemyImg = enemyCardKey
+                                    ? CARD_DB[enemyCardKey]?.imageUrl || ''
+                                    : (enemyArch ? HERO_IMAGES[enemyArch.champion as keyof typeof HERO_IMAGES]?.base || '' : '');
+
+                                const playerHeroKey = stage.playerHeroConfig?.heroKey || 'lyfe';
                                 const playerImg = HERO_IMAGES[playerHeroKey as keyof typeof HERO_IMAGES]?.base || '';
-                                const enemyImg = HERO_IMAGES[enemyHeroKey as keyof typeof HERO_IMAGES]?.base || '';
 
                                 return (
                                     <div className="absolute inset-0 z-0 overflow-hidden bg-slate-950 flex">
@@ -171,7 +197,7 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                                             <div className="absolute top-10 right-10 z-10 text-right">
                                                 <div className="text-xs font-mono text-red-400 font-bold tracking-widest flex items-center justify-end gap-1"><Sword size={12}/> ENEMY</div>
                                                 <div className="text-3xl font-black text-white tracking-widest uppercase drop-shadow-[0_0_15px_rgba(0,0,0,0.8)] mt-1">
-                                                    {enemyArch?.name || 'UNKNOWN HOSTILE'}
+                                                    {enemyDisplayName}
                                                 </div>
                                             </div>
                                         </div>
@@ -187,6 +213,22 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
 
                                         {/* 托底的全局暗色渐变遮罩，使底部悬浮 UI 的文字保持绝对清晰 */}
                                         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none z-30"></div>
+
+                                        {/* [新增] 已完成：橙色半透明遮罩 */}
+                                        {stageCompleted && (
+                                            <div className="absolute inset-0 z-[1] bg-orange-500/25 pointer-events-none"></div>
+                                        )}
+
+                                        {/* [新增] 已完成：红色圆环 + 倾斜文字标识 */}
+                                        {stageCompleted && (
+                                            <div className="absolute inset-0 z-[2] flex items-center justify-center pointer-events-none">
+                                                <div className="w-44 h-44 rounded-full border-[4px] border-red-500/80 flex items-center justify-center shadow-[0_0_40px_rgba(239,68,68,0.3)]">
+                                                    <span className="text-red-500 text-[2.25rem] font-black italic -rotate-12 tracking-wider drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]">
+                                                        已完成
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })()}
@@ -244,19 +286,24 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                                         查看牌组
                                     </button>
 
-                                    {/* 开始考核按钮 */}
+                                    {/* 开始/再次考核按钮 */}
                                     <button
                                         onClick={() => {
                                             eventBus.emit(GameEvents.UI_CLICK);
                                             onStartStage(selectedStage.id);
                                         }}
-                                        className="flex-[2] py-4 rounded-xl flex items-center justify-center gap-2 font-bold text-lg tracking-widest
-                                            bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500
-                                            text-white shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)]
-                                            transition-all hover:scale-[1.02] active:scale-[0.98] border border-cyan-400/30"
+                                        className={`flex-[2] py-4 rounded-xl flex items-center justify-center gap-2 font-bold text-lg tracking-widest
+                                            text-white transition-all hover:scale-[1.02] active:scale-[0.98] border
+                                            ${isStageCompleted(selectedStage.id, userId)
+                                                ? 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-[0_0_20px_rgba(251,146,60,0.4)] hover:shadow-[0_0_30px_rgba(251,146,60,0.6)] border-amber-400/30'
+                                                : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)] border-cyan-400/30'
+                                            }`}
                                     >
-                                        <Play size={20} fill="currentColor" />
-                                        开始考核
+                                        {isStageCompleted(selectedStage.id, userId) ? (
+                                            <><RotateCcw size={20} /> 再次考核</>
+                                        ) : (
+                                            <><Play size={20} fill="currentColor" /> 开始考核</>
+                                        )}
                                     </button>
                                 </div>
                             </div>

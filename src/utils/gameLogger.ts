@@ -17,6 +17,7 @@ export type LogActionType =
     | 'play_card'      // 打出卡牌 (用于普通卡牌皮肤解锁任务)
     | 'attack'         // 发起攻击 (用于里芙卡背任务)
     | 'nexus_damage'   // 对水晶造成伤害 (用于芬妮卡背任务)
+    | 'damage_dealt'   // 造成伤害 (用于莲驱臆莲基座累计伤害任务)
     | 'level_up'       // 英雄升级 (用于卜卜卡背任务)
     | 'game_end';      // 对局结束 (用于每日/每周活跃任务)
 
@@ -47,6 +48,13 @@ export interface NexusDamageLogEvent extends BaseLogEvent {
     amount: number;          // 伤害数值
 }
 
+// 派生事件结构：单位/技能造成伤害 (用于臆莲基座累计伤害等任务)
+export interface DamageDealtLogEvent extends BaseLogEvent {
+    type: 'damage_dealt';
+    sourceCardKey: string;   // 造成伤害的来源实体
+    amount: number;          // 总伤害数值 (单次结算)
+}
+
 // 派生事件结构：英雄升级
 export interface LevelUpLogEvent extends BaseLogEvent {
     type: 'level_up';
@@ -64,6 +72,7 @@ export type LogEvent =
     | PlayCardLogEvent
     | AttackLogEvent
     | NexusDamageLogEvent
+    | DamageDealtLogEvent
     | LevelUpLogEvent
     | GameEndLogEvent;
 

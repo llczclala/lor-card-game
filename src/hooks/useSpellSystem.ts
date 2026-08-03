@@ -6,7 +6,8 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor'; // [核心修复] 严格声明这是一个类型导入
 import { executeSpellEffect } from '../logic/spells';
-import { calculateNewMana } from '../utils/gameRules';
+import { CARD_DB } from '../data/cards';
+import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck } from '../utils/gameRules';
 import { StrikeEvents } from '../utils/eventBus'; // [新增] 引入全新的打击信号总线
 import { getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
 import { getPower } from '../logic/keywords'; // [新增] 引入真实攻击力探针
@@ -33,6 +34,86 @@ export const waitForStrikeComplete = (timeoutMs: number = 3000): Promise<void> =
         }, timeoutMs);
     });
 };
+
+/** [2026-07-30 AI抉择] 根据效果定义自动选取合法目标 */
+function findAITargetsForEffect(
+    effectDef: typeof EFFECT_DB[string],
+    owner: 'player' | 'enemy',
+    state: {
+        game: GameState;
+        playerBench: CardData[];
+        enemyBench: CardData[];
+        combatField: any[];
+    }
+): any[] {
+    const targets: any[] = [];
+    if (!effectDef.targetRequirements || effectDef.targetRequirements.length === 0) return targets;
+
+    const isAI = owner === 'enemy';
+    const friendlyBench = isAI ? state.enemyBench : state.playerBench;
+    const hostileBench = isAI ? state.playerBench : state.enemyBench;
+
+    for (const req of effectDef.targetRequirements) {
+        const type = req.type;
+        const filterKey = req.filterKey;
+        const count = req.count || 1;
+        let candidates: CardData[] = [];
+
+        if (type === 'ALLY_CHAMPION' || type === 'ALLY_UNIT') {
+            candidates = [...friendlyBench];
+            state.combatField.forEach(f => {
+                if (f.owner === owner && f.attacker) candidates.push(f.attacker);
+                if (f.blocker) {
+                    const blockerOwner = f.owner === owner ? owner : (owner === 'player' ? 'enemy' : 'player');
+                    // blocker belongs to whoever controls it — check field ownership
+                    // Actually, blocker is assigned to the non-attacker side
+                    if (f.owner !== owner && f.blocker) candidates.push(f.blocker);
+                }
+            });
+            if (filterKey) {
+                candidates = candidates.filter(c => c.key?.toLowerCase().includes(filterKey.toLowerCase()));
+            }
+            if (type === 'ALLY_CHAMPION') {
+                candidates = candidates.filter(c => c.isChampion);
+            }
+        } else if (type === 'ENEMY_UNIT' || type === 'ENEMY_CHAMPION') {
+            candidates = [...hostileBench];
+            state.combatField.forEach(f => {
+                if (f.owner !== owner && f.attacker) candidates.push(f.attacker);
+                if (f.blocker && f.owner === owner) candidates.push(f.blocker);
+            });
+            if (type === 'ENEMY_CHAMPION') {
+                candidates = candidates.filter(c => c.isChampion);
+            }
+        } else if (type === 'ANY_UNIT') {
+            candidates = [...friendlyBench, ...hostileBench];
+            state.combatField.forEach(f => {
+                if (f.attacker && !candidates.some(c => c.id === f.attacker!.id)) candidates.push(f.attacker);
+                if (f.blocker && !candidates.some(c => c.id === f.blocker!.id)) candidates.push(f.blocker);
+            });
+        }
+
+        // 去重 + 取前 count 个
+        const seen = new Set<string>();
+        const picked = candidates.filter(c => {
+            if (seen.has(c.id)) return false;
+            seen.add(c.id);
+            return true;
+        }).slice(0, count).map(c => ({
+            id: c.id,
+            key: c.key,
+            type: c.type,
+            entityType: type,
+        }));
+        targets.push(...picked);
+
+        if (picked.length < count) {
+            console.warn(`[AI抉择] 目标类型 ${type} 仅找到 ${picked.length}/${count} 个合法目标`);
+        }
+    }
+
+    return targets;
+}
 
 export interface UseSpellSystemParams {
     stateRef: MutableRefObject<{
@@ -87,13 +168,139 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         return EFFECT_DB[card.effects[0]];
     };
 
+    // [2026-07-21] 根据 ID 在全场查找单位（备战席/战场/手牌）
+    const findUnitById = (id: string): CardData | null => {
+        const { playerBench, enemyBench, combatField, playerHand, enemyHand } = stateRef.current;
+        let unit: CardData | undefined;
+        unit = playerBench.find(c => c.id === id); if (unit) return unit;
+        unit = enemyBench.find(c => c.id === id); if (unit) return unit;
+        if (combatField) {
+            for (const fight of combatField) {
+                if (fight.attacker?.id === id) return fight.attacker;
+                if (fight.blocker?.id === id) return fight.blocker;
+            }
+        }
+        unit = playerHand?.find(c => c.id === id); if (unit) return unit;
+        unit = enemyHand?.find(c => c.id === id); if (unit) return unit;
+        return null;
+    };
+
+    // [2026-07-21] 判断某个 ID 的单位属于哪一方
+    const getUnitOwner = (id: string): 'player' | 'enemy' => {
+        const { playerBench, enemyBench, combatField } = stateRef.current;
+        if (playerBench.some(c => c.id === id)) return 'player';
+        if (enemyBench.some(c => c.id === id)) return 'enemy';
+        if (combatField) {
+            for (const f of combatField) {
+                if (f.attacker?.id === id) return f.owner;
+                if (f.blocker?.id === id) return f.owner === 'player' ? 'enemy' : 'player';
+            }
+        }
+        return 'player';
+    };
+
+    // [2026-07-21] 卡牌状态快照
+    const captureSnapshot = (card: CardData) => ({
+        power: card.power || 0,
+        health: card.health || 0,
+        maxHealth: card.maxHealth || card.health || 0,
+        damageTaken: card.damageTaken || 0,
+        buffs: card.buffs ? { health: card.buffs.health, power: card.buffs.power } : undefined,
+        roundBuffs: card.roundBuffs ? { health: card.roundBuffs.health, power: card.roundBuffs.power } : undefined,
+    });
+
+    // [2026-07-21] 扫描全场单位 ID（备战席 + 战场）
+    const collectFieldUnitIds = (): string[] => {
+        const { playerBench, enemyBench, combatField } = stateRef.current;
+        const ids: string[] = [];
+        playerBench.forEach(c => { if (c.id) ids.push(c.id); });
+        enemyBench.forEach(c => { if (c.id) ids.push(c.id); });
+        if (combatField) {
+            combatField.forEach((f: any) => {
+                if (f.attacker?.id) ids.push(f.attacker.id);
+                if (f.blocker?.id) ids.push(f.blocker.id);
+            });
+        }
+        return ids;
+    };
+
+    // [2026-07-21] 从快照 Map 计算所有变化 → 生成实体数组
+    const computeChangesFromMap = (
+        map: Map<string, { damageTaken: number; buffsH: number; buffsP: number; roundH: number; roundP: number; keywords: string[] }>
+    ): import('../types').RecordEntity[] => {
+        const entities: import('../types').RecordEntity[] = [];
+        for (const [id, before] of map) {
+            const after = findUnitById(id);
+            if (!after) continue;
+
+            const changes: import('../types').RecordChange[] = [];
+            const dmgDelta = (after.damageTaken || 0) - before.damageTaken;
+            if (dmgDelta > 0) changes.push({ type: 'damage', value: dmgDelta });
+            const healDelta = before.damageTaken - (after.damageTaken || 0);
+            if (healDelta > 0) changes.push({ type: 'heal', value: healDelta });
+
+            const nowH = (after.buffs?.health || 0) + (after.roundBuffs?.health || 0);
+            const befH = before.buffsH + before.roundH;
+            if (nowH - befH > 0) changes.push({ type: 'buff_health', value: nowH - befH });
+
+            const nowP = (after.buffs?.power || 0) + (after.roundBuffs?.power || 0);
+            const befP = before.buffsP + before.roundP;
+            const pwD = nowP - befP;
+            if (pwD > 0) changes.push({ type: 'buff_power', value: pwD });
+            if (pwD < 0) changes.push({ type: 'debuff_power', value: Math.abs(pwD) });
+
+            const newKws = (after.keywords || []).filter(k => !before.keywords.includes(k));
+            for (const kw of newKws) changes.push({ type: 'gain_keyword', keyword: kw });
+
+            if (changes.length > 0) {
+                entities.push({
+                    cardKey: after.key,
+                    owner: getUnitOwner(id),
+                    damageTaken: dmgDelta > 0 ? dmgDelta : undefined,
+                    died: after.isDead || after.animState === 'dying' || getCurrentHP(after) <= 0,
+                    snapshot: captureSnapshot(after),
+                    changes,
+                });
+            }
+        }
+        return entities;
+    };
+
+    // [2026-07-21] 全单位快照类型
+    type UnitSnapshot = { damageTaken: number; buffsH: number; buffsP: number; roundH: number; roundP: number; keywords: string[] };
+
+    // [2026-07-21] 捕获全场单位的快照 Map
+    const snapshotAllFieldUnits = (): Map<string, UnitSnapshot> => {
+        const map = new Map<string, UnitSnapshot>();
+        for (const id of collectFieldUnitIds()) {
+            const u = findUnitById(id);
+            if (u) map.set(id, {
+                damageTaken: u.damageTaken || 0,
+                buffsH: u.buffs?.health || 0, buffsP: u.buffs?.power || 0,
+                roundH: u.roundBuffs?.health || 0, roundP: u.roundBuffs?.power || 0,
+                keywords: [...(u.keywords || [])],
+            });
+        }
+        return map;
+    };
+
     // --- 1. 开始施法 ---
-    const startCasting = (card: CardData) => {
+    // ★ 选择模式基础框架 — 每个选择模式都通过此函数激活 spellSystem 视觉层
+    //    有效果定义的卡：进入目标选择模式（瞄准线/高亮）
+    //    无效果定义的卡（如 select_bench 的单位）：仅激活视觉层（卡牌居中/播报文字/瞄准线）
+    const startCasting = (card: CardData, skipAutoComplete?: boolean) => {
         const effect = getEffectDef(card);
-        if (!effect) return;
+        if (!effect) {
+            // [2026-07-20] 无效果定义的卡（如替换打出的单位）：仍然激活视觉层
+            setCastingCard(card);
+            setCurrentStepIndex(0);
+            setSelectedTargets([]);
+            return;
+        }
 
         // 如果没有目标需求，直接完成 (自动施法)
-        if (effect.targetRequirements.length === 0) {
+        // 但 skipAutoComplete 时跳过，由调用方控制完成时机
+        if (effect.targetRequirements.length === 0 && !skipAutoComplete) {
             onComplete(card, []);
         } else {
             // 进入选择模式
@@ -118,7 +325,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         reqType: TargetType,
         filterKey?: string,
         targetCondition?: string, // [核心新增] 接收目标高级过滤暗号
-        raceFilter?: Race[]       // [新增] 种族过滤器
+        raceFilter?: Race[],       // [新增] 种族过滤器
+        keywordFilter?: string[]   // [2026-07-07] 关键词过滤
     ): boolean => {
         if (card === 'nexus') {
             // [2026-06-27 生机补充] ally_only 时我方水晶可被选，敌方不可
@@ -154,6 +362,15 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         }
 
         // =====================================
+        // [2026-07-07 新增] 关键词过滤器 (Keyword Filter)
+        // =====================================
+        if (keywordFilter && keywordFilter.length > 0) {
+            // 目标必须拥有 keywordFilter 中的至少一个关键词
+            const hasKeyword = keywordFilter.some(kw => card.keywords?.includes(kw));
+            if (!hasKeyword) return false;
+        }
+
+        // =====================================
         // [核心新增] 高级条件拦截器 (Advanced Radar)
         // =====================================
         if (targetCondition) {
@@ -178,7 +395,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         }
 
         switch (reqType) {
-            case 'ALLY_UNIT': return isAlly;
+            case 'ALLY_UNIT': return isAlly && (!filterKey || card.key === filterKey);
             case 'ENEMY_UNIT': return isEnemy;
             case 'ANY_UNIT': return true;
             case 'ANY_TARGET': return true; // 单位也是 Target
@@ -191,6 +408,23 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     // --- 4. 处理点击交互 ---
     // [2026-06-27 暗箱操作] 新增 source 参数区分手牌点击 vs 场上点击
     const handleTargetClick = (target: CardData | 'nexus', owner: 'player' | 'enemy', source?: 'hand' | 'field') => {
+        // [2026-07-09 瓦莱莉] 支持 select_discard 模式（无 castingCard，直接读写 game.spellCasting）
+        // 注：此分支只有 useGameState 层的 useSpellSystem 有 stateRef，UI 层的走 GameSession.handleCardClick
+        if (stateRef) {
+            const sc = stateRef.current.game.spellCasting;
+            if (!castingCard && sc?.step === 'select_discard') {
+                if (source !== 'hand' || target === 'nexus') return;
+                const targetObj = { type: 'ally' as const, id: target.id };
+                const currentIds = sc.targets.map((t: any) => t.id);
+                const newTargets = currentIds.includes(target.id)
+                    ? sc.targets.filter((t: any) => t.id !== target.id)
+                    : [...sc.targets, targetObj];
+                updateSpellCasting({ ...sc, targets: newTargets });
+                eventBus.emit(GameEvents.SFX_SELECT_UNIT);
+                return;
+            }
+        }
+
         if (!castingCard) return;
 
         const effect = getEffectDef(castingCard);
@@ -204,8 +438,14 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         if (requirement.type === 'HAND_CARD' && source !== 'hand') return;
         if (requirement.type !== 'HAND_CARD' && source === 'hand') return;
 
+        // [2026-07-09 修复] 手牌弃牌：不能选正在打出的卡牌自身（按实例 ID 排，同名不同 ID 可以选）
+        if (requirement.type === 'HAND_CARD' && target !== 'nexus' && castingCard && target.id === castingCard.id) {
+            console.log("[HAND_CARD] 不能选择正在施放的卡牌自身作为弃牌目标");
+            return;
+        }
+
         // 验证合法性：将法术配置中的高级暗号和种族过滤器传给雷达
-        if (isValidTarget(target, owner, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter)) {
+        if (isValidTarget(target, owner, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter)) {
             // [新增] 目标合法，成功锁定！播放清脆的确认音
             eventBus.emit(GameEvents.SFX_SELECT_UNIT);
 
@@ -248,25 +488,71 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
 
     const updateSpellCasting = (newState: any) => setGame(prev => ({ ...prev, spellCasting: newState }));
 
+    // =============================================
+    // [2026-07-11 绿灵·艾娃] 光环检测：打出快速法术时触发牌库BUFF
+    // =============================================
+    const checkEvaAura = (card: CardData, owner: 'player' | 'enemy', logPrefix: string) => {
+        if (card.type !== 'spell-fast') return;
+        const benchToCheck = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
+        const aliveFilter = (c: CardData) =>
+            c.key === 'Green_Spirit_Squad_Eva' && !c.isDead &&
+            c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+        const evaCount = benchToCheck.filter(aliveFilter).length;
+        console.log(`[Green_Debug] 🔍 ${logPrefix} 艾娃光环检测: card=${card.name}(${card.cost}费), type=${card.type}, owner=${owner}, evaCount=${evaCount}, benchLen=${benchToCheck.length}`);
+        if (evaCount === 0) return;
+
+        let deckCopy = [...(owner === 'player' ? stateRef.current.playerDeck : stateRef.current.enemyDeck)];
+        let totalBuffed = 0;
+        for (let i = 0; i < evaCount; i++) {
+            const result = buffTopUnitInDeck(deckCopy, 1, 1);
+            if (result.buffed) {
+                deckCopy = result.deck;
+                totalBuffed++;
+                console.log(`[Green_Debug] 🌟 艾娃光环 #${i + 1} 触发！${owner}打出快速法术=${card.name}，牌库顶单位=${result.buffedUnit?.name} 获得+1+1`);
+            }
+        }
+        if (totalBuffed > 0) {
+            if (owner === 'player') {
+                setPlayerDeck(deckCopy);
+                stateRef.current.playerDeck = deckCopy;
+            } else {
+                setEnemyDeckState(deckCopy);
+                stateRef.current.enemyDeck = deckCopy;
+            }
+            setMessage(`艾娃的光环${evaCount > 1 ? '们' : ''}滋养了牌库！`);
+        } else {
+            console.log(`[Green_Debug] 🌟 艾娃光环：${owner}牌库中无单位可BUFF`);
+        }
+    };
+
     const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
+        // [2026-07-20 对局记录修复] 使用 setTimeout 将事件推入宏任务队列，
+        // 确保它在 commitSpell 后续所有的 setGame(cleanSnapshot) 同步状态覆盖完成后再执行
+        setTimeout(() => {
+            eventBus.emit('spell_record', { card, owner, targets });
+        }, 0);
+
         const existingPending = stateRef.current.game.pendingSpell;
         let cleanSnapshot = { ...stateRef.current.game };
         const safePhase = originalPhase || (cleanSnapshot.phase === 'animating' ? 'main' : cleanSnapshot.phase);
 
         if (card.type === 'spell-burst') {
             if (!card.parentCard) {
+                // [2026-07-10 诗人] 凯特琳减费影响实际扣费（双方均适配）
+                const benchForCost = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
+                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana);
                 const { newMana, newSpellMana } = calculateNewMana(
-                    card.cost,
+                    effectiveCost,
                     owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
                     owner === 'player' ? cleanSnapshot.playerSpellMana : cleanSnapshot.enemySpellMana,
                     false
                 );
                 if (owner === 'player') {
-                    cleanSnapshot.playerMana = newMana;
-                    cleanSnapshot.playerSpellMana = newSpellMana;
+                    cleanSnapshot.playerMana = Math.min(cleanSnapshot.playerMaxMana, newMana);
+                    cleanSnapshot.playerSpellMana = Math.min(3, newSpellMana);
                 } else {
-                    cleanSnapshot.enemyMana = newMana;
-                    cleanSnapshot.enemySpellMana = newSpellMana;
+                    cleanSnapshot.enemyMana = Math.min(cleanSnapshot.enemyMaxMana, newMana);
+                    cleanSnapshot.enemySpellMana = Math.min(3, newSpellMana);
                 }
             }
 
@@ -274,30 +560,59 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             setMessage("极速法术准备就绪...");
 
             if (owner === 'enemy') {
+                // [2026-07-07 重构] AI 法术三段式演出: 悬念 → 锁定 → 飞弹
+                // Phase 1: 入堆栈无 targets → 大圆盘出现，无瞄准线（悬念期）
                 setGame(prev => ({
                     ...prev,
-                    activeCard: card,
-                    spellCasting: { cardId: card.id, step: 'select_target', targets: targets || [] }
+                    spellStack: [{ card, owner, targets: [] }, ...prev.spellStack],
+                    phase: 'animating',
+                }));
+                setMessage("敌方正在施法...");
+                await wait(1200);
+
+                // Phase 2: 补充 targets → 瞄准线出现（锁定期）
+                setGame(prev => ({
+                    ...prev,
+                    spellStack: prev.spellStack.map(s =>
+                        s.card.id === card.id ? { ...s, targets } : s
+                    )
+                }));
+                setMessage("敌方法术锁定目标！");
+                await wait(400);
+            } else {
+                await wait(1000);
+
+                const currentActiveCard = stateRef.current.game.activeCard;
+                // [修复] 容错抉择法术：card.parentCard 指向抉择卡，此时 currentActiveCard 可能还是抉择卡的旧 ID
+                const matchesActiveCard = currentActiveCard && (
+                    currentActiveCard.id === card.id ||
+                    currentActiveCard.id === (card as any).parentCard?.id
+                );
+                if (owner === 'player' && !matchesActiveCard) {
+                    console.log("[SpellSystem] 极速法术在 1 秒悬停期内被撤回，执行链已安全熔断！");
+                    return;
+                }
+
+                setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
+            }
+
+            // Phase 3: AI 弹道飞行前清除瞄准线
+            if (owner === 'enemy') {
+                setGame(prev => ({
+                    ...prev,
+                    spellStack: prev.spellStack.map(s => ({ ...s, targets: [] }))
                 }));
             }
 
-            await wait(1000);
-
-            const currentActiveCard = stateRef.current.game.activeCard;
-            if (owner === 'player' && (!currentActiveCard || currentActiveCard.id !== card.id)) {
-                console.log("[SpellSystem] 极速法术在 1 秒悬停期内被撤回，执行链已安全熔断！");
-                return;
-            }
-
-            setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
+            // [2026-07-21 对局记录] 极速法术 — 执行前扫全场快照
+            const burstBeforeMap = snapshotAllFieldUnits();
 
             // [核心升级] 极速法术弹道接入通用管线！
-            // [核心修复] 放宽限制！即使没有具体目标，也必须发出施法指令以触发屏幕中央的法阵特效！
             eventBus.emit(StrikeEvents.COMMAND, {
-                sourceId: card.id, // 用法术卡牌自身的 ID 作为起点
+                sourceId: card.id,
                 spellKey: card.key,
                 bullets: (targets || []).map(t => ({ targetId: t.id, damage: 0, barrierPopped: false })),
-                interval: 0 // 法术默认齐射
+                interval: 0
             });
             await waitForStrikeComplete();
 
@@ -311,29 +626,71 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 playerDeck: stateRef.current.playerDeck, setPlayerDeck, // [核心修复] 喂入我方牌库快照与写权限
                 enemyDeck: stateRef.current.enemyDeck, setEnemyDeck: setEnemyDeckState, // [核心修复] 喂入敌方牌库快照与写权限
                 triggerShake,
-                setMessage
-            });
+                setMessage,
+                // [2026-07-08 修复] 补传 enemyHand，DISCARD 需要它来找到要弃的牌
+                enemyHand: stateRef.current.enemyHand,
+                setEnemyHand,
+            }, card); // [2026-07-28] 传入法术卡牌实例（供 FLYING_SWORD 读取 customProgress 模式）
 
             await wait(50);
             const isQueueProcessed = flushMicroQueue();
             if (isQueueProcessed) await wait(50);
 
-            setGame(prev => ({ ...prev, phase: safePhase, lastActionTimestamp: Date.now() }));
+            // [2026-07-11 绿灵·艾娃] 极速法术触发艾娃光环
+            checkEvaAura(card, owner, '[BURST]');
+
+            // [2026-07-21 对局记录] 极速法术 — 全量对比发射
+            {
+                const burstEntities = computeChangesFromMap(burstBeforeMap);
+                let burstSummary = '';
+                if (card.effects) {
+                    for (const effId of card.effects) {
+                        const effDef = EFFECT_DB[effId];
+                        if (!effDef) continue;
+                        if (effDef.class === 'STRIKE' || effDef.class === 'HEAL') {
+                            if (effDef.record?.summary) {
+                                burstSummary = effDef.record.summary.replace(/\{(\w+)\}/g, (_, k) =>
+                                    String(effDef.params[k as keyof typeof effDef.params] ?? `{${k}}`));
+                            } else if (effDef.class === 'STRIKE' && effDef.params.value) {
+                                burstSummary = `造成 ${effDef.params.value} 点伤害`;
+                            } else if (effDef.class === 'HEAL' && effDef.params.value) {
+                                burstSummary = `恢复 ${effDef.params.value} 点生命`;
+                            }
+                        }
+                    }
+                }
+                if (burstEntities.length > 0 || burstSummary) {
+                    eventBus.emit('spell_effect_record', {
+                        owner, spellCardKey: card.key, summary: burstSummary, entities: burstEntities,
+                    } as any);
+                }
+            }
+
+            setGame(prev => ({
+                ...prev,
+                phase: safePhase,
+                lastActionTimestamp: Date.now(),
+                // [教程方案] AI 极速法术：从堆叠移除已结算的法术
+                spellStack: owner === 'enemy' ? prev.spellStack.filter(s => s.card.id !== card.id) : prev.spellStack,
+            }));
             setMessage("极速法术生效");
         } else {
             if (!card.parentCard) {
+                // [2026-07-15 梵音] 慢速法术也应用减费（觉悟/凯特琳）
+                const benchForCost = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
+                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana);
                 const { newMana, newSpellMana } = calculateNewMana(
-                    card.cost,
+                    effectiveCost,
                     owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
                     owner === 'player' ? cleanSnapshot.playerSpellMana : cleanSnapshot.enemySpellMana,
                     false
                 );
                 if (owner === 'player') {
-                    cleanSnapshot.playerMana = newMana;
-                    cleanSnapshot.playerSpellMana = newSpellMana;
+                    cleanSnapshot.playerMana = Math.min(cleanSnapshot.playerMaxMana, newMana);
+                    cleanSnapshot.playerSpellMana = Math.min(3, newSpellMana);
                 } else {
-                    cleanSnapshot.enemyMana = newMana;
-                    cleanSnapshot.enemySpellMana = newSpellMana;
+                    cleanSnapshot.enemyMana = Math.min(cleanSnapshot.enemyMaxMana, newMana);
+                    cleanSnapshot.enemySpellMana = Math.min(3, newSpellMana);
                 }
             }
 
@@ -350,21 +707,67 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 });
                 setMessage("请确认是否打出该法术");
             } else {
+                // [2026-07-07 重构] AI 非极速法术悬念期: 大圆盘 → 瞄准线 → 交响应
+                // Phase 1: 入堆栈无 targets → 大圆盘出现，悬念（animating 防 AI 计时器捣乱）
                 setGame({
                     ...cleanSnapshot,
-                    spellStack: [stackItem, ...cleanSnapshot.spellStack],
+                    activeCard: null,
+                    spellCasting: null,
+                    spellStack: [{ card, owner, targets: [] }, ...cleanSnapshot.spellStack],
+                    phase: 'animating',
+                });
+                setMessage("敌方正在施法...");
+                await wait(1200);
+
+                // Phase 2: 补充 targets → 瞄准线出现 → 交给玩家响应
+                setGame(prev => ({
+                    ...prev,
                     turnOwner: 'player',
                     consecutivePasses: 0,
                     lastActionTimestamp: Date.now(),
-                    phase: safePhase
-                });
+                    phase: safePhase,
+                    spellStack: prev.spellStack.map(s =>
+                        s.card.id === card.id ? { ...s, targets } : s
+                    )
+                }));
                 setMessage("敌方打出法术，请响应");
             }
         }
     };
 
+    // ★ 选择模式接入点 ⑩ — 每个 select_* step 在取消时需处理退卡退费
+    //    已实现: select_bench
+    //    未来: select_enemy_bench | select_enemy_hand
     const cancelChoice = () => {
+        // [2026-08-02 莉莉子] 同步清理施法视觉状态（castingCard / 目标选择 / 连线渲染）
+        // 防止取消抉择后残留施法层，导致界面看起来"取消不掉"
+        cancelCasting();
+        const sc = stateRef.current.game.spellCasting;
         const currentActive = stateRef.current.game.activeCard;
+
+        // [2026-07-20 替换打出] 取消替换：退回手牌 + 退还法力
+        if (sc?.step === 'select_bench' && currentActive) {
+            const cost = currentActive.cost || 0;
+            setPlayerHand(prev => [...prev, currentActive]);
+            setGame(prev => {
+                let newMana = prev.playerMana + cost;
+                let newSpellMana = prev.playerSpellMana;
+                if (newMana > prev.playerMaxMana) {
+                    newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
+                    newMana = prev.playerMaxMana;
+                }
+                return {
+                    ...prev,
+                    activeCard: null,
+                    spellCasting: null,
+                    playerMana: newMana,
+                    playerSpellMana: newSpellMana,
+                };
+            });
+            setMessage("已取消替换");
+            return;
+        }
+
         if (currentActive) {
             const cardToReturn = currentActive.parentCard || currentActive;
             setPlayerHand(prev => [...prev, cardToReturn]);
@@ -380,6 +783,19 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         const transformed = createFullCard(chosenCardKey);
         transformed.parentCard = originalCard;
 
+        // [2026-07-30 飞剑减费] 抉择确认时应用飞剑折扣（朔望之期 + 剑痕时空）
+        const SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
+        if (SWORD_DISCOUNT_KEYS.includes(chosenCardKey)) {
+            const choiceOwner = game.turnOwner === 'enemy' ? 'enemy' : 'player';
+            const gameState = stateRef.current.game;
+            const fsTotal = choiceOwner === 'player'
+                ? (gameState.playerFlyingSwordsTotal || 0)
+                : (gameState.enemyFlyingSwordsTotal || 0);
+            if (fsTotal > 0) {
+                transformed.cost = Math.max(0, (transformed.cost || 0) - fsTotal);
+            }
+        }
+
         // [新增] 触发天启者技能语音
         const heroKey = originalCard.associatedChampionKey;
         if (heroKey) {
@@ -390,18 +806,18 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             });
         }
 
-        const { newMana, newSpellMana } = calculateNewMana(transformed.cost, game.playerMana, game.playerSpellMana, false);
-        setGame(prev => ({ ...prev, playerMana: newMana, playerSpellMana: newSpellMana }));
-
-        setGame(prev => ({
-            ...prev,
-            spellCasting: null,
-            pendingSpell: null,
-            activeCard: transformed,
-            phase: 'animating'
-        }));
-
-        await wait(800);
+        const choiceOwner = game.turnOwner === 'enemy' ? 'enemy' : 'player';
+        const { newMana, newSpellMana } = calculateNewMana(
+            transformed.cost,
+            choiceOwner === 'player' ? game.playerMana : game.enemyMana,
+            choiceOwner === 'player' ? game.playerSpellMana : game.enemySpellMana,
+            false
+        );
+        if (choiceOwner === 'player') {
+            setGame(prev => ({ ...prev, playerMana: Math.min(prev.playerMaxMana, newMana), playerSpellMana: Math.min(3, newSpellMana) }));
+        } else {
+            setGame(prev => ({ ...prev, enemyMana: Math.min(prev.enemyMaxMana, newMana), enemySpellMana: Math.min(3, newSpellMana) }));
+        }
 
         const effectId = transformed.effects && transformed.effects.length > 0 ? transformed.effects[0] : null;
         const effectDef = effectId ? EFFECT_DB[effectId] : null;
@@ -414,25 +830,42 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
               )
             : needsTargets;
 
+        // [修复] 将 activeCard 更新为选中的技能卡，确保后续流程使用正确的卡牌效果
         if (finalNeedsTargets) {
-            const reqType = effectDef.targetRequirements[0].type;
-            let step: 'select_ally' | 'select_enemy' | 'select_any' = 'select_any';
-            if (reqType.includes('ALLY')) step = 'select_ally';
-            else if (reqType.includes('ENEMY')) step = 'select_enemy';
-
-            setGame(prev => ({
-                ...prev,
-                phase: originalPhase === 'animating' ? 'main' : originalPhase,
-                spellCasting: {
-                    cardId: transformed.id,
-                    step: step,
-                    targets: [],
-                    allyId: undefined
+            // [2026-07-30 AI抉择] 敌方抉择法术需选目标时，AI自动选目标入栈
+            if (choiceOwner === 'enemy') {
+                const autoTargets = findAITargetsForEffect(effectDef!, choiceOwner, stateRef.current);
+                if (autoTargets.length > 0) {
+                    setGame(prev => ({ ...prev, activeCard: transformed }));
+                    commitSpell(transformed, 'enemy', autoTargets, originalPhase);
+                } else {
+                    console.warn(`[AI抉择] 找不到 ${transformed.name} 的合法目标，取消施法`);
+                    // 直接清理状态，不调用 cancelChoice（后者会错误地归还手牌到玩家侧）
+                    setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
                 }
-            }));
-            setMessage(`请选择 ${transformed.name} 的施放目标`);
+            } else {
+                const reqType = effectDef!.targetRequirements[0].type;
+                let step: 'select_ally' | 'select_enemy' | 'select_any' = 'select_any';
+                if (reqType.includes('ALLY')) step = 'select_ally';
+                else if (reqType.includes('ENEMY')) step = 'select_enemy';
+
+                setGame(prev => ({
+                    ...prev,
+                    activeCard: transformed,  // [修复] 替换 activeCard 为技能卡（含 effects）
+                    phase: originalPhase === 'animating' ? 'main' : originalPhase,
+                    spellCasting: {
+                        cardId: transformed.id,
+                        step: step,
+                        targets: [],
+                        allyId: undefined
+                    }
+                }));
+                setMessage(`请选择 ${transformed.name} 的施放目标`);
+            }
         } else {
-            commitSpell(transformed, 'player', [], originalPhase);
+            // [修复] 先更新 activeCard 再 commit，防止 commitSpell 中 ID 检查失败
+            setGame(prev => ({ ...prev, activeCard: transformed }));
+            commitSpell(transformed, choiceOwner, [], originalPhase);
         }
     };
 
@@ -462,21 +895,56 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     };
 
     const confirmPendingSpell = () => {
+        const isBlockDeclare = stateRef.current.game.phase === 'block_declare';
         setGame(prev => {
             if (!prev.pendingSpell) return prev;
             return {
                 ...prev,
                 spellStack: [prev.pendingSpell, ...prev.spellStack],
                 pendingSpell: null,
-                turnOwner: 'enemy',
+                // [修复] block_declare 阶段确认法术不转优先权，让玩家继续部署格挡
+                turnOwner: isBlockDeclare ? prev.turnOwner : 'enemy',
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now()
             };
         });
-        setMessage("法术入栈，等待对方响应");
+        setMessage(isBlockDeclare ? "法术入栈，继续部署防线" : "法术入栈，等待对方响应");
     };
 
+    // ★ 选择模式接入点 ⑪ — 每个 select_* step 的取消按钮路由到对应的退卡退费逻辑
+    //    已实现: select_bench → cancelChoice | select_discard → 退费退卡
+    //    未来: select_enemy_bench → cancelChoice | select_enemy_hand → cancelChoice
     const cancelPendingSpell = () => {
+        // [2026-07-09 瓦莱莉] 取消弃牌选择：退回瓦莱莉并归还法力
+        const sc = stateRef.current.game.spellCasting;
+
+        // [2026-07-20 替换打出] 取消替换：同样退回卡牌并归还法力
+        if (sc?.step === 'select_bench') {
+            cancelChoice();
+            return;
+        }
+
+        if (sc?.step === 'select_discard') {
+            const activeCard = stateRef.current.game.activeCard;
+            if (activeCard) {
+                setPlayerHand(prev => [...prev, activeCard]);
+                const costToRefund = activeCard.cost;
+                setGame(prev => {
+                    let newMana = prev.playerMana + costToRefund;
+                    let newSpellMana = prev.playerSpellMana;
+                    if (newMana > prev.playerMaxMana) {
+                        newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
+                        newMana = prev.playerMaxMana;
+                    }
+                    return { ...prev, playerMana: newMana, playerSpellMana: newSpellMana, activeCard: null, spellCasting: null };
+                });
+            } else {
+                setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
+            }
+            setMessage("已取消");
+            return;
+        }
+
         const pending = stateRef.current.game.pendingSpell;
         if (!pending || pending.owner !== 'player') return;
 
@@ -552,6 +1020,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 continue; // 跳过常规 executeSpellEffect
             }
 
+            // [2026-07-21 对局记录] 执行前 — 扫全场快照
+            const beforeSnapshotMap = snapshotAllFieldUnits();
+
             // [核心升级] 栈内法术弹道接入通用管线！
             // [核心修复] 放宽限制！即使没有具体目标，也必须发出施法指令以触发屏幕中央的法阵特效！
             eventBus.emit(StrikeEvents.COMMAND, {
@@ -570,13 +1041,19 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 playerHand: stateRef.current.playerHand, setPlayerHand,
                 playerDeck: stateRef.current.playerDeck, setPlayerDeck, // [核心修复] 同步传给堆栈法术系统
                 enemyDeck: stateRef.current.enemyDeck, setEnemyDeck: setEnemyDeckState, // [核心修复] 同步传给堆栈法术系统
-                triggerShake, setMessage
-            });
+                triggerShake, setMessage,
+                // [2026-07-08 修复] 补传 enemyHand，DISCARD 需要它来找到要弃的牌
+                enemyHand: stateRef.current.enemyHand,
+                setEnemyHand,
+            }, spell.card); // [2026-07-28] 传入法术卡牌实例（供 FLYING_SWORD 读取 customProgress 模式）
             setGame(prev => ({ ...prev, spellStack: prev.spellStack.filter(s => s.card.id !== spell.card.id) }));
 
             await wait(50);
             const isQueueProcessed = flushMicroQueue();
             if (isQueueProcessed) await wait(50);
+
+            // [2026-07-11 绿灵·艾娃] 栈内法术触发艾娃光环
+            checkEvaAura(spell.card, spell.owner, '[STACK]');
 
             while (
                 stateRef.current.game.levelUpCard !== null ||
@@ -584,10 +1061,53 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             ) {
                 await wait(200);
             }
+
+            // [2026-07-21 对局记录] 全量对比发射
+            {
+                const effectEntities = computeChangesFromMap(beforeSnapshotMap);
+                let effectSummary = '';
+                const cardDef = CARD_DB[spell.card.key];
+                if (cardDef?.effects) {
+                    for (const effId of cardDef.effects) {
+                        const effDef = EFFECT_DB[effId];
+                        if (!effDef) continue;
+                        if (effDef.class === 'STRIKE' || effDef.class === 'HEAL') {
+                            if (effDef.record?.summary) {
+                                effectSummary = effDef.record.summary.replace(/\{(\w+)\}/g, (_, k) =>
+                                    String(effDef.params[k as keyof typeof effDef.params] ?? `{${k}}`));
+                            } else if (effDef.class === 'STRIKE' && effDef.params.value) {
+                                effectSummary = `造成 ${effDef.params.value} 点伤害`;
+                            } else if (effDef.class === 'HEAL' && effDef.params.value) {
+                                effectSummary = `恢复 ${effDef.params.value} 点生命`;
+                            }
+                        }
+                    }
+                }
+                if (effectEntities.length > 0 || effectSummary) {
+                    eventBus.emit('spell_effect_record', {
+                        owner: spell.owner,
+                        spellCardKey: spell.card.key,
+                        summary: effectSummary,
+                        entities: effectEntities,
+                    } as any);
+                }
+            }
         }
         // [SBA] 法术结算后同步清尸
         judgeLifeAndDeath();
-        setGame(prev => ({ ...prev, phase: originalPhase === 'react_to_block' ? 'react_to_block' : 'main', spellStack: [], consecutivePasses: 0 }));
+        const nextPhase = originalPhase === 'react_to_block' ? 'react_to_block' : 'main';
+        setGame(prev => ({
+            ...prev,
+            phase: nextPhase,
+            spellStack: [],
+            // 【机制修复】如果是从防守响应阶段结算的法术，将让过次数设为 1
+            // 这样接力调用的 passTurn 看到 >=1 就会立刻无缝触发 resolveCombatAnimation()！
+            consecutivePasses: nextPhase === 'react_to_block' ? 1 : 0
+        }));
+
+        // 【致命核心修复】强制让出主线程 50ms，确保上述的 setGame 被 React 批处理刷入 stateRef！
+        // 防止外层的 .then(() => passTurn()) 同步执行时，读到滞后的 'animating' 阶段而导致回合被错误跳过
+        await wait(50);
         setMessage("法术结算完毕");
     };
 
@@ -607,7 +1127,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [2026-06-27 HAND_CARD] 手牌选择不高亮场上目标
             if (currentRequirement.type === 'HAND_CARD') return false;
             const effect = getEffectDef(castingCard);
-            return isValidTarget(card, owner, currentRequirement.type, currentRequirement.filterKey, effect?.params?.targetCondition, currentRequirement.raceFilter);
+            return isValidTarget(card, owner, currentRequirement.type, currentRequirement.filterKey, effect?.params?.targetCondition, currentRequirement.raceFilter, currentRequirement.keywordFilter);
         },
         startCasting,
         cancelCasting,

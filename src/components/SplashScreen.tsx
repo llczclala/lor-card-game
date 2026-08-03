@@ -254,7 +254,7 @@ const DisclaimerScreen: React.FC<{
 
             {/* 底部版本 */}
             <div className="absolute bottom-6 text-[10px] text-slate-800 tracking-wider font-mono">
-                v1.0.3 · FAN-MADE · FREE
+                v1.0.7 · FAN-MADE · FREE
             </div>
         </motion.div>
     );

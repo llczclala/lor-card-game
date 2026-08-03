@@ -33,6 +33,15 @@ import pupuSkillUpSound from '../music/music/卜卜 灵鉴/卜卜小技能强化
 import mauxirSummonSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_summon.mp3';
 import mauxirRushAttackSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_attack.mp3';
 import mauxirRushHitSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_be_attack.mp3';
+
+// ================= [2026-07-31 安卡希雅·时之重奏] 专属音效 =================
+import acaciaRushFocusSound from '../music/music/安卡希雅时之重奏/圆缺有律_切换到集束模型.mp3';
+import acaciaRushSpreadSound from '../music/music/安卡希雅时之重奏/圆缺有律_切换到扩散模型.mp3';
+import acaciaSwordSound from '../music/music/安卡希雅时之重奏/飞剑.mp3';
+import acaciaUltimateSound from '../music/music/安卡希雅时之重奏/朔望之期.mp3';
+import acaciaGreatSwordSound from '../music/music/安卡希雅时之重奏/大飞剑.mp3';
+import acaciaCrossTemporalSound from '../music/music/安卡希雅时之重奏/越时斩.mp3';
+import acaciaSwordTimelineSound from '../music/music/安卡希雅时之重奏/剑痕时空.mp3';
 // ==========================================================
 export const useSfx = () => {
     // [新增] 全局音效音量 Ref (默认 0.6)
@@ -105,6 +114,14 @@ export const useSfx = () => {
         const playMauxirSummon = () => playSound(mauxirSummonSound, 0.8);
         const playMauxirRushAttack = () => playSound(mauxirRushAttackSound, 0.8);
         const playMauxirRushHit = () => playSound(mauxirRushHitSound, 0.8);
+        // ================= [2026-07-31 安卡希雅·时之重奏] 专属音效触发器 =================
+        const playAcaciaRushFocus = () => playSound(acaciaRushFocusSound, 0.8);      // 圆缺有律 → 集束
+        const playAcaciaRushSpread = () => playSound(acaciaRushSpreadSound, 0.8);    // 圆缺有律 → 扩散
+        const playAcaciaUltimate = () => playSound(acaciaUltimateSound, 0.8);        // 朔望之期
+        const playAcaciaCrossTemporal = () => playSound(acaciaCrossTemporalSound, 0.8); // 越时斩
+        const playAcaciaTimeline = () => playSound(acaciaSwordTimelineSound, 0.8);   // 剑痕时空
+        const playAcaciaSword = () => playSound(acaciaSwordSound, 0.8);              // 飞剑
+        const playAcaciaGreatSword = () => playSound(acaciaGreatSwordSound, 0.8);    // 大飞剑
         // ==============================================================
 
         // --- 注册事件监听 ---
@@ -146,6 +163,13 @@ export const useSfx = () => {
         eventBus.on(GameEvents.SFX_MAUXIR_SUMMON, playMauxirSummon);
         eventBus.on(GameEvents.SFX_MAUXIR_RUSH_ATTACK, playMauxirRushAttack);
         eventBus.on(GameEvents.SFX_MAUXIR_RUSH_HIT, playMauxirRushHit);
+        eventBus.on(GameEvents.SFX_ACACIA_RUSH_FOCUS, playAcaciaRushFocus);
+        eventBus.on(GameEvents.SFX_ACACIA_RUSH_SPREAD, playAcaciaRushSpread);
+        eventBus.on(GameEvents.SFX_ACACIA_ULTIMATE, playAcaciaUltimate);
+        eventBus.on(GameEvents.SFX_ACACIA_CROSS_TEMPORAL, playAcaciaCrossTemporal);
+        eventBus.on(GameEvents.SFX_ACACIA_TIMELINE, playAcaciaTimeline);
+        eventBus.on(GameEvents.SFX_ACACIA_SWORD, playAcaciaSword);
+        eventBus.on(GameEvents.SFX_ACACIA_GREAT_SWORD, playAcaciaGreatSword);
         eventBus.on(GameEvents.SFX_SELECT_UNIT, playSelectUnit);
         eventBus.on(GameEvents.SFX_SUMMON, playSummon);
         eventBus.on(GameEvents.UNIT_DIE, playDefeat);
@@ -180,6 +204,13 @@ export const useSfx = () => {
             eventBus.off(GameEvents.SFX_MAUXIR_SUMMON, playMauxirSummon);
             eventBus.off(GameEvents.SFX_MAUXIR_RUSH_ATTACK, playMauxirRushAttack);
             eventBus.off(GameEvents.SFX_MAUXIR_RUSH_HIT, playMauxirRushHit);
+            eventBus.off(GameEvents.SFX_ACACIA_RUSH_FOCUS, playAcaciaRushFocus);
+            eventBus.off(GameEvents.SFX_ACACIA_RUSH_SPREAD, playAcaciaRushSpread);
+            eventBus.off(GameEvents.SFX_ACACIA_ULTIMATE, playAcaciaUltimate);
+            eventBus.off(GameEvents.SFX_ACACIA_CROSS_TEMPORAL, playAcaciaCrossTemporal);
+            eventBus.off(GameEvents.SFX_ACACIA_TIMELINE, playAcaciaTimeline);
+            eventBus.off(GameEvents.SFX_ACACIA_SWORD, playAcaciaSword);
+            eventBus.off(GameEvents.SFX_ACACIA_GREAT_SWORD, playAcaciaGreatSword);
             eventBus.off(GameEvents.SFX_BLOCK, playBlock);
             eventBus.off(GameEvents.SFX_CARD_HOVER, playCardHover);
             eventBus.off(GameEvents.SFX_SHUFFLE, playShuffle);

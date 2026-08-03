@@ -32,6 +32,20 @@ interface RewardPopupData {
 }
 
 // ============================================================================
+// 工具函数：获取卡牌奖励的图片地址（英雄立绘 / 皮肤 / 单位图）
+// ============================================================================
+function getCardRewardImage(cardKey: string): string {
+    // 1. 先试皮肤系统（单位/法术）
+    const skin = getSkinImage(cardKey);
+    if (skin) return skin;
+    // 2. 再试英雄立绘
+    const hero = HERO_IMAGES[cardKey];
+    if (hero?.base) return hero.base;
+    // 3. 都没有 → 空
+    return '';
+}
+
+// ============================================================================
 // 子组件 1：大厅军需面板 (MissionPanel)
 // ============================================================================
 
@@ -48,15 +62,31 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
     const [rewardPopup, setRewardPopup] = useState<RewardPopupData | null>(null);
     // [悬停预览] 鼠标悬停缩略图时放大
     const [hoverPreview, setHoverPreview] = useState<{ src: string; x: number; y: number } | null>(null);
+    // portal 到 body 的预览需要跟随游戏缩放
+    const [gameScale, setGameScale] = useState(1);
+    useEffect(() => {
+        const handleResize = () => {
+            setGameScale(Math.min(window.innerWidth / 1680, window.innerHeight / 1050));
+        };
+        handleResize();
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     if (!isOpen) return null;
 
-    // 筛选当前标签页的任务
+    // 筛选当前标签页的任务，按 sort 排序
     // [fix] 由 missionSystem 决定哪些任务存在（showCondition 已在初始化时处理）
-    const displayMissions = MISSIONS.filter(m => {
-        if (m.category !== activeTab) return false;
-        return !!missionSystem.progress[m.id]; // 不在 progress 中的任务不显示
-    });
+    const displayMissions = MISSIONS
+        .filter(m => {
+            if (m.category !== activeTab) return false;
+            return !!missionSystem.progress[m.id]; // 不在 progress 中的任务不显示
+        })
+        .sort((a, b) => {
+            const sortA = missionSystem.progress[a.id]?.sort ?? 101;
+            const sortB = missionSystem.progress[b.id]?.sort ?? 101;
+            return sortA - sortB; // 升序：0(待领取) → 1~100(进行中) → 101(已领取)
+        });
 
     // 领取奖励的业务封装
     const handleClaim = (mission: typeof MISSIONS[0]) => {
@@ -77,12 +107,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                 popup.amount = reward.amount;
             } else if (reward.type === 'card' && reward.cardKeys) {
                 popup.cards = reward.cardKeys.map(cardKey => {
-                    let imageSrc = '';
-                    if (cardKey === 'mauxir_lotus_drive') {
-                        imageSrc = HERO_IMAGES.mauxir_lotus_drive?.base || '';
-                    } else {
-                        imageSrc = getSkinImage(cardKey) || '';
-                    }
+                    const imageSrc = getCardRewardImage(cardKey);
                     const cardDef = CARD_DB[cardKey];
                     return { imageSrc, name: cardDef?.name || cardKey, count: 1 };
                 });
@@ -198,9 +223,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                 if (mission.reward.type === 'card') {
                                                     const cardKeys = mission.reward.cardKeys || [];
                                                     const firstKey = cardKeys[0];
-                                                    const previewSrc = firstKey === 'mauxir_lotus_drive'
-                                                        ? HERO_IMAGES.mauxir_lotus_drive?.base || ''
-                                                        : getSkinImage(firstKey);
+                                                    const previewSrc = getCardRewardImage(firstKey);
                                                     return (
                                                         <div
                                                             className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-green-500/30 min-w-[120px] cursor-pointer"
@@ -417,12 +440,14 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
             <motion.div
                 className="fixed pointer-events-none z-[800]"
                 style={{ left: hoverPreview.x, top: hoverPreview.y }}
-                initial={{ opacity: 0, scale: 0.85 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.85 }}
+                // follow 模式 portal 出去后需要跟随游戏缩放，inner div 负责缩放内容
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
                 transition={{ type: "spring", stiffness: 300, damping: 20 }}
             >
-                <div className="w-80 h-[420px] rounded-xl overflow-hidden border-2 border-yellow-500/50 shadow-[0_0_30px_rgba(0,0,0,0.9)] bg-slate-900">
+                <div className="w-80 h-[420px] rounded-xl overflow-hidden border-2 border-yellow-500/50 shadow-[0_0_30px_rgba(0,0,0,0.9)] bg-slate-900"
+                     style={{ transform: `scale(${gameScale})`, transformOrigin: 'top left' }}>
                     <img src={hoverPreview.src} className="w-full h-full object-cover" />
                 </div>
             </motion.div>,

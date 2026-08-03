@@ -1,10 +1,12 @@
-import React, { useState, useMemo,useEffect} from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ShoppingCart, Eraser, AlertTriangle, Filter, X, User, LayoutGrid, GalleryHorizontalEnd } from 'lucide-react';
+import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ShoppingCart, Eraser, AlertTriangle, Filter, X, User, Palette, Shuffle, LayoutGrid, GalleryHorizontalEnd, BarChart3, Clock } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
-import { HERO_IMAGES, PERSONALIZATION_ASSETS, getSkinImage } from '../data/imageData'; // [修改] 补充引入 getSkinImage
+import { KEYWORD_DB } from '../data/keywords';
+import { HERO_IMAGES, PERSONALIZATION_ASSETS, SKIN_IMAGES, getSkinImage } from '../data/imageData'; // [皮肤检视] 引入 SKIN_IMAGES
 import { Card } from './Card';
 import type { CardData, SavedDeck } from '../types';
+import type { PoolId } from '../logic/gachaLogic'; // [2026-08-02] 卡池跳转
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { FullArtOverlay } from './Overlays';
 // [移除] 彻底废弃 PersonalizationDrawer 的引入
@@ -23,11 +25,11 @@ interface DeckBuilderProps {
     onBack?: () => void;
     // [新增] 接收来源属性
     fromSource: 'lobby' | 'mode_select';
+    // [2026-08-02] 卡牌详情页"前往卡池"回调
+    onGachaNav?: (poolId: PoolId) => void;
 }
 
-// [修改] 废弃旧的 FilterRegion，引入现代复合类型
-type CategoryFilter = 'ALL' | 'HERO' | 'SPELL' | 'UNIT';
-
+// 转全量卡牌数据
 const toFullCardData = (staticData: any): CardData => ({
     ...staticData,
     id: 'preview_id', // 虚拟 ID
@@ -196,7 +198,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     onStartGame,
     userSystem,
     onBack,
-    fromSource // [新增] 解构
+    fromSource, // [新增] 解构
+    onGachaNav // [2026-08-02] 解构
 }) => {
 
     const [localDeck, setLocalDeck] = useState<Record<string, number>>({});
@@ -204,21 +207,38 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const [isDirty, setIsDirty] = useState(false); // 标记是否有未保存的修改
 
     const [viewCard, setViewCard] = useState<CardData | null>(null);
-    // [修改] 引入现代复合状态集
+    // [卡牌导航] 标记当前查看的卡牌来自左侧牌库还是右侧牌组列表
+    const [viewCardContext, setViewCardContext] = useState<'grid' | 'list' | null>(null);
+    const [viewCardIndex, setViewCardIndex] = useState(0);
+    // [升级] 多选筛选状态集
     const [searchTerm, setSearchTerm] = useState('');
-    const [category, setCategory] = useState<CategoryFilter>('ALL');
-    const [costFilter, setCostFilter] = useState<string>('ALL');
-    const [regionFilter, setRegionFilter] = useState<string>('ALL');
+    const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+    const [selectedCosts, setSelectedCosts] = useState<number[]>([]);
+    const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+    const [selectedSpellSpeeds, setSelectedSpellSpeeds] = useState<string[]>([]);
+    const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
 
+    // [新增] 右侧列表排序模式
+    type SortMode = 'default' | 'rarity' | 'cost';
+    const [sortMode, setSortMode] = useState<SortMode>('default');
+
+    // [新增] 费用分布图悬停状态
+    const [isCostChartHovered, setIsCostChartHovered] = useState(false);
+
+    // [皮肤检视] 皮肤查看模式开关
+    const [showSkinView, setShowSkinView] = useState(false);
+    // [皮肤检视] 皮肤悬停预览状态 — cardKey → 临时预览的 skinId
+    const [hoveredSkins, setHoveredSkins] = useState<Record<string, number>>({});
 
     // [新增] 统一悬停预览
     const { gazeTarget, bindGazeEvents, keepAlive, scheduleDismiss } = useCardGaze({ delay: 300 });
 
-    // [新增] 一键重置逻辑
-    const isFilterActive = category !== 'ALL' || costFilter !== 'ALL' || regionFilter !== 'ALL' || searchTerm !== '';
+    // [升级] 一键重置逻辑
+    const isFilterActive = selectedTypes.length > 0 || selectedCosts.length > 0 || selectedRegions.length > 0 || selectedSpellSpeeds.length > 0 || selectedKeywords.length > 0 || searchTerm !== '';
     const resetFilters = () => {
-        setSearchTerm(''); setCategory('ALL'); setCostFilter('ALL'); setRegionFilter('ALL');
+        setSearchTerm(''); setSelectedTypes([]); setSelectedCosts([]); setSelectedRegions([]);
+        setSelectedSpellSpeeds([]); setSelectedKeywords([]);
     };
     const [viewMode, setViewMode] = useState<'SELECTION' | 'EDITOR'>('SELECTION');
 
@@ -347,6 +367,41 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         return userSystem.collection.ownedCards[key] || 0;
     };
 
+    // [新增] 右侧列表排序逻辑
+    const sortedDeckEntries = useMemo(() => {
+        const entries = Object.entries(localDeck);
+        switch (sortMode) {
+            case 'default':
+                return entries; // 默认按插入顺序
+            case 'rarity':
+                return [...entries].sort(([keyA], [keyB]) => {
+                    const cardA = CARD_DB[keyA];
+                    const cardB = CARD_DB[keyB];
+                    const rankA = !cardA ? 99 : cardA.isChampion ? 0 : cardA.type.includes('spell') ? 2 : 1;
+                    const rankB = !cardB ? 99 : cardB.isChampion ? 0 : cardB.type.includes('spell') ? 2 : 1;
+                    return rankA - rankB;
+                });
+            case 'cost':
+                return [...entries].sort(([keyA], [keyB]) => {
+                    const cardA = CARD_DB[keyA];
+                    const cardB = CARD_DB[keyB];
+                    return (cardA?.cost ?? 0) - (cardB?.cost ?? 0);
+                });
+        }
+    }, [localDeck, sortMode]);
+
+    // [新增] 费用分布统计（用于柱状图）
+    const costDistribution = useMemo(() => {
+        const dist: Record<string, number> = {};
+        Object.entries(localDeck).forEach(([key, count]) => {
+            const card = CARD_DB[key];
+            if (!card) return;
+            const bucket = card.cost >= 10 ? '10+' : String(card.cost);
+            dist[bucket] = (dist[bucket] || 0) + count;
+        });
+        return dist;
+    }, [localDeck]);
+
 
     // --- 操作逻辑 ---
 
@@ -425,7 +480,6 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         setIsDirty(true);
     };
 
-
     const handleSaveDeck = () => {
         eventBus.emit(GameEvents.UI_CLICK);
         if (!userSystem.activeDeckId) {
@@ -486,13 +540,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
             // [修改] 让自动填充也遵循玩家当前的高级筛选！
             if (searchTerm && !card.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-            if (category === 'SPELL' && !card.type.includes('spell')) return false;
-            if (category === 'UNIT' && card.type.includes('spell')) return false;
-
-            if (regionFilter !== 'ALL' && card.region !== regionFilter) return false;
-            if (costFilter !== 'ALL') {
-                if (costFilter === '10+' && card.cost < 10) return false;
-                if (costFilter !== '10+' && card.cost.toString() !== costFilter) return false;
+            if (selectedTypes.length > 0) {
+                const isHero = card.isChampion === true;
+                const isSpell = card.type?.toLowerCase().includes('spell');
+                const isUnit = !isHero && !isSpell;
+                if (!((selectedTypes.includes('HERO') && isHero) || (selectedTypes.includes('SPELL') && isSpell) || (selectedTypes.includes('UNIT') && isUnit))) return false;
+            }
+            if (selectedRegions.length > 0 && !selectedRegions.includes(card.region)) return false;
+            if (selectedCosts.length > 0) {
+                const matchesCost = selectedCosts.some(c => c === 9 ? card.cost >= 9 : card.cost === c);
+                if (!matchesCost) return false;
             }
             return true;
         });
@@ -530,33 +587,150 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     };
 
 
+    // 多选 toggle 辅助
+    const toggleFilter = (setter: React.Dispatch<React.SetStateAction<any[]>>, val: any) => {
+        setter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
+    };
+
     const visibleCards = useMemo(() => {
-        const isAdmin = userSystem.userId === 'dev_full_admin'; // [新增] 识别开发者权限
+        const isAdmin = userSystem.userId === 'dev_full_admin';
 
         return Object.values(CARD_DB).filter(c => {
-            // [核心新增] 构筑白名单拦截：如果不是开发者，且该卡被标记为不可收集，则直接隐藏！
+            // 不可收集的隐藏
             if (!isAdmin && c.isCollectible === false) return false;
 
-            // 1. 基础搜索
+            // 1. 搜索
             if (searchTerm && !c.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
 
-            // 2. 类型过滤
-            if (category === 'HERO' && !c.isChampion) return false;
-            if (category === 'SPELL' && !c.type.includes('spell')) return false;
-            if (category === 'UNIT' && (c.isChampion || c.type.includes('spell'))) return false;
+            // 2. 类型多选
+            if (selectedTypes.length > 0) {
+                const isHero = c.isChampion === true;
+                const isSpell = c.type?.toLowerCase().includes('spell');
+                const isUnit = !isHero && !isSpell;
+                const matchType = (selectedTypes.includes('HERO') && isHero) ||
+                                  (selectedTypes.includes('SPELL') && isSpell) ||
+                                  (selectedTypes.includes('UNIT') && isUnit);
+                if (!matchType) return false;
+            }
 
-            // 3. 阵营过滤
-            if (regionFilter !== 'ALL' && c.region !== regionFilter) return false;
+            // 3. 费用多选
+            if (selectedCosts.length > 0) {
+                const matchCost = selectedCosts.some(cost => cost === 9 ? c.cost >= 9 : c.cost === cost);
+                if (!matchCost) return false;
+            }
 
-            // 4. 费用过滤
-            if (costFilter !== 'ALL') {
-                if (costFilter === '10+' && c.cost < 10) return false;
-                if (costFilter !== '10+' && c.cost.toString() !== costFilter) return false;
+            // 4. 阵营多选
+            if (selectedRegions.length > 0) {
+                if (!selectedRegions.includes(c.region)) return false;
+            }
+
+            // 5. 法术速度级联
+            if (selectedTypes.includes('SPELL') && selectedSpellSpeeds.length > 0) {
+                const typeStr = c.type?.toLowerCase() || '';
+                if (!typeStr.includes('spell')) return false;
+                const matchSpeed = selectedSpellSpeeds.some(speed => typeStr.includes(speed.toLowerCase()));
+                if (!matchSpeed) return false;
+            }
+
+            // 6. 关键词级联
+            if ((selectedTypes.length === 0 || selectedTypes.includes('HERO') || selectedTypes.includes('UNIT')) && selectedKeywords.length > 0) {
+                if (!c.keywords || c.keywords.length === 0) return false;
+                if (!selectedKeywords.some(kw => c.keywords!.includes(kw as any))) return false;
             }
 
             return true;
         });
-    }, [searchTerm, category, costFilter, regionFilter, userSystem.collection, userSystem.userId]); // [修改] 补充 userId 依赖
+    }, [searchTerm, selectedTypes, selectedCosts, selectedRegions, selectedSpellSpeeds, selectedKeywords, userSystem.collection, userSystem.userId]);
+
+    // [修正] 将 handleViewCard 移动到 visibleCards 和 sortedDeckEntries 初始化之后！
+    // 统一的查看大图处理函数，智能补全上下文
+    const handleViewCard = useCallback((card: CardData, preferredContext?: 'grid' | 'list') => {
+        if (preferredContext === 'grid') {
+            const idx = visibleCards.findIndex(c => c.key === card.key);
+            if (idx >= 0) {
+                setViewCardContext('grid');
+                setViewCardIndex(idx);
+                setViewCard(toFullCardData(visibleCards[idx]));
+                return;
+            }
+        } else if (preferredContext === 'list') {
+            const idx = sortedDeckEntries.findIndex(([k]) => k === card.key);
+            if (idx >= 0) {
+                setViewCardContext('list');
+                setViewCardIndex(idx);
+                const c = CARD_DB[card.key];
+                setViewCard(c ? toFullCardData(c) : null);
+                return;
+            }
+        }
+
+        // 智能兜底查找：先左侧图鉴（卡片来源优先），后右侧卡组
+        const idxGrid = visibleCards.findIndex(c => c.key === card.key);
+        if (idxGrid >= 0) {
+            setViewCardContext('grid');
+            setViewCardIndex(idxGrid);
+            setViewCard(toFullCardData(visibleCards[idxGrid]));
+            return;
+        }
+        const idxList = sortedDeckEntries.findIndex(([k]) => k === card.key);
+        if (idxList >= 0) {
+            setViewCardContext('list');
+            setViewCardIndex(idxList);
+            const c = CARD_DB[card.key];
+            setViewCard(c ? toFullCardData(c) : null);
+            return;
+        }
+
+        // 极小概率兜底
+        setViewCardContext(null);
+        setViewCardIndex(0);
+        setViewCard(card);
+    }, [visibleCards, sortedDeckEntries]);
+
+    // [皮肤检视] 点击皮肤方块 → 切换选中皮肤并保存到卡组
+    const handleSkinSelect = useCallback((cardKey: string, skinId: number) => {
+        const deck = userSystem.activeDeck;
+        if (!deck) return;
+        // 如果已经是当前皮肤，不做任何事
+        if ((deck.skinOverrides?.[cardKey] ?? 0) === skinId) return;
+        // 不允许选择未拥有的皮肤
+        const ownedSkins = userSystem.collection?.ownedSkins?.[cardKey] || [];
+        if (skinId !== 0 && !ownedSkins.includes(skinId)) return;
+        userSystem.saveDeck({
+            ...deck,
+            skinOverrides: {
+                ...(deck.skinOverrides || {}),
+                [cardKey]: skinId,
+            },
+        });
+    }, [userSystem.activeDeck, userSystem.collection?.ownedSkins]);
+
+    // [皮肤检视] 随机皮肤 — 为所有有皮肤的卡牌随机分配已拥有的皮肤
+    const handleRandomSkins = useCallback(() => {
+        const deck = userSystem.activeDeck;
+        if (!deck) return;
+        const ownedSkinsData = userSystem.collection?.ownedSkins || {};
+        const newOverrides: Record<string, number> = { ...(deck.skinOverrides || {}) };
+
+        for (const [cardKey, skinRecord] of Object.entries(SKIN_IMAGES)) {
+            const skinIds = Object.keys(skinRecord).map(Number).sort((a, b) => a - b);
+            if (skinIds.length <= 1) continue; // 只有默认皮肤时跳过
+
+            // 筛选该卡牌已拥有的皮肤（skin 0 默认拥有）
+            const owned = skinIds.filter(id => id === 0 || (ownedSkinsData[cardKey] || []).includes(id));
+            if (owned.length <= 1) continue; // 只有默认皮肤时跳过
+
+            // 随机选择一个已拥有的皮肤
+            const randomSkin = owned[Math.floor(Math.random() * owned.length)];
+            newOverrides[cardKey] = randomSkin;
+        }
+
+        userSystem.saveDeck({
+            ...deck,
+            skinOverrides: newOverrides,
+        });
+    }, [userSystem.activeDeck, userSystem.collection?.ownedSkins]);
+
 
     const handleStart = () => {
         if (stats.total !== 40) return;
@@ -666,7 +840,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setHubDeckId(null); }} className="absolute top-8 right-8 text-gray-400 hover:text-white bg-white/5 border border-white/10 p-3 rounded-full transition-all hover:bg-red-500/80 z-50"><X size={24} /></button> {/* [新增] 音效 */}
 
                             {/* 左侧翼：卡牌列表只读预览 */}
-                            <motion.div initial={{ x: -60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-80 h-[85vh] bg-slate-900/90 border border-white/10 rounded-3xl flex flex-col mr-12 shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden" onContextMenu={(e) => e.stopPropagation()}>
+                            <motion.div initial={{ x: -60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-80 h-[620px] bg-slate-900/90 border border-white/10 rounded-3xl flex flex-col mr-12 shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden" onContextMenu={(e) => e.stopPropagation()}>
                                 <div className="p-5 bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0 z-20">卡组预览</div>
 
                                 {/* 痛点 1 & 5：隐藏滚动条，并架设上下两层凸出的半透明黑影渐变层进行卡牌边缘裁剪虚化 */}
@@ -795,7 +969,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 skinId={userSystem.activeDeck?.skinOverrides?.[gazeTarget?.card.key || ''] || 0}
                                 onMouseEnter={keepAlive}
                                 onMouseLeave={scheduleDismiss}
-                                onViewArt={(c) => setViewCard(c)}
+                                onViewArt={(c) => handleViewCard(c)}
                             />
                         </motion.div>
                     )}
@@ -890,7 +1064,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 skinId={userSystem.activeDeck?.skinOverrides?.[gazeTarget?.card.key || ''] || 0}
                 onMouseEnter={keepAlive}
                 onMouseLeave={scheduleDismiss}
-                onViewArt={(c) => setViewCard(c)}
+                onViewArt={(c) => handleViewCard(c)}
             />
 
             {/* --- [重构] 中间主内容区 (包含顶部筛选台与卡牌网格) --- */}
@@ -909,15 +1083,50 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     className="w-full bg-slate-800 rounded-md py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                                 />
                             </div>
-                            {/* Category Buttons */}
+                            {/* Category Buttons — 同步到 selectedTypes 多选 */}
                             <div className="flex gap-1 bg-slate-800 p-1 rounded-md">
-                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCategory('HERO'); }} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='HERO'?'bg-yellow-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><User size={14}/> 英雄</button> {/* [新增] 音效 */}
-                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCategory('SPELL'); }} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='SPELL'?'bg-blue-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Zap size={14}/> 法术</button> {/* [新增] 音效 */}
-                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCategory('UNIT'); }} className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${category==='UNIT'?'bg-orange-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Box size={14}/> 单位</button> {/* [新增] 音效 */}
+                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setSelectedTypes(prev => prev.length === 3 ? [] : ['HERO','SPELL','UNIT']); }}
+                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.length === 0 ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-400 hover:bg-white/5'}`}>全部</button>
+                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, 'HERO'); }}
+                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.includes('HERO')?'bg-yellow-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><User size={14}/> 英雄</button>
+                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, 'SPELL'); }}
+                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.includes('SPELL')?'bg-blue-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Zap size={14}/> 法术</button>
+                                <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, 'UNIT'); }}
+                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.includes('UNIT')?'bg-orange-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Box size={14}/> 单位</button>
                             </div>
                         </div>
 
                         <div className="flex items-center gap-2">
+                            {/* [皮肤检视] 随机皮肤按钮 */}
+                            <button
+                                onClick={() => {
+                                    eventBus.emit(GameEvents.UI_CLICK);
+                                    handleRandomSkins();
+                                }}
+                                className="py-2 px-3 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all bg-slate-800 text-gray-300 hover:bg-emerald-700 hover:text-white border border-transparent hover:border-emerald-500/50"
+                                title="为所有有皮肤的卡牌随机配置已拥有的皮肤"
+                            >
+                                <Shuffle size={16} />
+                                随机皮肤
+                            </button>
+                            {/* [皮肤检视] 皮肤查看按钮 */}
+                            <button
+                                onClick={() => {
+                                    eventBus.emit(GameEvents.UI_CLICK);
+                                    setShowSkinView(!showSkinView);
+                                }}
+                                className={`
+                                    py-2 px-3 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all
+                                    ${showSkinView
+                                        ? 'bg-purple-600 text-white shadow-[0_0_10px_rgba(147,51,234,0.4)] border border-purple-400/50'
+                                        : 'bg-slate-800 text-gray-300 hover:bg-slate-700 border border-transparent'
+                                    }
+                                `}
+                                title="查看已拥有的皮肤"
+                            >
+                                <Palette size={16} />
+                                皮肤配置
+                            </button>
                             {/* Advanced Filters */}
                             <button
                                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsFilterOpen(!isFilterOpen); }} // [新增] 音效
@@ -936,33 +1145,82 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         </div>
                     </div>
 
-                    {/* Advanced Filters Dropdown */}
+                    {/* Advanced Filters Dropdown — 多选版 */}
                     <AnimatePresence>
                         {isFilterOpen && (
                             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden w-full px-4">
-                                <div className="p-4 bg-slate-800 rounded-md mt-3 flex gap-8 border border-white/5 shadow-inner">
-                                    {/* Cost */}
-                                    <div>
-                                        <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">费用 (COST)</span>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {['ALL', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '10+'].map(c => (
-                                                <button key={c} onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setCostFilter(c); }} className={`w-8 h-8 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${costFilter===c ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}> {/* [新增] 音效 */}
-                                                    {c}
-                                                </button>
-                                            ))}
+                                <div className="p-4 bg-slate-800 rounded-md mt-3 border border-white/5 shadow-inner">
+                                    <div className="flex flex-wrap gap-x-8 gap-y-4">
+                                        {/* 费用多选 */}
+                                        <div>
+                                            <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">费用 (COST)</span>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(c => (
+                                                    <button key={c} onClick={() => toggleFilter(setSelectedCosts, c)}
+                                                            className={`w-8 h-8 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${selectedCosts.includes(c) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                        {c}{c === 10 ? '+' : ''}
+                                                    </button>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                    {/* Region */}
-                                    <div>
-                                        <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">阵营 (REGION)</span>
-                                        <div className="flex flex-wrap gap-2">
-                                            {['ALL', 'Lyfe', 'Fenny', 'Pupu', 'Mauxir', 'Logistics', 'TEST'].map(r => (
-                                                <button key={r} onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setRegionFilter(r); }} className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${regionFilter===r ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]':'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}> {/* [新增] 音效 */}
-                                                    {r === 'Lyfe' ? '里芙' : r === 'Pupu' ? '卜卜' :r === 'Fenny' ? '芬妮' : r === 'Mauxir' ? '猫汐尔' : r === 'Logistics' ? '后勤' : r === 'TEST' ? '测试' : '全部'}
-                                                </button>
-                                            ))}
+                                        {/* 阵营多选 */}
+                                        <div>
+                                            <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">阵营 (REGION)</span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {[
+                                                    { key: 'Lyfe', label: '里芙' },
+                                                    { key: 'Fenny', label: '芬妮' },
+                                                    { key: 'Pupu', label: '卜卜' },
+                                                    { key: 'Mauxir', label: '猫汐尔' },
+                                                    { key: 'Acacia', label: '安卡希雅' },
+                                                    { key: 'Logistics', label: '后勤' },
+                                                    { key: 'TEST', label: '测试' },
+                                                ].map(r => (
+                                                    <button key={r.key} onClick={() => toggleFilter(setSelectedRegions, r.key)}
+                                                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${selectedRegions.includes(r.key) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                        {r.label}
+                                                    </button>
+                                                ))}
+                                            </div>
                                         </div>
+                                        {/* 法术速度级联 */}
+                                        {selectedTypes.includes('SPELL') && (
+                                            <div>
+                                                <span className="text-xs text-purple-400 font-bold tracking-widest block mb-2">法术速度</span>
+                                                <div className="flex gap-2">
+                                                    {[
+                                                        { id: 'Burst', icon: <Zap size={16} className="text-yellow-400 fill-yellow-400" />, title: '极速' },
+                                                        { id: 'Fast', icon: <Zap size={16} className="text-white" />, title: '快速' },
+                                                        { id: 'Slow', icon: <Clock size={16} className="text-purple-300" />, title: '慢速' },
+                                                    ].map(s => (
+                                                        <button key={s.id} onClick={() => toggleFilter(setSelectedSpellSpeeds, s.id)} title={s.title}
+                                                                className={`w-8 h-8 rounded flex items-center justify-center transition-all border ${selectedSpellSpeeds.includes(s.id) ? 'bg-purple-500/20 border-purple-400 shadow-[inset_0_0_10px_purple]' : 'bg-slate-700 border-transparent hover:bg-slate-600'}`}>
+                                                            {s.icon}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
+                                    {/* 关键词级联 */}
+                                    {(selectedTypes.length === 0 || selectedTypes.includes('HERO') || selectedTypes.includes('UNIT')) && (
+                                        <div className="mt-4 pt-4 border-t border-white/10">
+                                            <span className="text-xs text-green-400 font-bold tracking-widest block mb-2">关键词筛选</span>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {Object.entries(KEYWORD_DB).map(([kw, config]) => (
+                                                    <button key={kw} onClick={() => toggleFilter(setSelectedKeywords, kw)}
+                                                            title={`${config.label}\n${config.description}`}
+                                                            className={`w-8 h-8 rounded flex justify-center items-center transition-all border ${selectedKeywords.includes(kw) ? 'bg-green-500/20 border-green-400 shadow-[inset_0_0_10px_rgba(74,222,128,0.5)]' : 'bg-slate-700 border-transparent hover:bg-slate-600 opacity-70 hover:opacity-100'}`}>
+                                                        {config.icon ? (
+                                                            <img src={config.icon} alt={config.label} className="w-5 h-5 object-contain drop-shadow-md" />
+                                                        ) : (
+                                                            <span className="text-[8px] font-bold text-gray-300">{config.label.substring(0, 1)}</span>
+                                                        )}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </motion.div>
                         )}
@@ -975,8 +1233,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none"></div>
 
                     <div className="h-full p-8 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                        {/* [修改] 移除了左侧边栏后空间大增，增加列数到 5~6 列 (lg:grid-cols-5 xl:grid-cols-6) */}
-                    <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 pb-32">
+                        {/* 游戏始终在 1680×1050 坐标系内，固定 6 列由 ScaleWrapper 统一缩放 */}
+                    <div className="grid grid-cols-6 gap-6 pb-32">
                     {visibleCards.map(card => {
                         const ownedCount = getOwnedCount(card.key);
                         const inDeckCount = localDeck[card.key] || 0;
@@ -1001,7 +1259,10 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             <div
                                 key={card.key}
                                 className={`group relative transition-all duration-300 ${isInteractive ? 'hover:scale-105 hover:z-10' : ''}`}
-                                onContextMenu={(e) => { e.preventDefault(); setViewCard(fullCard); }}
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    handleViewCard(fullCard, 'grid');
+                                }}
                             >
                                 <div
                                     onClick={() => !isMaxed && addToDeck(card.key)}
@@ -1014,9 +1275,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     <Card
                                         data={fullCard}
                                         location="deck-builder"
-                                        skinId={userSystem.activeDeck?.skinOverrides?.[card.key] || 0} // [核心修复] 给中间网格的卡牌通电！让它读取当前选中卡组的皮肤！
+                                        skinId={hoveredSkins[card.key] ?? (userSystem.activeDeck?.skinOverrides?.[card.key] || 0)}
                                         isFaceUp={true}
-                                        onViewArt={(c) => setViewCard(c)}
+                                        onViewArt={(c) => handleViewCard(c, 'grid')}
                                         // [关键修改] 永远隐藏内部的小购物车图标
                                         // 因为我们要用外面的大按钮来统一负责购买，防止内部图标变灰
                                         showShopIcon={false}
@@ -1024,13 +1285,61 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     />
                                 </div>
 
+                                {/* [皮肤检视] 皮肤指示器 — 悬停预览 + 点击切换 */}
+                                {showSkinView && (() => {
+                                    const skinRecord = SKIN_IMAGES[card.key];
+                                    if (!skinRecord) return null;
+                                    const skinIds = Object.keys(skinRecord).map(Number).sort((a, b) => a - b);
+                                    if (skinIds.length <= 1) return null;
+                                    const ownedSkins = userSystem.collection?.ownedSkins?.[card.key] || [];
+                                    const currentSkin = userSystem.activeDeck?.skinOverrides?.[card.key] ?? 0;
+                                    return (
+                                        <div className="flex gap-1 mt-1.5 justify-center flex-nowrap overflow-x-auto [&::-webkit-scrollbar]:hidden">
+                                            {skinIds.map(id => {
+                                                const isOwned = id === 0 || ownedSkins.includes(id);
+                                                const isSelected = currentSkin === id;
+                                                const isHovered = hoveredSkins[card.key] === id;
+                                                return (
+                                                    <div
+                                                        key={id}
+                                                        onMouseEnter={() => setHoveredSkins(prev => ({ ...prev, [card.key]: id }))}
+                                                        onMouseLeave={() => setHoveredSkins(prev => {
+                                                            const next = { ...prev };
+                                                            delete next[card.key];
+                                                            return next;
+                                                        })}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            eventBus.emit(GameEvents.UI_CLICK);
+                                                            handleSkinSelect(card.key, id);
+                                                        }}
+                                                        className={`
+                                                            w-5 h-5 rounded text-[9px] font-black flex items-center justify-center shrink-0 transition-all duration-200 border cursor-pointer
+                                                            ${isSelected
+                                                                ? 'bg-orange-500 border-orange-400 text-white shadow-[0_0_8px_rgba(251,146,60,0.6)] scale-110'
+                                                                : isOwned
+                                                                    ? 'bg-blue-500 border-blue-400 text-white shadow-[0_0_6px_rgba(59,130,246,0.5)] hover:scale-110 hover:shadow-[0_0_10px_rgba(59,130,246,0.7)]'
+                                                                    : 'bg-slate-800/60 border-slate-600/50 text-slate-500 hover:border-slate-400 hover:scale-105'
+                                                            }
+                                                            ${isHovered && !isSelected ? 'ring-2 ring-white/40' : ''}
+                                                        `}
+                                                        title={`皮肤 ${id}${isSelected ? ' · 当前' : isOwned ? ' · 已拥有' : ' · 未拥有'}`}
+                                                    >
+                                                        {id}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })()}
+
                                 {/* [关键修改] 外部大购买按钮 */}
                                 {/* 条件改为 canBuy：只要没买满3张，这个按钮就一直悬浮在最上层，保持彩色 */}
                                 {canBuy && (
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            setViewCard(fullCard); // 点击购物车打开详情页(含购买逻辑)
+                                            handleViewCard(fullCard, 'grid'); // 点击购物车打开详情页(含购买逻辑)
                                         }}
                                         // 保持 z-10 防止遮挡右侧侧边栏
                                         className="absolute -top-2 -left-2 z-10 w-10 h-10 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white shadow-lg border-2 border-white/20 transition-transform hover:scale-110"
@@ -1047,9 +1356,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     </div>
                                 )}
 
-                                {/* 数量角标 (保持不变) */}
+                                {/* 数量角标 */}
                                 {inDeckCount > 0 && (
-                                    <div className="absolute -top-3 -right-3 w-8 h-8 bg-yellow-600 rounded-full flex items-center justify-center font-bold shadow-lg border-2 border-white z-20">
+                                    <div className="absolute -top-3 -right-0 w-8 h-8 bg-yellow-600 rounded-full flex items-center justify-center font-bold shadow-lg border-2 border-white z-20">
                                         {inDeckCount}
                                     </div>
                                 )}
@@ -1076,7 +1385,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
             </div>
 
             {/* Right Sidebar - Current Deck & Customization */}
-            <div className="w-80 bg-[#1e293b] border-l border-gray-700 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.3)]">
+            <div className="w-80 bg-[#1e293b] border-l border-gray-700 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.3)] relative">
 
                 {/* [修改] 卡组选择与管理区域 */}
                 {/* 彻底移除了 PersonalizationDrawer，并清除了多余的 mt-16 上边距 */}
@@ -1105,6 +1414,31 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     </button>
                 </div>
 
+                {/* [新增] 排序按钮组 — 默认/稀有度/费用，互斥单选 */}
+                <div className="px-6 py-3 border-b border-gray-700">
+                    <span className="text-[10px] font-bold tracking-widest text-gray-500 block mb-2">排序方式</span>
+                    <div className="flex bg-slate-800 rounded-lg p-1 gap-1">
+                        <button
+                            onClick={() => setSortMode('default')}
+                            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'default' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
+                        >
+                            默认
+                        </button>
+                        <button
+                            onClick={() => setSortMode('rarity')}
+                            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'rarity' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
+                        >
+                            稀有度
+                        </button>
+                        <button
+                            onClick={() => setSortMode('cost')}
+                            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'cost' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
+                        >
+                            费用
+                        </button>
+                    </div>
+                </div>
+
                 {/* [移植] 统计面板 (Stats UI) 移至右侧，并做了现代化视觉升级 */}
                 <div className="px-6 py-4 border-b border-gray-700 bg-slate-800/50">
                     <div className="flex justify-between mb-2">
@@ -1129,7 +1463,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     <div
                         className="h-full overflow-y-auto p-4 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                     >
-                        {Object.entries(localDeck).map(([key, count]) => {
+                        {sortedDeckEntries.map(([key, count]) => {
                         const card = CARD_DB[key];
                         // 兜底：防止 deleted cards 报错
                         if (!card) return null;
@@ -1155,7 +1489,10 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 <div
                                     className="flex-1 relative h-full bg-gray-800 rounded-r-md overflow-hidden border border-gray-700 hover:border-blue-500 transition-all cursor-pointer"
                                     onClick={() => removeFromDeck(key)}
-                                    onContextMenu={(e) => { e.preventDefault(); setViewCard(fullCard); }}
+                                    onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        handleViewCard(fullCard, 'list');
+                                    }}
                                     {...bindGazeEvents(card)}
                                 >
                                     {/* [皮肤修复] 动态提取右侧正在编辑的卡组的皮肤图 */}
@@ -1182,7 +1519,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                 {/* 底部操作区 */}
                 <div className="p-6 bg-[#0f172a] border-t border-gray-700 space-y-3">
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 relative">
                         <button
                             onClick={clearDeck}
                             className="p-3 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all flex items-center justify-center"
@@ -1196,6 +1533,48 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         >
                             <Wand2 size={18} /> 快速选择
                         </button>
+                        <button
+                            onMouseEnter={() => setIsCostChartHovered(true)}
+                            onMouseLeave={() => setIsCostChartHovered(false)}
+                            className="p-3 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:bg-slate-700 transition-all flex items-center justify-center"
+                            title="费用分布"
+                        >
+                            <BarChart3 size={18} />
+                        </button>
+
+                        {/* [新增] 悬浮柱状统计图 — 费用分布 */}
+                        <AnimatePresence>
+                            {isCostChartHovered && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                    transition={{ duration: 0.15 }}
+                                    className="absolute bottom-full left-0 right-0 mb-2 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 p-4 overflow-hidden"
+                                    onMouseEnter={() => setIsCostChartHovered(true)}
+                                    onMouseLeave={() => setIsCostChartHovered(false)}
+                                >
+                                    <h4 className="text-xs font-bold tracking-widest text-gray-400 mb-3 text-center">费用分布</h4>
+                                    <div className="flex items-end gap-[2px] h-28 px-1">
+                                        {['0','1','2','3','4','5','6','7','8','9','10','10+'].map(cost => {
+                                            const count = costDistribution[cost] || 0;
+                                            const maxDist = Math.max(1, ...Object.values(costDistribution));
+                                            const pct = (count / maxDist) * 100;
+                                            return (
+                                                <div key={cost} className="flex-1 flex flex-col items-center justify-end h-full gap-[2px]">
+                                                    <span className="text-[9px] font-bold text-gray-400 leading-none">{count || ''}</span>
+                                                    <div
+                                                        className="w-full rounded-sm bg-gradient-to-t from-blue-600 to-cyan-400 transition-all"
+                                                        style={{ height: `${Math.max(pct, count > 0 ? 6 : 0)}%` }}
+                                                    />
+                                                    <span className="text-[9px] text-gray-500 leading-none">{cost}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
                     </div>
 
                     {/* [核心修改] 根据 fromSource 渲染不同的按钮 */}
@@ -1247,32 +1626,65 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     )}
                 </div>
             </div>
-            {viewCard && (
-                <FullArtOverlay
-                    card={viewCard}
-                    onClose={() => setViewCard(null)}
-                    onBuy={(count, cost) => userSystem.purchaseCard(viewCard.key, count, cost)}
-                    ownedCount={getOwnedCount(viewCard.key)}
-                    playerSilver={userSystem.collection?.resources.silverCoin || 0}
-                    // [皮肤] 传递皮肤数据
-                    skinData={userSystem.activeDeck ? {
-                        ownedSkins: userSystem.collection?.ownedSkins || {},
-                        currentSkinId: userSystem.activeDeck.skinOverrides?.[viewCard.key] ?? 0,
-                        onSkinChange: (cardKey, newSkinId) => {
-                            const deck = userSystem.activeDeck;
-                            if (!deck) return;
-                            const updatedDeck = {
-                                ...deck,
-                                skinOverrides: {
-                                    ...(deck.skinOverrides || {}),
-                                    [cardKey]: newSkinId,
-                                },
-                            };
-                            userSystem.saveDeck(updatedDeck);
-                        },
-                    } : undefined}
-                />
-            )}
+            {/* [卡牌导航] 根据来源构建导航列表 */}
+            {(() => {
+                // 根据 viewCardContext 构建当前导航列表
+                const navList = viewCardContext === 'grid'
+                    ? visibleCards.map(c => toFullCardData(c))
+                    : viewCardContext === 'list'
+                        ? sortedDeckEntries.map(([k]) => {
+                            const c = CARD_DB[k];
+                            return c ? toFullCardData(c) : null;
+                        }).filter(Boolean) as CardData[]
+                        : [];
+                const navIndex = viewCardContext ? viewCardIndex : 0;
+
+                if (!viewCard) return null;
+
+                return (
+                    <FullArtOverlay
+                        card={viewCard}
+                        onClose={() => setViewCard(null)}
+                        onBuy={(count, cost) => userSystem.purchaseCard(viewCard.key, count, cost)}
+                        onGachaNav={(poolId) => onGachaNav?.(poolId)}
+                        ownedCount={getOwnedCount(viewCard.key)}
+                        playerSilver={userSystem.collection?.resources.silverCoin || 0}
+                        skinData={userSystem.activeDeck ? {
+                            ownedSkins: userSystem.collection?.ownedSkins || {},
+                            currentSkinId: userSystem.activeDeck.skinOverrides?.[viewCard.key] ?? 0,
+                            onSkinChange: (cardKey, newSkinId) => {
+                                const deck = userSystem.activeDeck;
+                                if (!deck) return;
+                                const updatedDeck = {
+                                    ...deck,
+                                    skinOverrides: {
+                                        ...(deck.skinOverrides || {}),
+                                        [cardKey]: newSkinId,
+                                    },
+                                };
+                                userSystem.saveDeck(updatedDeck);
+                            },
+                        } : undefined}
+                        navigation={navList.length > 1 ? {
+                            cardList: navList,
+                            currentIndex: navIndex,
+                            onNavigate: (newIndex) => {
+                                // 导航时直接 reconstruct navList 避免闭包陷阱
+                                const freshList = viewCardContext === 'grid'
+                                    ? visibleCards.map(c => toFullCardData(c))
+                                    : viewCardContext === 'list'
+                                        ? sortedDeckEntries.map(([k]) => {
+                                            const c = CARD_DB[k];
+                                            return c ? toFullCardData(c) : null;
+                                        }).filter(Boolean) as CardData[]
+                                        : [];
+                                setViewCardIndex(newIndex);
+                                if (freshList[newIndex]) setViewCard(freshList[newIndex]);
+                            },
+                        } : undefined}
+                    />
+                );
+            })()}
         </div>
     );
 };

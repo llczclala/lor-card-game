@@ -6,14 +6,15 @@ interface UseMulliganProps {
     initialHand: CardData[];
     onReplace: (indices: number[]) => Promise<void>; // 真正执行换牌的后端逻辑
     onComplete: () => void; // 换牌彻底结束的回调
+    skip?: boolean; // [新增] 完全跳过换牌环节
 }
 
-export const useMulligan = ({ onReplace, onComplete }: UseMulliganProps) => {
+export const useMulligan = ({ onReplace, onComplete, skip = false }: UseMulliganProps) => {
     // 状态管理
     const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
     const [isConfirmed, setIsConfirmed] = useState(false);
     const [timeLeft, setTimeLeft] = useState(20);
-    const [isActive, setIsActive] = useState(true); // 是否处于换牌流程中
+    const [isActive, setIsActive] = useState(!skip); // [修改] 跳过时直接 inactive
 
     // 倒计时逻辑
     useEffect(() => {

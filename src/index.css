@@ -489,3 +489,31 @@ body[data-game-cursor="ATTACK"] * {
 [data-game-cursor="BUSY"], .cursor-wait {
     cursor: url('./image/icon/mouse/mouse_9.png') 16 16, wait !important;
 }
+
+/* =================================================================
+   【召唤入场 · 碎片重组 V2】
+   真·卡面切片：原画切成 6 片从四周汇聚拼合（framer 驱动位移）；
+   本动画负责切片层整体的【灰暗 → 彩色】还原，全程 opacity 恒 1，颜色变化清晰可见。
+   挂在 Card 的召唤切片层容器（z-[70]）上，一次性。
+   ================================================================= */
+@keyframes summon-reveal-color {
+  0%   { filter: grayscale(1) brightness(0.35); }
+  100% { filter: grayscale(0) brightness(1); }
+}
+.animate-summon-reveal-color {
+  animation: summon-reveal-color 0.8s ease-out both;
+}
+
+/* =================================================================
+   【飞剑召唤 · 时空裂隙 青转彩】
+   安卡飞剑专属：与普通召唤的灰→彩不同，以冰青色起步 → 全彩还原。
+   起步滤镜与 Card.tsx 中 ACACIA_SUMMON_FILTER 保持一致，
+   挂在 Card 的 850 容器上（阶段B），一次性。
+   ================================================================= */
+@keyframes summon-reveal-color-acacia {
+  0%   { filter: grayscale(0.35) sepia(1) hue-rotate(165deg) brightness(0.5) saturate(1.7); }
+  100% { filter: grayscale(0) sepia(0) hue-rotate(0deg) brightness(1) saturate(1); }
+}
+.animate-summon-reveal-color-acacia {
+  animation: summon-reveal-color-acacia 0.8s ease-out both;
+}

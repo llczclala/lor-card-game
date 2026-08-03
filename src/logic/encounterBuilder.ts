@@ -114,7 +114,8 @@ export const buildRoguelikeEncounter = (_stage: number, _difficulty: number): En
 
 /**
  * 构建 [教程模式] 的遭遇战
- * 根据考核关卡配置，读取关联的敌方流派并生成卡组
+ * 教程模式不再通过 archetype 生成敌方牌组，
+ * 优先使用关卡数据中直接指定的 enemyDeck。
  */
 export const buildTutorialEncounter = (tutorialId: string): EncounterData => {
     const stage = TUTORIAL_STAGES[tutorialId];
@@ -123,26 +124,41 @@ export const buildTutorialEncounter = (tutorialId: string): EncounterData => {
         return buildFallbackTutorial();
     }
 
-    const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
-    if (!archetype) {
-        console.warn(`[EncounterBuilder] Unknown archetype: ${stage.enemyArchetypeId}, using fallback`);
-        return buildFallbackTutorial();
-    }
-
-    // 如果关卡指定了固定敌方卡组，直接使用
-    if (stage.enemyOverrideDeck && stage.enemyOverrideDeck.length > 0) {
+    // ★ 优先使用关卡中直接指定的 enemyDeck
+    if (stage.enemyDeck && stage.enemyDeck.length > 0) {
+        const archetype = stage.enemyArchetypeId ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
         return {
-            deck: stage.enemyOverrideDeck,
+            deck: stage.enemyDeck,
             heroConfig: {
-                heroKey: archetype.champion,
+                heroKey: archetype?.champion || 'fenny',
                 level: stage.enemyHeroLevel ?? 1,
-                customName: archetype.name,
+                customName: archetype?.name || '敌方',
             },
             passiveEffects: [],
         };
     }
 
-    // [核心升级] 否则走流水线生成，同样注入纯净锁逻辑
+    // 兼容旧版：走 enemyOverrideDeck
+    if (stage.enemyOverrideDeck && stage.enemyOverrideDeck.length > 0) {
+        const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId || ''];
+        return {
+            deck: stage.enemyOverrideDeck,
+            heroConfig: {
+                heroKey: archetype?.champion || 'fenny',
+                level: stage.enemyHeroLevel ?? 1,
+                customName: archetype?.name || '敌方',
+            },
+            passiveEffects: [],
+        };
+    }
+
+    // 最后的兜底：尝试从 archetype 生成（旧教程关卡兼容）
+    const archetype = stage.enemyArchetypeId ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
+    if (!archetype) {
+        console.warn(`[EncounterBuilder] Stage ${tutorialId} has no enemyDeck and no archetype, using fallback`);
+        return buildFallbackTutorial();
+    }
+
     const parsedCoreCards = parseCoreCards(archetype.coreCards);
     const fullDeck = (archetype as any).exactDeck || parsedCoreCards.length >= 40
         ? parsedCoreCards.sort(() => Math.random() - 0.5)

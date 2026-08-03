@@ -13,10 +13,31 @@ export type EffectClass =
     | 'RECALL_AND_REPLACE' // 撤回并替身替换类
     // [2026-06-27 暗箱操作] 两个独立基础机制
     | 'DISCARD'            // 弃牌类：从手牌移除指定卡牌
-    | 'DRAW';              // 抽牌类：从牌库抽 N 张到手上
+    | 'DRAW'               // 抽牌类：从牌库抽 N 张到手上
+    | 'GENERATE'           // [布里吉] 生成类：生成一张卡牌到手牌
+    | 'DISCARD_AND_SUMMON' // [布里吉] 弃牌并召唤类：弃任意数量手牌后召唤衍生物
+    | 'CLONE_TO_DECK'      // [诗人] 克隆类：选择手牌中的一张卡牌，复制N张洗入牌库
+    // [2026-07-14 锻造者] 三个全新机制底层分类
+    | 'COST_REDUCE'        // [锻造者] 减费类：降低手牌中某张卡牌的费用
+    | 'SUMMON_FROM_HAND'   // [锻造者] 从手牌召唤类：选择手牌单位并召唤到战场
+    | 'SPELL_DAMAGE_AURA' // [锻造者] 法术增伤光环类：全局法术伤害+1
+    | 'GRANT_MANA'        // [梵音] 额外法力类：本回合获得额外法力值
+    | 'CALIBRATE'          // [鸦眼] 校准类：从牌库选4张，选1张放顶部
+    | 'DECK_BUFF'          // [达努/鸦眼] 牌库强化类：对牌库内单位/法术施加buff
+    | 'FLYING_SWORD';       // [2026-07-26 安卡希雅] 飞剑类：召唤X个飞剑衍生物并立即发起进攻
 
 export type EffectTiming =
-    | 'BURST' | 'FAST' | 'SLOW';
+    | 'BURST' | 'FAST' | 'SLOW'
+    | 'ON_PLAY' | 'ON_ATTACK_DECLARE' | 'ON_ATTACK' | 'LAST_BREATH'
+    | 'ROUND_START' | 'ROUND_END' | 'ON_PLAY_AND_ROUND_START'
+    | 'ON_FIRST_NEXUS_STRIKE'
+    | 'ON_NEXUS_STRIKE'      // [2026-07-14 锻造者] 每次打击水晶时触发（不限于首次）
+    | 'ON_DAMAGE_SURVIVE'    // [达努] 受伤并存活时触发
+    | 'ON_FRIENDLY_DAMAGED'  // [达努] 友方单位被伤害时触发（光环）
+    | 'ON_FIRST_ATTACK'      // [达努] 首次进攻时触发
+    | 'POST_COMBAT'          // [达努] 战斗结算后触发（存活判定）
+    | 'ON_FIRST_ROUND_END'   // [鸦眼] 首次回合结束时触发
+    | 'ON_GET_ATTACK_TOKEN'; // [安卡希雅] 获得进攻标识时触发
 
 // [核心修改] 目标类型定义
 export type TargetType =
@@ -37,6 +58,8 @@ export interface TargetRequirement {
     label: string;      // 播报给玩家的提示文字 (如 "选择一个敌方单位")
     filterKey?: string; // 额外过滤器，例如仅限 key='fenny'
     raceFilter?: Race[]; // [新增] 种族过滤器，例如 ['summoner', 'summon']
+    keywordFilter?: string[]; // [2026-07-07 新增] 关键词过滤，例如 ['Ephemeral'] 要求目标拥有幻象
+    cardTypeFilter?: 'unit' | 'spell'; // [2026-07-14 锻造者] 手牌选择时的卡牌类型过滤
 }
 
 // [修改] 扁平化参数结构，移除 buffs 嵌套，与 Processor 对齐
@@ -45,6 +68,7 @@ export interface EffectParams {
     power?: number;          // Buff 攻击
     health?: number;         // Buff 血量
     keywords?: string[];     // Buff 词条
+    removeKeywords?: string[]; // [新增] 要移除的关键词（用于蟾鉴易纹等关键词转移）
     duration?: 'ROUND' | 'PERMANENT';
     strikeMode?: 'MUTUAL' | 'ONE_WAY'; // [新增] 打击模式
     condition?: string;
@@ -73,6 +97,8 @@ export interface EffectParams {
     // [新增] 猫汐尔专属：牌库光环与回合末鞭策
     // =====================================
     deckAuraSummon?: string;     // [新增] 库效召唤：回合开始时，若场上没有该Key的单位，则召唤一个
+    gameStartGenerate?: string;  // [安卡希雅] 牌局开始：生成指定卡牌到手牌
+    isVolatile?: boolean;        // [安卡希雅] 生成的卡牌带上易逝(Volatile)关键词
     roundEndSelfDamageBuff?: {   // [新增] 回合末鞭策：对我方指定单位造成伤害并强化
         targetKey: string;
         damage: number;
@@ -84,6 +110,9 @@ export interface EffectParams {
     buffCounterKey?: string;     // [新增] BUFF计数器的归属卡牌Key（用于累计BUFF次数）
     buffThreshold?: number;      // [新增] 达到多少次BUFF后触发奖励
     buffRewardKey?: string;      // [新增] 达到阈值后生成的奖励卡牌Key
+    // [2026-07-14 锻造者] 法术增伤光环参数
+    spellDamageBuff?: number;    // 法术增伤光环：对所有法术伤害的额外加成
+    triggerOnPlay?: boolean;     // [白猎] 从手牌召唤时是否触发入场效果
 }
 
 export interface EffectDefinition {
@@ -95,6 +124,15 @@ export interface EffectDefinition {
     speed: EffectSpeed;
     targetRequirements: TargetRequirement[];
     params: EffectParams;
+    /** [2026-07-07] 效果动画预算时长(ms)，用于多效果链式演出的自动时序编排 */
+    animationDuration?: number;
+    /** [2026-07-21] 对局记录配置 — 自动追踪目标状态变化生成记录 */
+    record?: {
+        /** 概要模板，支持 {paramName} 占位符，如 "造成 {value} 点伤害" */
+        summary?: string;
+        /** 是否追踪目标 HP/damageTaken 变化 */
+        trackTargets?: boolean;
+    };
 }
 
 export const EFFECT_DB: Record<string, EffectDefinition> = {
@@ -104,12 +142,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_pupu_specular_soul_rush': {
         id: 'effect_pupu_specular_soul_rush',
         name: '镜涌万象',
-        description: '选择一名敌人，对他及其左右两边的单位，各造成1点伤害。若本回合卜卜已经打击过一次，则改为对所选目标造成2点伤害。',
+        description: '选择一个敌方单位，对其及其左右两边的单位，各造成1点伤害。若本回合卜卜已经打击过一次，则改为对所选目标造成2点伤害。',
         class: 'STRIKE',
         timing: 'ON_PLAY',
         speed: 'FAST', // 常规伤害法术通常为快速
         targetRequirements: [
-            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位作为中心目标' }
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个单位作为中心' }
         ],
         params: {
             value: 1,                    // 基础伤害 1 (也是溅射伤害)
@@ -128,7 +166,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'SLOW',
         targetRequirements: [
-            { type: 'ALL_ALLIES', count: 0, label: '全体友军' } // 引擎会扫过全队，交由下方的白名单精准拦截
+            { type: 'ALL_ALLIES', count: 0, label: '全体友方单位' } // 引擎会扫过全队，交由下方的白名单精准拦截
         ],
         params: {
             power: 0,
@@ -171,12 +209,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_single_combat': {
         id: 'effect_single_combat',
         name: '单挑',
-        description: '一个我方单位和一个敌方单位相互打击。',
+        description: '一个友方单位和一个敌方单位相互打击。',
         class: 'STRIKE',
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALLY_UNIT', count: 1, label: '选择一个我方单位' },
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个友方单位' },
             { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
         ],
         params: { strikeMode: 'MUTUAL' } // [新增] 互殴模式
@@ -186,15 +224,14 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         id: 'effect_lyfe_rush',
         name: '无尽霜刃',
         description: '给予里芙 +1/+1。',
-        class: 'BUFF', // [修正] GRANT -> BUFF
+        class: 'BUFF',
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-             // 暂时允许选任意友军，保证体验
-            { type: 'ALLY_UNIT', count: 1, label: '选择目标' }
+            { type: 'ALLY_UNIT', count: 1, label: '选择里芙', filterKey: 'lyfe' }
         ],
         params: {
-            power: 1, health: 1, duration: 'ROUND' // [修正] 扁平化
+            power: 1, health: 1, duration: 'PERMANENT'
         }
     },
 
@@ -245,7 +282,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'FAST', // [修正] 3费快速
         targetRequirements: [
-            { type: 'ALLY_CHAMPION', count: 1, label: '选择我方芬妮', filterKey: 'fenny' }
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择友方芬妮', filterKey: 'fenny' }
         ],
         params: {
             keywords: ['Barrier'] // 附带屏障
@@ -260,7 +297,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'SLOW', // [修正] 7费慢速
         targetRequirements: [
-            { type: 'ALLY_CHAMPION', count: 1, label: '选择我方芬妮', filterKey: 'fenny' },
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择友方芬妮', filterKey: 'fenny' },
             { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
         ],
         params: {
@@ -274,12 +311,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_prayer': {
         id: 'effect_prayer',
         name: '祈愿',
-        description: '给予一个友军 +1/+1。',
+        description: '给予一个友方单位 +1/+1。',
         class: 'BUFF', // [修正] GRANT -> BUFF
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'ALLY_UNIT', count: 1, label: '选择一个我方单位' }
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个友方单位' }
         ],
         params: {
             power: 1, health: 1, duration: 'PERMANENT' // [修正] 扁平化
@@ -317,7 +354,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALL_ALLIES', count: 0, label: '全体友军' } // [修正] 使用自动目标
+            { type: 'ALL_ALLIES', count: 0, label: '全体友方单位' } // [修正] 使用自动目标
         ],
         params: { power: 2, health: 1, duration: 'ROUND' } // [修正] 扁平化 (削弱：永久+3+3→本回合+3/+0)
     },
@@ -355,12 +392,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_golia_buff': {
         id: 'effect_golia_buff',
         name: '高能碳水补给',
-        description: '打出；若我方场上存在【卜卜 灵鉴】，我方全体单位本回合获得 +2/+0 与【碾压】。',
+        description: '打出；若友方场上存在【卜卜 灵鉴】，友方全体单位本回合获得 +2/+0 与【碾压】。',
         class: 'BUFF',
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'ALL_ALLIES', count: 0, label: '全体友军' }
+            { type: 'ALL_ALLIES', count: 0, label: '全体友方单位' }
         ],
         params: {
             power: 2,
@@ -380,7 +417,8 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         speed: 'BURST',
         targetRequirements: [],
         params: {
-            summonKey: 'pupu_specular_soul' // 借用 summonKey 字段作为”检索目标”
+            summonKey: 'pupu_specular_soul', // 借用 summonKey 字段作为”检索目标”
+            placeOnTop: true                // 放到牌库顶而非直接加入手牌
         }
     },
 
@@ -404,11 +442,11 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_Kuranas_Crocodile_round_end': {
           id: 'effect_Kuranas_Crocodile_round_end',
           name: '清泉抚慰',
-          description: '【回合结束时】：赋予我方其他召唤单位和拉美西斯 +0/+1，随后对自己造成1点伤害。',
+          description: '【回合结束时】：赋予友方其他召唤单位和拉美西斯 +0/+1，随后对自己造成1点伤害。',
           class: 'BUFF',
           timing: 'ROUND_END',
           speed: 'BURST',
-          targetRequirements: [{ type: 'ALL_ALLIES', count: 0, label: '全体友军' }],
+          targetRequirements: [{ type: 'ALL_ALLIES', count: 0, label: '全体友方单位' }],
           params: {
               power: 0, health: 1, duration: 'PERMANENT',
               raceFilter: ['summoner', 'summon'],
@@ -478,12 +516,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_dream_lotus_drone': {
         id: 'effect_dream_lotus_drone',
         name: '梦莲无人机',
-        description: '赋予一个【召唤衍生物】或【召唤师】+2/+0。',
+        description: '赋予一个【召唤衍生物】+2/+0。',
         class: 'BUFF',
         timing: 'ON_PLAY',
         speed: 'BURST',
-        targetRequirements: [{ type: 'ALLY_UNIT', count: 1, label: '选择一个【召唤衍生物】或【召唤师】', raceFilter: ['summoner', 'summon'] }],
-        params: { power: 2, health: 0, duration: 'PERMANENT', buffTag: 'drone_power', raceFilter: ['summoner', 'summon'] }
+        targetRequirements: [{ type: 'ALLY_UNIT', count: 1, label: '选择一个【召唤衍生物】', raceFilter: ['summon'] }],
+        params: { power: 2, health: 0, duration: 'PERMANENT', buffTag: 'drone_power', raceFilter: ['summon'] }
     },
     // ==========================================
     // [新增] 第 3 批通用法术与支援技注册
@@ -493,12 +531,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_vitality_regen': {
         id: 'effect_vitality_regen',
         name: '活力再生',
-        description: '快速：治疗一个受伤的我方单位2点生命值。',
+        description: '快速：治疗一个受伤的友方单位2点生命值。',
         class: 'HEAL',  // [新增] 专属治疗类
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALLY_UNIT', count: 1, label: '选择一个受伤的我方单位' }
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个受伤的友方单位' }
         ],
         params: {
             value: 2,
@@ -510,13 +548,13 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_full_purification': {
         id: 'effect_full_purification',
         name: '全力净化',
-        description: '快速：赋予我方各处的【环境净化无人机】+1/+1。',
+        description: '快速：赋予友方各处的【环境净化无人机】+1/+1。',
         class: 'BUFF_EVERYWHERE', // [新增] 全域光环类
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
             // 全局法术无需手动点选目标，引擎底层直接扫描
-            { type: 'ALL_ALLIES', count: 0, label: '我方各处' }
+            { type: 'ALL_ALLIES', count: 0, label: '友方各处' }
         ],
         params: {
             power: 1,
@@ -531,12 +569,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_fenny_support': {
         id: 'effect_fenny_support',
         name: '激励之声',
-        description: '快速：本回合给予我方一个单位 +1/+0，若此后本回合该单位击杀敌人，则备战。',
+        description: '快速：本回合给予友方一个单位 +1/+0，若此后本回合该单位击杀敌方单位，则备战。',
         class: 'BUFF', // 前置动作是 BUFF
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALLY_UNIT', count: 1, label: '选择一个我方单位' }
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个友方单位' }
         ],
         params: {
             power: 1,
@@ -569,12 +607,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_pupu_specular_soul_support': {
         id: 'effect_pupu_specular_soul_support',
         name: '异镜来物',
-        description: '快速：撤回一个交战中的我方单位，以【镜爻】代替其原本的战场位置。',
+        description: '快速：撤回一个交战中的友方单位，以【镜爻】代替其原本的战场位置。',
         class: 'RECALL_AND_REPLACE', // [新增] 缝合怪指令
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALLY_UNIT', count: 1, label: '选择一个交战中的我方单位' }
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个交战中的友方单位' }
         ],
         params: {
             summonKey: 'Mirror', // 指定替身
@@ -584,7 +622,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_drive_lv1': {
         id: 'effect_mauxir_lotus_drive_lv1',
         name: '感知补全',
-        description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方随机一个【臆莲基座】造成1点伤害，之后赋予其+0 +1。',
+        description: '【库效】回合开始时，若友方备战席和手牌中没有【臆莲基座】，则召唤一个。回合结束：对友方随机一个【臆莲基座】造成1点伤害，之后赋予其+0 +1。',
         // 这是系统底层被动机制，class 和 timing 只是占位，主要靠 useGameState 扫描提取
         class: 'BUFF',
         timing: 'ON_PLAY',
@@ -651,7 +689,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_drive_lv2': {
         id: 'effect_mauxir_lotus_drive_lv2',
         name: '感知补全+',
-        description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方所有【臆莲基座】造成1点伤害，之后赋予其+0 +2，【臆莲基座】可以以敌方水晶为目标。',
+        description: '【库效】回合开始时，若友方备战席和手牌中没有【臆莲基座】，则召唤一个。回合结束：对友方所有【臆莲基座】造成1点伤害，之后赋予其+0 +2，【臆莲基座】可以以敌方水晶为目标。',
         class: 'BUFF', // TODO: 替换为完整Lv2逻辑
         timing: 'ON_PLAY_AND_ROUND_START',
         speed: 'BURST',
@@ -683,7 +721,8 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         targetRequirements: [
             { type: 'HAND_CARD', count: 1, label: '选择一张手牌丢弃' }
         ],
-        params: {}
+        params: {},
+        animationDuration: 1000,
     },
     'effect_backroom_deal_draw': {
         id: 'effect_backroom_deal_draw',
@@ -702,12 +741,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_vitality_supplement': {
         id: 'effect_vitality_supplement',
         name: '生机补充',
-        description: '极速：治疗任意一个我方单位或水晶3点生命值。',
+        description: '极速：治疗任意一个友方单位或水晶3点生命值。',
         class: 'HEAL',
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'ANY_TARGET', count: 1, label: '选择一个我方单位或水晶' }
+            { type: 'ANY_TARGET', count: 1, label: '选择一个友方单位或水晶' }
         ],
         params: {
             value: 3,
@@ -735,7 +774,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_bader_reagent_heal': {
         id: 'effect_bader_reagent_heal',
         name: '巴德尔试剂·治疗',
-        description: '治疗我方所有单位与水晶1点生命值。',
+        description: '治疗友方所有单位与水晶1点生命值。',
         class: 'HEAL',
         timing: 'ON_PLAY',
         speed: 'BURST',
@@ -750,7 +789,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_bader_reagent_buff': {
         id: 'effect_bader_reagent_buff',
         name: '巴德尔试剂·强化',
-        description: '给予我方所有单位 +0/+1。',
+        description: '给予友方所有单位 +0/+1。',
         class: 'BUFF_EVERYWHERE',
         timing: 'ON_PLAY',
         speed: 'BURST',
@@ -762,8 +801,940 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
             health: 1,
             duration: 'PERMANENT'
         }
-    }
+    },
+
+    // ==========================================
+    // [新增] 第 5 批法术效果
+    // ==========================================
+
+    // --- 1. 鬼影森森（召唤三个异化人）---
+    'effect_ghostly_shadows': {
+        id: 'effect_ghostly_shadows',
+        name: '鬼影森森',
+        description: '慢速：召唤三个异化人至备战席。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: {
+            summonKey: 'titan_mutant',
+            summonZone: 'bench',
+            summonCount: 3,
+        }
+    },
+
+    // --- 2. 毁灭仪式（击杀友方泰坦 → 造成 3 点伤害）---
+    'effect_destruction_ritual': {
+        id: 'effect_destruction_ritual',
+        name: '毁灭仪式',
+        description: '快速：击杀一个泰坦友方单位，以对一个敌方单位造成3点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个泰坦友方单位作为祭品', raceFilter: ['titan'] },
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
+        ],
+        params: {
+            sacrificeValue: 999,  // 对祭品的伤害（确保击杀）
+            value: 3,             // 对敌方的伤害
+        }
+    },
+
+    // --- 3. 蟾鉴易纹（转移幻象关键词）---
+    'effect_toad_pattern': {
+        id: 'effect_toad_pattern',
+        name: '蟾鉴易纹',
+        description: '快速：移除友方的幻象关键词，并将它转移给所选的敌方单位。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个拥有幻象的友方单位', keywordFilter: ['Ephemeral'] },
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位作为转移目标' }
+        ],
+        params: {
+            removeKeywords: ['Ephemeral'],   // 从第一个目标（友方）移除幻象
+            keywords: ['Ephemeral'],          // 给第二个目标（敌方）添加幻象
+        }
+    },
+
+    // --- 鬼怪小队：首次打击水晶触发 ---
+
+    'effect_ghost_antina_inspire': {
+        id: 'effect_ghost_antina_inspire',
+        name: '宇宙信号',
+        description: '首次打击敌方水晶后，随机赋予除自己以外的另一个友方单位 +1/+0。',
+        class: 'BUFF',
+        timing: 'ON_FIRST_NEXUS_STRIKE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            power: 1,
+            health: 0,
+            targetFilter: 'RANDOM_ALLY',
+        }
+    },
+    'effect_ghost_vez_heal': {
+        id: 'effect_ghost_vez_heal',
+        name: '战地急救',
+        description: '首次打击敌方水晶后，随机治疗一个受伤的友方单位3点；若没有友方受伤，则治疗我方水晶3点。',
+        class: 'HEAL',
+        timing: 'ON_FIRST_NEXUS_STRIKE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 3,
+            targetFilter: 'RANDOM_WOUNDED_ALLY',
+            nexusFallback: true,        // 无受伤队友时改奶水晶
+        }
+    },
+    'effect_ghost_valen_rally': {
+        id: 'effect_ghost_valen_rally',
+        name: '耶洛沙战吼',
+        description: '首次打击敌方水晶后，赋予我方所有单位 +1/+1，并给予敌方所有单位 -1/-0。',
+        class: 'BUFF',
+        timing: 'ON_FIRST_NEXUS_STRIKE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            allAlliesBuff: { power: 1, health: 1 },
+            allEnemiesDebuff: { power: -1, health: 0 },
+        }
+    },
+
+    // ==========================================
+    // [布里吉小队] 效果注册
+    // ==========================================
+
+    // --- 菲儿：在手牌生成「强行通讯」---
+    'effect_bridget_feier_gencard': {
+        id: 'effect_bridget_feier_gencard',
+        name: '通讯筹备',
+        description: '在手牌生成一张“强行通讯”。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            generateKey: 'forced_communication',
+        }
+    },
+
+    // --- 金吉拉：抽 2 张卡牌 ---
+    'effect_bridget_chinchilla_draw2': {
+        id: 'effect_bridget_chinchilla_draw2',
+        name: '快速补牌',
+        description: '抽取 2 张卡牌。',
+        class: 'DRAW',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 2,
+        }
+    },
+
+    // --- 瓦莱莉：弃任意手牌 → 召唤夜巡猫头鹰 ---
+    'effect_bridget_valerie_discard_summon': {
+        id: 'effect_bridget_valerie_discard_summon',
+        name: '夜幕葬仪',
+        description: '弃置任意数量手牌，召唤一只“夜巡猫头鹰”。',
+        class: 'DISCARD_AND_SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            summonKey: 'Night_Owl',
+            summonZone: 'bench',
+            discardCountMode: 'any', // 可弃任意数量
+        }
+    },
+
+    // --- 强行通讯：燃尽抽牌 ---
+    'effect_forced_communication_draw': {
+        id: 'effect_forced_communication_draw',
+        name: '强行通讯',
+        description: '燃尽。抽取（燃尽值/2）张卡牌。',
+        class: 'DRAW',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: {
+            value: 0,           // 动态计算，由逻辑层根据燃尽值覆盖
+            useBurnout: true,   // [新增] 标记此效果使用燃尽机制
+        }
+    },
+
+    // --- 夜巡猫头鹰：死亡时抽牌 ---
+    'effect_night_owl_death_draw': {
+        id: 'effect_night_owl_death_draw',
+        name: '夜巡回响',
+        description: '死亡时：抽取（瓦莱莉弃置数量-1）张卡牌。',
+        class: 'DRAW',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 0,           // 动态计算，由逻辑层根据弃置数量覆盖
+            useDiscardCount: true, // [新增] 标记使用瓦莱莉弃置数
+        }
+    },
+
+    // ==========================================
+    // [2026-07-10 精灵小队] 效果注册 — 资源循环体系
+    // ==========================================
+
+    // --- 露莎卡：入场生成精灵祈愿 ---
+    'effect_spirit_lusaka_generate': {
+        id: 'effect_spirit_lusaka_generate',
+        name: '精灵祈愿',
+        description: '入场时：在手牌中生成一张精灵祈愿。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'spirit_prayer' },
+        animationDuration: 800,
+    },
+
+    // --- 斯涅妮卡：入场本回合全员+0+1 ---
+    'effect_spirit_snenika_aura': {
+        id: 'effect_spirit_snenika_aura',
+        name: '精灵祝福',
+        description: '入场：本回合给予我方全员+0+1。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [{ type: 'ALL_ALLIES', count: 1 }],
+        params: { health: 1, duration: 'ROUND' },
+        animationDuration: 600,
+    },
+
+    // --- 斯涅妮卡：首次回合结束时全员治疗 ---
+    'effect_spirit_snenika_roundend_heal': {
+        id: 'effect_spirit_snenika_roundend_heal',
+        name: '精灵低语',
+        description: '首次回合结束时：治疗我方所有受伤的单位2点。',
+        class: 'HEAL',
+        timing: 'ROUND_END',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 2, targetCondition: 'all_injured' },
+        animationDuration: 800,
+    },
+
+    // --- 邦妮：打击时生成精灵祈愿 ---
+    'effect_spirit_bonnie_generate': {
+        id: 'effect_spirit_bonnie_generate',
+        name: '炎之祈愿',
+        description: '打击时：在手牌中生成一张精灵祈愿。',
+        class: 'GENERATE',
+        timing: 'ON_ATTACK',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'spirit_prayer' },
+        animationDuration: 600,
+    },
+
+    // --- 精灵祈愿：治疗+buff ---
+    'effect_spirit_prayer_heal_buff': {
+        id: 'effect_spirit_prayer_heal_buff',
+        name: '精灵祈愿',
+        description: '治疗一个受伤单位1点，之后赋予+1+0。',
+        class: 'HEAL',
+        timing: 'BURST',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ANY_UNIT', count: 1, label: '选择一个受伤单位' }
+        ],
+        params: { value: 1, power: 1, health: 0 },
+        animationDuration: 800,
+    },
+    // ==========================================
+    // [2026-07-10 诗人小队] 效果注册 — 「记录」方向B
+    // ==========================================
+
+    // --- 奥伊辛：入场生成真实快照 ---
+    'effect_poet_oisin_generate': {
+        id: 'effect_poet_oisin_generate',
+        name: '真实记录',
+        description: '入场时：在手牌中生成一张真实快照。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'true_snapshot' },
+        animationDuration: 800,
+    },
+
+    // --- 真实快照：选择手牌，复制x3洗入牌库 ---
+    'effect_true_snapshot_clone': {
+        id: 'effect_true_snapshot_clone',
+        name: '真实快照',
+        description: '选择一张手牌，复制三张相同的卡牌并洗入牌库。',
+        class: 'CLONE_TO_DECK',
+        timing: 'BURST',
+        speed: 'SLOW',
+        targetRequirements: [
+            { type: 'HAND_CARD', count: 1, label: '选择一张手牌进行复制' }
+        ],
+        params: { value: 3 },
+        animationDuration: 1000,
+    },
+
+    // --- 凯特琳：极速/快速法术减费光环（标记效果）---
+    'effect_poet_caitlin_aura': {
+        id: 'effect_poet_caitlin_aura',
+        name: '安可之音',
+        description: '在场时，我方所有极速和快速法术魔耗值减1。',
+        class: 'BUFF_EVERYWHERE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { costReduceSpell: true },
+        animationDuration: 200,
+    },
+
+    // --- 科洛：回合开始时，复制上回合前三张非易逝牌到手牌 ---
+    'effect_poet_kelo_recycle': {
+        id: 'effect_poet_kelo_recycle',
+        name: '收藏癖',
+        description: '回合开始时：复制上回合我方打出的前三张非易逝卡牌到手牌，并赋予[瞬逝]。',
+        class: 'GENERATE',
+        timing: 'ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {},
+        animationDuration: 800,
+    },
+
+    // ==========================================
+    // [2026-07-10 绿灵小队] 效果存根（逻辑待实现）
+    // ==========================================
+
+    // --- 格伦茨：入场赋予牌库最上方两个单位+0+1 ---
+    'effect_green_glanz_buff': {
+        id: 'effect_green_glanz_buff',
+        name: '双生萌芽',
+        description: '入场时，赋予我方牌库最上方的两个单位+0/+1。',
+        class: 'BUFF_EVERYWHERE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { health: 1, ownerSide: true },
+        animationDuration: 600,
+    },
+
+    // --- 艾娃：光环—每打出≥1费快速法术，牌库最上方+1+1 ---
+    'effect_green_eva_aura': {
+        id: 'effect_green_eva_aura',
+        name: '滋养光环',
+        description: '光环：我方每打出一张费用≥1的快速法术，赋予牌库最上方的单位+1/+1。',
+        class: 'BUFF_EVERYWHERE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { power: 1, health: 1, ownerSide: true },
+        animationDuration: 400,
+    },
+
+    // --- 格蕾丝：入场时召唤行李箱机器人 ---
+    'effect_green_grace_summon': {
+        id: 'effect_green_grace_summon',
+        name: '开箱！',
+        description: '入场时，召唤一个行李箱机器人。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonKey: 'Green_Spirit_Squad_LuggageBot' },
+        animationDuration: 800,
+    },
+
+    // --- 行李箱机器人：被召唤时，赋予我方牌库所有单位+1+1 ---
+    'effect_green_luggage_buff': {
+        id: 'effect_green_luggage_buff',
+        name: '满载而归',
+        description: '被召唤时，赋予我方牌库所有单位 +1/+1。',
+        class: 'BUFF_EVERYWHERE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { power: 1, health: 1, ownerSide: true },
+        animationDuration: 800,
+    },
+
+    // ==========================================
+    // [2026-07-14 锻造者小队] 蕾西亚 — 打击减费
+    // ==========================================
+    'effect_forger_leisia_strike_reduce': {
+        id: 'effect_forger_leisia_strike_reduce',
+        name: '情报折价',
+        description: '打击后，减少我方费用最高的手牌1点费用。',
+        class: 'COST_REDUCE',
+        timing: 'ON_ATTACK',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1 }
+    },
+
+    // ==========================================
+    // [2026-07-14 锻造者小队] 缇坦妮娅 — 法术增伤光环
+    // ==========================================
+    'effect_forger_tatiana_aura': {
+        id: 'effect_forger_tatiana_aura',
+        name: '火力支援',
+        description: '光环：我方所有法术伤害+1。',
+        class: 'SPELL_DAMAGE_AURA',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { spellDamageBuff: 1 }
+    },
+
+    // ==========================================
+    // [2026-07-14 锻造者小队] 白猎 — 手牌召唤
+    // ==========================================
+    'effect_forger_white_hunt_summon': {
+        id: 'effect_forger_white_hunt_summon',
+        name: '重装出击',
+        description: '选择一个手牌中的单位，赋予他+3/+0和碾压并将他从手牌中召唤。',
+        class: 'SUMMON_FROM_HAND',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'HAND_CARD', count: 1, cardTypeFilter: 'unit', label: '选择一个手牌中的单位' }
+        ],
+        params: { power: 3, keywords: ['Overwhelm'], triggerOnPlay: true, maxCost: 7 }
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 洛迦 — 亡语召唤幻莲音蛇
+    // ==========================================
+    'effect_hymn_loka_death_summon': {
+        id: 'effect_hymn_loka_death_summon',
+        name: '音蛇召唤',
+        description: '死亡时：召唤一个【幻莲音蛇】。',
+        class: 'SUMMON',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonKey: 'Loka_Phantom_Serpent', summonCount: 1 }
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 幻莲音蛇 — 回合开始额外法力
+    // ==========================================
+    'effect_loka_serpent_bonus_mana': {
+        id: 'effect_loka_serpent_bonus_mana',
+        name: '音蛇共鸣',
+        description: '回合开始时，永久提升1点法力上限。',
+        class: 'GRANT_MANA',
+        timing: 'ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1, grantMaxMana: true }
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 欧白芷 — 亡语生成迷离之音
+    // ==========================================
+    'effect_hymn_angelica_death_generate': {
+        id: 'effect_hymn_angelica_death_generate',
+        name: '迷离之音',
+        description: '死亡时：在手牌生成一张【迷离之音】。',
+        class: 'GENERATE',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'Angelica_Hazy_Note' }
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 迷离之音 — 治疗
+    // ==========================================
+    'effect_angelica_hazy_note_heal': {
+        id: 'effect_angelica_hazy_note_heal',
+        name: '迷离治愈',
+        description: '治疗我方任意一个单位或水晶2点生命值。',
+        class: 'HEAL',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ANY_TARGET', count: 1, label: '选择治疗目标' }
+        ],
+        params: { value: 2, targetCondition: 'ally_only' }
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 迷离之音 — 额外法力
+    // ==========================================
+    'effect_angelica_hazy_note_mana': {
+        id: 'effect_angelica_hazy_note_mana',
+        name: '音律涌动',
+        description: '永久提升1点法力上限。',
+        class: 'GRANT_MANA',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1, grantMaxMana: true }
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 莎罗 — 入场阵亡计数buff
+    // ==========================================
+    'effect_hymn_shalo_onplay_buff': {
+        id: 'effect_hymn_shalo_onplay_buff',
+        name: '逝者回响',
+        description: '入场时，本牌局我方每有一个单位阵亡，则同时赋予一次自己和随机场上任意一个单位+1/+1。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 0 } // value 由逻辑层根据 friendlyUnitDeaths 动态计算
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 莎罗 — 亡语生成巨偶一瞥
+    // ==========================================
+    'effect_hymn_shalo_death_generate': {
+        id: 'effect_hymn_shalo_death_generate',
+        name: '巨偶一瞥',
+        description: '死亡时：在手牌中生成一张【巨偶一瞥】。',
+        class: 'GENERATE',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'Shalo_Golem_Glimpse' }
+    },
+
+    // ==========================================
+    // [2026-07-14 梵音小队] 巨偶一瞥 — AOE伤害+觉悟碾压
+    // ==========================================
+    'effect_shalo_golem_glimpse_strike': {
+        id: 'effect_shalo_golem_glimpse_strike',
+        name: '巨偶一瞥',
+        description: '对所有敌人造成3点伤害。[觉悟]：费用降为0，赋予我方所有单位【碾压】。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: { value: 3, targetAllEnemies: true } // targetAllEnemies 标记全屏AOE
+    },
+
+    // ==========================================
+    // [2026-07-15 达努小队] 班西 — 受伤存活自buff+生成墓穴蜘蛛
+    // ==========================================
+    'effect_danu_banshee_damage_buff': {
+        id: 'effect_danu_banshee_damage_buff',
+        name: '墓穴呼唤',
+        description: '受伤并存活后，自身+2/+0，并在手牌中生成一张【墓穴蜘蛛】。',
+        class: 'BUFF', // TODO: 改为 ON_DAMAGE_SURVIVE 专用逻辑
+        timing: 'ON_DAMAGE_SURVIVE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { power: 2, health: 0, generateKey: 'Tomb_Spider' }
+    },
+
+    // ==========================================
+    // [2026-07-15 达努小队] 墓穴蜘蛛 — 衍生物
+    // ==========================================
+    'effect_tomb_spider_challenger': {
+        id: 'effect_tomb_spider_challenger',
+        name: '掘穴突袭',
+        description: '挑战者。',
+        class: 'BUFF', // 关键词自带，纯占位
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {}
+    },
+
+    // ==========================================
+    // [2026-07-15 达努小队] 温蒂 — 入场AOE自伤
+    // ==========================================
+    'effect_danu_wendy_onplay_ping': {
+        id: 'effect_danu_wendy_onplay_ping',
+        name: '自适应性调整',
+        description: '入场时，对我方除自己以外所有单位造成1点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1, targetAllAllies: true, excludeSelf: true }
+    },
+
+    // ==========================================
+    // [2026-07-15 达努小队] 温蒂 — 受伤光环buff
+    // ==========================================
+    'effect_danu_wendy_aura_buff': {
+        id: 'effect_danu_wendy_aura_buff',
+        name: '痛觉强化',
+        description: '在场时，每当我方单位受伤，赋予其+1/+0和【坚韧】。',
+        class: 'BUFF',
+        timing: 'ON_FRIENDLY_DAMAGED',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { power: 1, health: 0, keywords: ['Tough'] }
+    },
+
+    // ==========================================
+    // [2026-07-16 银臂乱打] — 法术：对交战区所有单位造成2点伤害
+    // ==========================================
+    'effect_silver_arm_smash': {
+        id: 'effect_silver_arm_smash',
+        name: '银臂乱打',
+        description: '对战场上所有单位造成2点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [],
+        params: { value: 2, targetCombatOnly: true }
+    },
+
+    // ==========================================
+    // [2026-07-15 达努小队] 银臂 — 战后存活buff
+    // ==========================================
+    'effect_danu_silverarm_post_combat_buff': {
+        id: 'effect_danu_silverarm_post_combat_buff',
+        name: '战争红利',
+        description: '首次进攻战斗结束后，存活的我方单位获得+1/+0和【挑战者】。',
+        class: 'BUFF',
+        timing: 'POST_COMBAT',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { power: 1, health: 0, keywords: ['Challenger'], firstAttackOnly: true }
+    },
+
+    // ==========================================
+    // [2026-07-15 鸦眼小队] 安 — 入场校准
+    // ==========================================
+    'effect_crows_an_onplay_calibrate': {
+        id: 'effect_crows_an_onplay_calibrate',
+        name: '校准·安',
+        description: '入场时：从牌库中随机展示4张牌，选择1张放回牌库顶。',
+        class: 'CALIBRATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { calibrateCount: 4 }
+    },
+
+    // ==========================================
+    // [2026-07-15 鸦眼小队] 穆林 — 入场牌库buff
+    // ==========================================
+    'effect_crows_mulin_onplay_deckbuff': {
+        id: 'effect_crows_mulin_onplay_deckbuff',
+        name: '鸦羽庇护',
+        description: '入场时：随机给予我方牌库中的4个单位+2/+2。',
+        class: 'DECK_BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 4, count: 4, targetType: 'unit', power: 2, health: 2 }
+    },
+
+    // ==========================================
+    // [2026-07-17 鸦眼小队] 穆林 — 回合开始时校准
+    // ==========================================
+    'effect_crows_mulin_roundstart_calibrate': {
+        id: 'effect_crows_mulin_roundstart_calibrate',
+        name: '校准·穆林',
+        description: '回合开始时：校准。',
+        class: 'CALIBRATE',
+        timing: 'ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { calibrateCount: 4 }
+    },
+
+    // ==========================================
+    // [2026-07-17 鸦眼小队] 海基 — 入场生成精密操作
+    // ==========================================
+    'effect_crows_hiki_onplay_generate': {
+        id: 'effect_crows_hiki_onplay_generate',
+        name: '精密调度',
+        description: '入场时：在手牌中生成一张"精密操作"，若手牌中已有该卡牌，则赋予它费用-1。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'Crows_Precise_Operation', reduceCostIfDuplicate: true }
+    },
+
+    // ==========================================
+    // [2026-07-17 鸦眼小队] 海基 — 回合开始生成精密操作
+    // ==========================================
+    'effect_crows_hiki_roundstart_generate': {
+        id: 'effect_crows_hiki_roundstart_generate',
+        name: '精密调度',
+        description: '回合开始时：在手牌中生成一张"精密操作"，若手牌中已有该卡牌，则赋予它费用-1。',
+        class: 'GENERATE',
+        timing: 'ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'Crows_Precise_Operation', reduceCostIfDuplicate: true }
+    },
+
+    // ==========================================
+    // [2026-07-15 鸦眼小队] 海基 — 校准奖励光环
+    // ==========================================
+    'effect_crows_hiki_calibrate_aura': {
+        id: 'effect_crows_hiki_calibrate_aura',
+        name: '鸦眼洞察',
+        description: '在场时：校准中没有被选择的单位卡牌获得+1/+1，法术卡牌费用-1。',
+        class: 'BUFF',
+        timing: 'ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { power: 1, health: 1, spellCostReduce: 1 } // 光环逻辑待实现
+    },
+
+    // ==========================================
+    // [2026-07-17 鸦眼小队] 精密操作 — 校准
+    // ==========================================
+    'effect_crows_precise_operation': {
+        id: 'effect_crows_precise_operation',
+        name: '精密操作',
+        description: '校准。（从牌库顶展示4张牌，选1张放回牌库顶）',
+        class: 'CALIBRATE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [],
+        params: { calibrateCount: 4 }
+    },
+
+    // ==========================================
+    // [2026-07-17 阿尔戈小队重做] 蓄意渗透 — 对敌方水晶造成1点伤害
+    // ==========================================
+    'effect_deliberate_infiltration': {
+        id: 'effect_deliberate_infiltration',
+        name: '蓄意渗透',
+        description: '对敌方水晶造成1点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ENEMY_NEXUS', count: 1, label: '敌方水晶' }
+        ],
+        params: { value: 1 }
+    },
+
+    // ==========================================
+    // [2026-07-17 阿尔戈小队] 乐手 — 回合开始时对敌方水晶造成1点伤害
+    // ==========================================
+    'effect_argo_musician_round_start': {
+        id: 'effect_argo_musician_round_start',
+        name: '蓄意渗透',
+        description: '回合开始时：对敌方水晶造成1点伤害。',
+        class: 'STRIKE',
+        timing: 'ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1, targetEnemyNexus: true }
+    },
+
+    // ==========================================
+    // [2026-07-17 阿尔戈小队] 箭头 — 发起进攻时赋予自己+3/+0
+    // ==========================================
+    'effect_argo_arrowhead_attack_declare': {
+        id: 'effect_argo_arrowhead_attack_declare',
+        name: '箭头冲击',
+        description: '发起进攻时：赋予自己+3/+0。',
+        class: 'BUFF',
+        timing: 'ON_ATTACK_DECLARE',
+        targetRequirements: [{ type: 'SELF', count: 1 }],
+        params: { power: 3, health: 0 }
+    },
+
+    // ==========================================
+    // [2026-07-24 测试卡] 冻结 — 入场本回合将自身攻击力降为0
+    // ==========================================
+    'effect_test_frostbite': {
+        id: 'effect_test_frostbite',
+        name: '冻结测试',
+        description: '入场本回合将自身攻击力降为0。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [{ type: 'SELF', count: 1 }],
+        params: {
+            duration: 'ROUND',
+            keywords: ['Frostbite'] as Keyword[],
+        }
+    },
+
+    // --- 丁型异化人 亡语：泰坦物质爆炸 ---
+    'effect_titan_type_d_lastbreath': {
+        id: 'effect_titan_type_d_lastbreath',
+        name: '泰坦物质爆炸',
+        description: '【亡语】：对敌方所有单位与水晶造成 2 点伤害。',
+        class: 'BUFF',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {}
+    },
+
+    // ==========================================
+    // [2026-07-26 安卡希雅 时之重奏] 效果存根
+    // ==========================================
+
+    'effect_acacia_chrono_echo_lv1': {
+        id: 'effect_acacia_chrono_echo_lv1',
+        name: '时之重奏',
+        description: '【库效】牌局开始：若手牌中没有则生成"安卡希雅的剑舞"。入场时：生成易逝的"灵轨月轮·扩散"。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'acacia_sword_rain', gameStartGenerate: 'acacia_chrono_echo_spell', isVolatile: true }
+    },
+    'effect_acacia_chrono_echo_token': {
+        id: 'effect_acacia_chrono_echo_token',
+        name: '时之重奏·标识',
+        description: '获得进攻标识时：生成易逝的"灵轨月轮·扩散"。',
+        class: 'GENERATE',
+        timing: 'ON_GET_ATTACK_TOKEN',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'acacia_sword_rain', isVolatile: true }
+    },
+    // [2026-07-31 安卡希雅 Lv2] 升级后效果：库效生成重锋 + 入场生成月镰剑势
+    'effect_acacia_chrono_echo_lv2': {
+        id: 'effect_acacia_chrono_echo_lv2',
+        name: '时之重奏·重锋',
+        description: '【库效】牌局开始：若手牌中没有则生成"安卡希雅的重锋"。入场时：生成易逝的"月镰剑势"。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'acacia_sword_rain_alt', gameStartGenerate: 'acacia_chrono_echo_heavy', isVolatile: true }
+    },
+    'effect_acacia_chrono_echo_token_lv2': {
+        id: 'effect_acacia_chrono_echo_token_lv2',
+        name: '时之重奏·重锋标识',
+        description: '获得进攻标识时：生成易逝的"月镰剑势"。',
+        class: 'GENERATE',
+        timing: 'ON_GET_ATTACK_TOKEN',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'acacia_sword_rain_alt', isVolatile: true }
+    },
+    'effect_acacia_chrono_echo_rush': {
+        id: 'effect_acacia_chrono_echo_rush',
+        name: '剑咏变调',
+        description: '切换灵轨月轮·扩散/集束。',
+        class: 'BUFF',
+        timing: 'FAST',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { condition: 'acacia_rush_upgraded' }
+    },
+    'effect_acacia_chrono_echo_ultimate': {
+        id: 'effect_acacia_chrono_echo_ultimate',
+        name: '朔望之期',
+        description: '本牌局每召唤过飞剑1减1费。打出后升级安卡希雅，并回复全部费用。',
+        class: 'BUFF',
+        timing: 'SLOW',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { condition: 'acacia_full_moon_levelup' }
+    },
+    'effect_acacia_cross_temporal': {
+        id: 'effect_acacia_cross_temporal',
+        name: '越时斩',
+        description: '若本回合已飞剑，则对敌方战场上所有单位造成2点伤害。',
+        class: 'STRIKE',
+        timing: 'FAST',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 2, targetCondition: 'enemy_all' }
+    },
+    'effect_acacia_sword_timeline': {
+        id: 'effect_acacia_sword_timeline',
+        name: '剑痕时空',
+        description: '安卡希雅退级，每大飞剑1打敌方水晶1。每飞剑1减1费。使用后回复全部费用。',
+        class: 'STRIKE',
+        timing: 'SLOW',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1, condition: 'acacia_ultimate_delevel' }
+    },
+    'effect_acacia_chrono_echo_support': {
+        id: 'effect_acacia_chrono_echo_support',
+        name: '时之协奏',
+        description: '[支援技] 对所有本回合进攻或格挡过的敌人造成1点伤害。',
+        class: 'STRIKE',
+        timing: 'BURST',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1, targetCondition: 'attacked_or_blocked_this_round' }
+    },
+    'effect_acacia_sword_rain': {
+        id: 'effect_acacia_sword_rain',
+        name: '刀光剑影',
+        description: '慢速：飞剑4。',
+        class: 'FLYING_SWORD',
+        timing: 'SLOW',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonCount: 4 }
+    },
+    'effect_acacia_moon_focus': {
+        id: 'effect_acacia_moon_focus',
+        name: '灵轨月轮·集束',
+        description: '慢速：飞剑1，此次飞剑获得+3/+3和碾压。',
+        class: 'FLYING_SWORD',
+        timing: 'SLOW',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonCount: 1, power: 3, health: 3 }
+    },
+    'effect_acacia_sword_rain_alt': {
+        id: 'effect_acacia_sword_rain_alt',
+        name: '月镰剑势',
+        description: '慢速：飞剑3。',
+        class: 'FLYING_SWORD',
+        timing: 'SLOW',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonCount: 3 }
+    },
+    'effect_sacred_tree_alvina': {
+        id: 'effect_sacred_tree_alvina',
+        name: '飞剑召来',
+        description: '入场时：若本回合已召唤过飞剑，则赋予我方全员+0/+2并备战。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { condition: 'sacred_tree_alvina_check' }
+    },
+    'effect_sacred_tree_lumi': {
+        id: 'effect_sacred_tree_lumi',
+        name: '时序加速',
+        description: '打出时：飞剑2。',
+        class: 'FLYING_SWORD',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonCount: 2 }
+    },
+    'effect_sacred_tree_margaret': {
+        id: 'effect_sacred_tree_margaret',
+        name: '飞剑突袭',
+        description: '进攻时：飞剑2并点亮充能。',
+        class: 'FLYING_SWORD',
+        timing: 'ON_ATTACK_DECLARE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonCount: 2 }
+    },
 };
+
+
 
 // ==========================================
 // [新增] 猫汐尔 莲驱 效果存根（逻辑待实现）

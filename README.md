@@ -1,73 +1,86 @@
-# React + TypeScript + Vite
+# Snowbreak Rivals
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> 类《Legends of Runeterra》风格的 1v1 卡牌对战游戏 — 个人独立开发
 
-Currently, two official plugins are available:
+基于 React + TypeScript + Electron 技术栈打造的 Windows 桌面端卡牌游戏。支持完整的回合制对战、AI 对手、卡组编辑、抽卡/商城、任务系统、教程关卡与工作室沙盒模式。
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## 技术栈
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| 层级 | 选型 |
+|------|------|
+| **语言** | TypeScript 5.6 严格模式 |
+| **UI 框架** | React 19 + Tailwind CSS 3 |
+| **动画引擎** | Framer Motion 12 + GSAP 3.15 |
+| **特效渲染** | Pixi.js 7.4（局内 VFX） |
+| **桌面端** | Electron 39（NSIS 安装包） |
+| **构建工具** | Vite 6 + PostCSS |
+| **状态管理** | React Hooks 纯函数状态机 |
+| **代码保护** | javascript-obfuscator（构建时混淆） |
 
-## Expanding the ESLint configuration
+## 项目规模
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- **总代码**：~44,832 行 TypeScript/TSX（113 个源文件）
+- **卡牌**：155 个卡牌实体（含衍生卡），4 位天启者（英雄）
+- **效果**：69 个效果定义
+- **关键词**：38+ 关键词机制
+- **敌人**：10 种敌人流派/卡池
+- **界面**：45 个 React 组件，16 个自定义 Hooks
+- **素材**：446 个图片资源（卡面、图标、特效、UI）
+- **版本**：v1.0.5（持续迭代中）
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## 功能模块
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- ⚔️ **回合制卡牌对战** — 完整战斗流程：抽牌 → 下单位 → 法术响应 → 进攻/格挡 → 伤害结算
+- 🤖 **AI 对手** — 数据驱动的法术策略引擎，支持多种出牌模式
+- 🃏 **卡组编辑器** — 多选筛选（费用/阵营/关键词/法术速度）、卡牌统计面板
+- 💎 **抽卡/卡池系统** — 带有抽卡动画、保底机制
+- 🏪 **商城系统** — 比特金、银币、礼包
+- 📋 **任务系统** — 每日/周常任务，仪式感金光弹窗奖励
+- 🎓 **教程系统** — 剧本驱动的引导关卡，覆盖层交互，支持关卡完成度追踪
+- 🏛️ **图鉴系统** — 全卡收集进度、衍生卡自动点亮
+- 🔧 **工作室沙盒** — 卡牌数值调试、敌人卡组编辑（内部工具）
+- 🎨 **皮肤系统** — 天启者多皮肤切换、卡面裁剪、渐变背景
+- 📖 **背景故事** — lore 档案、泰坦生态系、版本活动剧情
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 开发环境
+
+```bash
+# 安装依赖
+npm install
+
+# 启动开发服务器（热更新）
+npm run dev
+
+# 构建生产版本
+npm run build
+
+# 构建 Electron 桌面客户端
+npm run dist
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+构建产物位于 `release/` 目录，NSIS 安装包格式。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 项目结构
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+src/
+├── data/          # 数据层（卡牌、效果、关键词、语音、图片映射）
+├── logic/         # 纯逻辑层（效果引擎、战斗结算、AI 策略）
+├── hooks/         # 状态钩子（中央引擎、法术系统、AI、语音）
+├── components/    # 组件层（45 个 React 组件）
+├── types/         # 类型定义
+└── utils/         # 工具函数（游戏规则、存储、事件总线）
+```
+
+## 核心设计思路
+
+- **中央状态机**：`useGameState.ts` 作为单一真相来源，以 `phase` 驱动游戏流程
+- **效果引擎**：`effectProcessor.ts` 实现效果链式结算，支持条件判断、目标选择、状态修改的组合
+- **关键词系统**：关键词以数据驱动方式注册，与效果引擎解耦
+- **AI 决策**：从硬编码演变为 Pattern 引擎，支持扩展新的出牌模式
+
+## 版权说明
+
+© 2026 Snowbreak Rivals Dev Team. 卡面及音效素材版权归原作者所有。

@@ -13,7 +13,7 @@ export const calculateRoundStart = (currentGame: GameState) => {
             round: 1,
             playerMaxMana: 1, playerMana: 1, playerSpellMana: 0,
             enemyMaxMana: 1, enemyMana: 1, enemySpellMana: 0,
-            attackToken: 'player',
+            attackToken: { player: 'normal', enemy: null },
             turnOwner: 'player',
             phase: 'main',
             consecutivePasses: 0,
@@ -52,9 +52,10 @@ export const calculateRoundStart = (currentGame: GameState) => {
 /**
  * 检查是否买得起卡牌
  */
-export const canAfford = (card: CardData, mana: number, spellMana: number) => {
-    if (card.type.includes('unit')) return mana >= card.cost;
-    return (mana + spellMana) >= card.cost;
+export const canAfford = (card: CardData, mana: number, spellMana: number, effectiveCost?: number) => {
+    const cost = effectiveCost ?? card.cost;
+    if (card.type.includes('unit')) return mana >= cost;
+    return (mana + spellMana) >= cost;
 };
 
 /**
@@ -72,5 +73,6 @@ export const calculateManaCost = (card: CardData, currentMana: number, currentSp
     } else {
         m -= cost;
     }
-    return { newMana: m, newSpellMana: sm };
+    // [2026-07-22 莉莉子] 保险钳制：法力值不允许低于 0
+    return { newMana: Math.max(0, m), newSpellMana: Math.max(0, sm) };
 };

@@ -28,6 +28,7 @@ export interface VFXTarget {
 export interface PersistentLine {
     sourceId: string;
     targets: VFXTarget[];
+    owner?: 'player' | 'enemy'; // [新增] 施法者，用于颜色判定
 }
 
 interface VFXLayerProps {
@@ -48,11 +49,28 @@ const COLORS = {
     preview: '#ffffff',
 };
 
-const getLineColor = (type: string): string => {
-    if (type.includes('enemy')) return COLORS.enemy;
-    if (type.includes('ally') || type.includes('player')) return COLORS.ally;
-    if (type.includes('nexus')) return COLORS.nexus;
-    return COLORS.preview;
+const getLineColor = (owner: 'player' | 'enemy' | undefined, targetType: string): string => {
+    if (owner === 'enemy') {
+        // 敌方施法时，targetType 是绝对游戏视角：
+        //   'ally'/'player' = 玩家方单位 = AI的敌人 → 红
+        //   'enemy' = AI方单位 = AI的自己人 → 蓝
+        const isOwnSide = targetType.includes('enemy');  // AI自己单位
+        const isOpponentSide = targetType.includes('ally') || targetType.includes('player'); // 玩家单位
+        if (isOwnSide) return COLORS.ally;      // 蓝：AI 打自己人
+        if (isOpponentSide) return COLORS.enemy; // 红：AI 打玩家
+        if (targetType.includes('nexus')) return COLORS.nexus;
+        return COLORS.preview;
+    }
+    // 玩家施法（或兜底）: 按字面理解目标类型
+    if (!owner) {
+        if (targetType.includes('enemy')) return COLORS.enemy;
+        if (targetType.includes('ally') || targetType.includes('player')) return COLORS.ally;
+        if (targetType.includes('nexus')) return COLORS.nexus;
+        return COLORS.preview;
+    }
+    const isAlly = targetType.includes('ally') || targetType.includes('player');
+    if (isAlly) return COLORS.ally;
+    return COLORS.enemy;
 };
 
 // ==========================================
@@ -195,6 +213,24 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
     const mousePosRef = useRef({ x: 0, y: 0 });
     const centerRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const prevTargetCountRef = useRef(0);
+    // [2026-07-06] 堆叠法术刚挂载时连续刷新几帧，等 Framer Motion 动画稳定
+    const [refreshTick, setRefreshTick] = useState(0);
+    const prevLinesLenRef = useRef(persistentLines.length);
+    useEffect(() => {
+        if (persistentLines.length === 0) return;
+        if (prevLinesLenRef.current !== persistentLines.length) {
+            prevLinesLenRef.current = persistentLines.length;
+            let frame = 0;
+            const MAX_FRAMES = 18; // ~300ms @ 60fps
+            const tick = () => {
+                if (frame >= MAX_FRAMES) return;
+                frame++;
+                setRefreshTick(t => t + 1);
+                requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        }
+    }, [persistentLines.length, refreshTick]);
 
     // ==========================================
     // [新增] 临时瞄准线雷达 (用于回合结束或技能锁定预演)
@@ -353,7 +389,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
     return (
         <svg
             ref={svgRef}
-            className="absolute inset-0 w-full h-full pointer-events-none z-[90]"
+            className="absolute inset-0 w-full h-full pointer-events-none z-[25]"
             style={{ overflow: 'visible' }}
         >
             {/* A. 持久化连线 & 临时瞄准线 */}
@@ -369,13 +405,13 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
                             const targetPos = getElementCenter(target.id, svgRef.current);
                             if (!targetPos) return null;
                             // 传入 sourceId，开启动态口径测算！
-                            return renderLine(sourcePos, targetPos, getLineColor(target.type), false, `p-${li}-${ti}`, line.sourceId);
+                            return renderLine(sourcePos, targetPos, getLineColor(line.owner, target.type), false, `p-${li}-${ti}`, line.sourceId);
                         })}
                     </g>
                 );
             })}
 
-            {/* B. 施法中已确认目标连线 */}
+            {/* B. 施法中已确认目标连线（永远视为玩家施法） */}
             {isMounted && isCasting && selectedTargets.map((target, i) => {
                 const targetPos = target.id ? getElementCenter(target.id, svgRef.current) : null;
                 const startPos = getStartPos();
@@ -384,7 +420,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
                     <g key={`selected-${i}`}>
                         {/* [核心修复 BUG 2] 将 isActive 设为 false，剥离纯白高光，彻底释放阵营颜色！ */}
                         {/* 施法确认期，起点就是施法圆盘，使用预设口径即可，传空 */}
-                        {renderLine(startPos, targetPos, getLineColor(target.type), false, `s-${i}`)}
+                        {renderLine(startPos, targetPos, getLineColor('player', target.type), false, `s-${i}`)}
                     </g>
                 );
             })}

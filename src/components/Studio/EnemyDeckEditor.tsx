@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Search, Plus, Trash2, Save, Download, X,
-    Swords, Box, Zap, AlertTriangle, Filter, LayoutGrid, User, BookOpen
+    Search, Plus, Trash2, Save, Download, X, BookOpen,
+    Swords, Box, Zap, AlertTriangle, Filter, LayoutGrid, User
 } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes';
-import { TUTORIAL_STAGES } from '../../data/tutorialStages'; // [新增]
+// 注：教程模式已不再通过 archetype 关联，相关字段已废弃
 import { Card } from '../Card';
 import { FullArtOverlay } from '../Overlays'; // [植入精髓] 右键大图检视
 import type { EnemyArchetype } from '../../data/enemies/archetypes';
@@ -516,23 +516,11 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                 </div>
                             </div>
 
-                            {/* 关联考核关卡 */}
-                            <div>
-                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><BookOpen size={12}/> 关联考核</div>
-                                <select
-                                    value={selected.tutorialStageId || ''}
-                                    onChange={e => updateArchetype({ tutorialStageId: e.target.value || undefined })}
-                                    className="w-full bg-black/60 text-xs px-3 py-2.5 rounded-lg border border-white/5 text-gray-300 focus:outline-none focus:border-amber-500 transition-colors appearance-none cursor-pointer"
-                                >
-                                    <option value="">— 不关联 —</option>
-                                    {Object.values(TUTORIAL_STAGES).map(stage => (
-                                        <option key={stage.id} value={stage.id}>
-                                            {stage.name}（{stage.category === 'basic' ? '基础' : stage.category === 'keyword' ? '关键词' : 'XX'}）
-                                        </option>
-                                    ))}
-                                </select>
-                                <div className="text-[9px] text-gray-600 mt-1.5 font-mono tracking-wider px-0.5">
-                                    关联后，该流派将作为对应考核关卡的敌方牌组
+                            {/* 关联考核 — 已废弃，教程模式直接在关卡数据中指定牌组 */}
+                            <div className="opacity-30 pointer-events-none">
+                                <div className="text-[10px] text-gray-600 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><BookOpen size={12}/> 关联考核 <span className="text-[8px] text-gray-700">(已弃用)</span></div>
+                                <div className="w-full bg-black/30 text-xs px-3 py-2.5 rounded-lg border border-white/5 text-gray-600">
+                                    教程牌组已迁移至 tutorialStages.ts 直接定义
                                 </div>
                             </div>
                         </div>

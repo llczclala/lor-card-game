@@ -21,6 +21,7 @@ interface UseGameButtonProps {
     mulliganState?: {
         selectedCount: number;
         isConfirmed: boolean;
+        isLocked?: boolean; // [2026-07-07 换牌锁定] 动画播完前锁定按钮
     };
 
     // 战斗/法术相关参数
@@ -28,6 +29,7 @@ interface UseGameButtonProps {
         hasAttackers: boolean;
         spellStackLength: number;
         canInitiateAttack: boolean;
+        hasSwordAttacker?: boolean; // [2026-08-02 莉莉子] 飞剑攻击者检测（格挡阶段切换"进攻"文案）
     };
 
     // [新增] 施法与预提交状态
@@ -35,6 +37,9 @@ interface UseGameButtonProps {
         isCasting: boolean;
         hasPendingSpell: boolean;
     };
+
+    // [2026-07-08 新增] 全局禁用锁 — 开局过渡期禁止按钮交互
+    disabled?: boolean;
 
     // 动作回调集合
     actions: {
@@ -57,17 +62,27 @@ export const useGameButton = ({
     mulliganState,
     combatState,
     spellState, // [新增]
+    disabled,   // [2026-07-08] 全局禁用锁
     actions
 }: UseGameButtonProps): ButtonConfig | null => {
 
     return useMemo(() => {
         const baseStyle = "w-36 h-36 rounded-full border-4 shadow-lg flex flex-col items-center justify-center transition-all active:scale-95 z-20 cursor-pointer relative";
 
-        // --- 0. 自动推进托管状态 (Auto-Advancing) --- [最高优先级视觉拦截]
+        // 自动推进判断
         if (isAutoAdvancing) {
             return {
                 style: `${baseStyle} bg-slate-800/80 border-slate-600 text-slate-400 cursor-wait`,
                 text: "自动推进...",
+                disabled: true
+            };
+        } // 这里补上缺失的闭合 }
+
+        // [2026-07-08 新增] --- 0.5 全局禁用锁 — 开局过渡期禁止交互 ---
+        if (disabled) {
+            return {
+                style: `${baseStyle} bg-gray-700 border-gray-600 cursor-not-allowed`,
+                text: "...",
                 disabled: true
             };
         }
@@ -75,6 +90,11 @@ export const useGameButton = ({
         // --- 1. 换牌阶段 (Mulligan Phase) ---
         if (isMulliganPhase && mulliganState) {
             if (mulliganState.isConfirmed) {
+                return { style: `${baseStyle} bg-gray-700 border-gray-600 cursor-not-allowed`, text: "..." };
+            }
+
+            // [2026-07-07 换牌锁定] 卡片展示完前（animPhase === 'enter'）禁止点击"确定"/"更换"
+            if (mulliganState.isLocked) {
                 return { style: `${baseStyle} bg-gray-700 border-gray-600 cursor-not-allowed`, text: "..." };
             }
 
@@ -155,6 +175,15 @@ export const useGameButton = ({
 
         // --- 5. 格挡阶段 (Block Declare) ---
         if (phase === 'block_declare') {
+            // [2026-08-02 莉莉子] 飞剑来袭：作为额外攻击者的飞剑需要发起进攻确认，
+            // 按钮文案切换为"进攻"（动作仍为确认防线并推进结算），而非笼统的"格挡"
+            if (combatState?.hasSwordAttacker) {
+                return {
+                    style: `${baseStyle} bg-orange-600 hover:bg-orange-500 border-orange-400 shadow-[0_0_30px_rgba(234,88,12,0.5)]`,
+                    text: "进攻",
+                    action: () => { eventBus.emit(GameEvents.UI_CLICK); actions.onBlock(); }
+                };
+            }
             return {
                 style: `${baseStyle} bg-blue-500 border-blue-300`,
                 text: "格挡",
@@ -200,5 +229,5 @@ export const useGameButton = ({
         return { style: `${baseStyle} bg-gray-800 border-gray-600 text-gray-400`, text: "...", disabled: true };
 
     // [新增] 必须将 isAutoAdvancing 加入依赖数组，否则按钮不会随信号重绘
-    }, [phase, turnOwner, isAutoAdvancing, isMulliganPhase, mulliganState, combatState, actions]);
+    }, [phase, turnOwner, isAutoAdvancing, disabled, isMulliganPhase, mulliganState, combatState, spellState, actions]);
 };

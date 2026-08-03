@@ -14,6 +14,7 @@ import { useUserSystem } from './hooks/useUserSystem';
 import { SystemLoadingScreen } from './components/SystemLoadingScreen';
 import { GameLobby } from './components/GameLobby';
 import { GachaScreen } from './components/GachaScreen';
+import type { PoolId } from './logic/gachaLogic'; // [2026-08-02] 卡池跳转
 import { ShopScreen } from './components/ShopScreen'; // [核心新增] 引入商店组件
 import { MissionPanel } from './components/MissionUI'; // [核心新增] 引入军需面板
 import { useMissionSystem } from './hooks/useMissionSystem'; // [核心新增] 引入军功大脑
@@ -24,13 +25,15 @@ import { StandardGameWrapper } from './components/modes/StandardGameWrapper';
 import { TutorialModeSelect } from './components/Tutorial/TutorialModeSelect';
 import { StageSelectScreen } from './components/Tutorial/StageSelectScreen';
 import { TutorialGameWrapper } from './components/Tutorial/TutorialGameWrapper';
+import { TutorialGuidance } from './components/Tutorial/TutorialGuidance'; // [新增] 大厅引导层
 import { DeckPreviewModal } from './components/Tutorial/DeckPreviewModal';
 import type { BgConfig } from './components/GameLobby'; // [修复] 加入 type 关键字，解决纯类型导入报错
 import type { ExamCategoryId } from './data/tutorialStages';
 import { TUTORIAL_STAGES } from './data/tutorialStages'; // [新增]
 import { ENEMY_ARCHETYPES } from './data/enemies/archetypes'; // [新增]
 import { buildStandardEncounter } from './logic/encounterBuilder'; // [新增] 引入标准模式敌人生成器
-import { getHallBgmByIndex } from './data/movieData'; // [新增] 引入大厅音画联动雷达
+import { getHallBgmByIndex, getHallBgmByVideoUrl } from './data/movieData'; // [核心重构] 新增视频 URL 直查 BGM
+import { getCompletedStages, isGuidanceDismissed, dismissGuidance } from './utils/tutorialProgress'; // [新增] 引导层状态
 import { motion, AnimatePresence } from 'framer-motion';
 
 // [核心修复] AppState 增加 'shop' 状态
@@ -51,10 +54,13 @@ export default function App() {
   const [isMissionOpen, setIsMissionOpen] = useState(false); // [新增] 军需面板开关状态
   const [gameId, setGameId] = useState(0);
   const [deckBuilderSource, setDeckBuilderSource] = useState<'lobby' | 'mode_select'>('mode_select');
+  const [gachaInitPool, setGachaInitPool] = useState<PoolId | undefined>(undefined); // [2026-08-02] 抽卡界面初始卡池（备战详情跳转用）
   const [tutorialCategoryId, setTutorialCategoryId] = useState<ExamCategoryId | null>(null);
   const [tutorialStageId, setTutorialStageId] = useState<string | null>(null);
   const [previewStageId, setPreviewStageId] = useState<string | null>(null);
   const [standardEncounter, setStandardEncounter] = useState<any>(null); // [新增] 提前缓存标准模式的敌人数据
+  // ★ PVE 模式：每局随机决定谁先手
+  const [firstAttacker, setFirstAttacker] = useState<'player' | 'enemy'>('player');
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -81,12 +87,11 @@ export default function App() {
           localStorage.setItem('sbr_lobby_bg', JSON.stringify(bg));
           stopMovie(); // [性能优化] 如果设置了自定义背景，彻底停用底层默认视频解码
           // [新增] 智能切轨：如果自定义背景是视频，切入专属音轨；如果是静态图片，兜底采用 default
-          playBgm(bg.type === 'movie' ? getHallBgmByIndex(bg.index) : 'default');
+          playBgm(bg.type === 'movie' ? getHallBgmByVideoUrl(bg.url) : 'default');
       } else {
           localStorage.removeItem('sbr_lobby_bg');
-          if (appState === 'lobby' || appState === 'mode_select' || appState === 'gacha') {
-              playHallMovie(lobbyVideoIndex); // 恢复底层播放
-              // [新增] 恢复大厅轮播视频的专属 BGM
+          if (['lobby', 'mode_select', 'gacha'].includes(appState)) {
+              playHallMovie(lobbyVideoIndex);
               playBgm(getHallBgmByIndex(lobbyVideoIndex));
           }
       }
@@ -168,6 +173,16 @@ export default function App() {
   // [新增] 大厅 -> 抽卡 (Lobby -> Gacha)
   const handleLobbyGacha = () => {
     stopBgm();
+    setGachaInitPool(undefined); // [2026-08-02] 大厅进入默认常驻池
+    setPendingAppState('gacha');
+    setAppState('system_loading');
+    stopMovie();
+  };
+
+  // [2026-08-02] 备战 -> 抽卡（带目标卡池，卡牌详情页"前往卡池"）
+  const handleDeckToGacha = (poolId: PoolId) => {
+    stopBgm();
+    setGachaInitPool(poolId);
     setPendingAppState('gacha');
     setAppState('system_loading');
     stopMovie();
@@ -250,6 +265,8 @@ export default function App() {
     // [核心修正] 如果不是教程模式，在进入 Loading 前立即生成并锁定本局敌人！
     if (!tutorialStageId) {
         setStandardEncounter(buildStandardEncounter());
+        // ★ PVE 模式：随机决定先手方
+        setFirstAttacker(Math.random() > 0.5 ? 'player' : 'enemy');
     }
     setAppState('loading');
     stopMovie();
@@ -309,7 +326,7 @@ export default function App() {
     else if (appState === 'lobby') {
       // [核心修正] 彻底接入智能音画感知系统
       if (customBgRef.current) {
-          playBgm(customBgRef.current.type === 'movie' ? getHallBgmByIndex(customBgRef.current.index) : 'default');
+          playBgm(customBgRef.current.type === 'movie' ? getHallBgmByVideoUrl(customBgRef.current.url) : 'default');
       } else {
           playBgm(getHallBgmByIndex(lobbyVideoIndex));
           const idx = playHallMovie(lobbyVideoIndex); // 保持索引不丢
@@ -324,7 +341,7 @@ export default function App() {
     else if (appState === 'mode_select') {
        // [核心修正] 模式选择界面也完全继承大厅的智能音轨
        if (customBgRef.current) {
-           playBgm(customBgRef.current.type === 'movie' ? getHallBgmByIndex(customBgRef.current.index) : 'default');
+           playBgm(customBgRef.current.type === 'movie' ? getHallBgmByVideoUrl(customBgRef.current.url) : 'default');
        } else {
            playBgm(getHallBgmByIndex(lobbyVideoIndex));
            if (!isVisible) playHallMovie(lobbyVideoIndex);
@@ -355,6 +372,14 @@ export default function App() {
 
   // 逻辑：从 userSystem.activeDeck 中读取卡牌列表 -> 找第一个英雄 -> 或第一个单位 -> 或默认 'lyfe'
   const getDisplayHero = (): string => {
+    // ★ 教程模式：优先使用关卡预设的我方英雄
+    if (tutorialStageId) {
+        const stage = TUTORIAL_STAGES[tutorialStageId];
+        if (stage?.playerHeroConfig?.heroKey) {
+            return stage.playerHeroConfig.heroKey;
+        }
+    }
+    // 标准模式：从用户当前卡组读取
     if (!userSystem.activeDeck) return 'lyfe';
     const deckKeys = Object.keys(userSystem.activeDeck.cards);
     const championKey = deckKeys.find(key => CARD_DB[key]?.isChampion);
@@ -377,7 +402,12 @@ export default function App() {
       // 优先判断是否是教程考核模式
       if (tutorialStageId) {
           const stage = TUTORIAL_STAGES[tutorialStageId];
-          if (stage && stage.enemyArchetypeId) {
+          // ★ 优先使用关卡指定的 enemyVisual 视觉配置
+          if (stage?.enemyVisual?.cardKey) {
+              return stage.enemyVisual.cardKey;
+          }
+          // 旧逻辑回退（兼容没有 enemyVisual 的老关卡）
+          if (stage?.enemyArchetypeId) {
               const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
               // [核心升级] 智能回退：如果没统帅，就抓核心池第一张牌当代言人！
               if (archetype && archetype.champion) {
@@ -403,7 +433,12 @@ export default function App() {
   const getEnemyDisplayName = (): string => {
       if (tutorialStageId) {
           const stage = TUTORIAL_STAGES[tutorialStageId];
-          if (stage && stage.enemyArchetypeId) {
+          // ★ 优先使用关卡指定的 enemyVisual 视觉配置
+          if (stage?.enemyVisual?.displayName) {
+              return stage.enemyVisual.displayName;
+          }
+          // 旧逻辑回退（兼容旧数据）
+          if (stage?.enemyArchetypeId) {
               const archetype = ENEMY_ARCHETYPES[stage.enemyArchetypeId];
               if (archetype) return archetype.name;
           }
@@ -460,6 +495,7 @@ export default function App() {
       {appState === 'tutorial_stage_select' && tutorialCategoryId && (
         <StageSelectScreen
             categoryId={tutorialCategoryId}
+            userId={userSystem.userId}
             onBack={handleBackFromStageSelect}
             onStartStage={handleStartStage}
             onViewDecks={setPreviewStageId}
@@ -475,6 +511,7 @@ export default function App() {
 
       {/* 3. 游戏大厅 */}
       {appState === 'lobby' && (
+          <div className="relative w-full h-full">
               <GameLobby
                   userSystem={userSystem}
                   onStartBattle={handleLobbyStartBattle}
@@ -488,6 +525,17 @@ export default function App() {
                   customBg={customBg}
                   onUpdateCustomBg={handleUpdateCustomBg}
               />
+
+              {/* [新增] 大厅新手引导层 */}
+              <TutorialGuidance
+                  visible={
+                      getCompletedStages(userSystem.userId).length === 0 &&
+                      !isGuidanceDismissed(userSystem.userId)
+                  }
+                  onStartTutorial={() => handleStartStage('basic_01_victory')}
+                  onClosed={() => dismissGuidance(userSystem.userId)}
+              />
+          </div>
       )}
 
       {/* [新增] 抽卡界面 */}
@@ -495,6 +543,7 @@ export default function App() {
           <GachaScreen
               userSystem={userSystem}
               onBack={handleBackToLobby}
+              initialPool={gachaInitPool} // [2026-08-02] 备战详情跳转指定卡池
           />
       )}
 
@@ -514,6 +563,7 @@ export default function App() {
             onBack={handleBackFromDeckBuilder}
             // [新增] 将来源传递给组件
             fromSource={deckBuilderSource}
+            onGachaNav={handleDeckToGacha} // [2026-08-02] 卡牌详情页跳转抽卡
         />
       )}
 
@@ -543,10 +593,10 @@ export default function App() {
                 playVictoryMovie={playVictoryMovie}
                 prepareVictoryMovie={prepareVictoryMovie} // [新增] 下发胜利预热
                 stopMovie={stopMovie}
-                // [核心修复] 优先读取卡组专属配置，没有则回退到全局默认配置
-                deskIndex={userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex}
-                cardBackIndex={userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex}
+                deskIndex={tutorialStageId ? 0 : (userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex)}
+                cardBackIndex={tutorialStageId ? 0 : (userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex)}
                 missionSystem={missionSystem} // [核心挂载] 注入军功大脑供结算画面使用
+                firstAttacker={firstAttacker} // ★ PVE 随机先手
             />
        )}
       {/* [新增] 6b. 战斗 (教程模式) */}
@@ -554,6 +604,7 @@ export default function App() {
             <TutorialGameWrapper
                 key={`tutorial_${gameId}`}
                 stageId={tutorialStageId}
+                userId={userSystem.userId}
                 deck={currentPlayerDeckList}
                 onExitGame={handleExitGame}
                 onExit={handleExitGame}
@@ -563,9 +614,9 @@ export default function App() {
                 playVictoryMovie={playVictoryMovie}
                 prepareVictoryMovie={prepareVictoryMovie} // [新增] 下发胜利预热
                 stopMovie={stopMovie}
-                // [核心修复] 优先读取卡组专属配置，没有则回退到全局默认配置
-                deskIndex={userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex}
-                cardBackIndex={userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex}
+                // ★ 教程模式使用默认牌桌和卡背
+                deskIndex={0}
+                cardBackIndex={0}
                 missionSystem={missionSystem} // [核心挂载] 注入军功大脑供结算画面使用
             />
        )}
@@ -577,6 +628,15 @@ export default function App() {
               onVolumeChange={handleVolumeChange}
               videoResolution={(userSystem.settings as any)?.videoResolution || '1k'}
               onResolutionChange={(res) => userSystem.updateSettings({ videoResolution: res } as any)}
+              skipStartDrawAnimation={(userSystem.settings as any)?.skipGameStartDrawAnimation || false}
+              onToggleSkipDraw={() => userSystem.updateSettings({ skipGameStartDrawAnimation: !(userSystem.settings as any)?.skipGameStartDrawAnimation } as any)}
+              skipLevelupMovie={(userSystem.settings as any)?.skipLevelupMovie || false}
+              onToggleSkipLevelup={() => userSystem.updateSettings({ skipLevelupMovie: !(userSystem.settings as any)?.skipLevelupMovie } as any)}
+              skipVictoryMovie={(userSystem.settings as any)?.skipVictoryMovie || false}
+              onToggleSkipVictory={() => userSystem.updateSettings({ skipVictoryMovie: !(userSystem.settings as any)?.skipVictoryMovie } as any)}
+              onRestartMatch={() => { setIsSettingsOpen(false); handleStartGame(); }}
+              onReturnToLobby={() => { setIsSettingsOpen(false); handleBackToLobby(); }}
+              isInGame={appState === 'game' || appState === 'tutorial_game'}
           />
 
       {/* [核心挂载] 军需处视觉终端面板 */}

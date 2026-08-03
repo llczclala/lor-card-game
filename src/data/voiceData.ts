@@ -71,6 +71,22 @@ import mauxir_lotus_drive_victory_1 from '../music/voice/天启者/猫汐尔莲�
 import mauxir_lotus_drive_victory_2 from '../music/voice/天启者/猫汐尔莲驱/胜利2.mp3';
 import mauxir_lotus_drive_support_voice from '../music/voice/天启者/猫汐尔莲驱/支援技.mp3';
 
+// --- 安卡希雅 时之重奏 语音资源 ---
+import acacia_chrono_echo_play_1 from '../music/voice/天启者/安卡希雅时之重奏/登场1.mp3';
+import acacia_chrono_echo_play_2 from '../music/voice/天启者/安卡希雅时之重奏/登场2.mp3';
+import acacia_chrono_echo_attack_block_1 from '../music/voice/天启者/安卡希雅时之重奏/进攻或格挡1.mp3';
+import acacia_chrono_echo_attack_block_2 from '../music/voice/天启者/安卡希雅时之重奏/进攻或格挡2.mp3';
+import acacia_chrono_echo_die from '../music/voice/天启者/安卡希雅时之重奏/被击败.mp3';
+import acacia_chrono_echo_enemy_spawn_1 from '../music/voice/天启者/安卡希雅时之重奏/敌人出现1.mp3';
+import acacia_chrono_echo_enemy_spawn_2 from '../music/voice/天启者/安卡希雅时之重奏/敌人出现2.mp3';
+import acacia_chrono_echo_kill_1 from '../music/voice/天启者/安卡希雅时之重奏/敌人击败1.mp3';
+import acacia_chrono_echo_kill_2 from '../music/voice/天启者/安卡希雅时之重奏/敌人击败2.mp3';
+import acacia_chrono_echo_kill_3 from '../music/voice/天启者/安卡希雅时之重奏/敌人击败3.mp3';
+import acacia_chrono_echo_victory_1 from '../music/voice/天启者/安卡希雅时之重奏/胜利1.mp3';
+import acacia_chrono_echo_victory_2 from '../music/voice/天启者/安卡希雅时之重奏/胜利2.mp3';
+import acacia_chrono_echo_spell_ultimate from '../music/voice/天启者/安卡希雅时之重奏/大招.mp3';
+import acacia_chrono_echo_spell_support from '../music/voice/天启者/安卡希雅时之重奏/支援技.mp3';
+
 // 导出语音事件类型 (关键修复：确保 export 关键字存在)
 export type VoiceEventType =
     | 'die'
@@ -143,5 +159,17 @@ export const VOICE_DB: VoiceRegistry = {
         spell_small: [mauxir_lotus_drive_skill_select_1, mauxir_lotus_drive_skill_select_2, mauxir_lotus_drive_skill_select_3],
         spell_ultimate: [mauxir_lotus_drive_ult_select],
         spell_support: [mauxir_lotus_drive_support_voice]
+    },
+
+    // 安卡希雅 时之重奏
+    'acacia_chrono_echo': {
+        play: [acacia_chrono_echo_play_1, acacia_chrono_echo_play_2],
+        attack_block: [acacia_chrono_echo_attack_block_1, acacia_chrono_echo_attack_block_2],
+        die: [acacia_chrono_echo_die],
+        enemy_spawn: [acacia_chrono_echo_enemy_spawn_1, acacia_chrono_echo_enemy_spawn_2],
+        kill: [acacia_chrono_echo_kill_1, acacia_chrono_echo_kill_2, acacia_chrono_echo_kill_3],
+        victory: [acacia_chrono_echo_victory_1, acacia_chrono_echo_victory_2],
+        spell_ultimate: [acacia_chrono_echo_spell_ultimate],
+        spell_support: [acacia_chrono_echo_spell_support]
     },
 };

@@ -124,6 +124,7 @@ export const AttackToken: React.FC<AttackTokenProps> = ({ type, isEnemy = false 
     return (
         // AnimatePresence 的 exit 退场动画，处理回合结束令牌消失的平滑度
         <motion.div
+            data-entity-id="attack-token"
             className={`absolute z-40 ${positionClasses}`}
             initial={{ opacity: 0, scale: 0.5 }}
             animate={{ opacity: 1, scale: 1 }}

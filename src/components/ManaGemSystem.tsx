@@ -92,7 +92,7 @@ export const ManaGemSystem: React.FC<ManaGemSystemProps> = ({
 
     return (
         // 根容器：铺满父级 (GameSession 中的 relative 容器)
-        <div className="absolute inset-0 pointer-events-none z-40">
+        <div className="absolute inset-0 pointer-events-none z-40" data-entity-id={isPlayer ? 'player-mana' : 'enemy-mana'}>
 
             {/* 1. 法术法力层 (0-2) */}
             {Array.from({ length: 3 }).map((_, i) => {

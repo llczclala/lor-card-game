@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {ArrowLeft, Search, RefreshCw,Database} from 'lucide-react';
+import {ArrowLeft, Search, RefreshCw} from 'lucide-react';
 import { useUserSystem } from '../hooks/useUserSystem';
-import { rollOne, GACHA_COST_SINGLE, GACHA_COST_TEN, MAX_PITY, type GachaResult } from '../logic/gachaLogic';
+import { rollOne, GACHA_COST_SINGLE, GACHA_COST_TEN, MAX_PITY, POOLS, type GachaResult, type PoolId } from '../logic/gachaLogic';
 import { GachaAnimation } from './GachaAnimation';
 import { GachaTargetSelector } from './GachaTargetSelector';
+import { GachaPoolViewer } from './GachaPoolViewer';
 import { CURRENCY_ICONS,gacha_icon } from '../data/imageData';
 import { eventBus, GameEvents } from '../utils/eventBus';
 
@@ -12,34 +13,49 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 interface GachaScreenProps {
     userSystem: ReturnType<typeof useUserSystem>;
     onBack: () => void;
+    initialPool?: PoolId; // [2026-08-02] 初始卡池（备战详情跳转指定）
 }
 
-export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) => {
-    // 状态管理
+// [核心新增] 按池子读取独立保底/定轨的辅助函数
+const getPoolPity = (profile: any, poolId: PoolId): number =>
+    (profile as any)[`pityCounter_${poolId}`] ?? (profile as any).pityCounter ?? 0;
+
+const getPoolSkinPity = (profile: any, poolId: PoolId): number =>
+    (profile as any)[`skinPityCounter_${poolId}`] ?? (profile as any).skinPityCounter ?? 0;
+
+const getPoolTarget = (profile: any, poolId: PoolId): string | null =>
+    (profile as any)[`gachaTarget_${poolId}`] ?? (profile as any).gachaTarget ?? null;
+
+export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack, initialPool }) => {
+    const [activePool, setActivePool] = useState<PoolId>(initialPool ?? 'permanent');
     const [isAnimating, setIsAnimating] = useState(false);
     const [gachaResults, setGachaResults] = useState<GachaResult[]>([]);
     const [showTargetSelector, setShowTargetSelector] = useState(false);
-    const [showProbModal, setShowProbModal] = useState(false);
+    const [showPoolViewer, setShowPoolViewer] = useState(false);
 
     const { collection, profile } = userSystem;
 
-    // 获取当前资源 (防御性读取)
     const resources = collection?.resources || { silverCoin: 0, dataGold: 0, bitGold: 0 };
 
-    // 获取保底和定轨状态 (注意：需要先在 initialUserData 里添加这两个字段，这里先用 fallback)
-    // 稍后我们会去 initialUserData.ts 补上这些字段定义
-    const pityCounter = (profile as any).pityCounter || 0;
-    const skinPityCounter = (profile as any).skinPityCounter || 0; // [核心新增] 获取皮肤保底进度
-    const currentTarget = (profile as any).gachaTarget || null;
+    // [修改] 按当前池子读取独立保底/定轨
+    const pityCounter = getPoolPity(profile, activePool);
+    const skinPityCounter = getPoolSkinPity(profile, activePool);
+    const currentTarget = getPoolTarget(profile, activePool);
+
+    const currentPoolConfig = POOLS[activePool];
+
+    // --- 切换池子 ---
+    const handleSwitchPool = (poolId: PoolId) => {
+        if (poolId === activePool) return;
+        eventBus.emit(GameEvents.UI_CLICK);
+        setActivePool(poolId);
+    };
 
     // --- 核心操作：执行抽卡 ---
     const handleGacha = (count: number) => {
         const cost = count === 1 ? GACHA_COST_SINGLE : GACHA_COST_TEN;
 
-
-        // 1. 检查余额
         if (resources.dataGold < cost) {
-            // 这里应该弹出一个充值提示或者 Toast
             eventBus.emit(GameEvents.UI_BACK);
             alert("资源不足");
             return;
@@ -51,36 +67,28 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
             eventBus.emit(GameEvents.GACHA_START_TEN);
         }
 
-        // 2. 扣除资源 & 计算结果
-
         const results: GachaResult[] = [];
         let newPity = pityCounter;
-        let newSkinPity = skinPityCounter; // [核心新增] 初始化局部皮肤保底变量
+        let newSkinPity = skinPityCounter;
         let newSilver = resources.silverCoin;
         let newBitGold = resources.bitGold;
 
-        // 循环执行抽卡逻辑
         for (let i = 0; i < count; i++) {
-            // [核心修复] 喂给 rollOne 皮肤保底参数，以及 userSettings 查缺补漏重复饰品
-            const res = rollOne(collection!, newPity, newSkinPity, currentTarget, userSystem.settings);
+            const res = rollOne(collection!, newPity, newSkinPity, currentTarget, userSystem.settings, activePool);
             results.push(res);
 
-            // [核心修复] 分离双轨保底重置逻辑
-            // 常规百抽保底（仅在出金且非皮肤时重置）
             if (res.isRare && res.type !== 'skin') {
                 newPity = 0;
             } else {
                 newPity++;
             }
 
-            // 皮肤 30 抽保底（出皮肤时重置）
             if (res.type === 'skin') {
                 newSkinPity = 0;
             } else {
                 newSkinPity++;
             }
 
-            // 处理转化货币 (模拟累加，实际需要写入数据库)
             if (res.convertedCurrency) {
                 if (res.convertedCurrency.type === 'silverCoin') {
                     newSilver += res.convertedCurrency.amount;
@@ -90,31 +98,21 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
             }
         }
 
-        // 3. 执行数据写入 (这一步非常重要，必须原子化)
-        // 我们调用 userSystem 的一个新方法 (稍后在 hooks 里补充)
-        // 这里暂时用一个假设的方法名 performGachaTransaction
-        // 如果 useUserSystem 还没更新，这里先只做扣费演示，结果只在动画里显示
-        // 实际上：你应该在 GachaAnimation 结束后再写入？不，应该先写入防止掉线吞卡。
-
-        // [临时逻辑] 直接更新资源，假装写入了
-        // 真正的写入需要在 useUserSystem.ts 里实现 updateCollection 等方法
+        // [修改] 传入 activePool，按池子写入独立保底
         if (userSystem.performGacha) {
-             // [核心修复] 向发货中枢同步更新后的 newSkinPity
-             userSystem.performGacha(cost, results, newPity, newSkinPity);
+             userSystem.performGacha(cost, results, newPity, newSkinPity, activePool);
         } else {
              console.warn("useUserSystem.performGacha not implemented yet!");
         }
 
-        // 4. 启动动画
         setGachaResults(results);
         setIsAnimating(true);
     };
 
-    // 设置定轨
+    // 设置定轨 — [修改] 按池子独立写入
     const handleSetTarget = (target: string) => {
-        // 调用 userSystem 更新 profile.gachaTarget
         if (userSystem.setGachaTarget) {
-            userSystem.setGachaTarget(target);
+            userSystem.setGachaTarget(target, activePool);
         }
         setShowTargetSelector(false);
     };
@@ -122,71 +120,93 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
     return (
         <div className="relative w-full h-full bg-slate-950 overflow-hidden font-sans select-none text-white">
 
-            {/* 1. 背景层 (动态流光) */}
+            {/* 背景层 */}
             <div className="absolute inset-0 z-10">
                 <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 to-slate-900"></div>
-                {/* 模拟全息网格 */}
                 <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
                 <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-purple-600/10 blur-[100px] rounded-full mix-blend-screen animate-pulse-slow"></div>
             </div>
 
-            {/* 2. 左侧：卡池列表 (简化版) */}
+            {/* 左侧：卡池列表 */}
             <div className="absolute top-0 left-0 w-80 h-full z-20 flex flex-col pt-32 px-4 gap-4">
-                {/* [修改] 使用 button.png 作为背景的卡池按钮 */}
+                {/* 常守之誓 */}
                 <div
-                    onClick={() => eventBus.emit(GameEvents.UI_CLICK)}
-                    className="w-full h-32 rounded-xl relative cursor-pointer transform hover:scale-105 transition-all shadow-lg border border-white/20 overflow-hidden group"
+                    onClick={() => handleSwitchPool('permanent')}
+                    className={`w-full h-32 rounded-xl relative cursor-pointer transform hover:scale-105 transition-all shadow-lg border overflow-hidden group ${
+                        activePool === 'permanent'
+                            ? 'border-yellow-400/60 shadow-yellow-400/20'
+                            : 'border-white/20'
+                    }`}
                 >
                     <img
                         src={gacha_icon.PGgachaBtnImg}
                         className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                        alt="标准卡池"
+                        alt="常守之誓"
                     />
-                    {/* 文字叠加层 */}
                     <div className="absolute inset-0 flex flex-col justify-end p-3 bg-gradient-to-t from-black/80 to-transparent">
-                        <div className="text-[10px] font-black tracking-widest text-purple-200 mb-0.5">当前选择</div>
-                        <div className="font-black text-sm leading-tight text-white drop-shadow-md">常驻卡池</div>
+                        <div className="text-[10px] font-black tracking-widest text-purple-200 mb-0.5">
+                            {activePool === 'permanent' ? '当前选择' : '点击切换'}
+                        </div>
+                        <div className="font-black text-sm leading-tight text-white drop-shadow-md">常守之誓</div>
                     </div>
-                    {/* 选中高亮条 */}
-                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-400 box-shadow-[0_0_10px_orange]"></div>
+                    {activePool === 'permanent' && (
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-400 shadow-[0_0_10px_orange]"></div>
+                    )}
                 </div>
 
-                {/* 占位：未来活动卡池 */}
+                {/* 烬中镜火卡池 */}
                 <div
-                    onClick={() => eventBus.emit(GameEvents.UI_CLICK)} // [新增]
-                    className="w-full h-24 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 cursor-pointer transition-all flex items-center justify-center"
+                    onClick={() => handleSwitchPool('lotus')}
+                    className={`w-full h-32 rounded-xl relative cursor-pointer transform hover:scale-105 transition-all shadow-lg border overflow-hidden group ${
+                        activePool === 'lotus'
+                            ? 'border-yellow-400/60 shadow-yellow-400/20'
+                            : 'border-white/20'
+                    }`}
                 >
-                    <div className="text-center opacity-50">
-                        <div className="text-[10px] font-bold tracking-widest mb-1">正在路上。。。</div>
-                        <div className="text-xs">镜中烬火</div>
+                    <img
+                        src={gacha_icon.LgachaBtnImg}
+                        className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                        alt="烬中镜火"
+                    />
+                    <div className="absolute inset-0 flex flex-col justify-end p-3 bg-gradient-to-t from-black/80 to-transparent">
+                        <div className="text-[10px] font-black tracking-widest text-purple-200 mb-0.5">
+                            {activePool === 'lotus' ? '当前选择' : '点击切换'}
+                        </div>
+                        <div className="font-black text-sm leading-tight text-white drop-shadow-md">烬中镜火</div>
                     </div>
+                    {activePool === 'lotus' && (
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-400 shadow-[0_0_10px_orange]"></div>
+                    )}
+                </div>
+
+                {/* 池子信息摘要 */}
+                <div className="mt-auto mb-8 px-2 text-[10px] text-gray-500 leading-relaxed">
+                    <div className="font-bold text-gray-400 mb-1">—— 当前卡池信息 ——</div>
+                    <div>✦ 稀有英雄: {currentPoolConfig.heroKeys.length} 位</div>
+                    <div>✦ 可抽取卡背: {currentPoolConfig.cardBackIndices.length} 款</div>
+                    <div>✦ 可抽取牌桌: {currentPoolConfig.deskIndices.length} 款</div>
                 </div>
             </div>
 
-            {/* 3. [核心修改] 右侧主展示区：放置 desk.png */}
-            {/* 这里的定位策略是：让图片填满右侧区域，位于 TopBar 下方，BottomBar 上方 */}
+            {/* 右侧封面图 */}
             <div className="absolute inset-0 z-10 pointer-events-none">
-                {/* 封面图容器 */}
                 <motion.div
+                    key={activePool}
                     initial={{ opacity: 0, x: 50 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.8 }}
                     className="absolute right-0 top-0 bottom-0 w-[80%] h-full flex items-center justify-center"
                 >
-                    {/* desk.png */}
-                    {/* 我们使用 object-contain 配合 max-h/max-w 确保它完整显示在空白处 */}
-                    {/* 位置微调：translate-y-[-5%] 稍微往上一点，避开下面的抽卡按钮 */}
                     <img
-                        src={gacha_icon.PGgachaDeskImg}
+                        src={activePool === 'lotus' ? gacha_icon.LgachaDeskImg : gacha_icon.PGgachaDeskImg}
                         className="w-full h-full object-contain object-right-center p-12 translate-y-[-2.5%]"
                         alt="抽卡封面"
                     />
                 </motion.div>
             </div>
 
-            {/* 4. 顶部栏：资源与返回 */}
+            {/* 顶部栏 */}
             <div className="absolute top-0 right-0 p-8 z-20 flex items-center gap-8">
-                {/* 资源显示 */}
                 <div className="flex gap-6 bg-black/60 backdrop-blur-md px-6 py-3 rounded-full border border-white/10">
                     <div className="flex items-center gap-2">
                         <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5" alt="银币" />
@@ -202,10 +222,9 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                     </div>
                 </div>
 
-                {/* 返回按钮 */}
                 <button
                     onClick={() => {
-                        eventBus.emit(GameEvents.UI_BACK); // [新增] 退出音效
+                        eventBus.emit(GameEvents.UI_BACK);
                         onBack();
                     }}
                     className="p-4 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md transition-all border border-white/10 group"
@@ -214,51 +233,52 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                 </button>
             </div>
 
-            {/* 5. 底部栏：定轨与抽卡操作 */}
+            {/* 底部栏：定轨与抽卡 */}
             <div className="absolute bottom-0 left-0 w-full p-8 z-20 flex items-end justify-between pointer-events-none">
 
-                {/* 左下：定轨与保底 */}
                 <div className="flex flex-col gap-4 pointer-events-auto ml-64">
-                    {/* 定轨按钮 */}
-                    <div className="relative group">
+                    <div className="flex items-center gap-4">
+                        {/* 定轨按钮 */}
+                        <div className="relative group">
+                            <button
+                                onClick={() => {
+                                    eventBus.emit(GameEvents.UI_CLICK);
+                                    setShowTargetSelector(true);
+                                }}
+                                className="w-16 h-16 rounded-xl bg-black/60 border border-purple-500/50 flex items-center justify-center hover:bg-purple-900/40 transition-colors shadow-[0_0_20px_rgba(168,85,247,0.2)]"
+                            >
+                                <RefreshCw size={24} className="text-purple-400 group-hover:rotate-180 transition-transform duration-500" />
+                            </button>
+                            <div className="absolute -top-11 left-1/2 -translate-x-1/2 bg-black/80 px-4 py-2 rounded text-xs font-mono border border-white/10 whitespace-nowrap">
+                                定向目标: <span className="text-yellow-400 font-bold">{currentTarget ? currentTarget.split(':')[1].toUpperCase() : 'NONE'}</span>
+                            </div>
+                        </div>
+
+                        {/* [2026-08-02] 放大镜按钮 —— 整合卡池内容查看（原"概率查看"按钮升级） */}
                         <button
                             onClick={() => {
-                                eventBus.emit(GameEvents.UI_CLICK); // [新增] 打开定轨
-                                setShowTargetSelector(true);
+                                eventBus.emit(GameEvents.UI_CLICK);
+                                setShowPoolViewer(true);
                             }}
-                            className="w-16 h-16 rounded-xl bg-black/60 border border-purple-500/50 flex items-center justify-center hover:bg-purple-900/40 transition-colors shadow-[0_0_20px_rgba(168,85,247,0.2)]"
+                            className="w-16 h-16 rounded-xl bg-black/60 border border-white/20 flex items-center justify-center hover:bg-white/10 transition-colors shadow-lg group/lens"
+                            title="查看卡池内容"
                         >
-                            <RefreshCw size={24} className="text-purple-400 group-hover:rotate-180 transition-transform duration-500" />
+                            <Search size={24} className="text-gray-300 group-hover/lens:text-white group-hover/lens:scale-110 transition-all duration-300" />
                         </button>
-                        {/* 定轨状态提示 */}
-                        <div className="absolute left-full top-1/2 -translate-y-1/2 ml-4 bg-black/80 px-4 py-2 rounded text-xs font-mono border border-white/10 whitespace-nowrap">
-                            定向目标: <span className="text-yellow-400 font-bold">{currentTarget ? currentTarget.split(':')[1].toUpperCase() : 'NONE'}</span>
-                        </div>
                     </div>
 
-                    {/* 概率详情按钮 */}
-                    <button
-                        onClick={() => {
-                            eventBus.emit(GameEvents.UI_CLICK); // [新增] 打开详情
-                            setShowProbModal(true);
-                        }}
-                        className="flex items-center gap-2 text-gray-400 hover:text-white text-xs font-bold transition-colors w-fit"
-                    >
-                        <Search size={14} /> 概率查看
-                    </button>
-
-                    {/* 双轨保底看板 */}
+                    {/* 双轨保底看板 — [修改] 显示当前池子的保底 */}
                     <div className="flex gap-8">
-                        {/* 常规保底计数器 */}
                         <div className="flex flex-col gap-1">
-                            <div className="text-[10px] text-yellow-500 font-black tracking-widest uppercase">绝密保底进度</div>
+                            <div className="text-[10px] text-yellow-500 font-black tracking-widest uppercase">
+                                {activePool === 'lotus' ? '莲驱保底进度' : '绝密保底进度'}
+                            </div>
                             <div className="text-4xl font-black italic text-white flex items-baseline gap-1">
                                 <span className="text-yellow-400">{pityCounter}</span>
                                 <span className="text-lg text-gray-500">/ {MAX_PITY}</span>
                             </div>
                         </div>
 
-                        {/* 皮肤保底计数器 */}
                         <div className="flex flex-col gap-1">
                             <div className="text-[10px] text-purple-400 font-black tracking-widest uppercase">高定皮肤保底</div>
                             <div className="text-4xl font-black italic text-white flex items-baseline gap-1">
@@ -269,36 +289,33 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                     </div>
                 </div>
 
-                {/* 右下：抽卡按钮组 */}
+                {/* 抽卡按钮 */}
                 <div className="flex gap-4 pointer-events-auto">
-                    {/* 单抽 */}
                     <GachaButton
                         cost={GACHA_COST_SINGLE}
                         count={1}
                         canAfford={resources.dataGold >= GACHA_COST_SINGLE}
                         onClick={() => {
-                            eventBus.emit(GameEvents.UI_CLICK); // [新增] 打开定轨
+                            eventBus.emit(GameEvents.UI_CLICK);
                             handleGacha(1);
                         }}
                     />
 
-                    {/* 十连 */}
                     <GachaButton
                         cost={GACHA_COST_TEN}
                         count={10}
                         canAfford={resources.dataGold >= GACHA_COST_TEN}
                         isPrimary
                         onClick={() => {
-                            eventBus.emit(GameEvents.UI_CLICK); // [新增] 打开定轨
+                            eventBus.emit(GameEvents.UI_CLICK);
                             handleGacha(10);
                         }}
                     />
                 </div>
             </div>
 
-            {/* --- 弹窗层 --- */}
+            {/* 弹窗层 */}
 
-            {/* 1. 抽卡动画 (覆盖全屏) */}
             <AnimatePresence>
                 {isAnimating && (
                     <GachaAnimation
@@ -308,54 +325,29 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack }) 
                 )}
             </AnimatePresence>
 
-            {/* 2. 定轨选择器 */}
             {showTargetSelector && (
                 <GachaTargetSelector
                     currentTarget={currentTarget}
                     onConfirm={handleSetTarget}
                     onClose={() => setShowTargetSelector(false)}
+                    poolId={activePool}
+                    ownedCards={collection?.ownedCards || {}}
+                    unlockedCardBacks={userSystem.settings?.unlockedCardBacks || []}
+                    unlockedDesks={userSystem.settings?.unlockedDesks || []}
                 />
             )}
 
-            {/* 3. 概率详情 (简单文本弹窗) */}
-            {showProbModal && (
-                <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-sm"
-                onClick={() => {
-                        eventBus.emit(GameEvents.UI_BACK); // [新增] 关闭详情音效
-                        setShowProbModal(false);
-                    }}
-                >
-                    <div className="bg-slate-900 p-8 rounded-2xl border border-white/10 max-w-md" onClick={e => e.stopPropagation()}>
-                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Database size={20} /> DROP RATES</h3>
-                        <div className="space-y-4 text-sm text-gray-300">
-                            <div className="flex justify-between">
-                                <span>Legendary (Heroes/Styles)</span>
-                                <span className="text-yellow-400 font-bold">2.00%</span>
-                            </div>
-                            {/* [核心新增] 公示 4% 的独立皮肤爆率 */}
-                            <div className="flex justify-between">
-                                <span>Epic (Exclusive Skins)</span>
-                                <span className="text-purple-400 font-bold">4.00%</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Common (Unit/Spell Cards)</span>
-                                <span className="text-white font-bold">94.00%</span>
-                            </div>
-                            <div className="h-px bg-white/10 my-2"></div>
-                            <p className="text-xs text-gray-500">
-                                * Guaranteed legendary item every 100 pulls.<br/>
-                                * Duplicate items are converted into Silver Coin or Bit Gold.
-                            </p>
-                        </div>
-                    </div>
-                </div>
+            {showPoolViewer && (
+                <GachaPoolViewer
+                    poolId={activePool}
+                    onClose={() => setShowPoolViewer(false)}
+                />
             )}
 
         </div>
     );
 };
 
-// 子组件：抽卡按钮
 const GachaButton = ({ cost, count, canAfford, isPrimary, onClick }: { cost: number, count: number, canAfford: boolean, isPrimary?: boolean, onClick: () => void }) => (
     <button
         onClick={onClick}
@@ -377,7 +369,6 @@ const GachaButton = ({ cost, count, canAfford, isPrimary, onClick }: { cost: num
                 {cost}
             </span>
         </div>
-        {/* 装饰角标 */}
         {isPrimary && (
             <div className="absolute -top-2 -right-2 w-6 h-6 bg-yellow-400 rotate-45 shadow-lg"></div>
         )}

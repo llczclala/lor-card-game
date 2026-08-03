@@ -1,69 +1,118 @@
 import { CARD_DB } from '../data/cards';
 import { PERSONALIZATION_ASSETS, SKIN_IMAGES, getSkinImage } from '../data/imageData';
-import { getGachaItems } from '../data/skinData'; // [核心修复] 统一使用通用物资调取 API
+import { getGachaItems } from '../data/skinData';
 import type { UserCollection } from '../types';
 
 // --- 常量定义 ---
 export const GACHA_COST_SINGLE = 160;
 export const GACHA_COST_TEN = 1600;
-export const MAX_PITY = 100; // 100抽保底
-export const RARE_RATE = 0.02; // 2% 稀有率
-export const SKIN_RATE = 0.04; // [核心新增] 4% 独立皮肤率
+export const MAX_PITY = 100;
+export const RARE_RATE = 0.02;
+export const SKIN_RATE = 0.04;
 
-// 稀有物品类型
-export type GachaItemType = 'card' | 'cardBack' | 'desk' | 'skin'; // [核心新增] 加入 skin 类型
+export type GachaItemType = 'card' | 'cardBack' | 'desk' | 'skin';
 
 // 抽卡结果接口
 export interface GachaResult {
     type: GachaItemType;
-    key: string | number; // 卡牌是 string (key), 饰品是 number (index)
-    skinId?: number;      // [核心新增] 用于传递抽中皮肤的真实 ID
-    isRare: boolean;      // 是否是稀有资源 (英雄/饰品/皮肤)
-    isNew: boolean;       // 是否是新获得的
-    convertedCurrency?: { // 如果重复，转换为什么货币及数量
+    key: string | number;
+    skinId?: number;
+    isRare: boolean;
+    isNew: boolean;
+    convertedCurrency?: {
         type: 'silverCoin' | 'bitGold';
         amount: number;
     };
-    displayImage: string; // 用于动画展示的图片
-    name: string;         // 用于展示的名称
-    cost?: number;        // [新增] 卡牌费用，用于展示
+    displayImage: string;
+    name: string;
+    cost?: number;
 }
 
-// [新增] 价格计算公式
+// [新增] 卡池配置系统 ==========================================
+export type PoolId = 'permanent' | 'lotus';
+
+export interface GachaPoolConfig {
+    id: PoolId;
+    name: string;
+    // 稀有池 —— 要包含的英雄 key 列表
+    heroKeys: string[];
+    // 稀有池 —— 要包含的卡背 registry 索引
+    cardBackIndices: number[];
+    // 稀有池 —— 要包含的牌桌 registry 索引
+    deskIndices: number[];
+    // 普通池过滤 —— 返回 false 表示排除该卡
+    includeInCommonPool: (card: typeof CARD_DB[keyof typeof CARD_DB]) => boolean;
+}
+
+export const POOLS: Record<PoolId, GachaPoolConfig> = {
+    permanent: {
+        id: 'permanent',
+        name: '常守之誓',
+        heroKeys: ['lyfe', 'fenny', 'acacia_chrono_echo'],
+        cardBackIndices: [1, 2, 3],
+        deskIndices: [1, 2, 3, 4],
+        includeInCommonPool: () => true,
+    },
+    lotus: {
+        id: 'lotus',
+        name: '烬中镜火',
+        heroKeys: ['mauxir_lotus_drive', 'pupu_specular_soul'],
+        cardBackIndices: [13, 14, 15],
+        deskIndices: [5, 6, 7, 8, 9],
+        // 排除 里芙(Lyfe) 和 芬妮(Fenny) 区域的后勤卡
+        includeInCommonPool: (card) => card.region !== 'Lyfe' && card.region !== 'Fenny',
+    },
+};
+// ================================================================
+
 export const getCardPrice = (cost: number): number => {
     if (cost >= 0 && cost <= 2) return 400;
     if (cost >= 3 && cost <= 5) return 800;
     if (cost >= 6 && cost <= 8) return 1200;
-    return 2400; // 9+ 费
+    return 2400;
 };
 
 // --- 1. 构建卡池 ---
 
-// 获取所有普通卡牌 (非英雄，非TEST，非锁定)
-const getCommonPool = () => {
+// 获取所有普通卡牌 (非英雄，非TEST，非锁定)，按池子过滤
+const getCommonPool = (poolId: PoolId = 'permanent') => {
+    const config = POOLS[poolId];
     return Object.values(CARD_DB).filter(c =>
         !c.isChampion &&
         c.region !== 'TEST' &&
         !c.key.startsWith('test_') &&
-        c.isCollectible !== false // [核心提纯] 彻底封杀所有衍生法术、图征小队、泰坦巨兽等非构筑单元！
+        c.isCollectible !== false &&
+        config.includeInCommonPool(c)
     );
 };
 
-// 获取所有稀有资源 (英雄 + 卡背 + 牌桌)
-const getRarePool = () => {
-    const heroes = Object.values(CARD_DB).filter(c => c.isChampion);
+// 获取所有稀有资源，按池子过滤
+const getRarePool = (poolId: PoolId = 'permanent') => {
+    const config = POOLS[poolId];
+    const allHeroes = Object.values(CARD_DB).filter(c => c.isChampion);
+    // 只保留该池子配置的英雄
+    const heroes = allHeroes.filter(h => config.heroKeys.includes(h.key));
 
-    // [核心修复] 彻底废除硬编码过滤！向《全息外观资产调度局》按需调取盲盒专供的饰品列表！
-    const cardBacks = getGachaItems('cardBack');
-    const desks = getGachaItems('desk');
+    const allCardBacks = getGachaItems('cardBack');
+    const cardBacks = allCardBacks.filter(cb => config.cardBackIndices.includes(cb.index!));
+
+    const allDesks = getGachaItems('desk');
+    const desks = allDesks.filter(d => config.deskIndices.includes(d.index!));
 
     return { heroes, cardBacks, desks };
 };
 
-// [核心修复] 彻底废弃极其脆弱的动态扫描，直接向《皮肤资产注册局》索要合法的盲盒皮肤清单！
+// 皮肤池（两个池子共用全量皮肤）
 const getSkinRarePool = () => {
-    // [修正] 调用通用 API 并传入 'skin' 类型，同时利用类型断言保证后续逻辑的字段安全
     return getGachaItems('skin') as { cardKey: string, skinId: number }[];
+};
+
+// --- 3. 卡池内容查看（放大镜弹窗数据源）---
+export const getPoolViewerData = (poolId: PoolId = 'permanent') => {
+    const { heroes, cardBacks, desks } = getRarePool(poolId);
+    const commons = getCommonPool(poolId);
+    const skins = getSkinRarePool();
+    return { heroes, cardBacks, desks, commons, skins };
 };
 
 // --- 2. 核心抽取函数 ---
@@ -71,40 +120,38 @@ const getSkinRarePool = () => {
 export const rollOne = (
     collection: UserCollection,
     currentPity: number,
-    currentSkinPity: number, // [核心新增] 引入皮肤专属 30 抽保底游标
+    currentSkinPity: number,
     targetItem: string | null,
-    userSettings?: any // [新增] 透传用户设置以便检查饰品是否解锁
+    userSettings?: any,
+    poolId: PoolId = 'permanent'
 ): GachaResult => {
-    // 1. 皮肤 30 抽强保底熔断 (优先级最高，因为皮肤池不出卡背和英雄，不影响核心战力保底)
+    // 1. 皮肤 30 抽强保底熔断
     if (currentSkinPity >= 29) {
         return rollSkin(collection);
     }
 
-    // 2. 百抽熔断机制：强制切入 2% 纯稀有池 (无皮肤)
+    // 2. 百抽熔断机制
     if (currentPity >= MAX_PITY - 1) {
-        return rollRare(collection, targetItem, userSettings);
+        return rollRare(collection, targetItem, userSettings, poolId);
     }
 
     // 3. 常规三级盲盒解算
     const rollVal = Math.random();
 
-    // a. 顶层 2% 稀有面
     if (rollVal < RARE_RATE) {
-        return rollRare(collection, targetItem, userSettings);
+        return rollRare(collection, targetItem, userSettings, poolId);
     }
-    // b. 独立 4% 皮肤面 [核心新增]
     else if (rollVal < RARE_RATE + SKIN_RATE) {
         return rollSkin(collection);
     }
-    // c. 兜底 94% 普通面
     else {
-        return rollCommon(collection);
+        return rollCommon(collection, poolId);
     }
 };
 
 // 抽取稀有物品逻辑
-const rollRare = (collection: UserCollection, targetItem: string | null, userSettings?: any): GachaResult => {
-    const { heroes, cardBacks, desks } = getRarePool();
+const rollRare = (collection: UserCollection, targetItem: string | null, userSettings?: any, poolId: PoolId = 'permanent'): GachaResult => {
+    const { heroes, cardBacks, desks } = getRarePool(poolId);
 
     // 解析定轨
     let targetObj = null;
@@ -139,7 +186,7 @@ const rollRare = (collection: UserCollection, targetItem: string | null, userSet
                 selectedType = 'cardBack';
                 selectedKey = idx;
                 displayImage = PERSONALIZATION_ASSETS.cardBacks[idx];
-                name = cbConfig.name; // [核心修复] 动态读取调度局分发的名称
+                name = cbConfig.name;
                 hitTarget = true;
             }
         } else if (targetObj.type === 'desk') {
@@ -149,7 +196,7 @@ const rollRare = (collection: UserCollection, targetItem: string | null, userSet
                 selectedType = 'desk';
                 selectedKey = idx;
                 displayImage = PERSONALIZATION_ASSETS.desks[idx];
-                name = deskConfig.name; // [核心修复] 动态读取调度局分发的名称
+                name = deskConfig.name;
                 hitTarget = true;
             }
         }
@@ -170,19 +217,19 @@ const rollRare = (collection: UserCollection, targetItem: string | null, userSet
         } else if (rand < heroes.length + cardBacks.length) {
             const cb = cardBacks[rand - heroes.length];
             selectedType = 'cardBack';
-            selectedKey = cb.index!; // 调度单中一定包含该属性
+            selectedKey = cb.index!;
             displayImage = PERSONALIZATION_ASSETS.cardBacks[cb.index!];
-            name = cb.name; // [核心修复] 动态读取调度局分发的名称
+            name = cb.name;
         } else {
             const d = desks[rand - heroes.length - cardBacks.length];
             selectedType = 'desk';
-            selectedKey = d.index!; // 调度单中一定包含该属性
+            selectedKey = d.index!;
             displayImage = PERSONALIZATION_ASSETS.desks[d.index!];
-            name = d.name; // [核心修复] 动态读取调度局分发的名称
+            name = d.name;
         }
     }
 
-    // C. 重复检测 (稀有资源 -> 5 比特金)
+    // C. 重复检测
     let isNew = true;
     let convertedCurrency = undefined;
 
@@ -192,16 +239,14 @@ const rollRare = (collection: UserCollection, targetItem: string | null, userSet
             isNew = false;
             convertedCurrency = { type: 'bitGold' as const, amount: 5 };
         } else if (owned > 0) {
-            isNew = false; // 不算新卡，但不满3张也不转化
+            isNew = false;
         }
     } else if (selectedType === 'cardBack') {
-        // [核心修复] 利用透传的 userSettings 查阅饰品解锁状态
         if (userSettings && userSettings.unlockedCardBacks.includes(selectedKey as number)) {
             isNew = false;
             convertedCurrency = { type: 'bitGold' as const, amount: 5 };
         }
     } else if (selectedType === 'desk') {
-        // [核心修复] 同理，查阅牌桌解锁状态
         if (userSettings && userSettings.unlockedDesks.includes(selectedKey as number)) {
             isNew = false;
             convertedCurrency = { type: 'bitGold' as const, amount: 5 };
@@ -219,18 +264,16 @@ const rollRare = (collection: UserCollection, targetItem: string | null, userSet
         cost: itemCost
     };
 };
-// [新增] 抽取皮肤逻辑 (独立事件面)
+
+// 抽取皮肤逻辑
 const rollSkin = (collection: UserCollection): GachaResult => {
     const skinPool = getSkinRarePool();
     const target = skinPool[Math.floor(Math.random() * skinPool.length)];
 
-    // [核心防线] 终极避震：如果账号太新或数据残缺导致 ownedSkins 对象不存在，强制视为一个空对象，防止读取崩溃！
     const safeOwnedSkins = collection.ownedSkins || {};
-    // 从安全的皮肤仓库中查询是否已解锁
     const ownedSkinIds = safeOwnedSkins[target.cardKey] || [];
     const hasSkin = ownedSkinIds.includes(target.skinId);
 
-    // 如果已经拥有该皮肤，直接折算为 1 比特金！
     let isNew = !hasSkin;
     let convertedCurrency = undefined;
 
@@ -238,34 +281,32 @@ const rollSkin = (collection: UserCollection): GachaResult => {
         convertedCurrency = { type: 'bitGold' as const, amount: 1 };
     }
 
-    // 查卡牌原名用于提示
     const cardBase = CARD_DB[target.cardKey];
     const cardName = cardBase ? cardBase.name : "未知单位";
 
     return {
         type: 'skin',
         key: target.cardKey,
-        skinId: target.skinId, // 绑定专属皮肤ID
-        isRare: true, // 标记为稀有以触发高级视觉矩阵
+        skinId: target.skinId,
+        isRare: true,
         isNew,
         convertedCurrency,
-        displayImage: getSkinImage(target.cardKey, target.skinId, cardBase?.level === 2), // 提取高精度皮肤原画
+        displayImage: getSkinImage(target.cardKey, target.skinId, cardBase?.level === 2),
         name: `${cardName} · 皮肤`
     };
 };
+
 // 抽取普通物品逻辑
-const rollCommon = (collection: UserCollection): GachaResult => {
-    const commonPool = getCommonPool();
+const rollCommon = (collection: UserCollection, poolId: PoolId = 'permanent'): GachaResult => {
+    const commonPool = getCommonPool(poolId);
     const card = commonPool[Math.floor(Math.random() * commonPool.length)];
 
-    // 重复检测 (普通卡 -> 1/4 价格的通用银)
     const owned = collection.ownedCards[card.key] || 0;
     let isNew = true;
     let convertedCurrency = undefined;
 
     if (owned >= 3) {
         isNew = false;
-        // [修正] 使用 getCardPrice 计算原价，然后 * 0.25
         const price = getCardPrice(card.cost);
         const refund = Math.floor(price * 0.25);
         convertedCurrency = { type: 'silverCoin' as const, amount: refund };

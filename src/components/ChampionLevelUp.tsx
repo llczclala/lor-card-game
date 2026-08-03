@@ -15,13 +15,15 @@ interface ChampionLevelUpProps {
     // [新增] 停止视频回调，支持 immediate 参数
     onStopMovie?: (immediate?: boolean) => void;
     onPrepareMovie?: (heroKey: string) => void; // [核心新增] 接收预装弹函数
+    playerNexusHealth?: number;
+    enemyNexusHealth?: number;
 }
 
 /**
  * 英雄升级动画控制器
  * 负责调度：Phase 1 (旋转聚气) -> Phase 2 (播放影片) -> Phase 3 (爆发展示)
  */
-export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete, onStopMovie, onPrepareMovie }) => { // [修改] 解构 onPrepareMovie
+export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMovie, onComplete, onStopMovie, onPrepareMovie, playerNexusHealth, enemyNexusHealth }) => { // [修改] 解构 onPrepareMovie
     // 动画阶段：spin (旋转消失) -> video (播放视频) -> burst (爆发出现)
     const [phase, setPhase] = useState<'spin' | 'video' | 'burst'>('spin');
     // [新增] 跳过按钮显示状态
@@ -116,6 +118,12 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
 
     // Phase 1 结束 -> 播放视频
     const handleSpinComplete = () => {
+        // [2026-07-30] 默认跳过升级影片
+        const skipMovie = (userSystem.settings as any)?.skipLevelupMovie;
+        if (skipMovie) {
+            setPhase('burst');
+            return;
+        }
         setPhase('video');
         onPlayMovie(card.key, () => {
             // 视频播放结束回调 -> 进入 Phase 3
@@ -182,7 +190,8 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
                             data={displayCard}
                             location="preview"
                             isFaceUp={true}
-                            // 如果有专属的升级光效组件，也可以包裹在这里
+                            playerNexusHealth={playerNexusHealth}
+                            enemyNexusHealth={enemyNexusHealth}
                         />
                     </div>
                 </motion.div>

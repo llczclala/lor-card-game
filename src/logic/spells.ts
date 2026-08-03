@@ -1,9 +1,13 @@
 import type { CardData, GameState } from '../types';
 import { CARD_DB } from '../data/cards';
+import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-07] 效果定义库（读 animationDuration）
 import { processEffect } from './effectProcessor';
 import type { EffectContext } from './effectProcessor';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { accumulateMauxirDamage } from '../utils/gameRules'; // [2026-06-27] 引入猫汐尔经验收集器
+
+// [新增] 法术抽卡动画计数器，保证 animId 唯一
+let spellDrawCounter = 0;
 
 export interface SpellContext {
   game: GameState;
@@ -27,7 +31,7 @@ export interface SpellContext {
 }
 
 // [重构] 通用法术执行器
-export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', targets: any[], ctx: SpellContext) => {
+export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', targets: any[], ctx: SpellContext, sourceCard?: CardData) => {
   // [修改] 解构新增的 combatField 和 setCombatField
   const { game, playerBench, enemyBench, combatField, setGame, setPlayerBench, setEnemyBench, setCombatField, triggerShake, setMessage} = ctx;
 
@@ -53,6 +57,9 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
   };
 
   // 3. 遍历并执行所有效果 (管道式处理)
+  let drawAnimIndex = 0;  // [2026-07-06] 同一次施法中连续抽卡的错开计数器
+  let baseDelay = 0;      // [2026-07-07] 效果链动画时序累加器
+  const sfxDrawnCardIds: string[] = []; // [2026-07-07] 收集动画抽卡的卡牌 ID，提交 state 时移除（由 onAtCenter 加回）
   cardDef.effects.forEach(effectId => {
       // 每执行一个效果，都把当前累加器中最新鲜的数据组装成上下文
       const currentContext: EffectContext = {
@@ -64,7 +71,8 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
           enemyHand: acc.enemyHand,
           playerDeck: acc.playerDeck, // [核心流转] 每执行一次效果，都传递最新牌库快照
           enemyDeck: acc.enemyDeck,
-          owner
+          owner,
+          sourceCard, // [2026-07-28] 传入原始法术卡牌实例（含 customProgress 等运行时状态）
       };
 
       // 调用核心处理器
@@ -81,6 +89,7 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
       if (result.enemyDeck) acc.enemyDeck = result.enemyDeck;
 
       // 立即处理副作用事件 (如飘字、音效等不涉及 React 状态的指令)
+      const currentBaseDelay = baseDelay;
       result.events.forEach(event => {
           if (event.type === 'nexus_damage') {
               triggerShake();
@@ -98,7 +107,44 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
 	          if (event.type === 'nexus_heal') {
 	            eventBus.emit(GameEvents.NEXUS_HEALED, event.payload);
 	          }
+	          // [2026-07-06 暗箱操作] 抽卡动画：发射 DRAW_START 触发飞牌动画
+	          if (event.type === 'sfx_draw') {
+	            const card = event.payload;
+	            sfxDrawnCardIds.push(card.id); // [2026-07-07] 记录：由 onAtCenter 加回手牌，不在 state 中预置
+	            const animId = `spell-draw-${++spellDrawCounter}`;
+	            // [2026-07-07] 时序编排：baseDelay 让上一个效果的动画先播完
+	            const staggerDelay = currentBaseDelay + drawAnimIndex * 400;
+	            drawAnimIndex++;
+	            setTimeout(() => {
+	              eventBus.emit(GameEvents.DRAW_START, {
+	                animId, card, owner,
+	                skipHandAdd: true,
+	              });
+	            }, staggerDelay);
+	          }
+	          if (event.type === 'sfx_draw_burn') {
+	            const card = event.payload;
+	            const animId = `spell-draw-${++spellDrawCounter}`;
+	            // [2026-07-07] 时序编排：baseDelay 让上一个效果的动画先播完
+	            const staggerDelay = currentBaseDelay + drawAnimIndex * 400;
+	            drawAnimIndex++;
+	            setTimeout(() => {
+	              eventBus.emit(GameEvents.DRAW_START, {
+	                animId, card, owner, skipHandAdd: true,
+	              });
+	              // 爆牌：先飞到中央再碎裂
+	              setTimeout(() => {
+	                eventBus.emit(GameEvents.DRAW_CENTER_SHATTER, { animId });
+	              }, 800);
+	            }, staggerDelay);
+	          }
       });
+
+      // [2026-07-07] 累加当前效果的动画预算，为下一个效果让出时间窗口
+      const effectDef = EFFECT_DB[effectId];
+      if (effectDef?.animationDuration) {
+          baseDelay += effectDef.animationDuration;
+      }
   });
 
   // ==========================================
@@ -126,6 +172,14 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
       console.log('[Swali Aura] 目睹梦莲无人机使用，猫汐尔升级进度 +3！');
     }
   }
+  // [2026-07-07] 从手牌中移除以动画方式抽到的卡牌
+  // effectProcessor 已将卡牌推入 hand 累加器（供后续效果链使用），
+  // 但视觉上应由 DRAW_START->onAtCenter 在动画到达中央时再加入手牌。
+  if (sfxDrawnCardIds.length > 0) {
+    acc.playerHand = acc.playerHand.filter(c => !sfxDrawnCardIds.includes(c.id));
+    acc.enemyHand = acc.enemyHand.filter(c => !sfxDrawnCardIds.includes(c.id));
+  }
+
 
   // 4. 终极一阳指 (Apply Final Result)
   // 当所有效果链执行完毕后，一次性把最终累加的结果推给 React！

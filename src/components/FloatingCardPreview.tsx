@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card } from './Card';
@@ -32,6 +32,9 @@ interface FloatingCardPreviewProps {
     onViewArt?: (card: CardData) => void;
     /** [皮肤] 当前应渲染的皮肤 ID */
     skinId?: number; // [新增]
+    /** 透传给 Card 的英雄升级进度判断用 */
+    playerNexusHealth?: number;
+    enemyNexusHealth?: number;
 }
 
 // ─── 常量 ───────────────────────────────────────────────────────
@@ -60,7 +63,20 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
     onMouseEnter,
     onMouseLeave,
     onViewArt,
+    playerNexusHealth,
+    enemyNexusHealth,
 }) => {
+    // 与 ScaleWrapper 一致的缩放比（仅 follow 模式使用，该模式通过 portal 在 ScaleWrapper 外）
+    const [gameScale, setGameScale] = useState(1);
+    useEffect(() => {
+        const handleResize = () => {
+            setGameScale(Math.min(window.innerWidth / 1680, window.innerHeight / 1050));
+        };
+        handleResize();
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     // ── follow 模式 ─────────────────────────────────────────
     if (mode === 'follow') {
         // [修改] 兼容无目标的假 rect 兜底
@@ -69,9 +85,12 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
 
         const { card: followCard, cardRect } = target;
 
-        // [新增] 计算真实缩放后的视觉尺寸
-        const scaledWidth = BASE_WIDTH * scale;
-        const scaledHeight = BASE_HEIGHT * scale;
+        // follow 模式通过 portal 在 ScaleWrapper 外，叠加游戏缩放
+        const displayScale = scale * gameScale;
+
+        // 计算缩放后的视觉尺寸
+        const scaledWidth = BASE_WIDTH * displayScale;
+        const scaledHeight = BASE_HEIGHT * displayScale;
 
         // [核心修改] 碰撞检测：默认放卡牌左侧，空间不足则翻转到右侧
         const leftSpace = cardRect.left;
@@ -79,13 +98,13 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
         let isFlippedToRight = false; // 记录是否翻转
 
         // 使用缩放后的宽度判断是否会碰壁
-        if (leftSpace > scaledWidth + OFFSET) {
+        if (leftSpace > scaledWidth + OFFSET * gameScale) {
             // 放左边：因为后续设置了 transformOrigin: 'right'，元素的未缩放右边缘会死死锚定在原地。
             // 我们只需要算出它【未缩放时】的左边缘在哪即可。
-            left = cardRect.left - BASE_WIDTH - OFFSET;
+            left = cardRect.left - BASE_WIDTH - OFFSET * gameScale;
         } else {
             // 放右边：因为设置了 transformOrigin: 'left'，元素的未缩放左边缘贴脸即可。
-            left = cardRect.right + OFFSET;
+            left = cardRect.right + OFFSET * gameScale;
             isFlippedToRight = true;
         }
 
@@ -109,7 +128,7 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                     position: 'fixed',
                     left,
                     top,
-                    zIndex: 300,
+                    zIndex: 10001,
                     pointerEvents: interactive ? 'auto' : 'none',
                     // [核心法门] 动态更改缩放原点！彻底消灭“缩放空气墙”！
                     // 在左侧就以右边缘为基准向左膨胀，在右侧就以左边缘为基准向右膨胀
@@ -118,8 +137,8 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                 onMouseEnter={interactive ? onMouseEnter : undefined}
                 onMouseLeave={interactive ? onMouseLeave : undefined}
                 // [细节优化] 使用 y: '-50%' 让投影仪在Y轴完美对准计算好的安全 Top 点
-                initial={{ opacity: 0, x: isFlippedToRight ? -20 : 20, y: '-50%', scale: 1.1 }}
-                animate={{ opacity: 1, x: 0, y: '-50%', scale }}
+                initial={{ opacity: 0, x: isFlippedToRight ? -20 : 20, y: '-50%', scale: 1.1 * gameScale }}
+                animate={{ opacity: 1, x: 0, y: '-50%', scale: displayScale }}
                 exit={{ opacity: 0, x: isFlippedToRight ? -10 : 10, y: '-50%', transition: { duration: 0.1 } }}
                 transition={{
                     type: 'spring',
@@ -132,9 +151,11 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                     <Card
                         data={followCard}
                         location="preview"
-                        skinId={skinId} // [核心修复] 将皮肤 ID 透传给内部的实体大图卡牌
+                        skinId={skinId}
                         isFaceUp={true}
                         onViewArt={onViewArt}
+                        playerNexusHealth={playerNexusHealth}
+                        enemyNexusHealth={enemyNexusHealth}
                     />
                 </div>
             </motion.div>,
@@ -165,9 +186,11 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                         <Card
                             data={card}
                             location="preview"
-                            skinId={skinId} // [核心修复] 同样透传给固定模式的大图卡牌
+                            skinId={skinId}
                             isFaceUp={true}
                             onViewArt={onViewArt}
+                            playerNexusHealth={playerNexusHealth}
+                            enemyNexusHealth={enemyNexusHealth}
                         />
                     </div>
                 </motion.div>

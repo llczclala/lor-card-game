@@ -8,16 +8,22 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUserSystem } from '../hooks/useUserSystem';
 import { HERO_IMAGES, CURRENCY_ICONS, LOADING_SCREEN_IMAGES, UNIT_IMAGES, SPELL_IMAGES } from '../data/imageData';
-import { getHallMovies } from '../data/movieData';
-import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench } from 'lucide-react'; // [修改] 新增 Wrench 图标
+import { getHallCharacterEntries, getCharacterScenes, isHallCharacterVideo } from '../data/movieData';
+import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench, Camera } from 'lucide-react'; // [修改] 新增 Camera
 
 // [新增] 引入 GM 工作室主控台
 import { Studio } from './Studio/Studio';
 // [新增] 引入全新的全息科技图鉴舱
 import { GalleryCodex } from './GalleryCodex';
-// [新增] 导出背景类型，供 App.tsx 等外部调用
+// [核心重构] 背景配置 —— 增加角色分组支持
 export type BgType = 'movie' | 'pic';
-export interface BgConfig { type: BgType; url: string; index: number; }
+export interface BgConfig {
+  type: BgType;
+  url: string;
+  index: number;
+  characterKey?: string;  // [新增] 角色标识（大厅视频专用）
+  sceneIndex?: number;     // [新增] 当前场景索引 0~3
+}
 
 interface GameLobbyProps {
     userSystem: ReturnType<typeof useUserSystem>;
@@ -249,8 +255,21 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     };
 
 
-    // 动态生成背景数据列表
-    const movieList: BgConfig[] = React.useMemo(() => getHallMovies().map((url, i) => ({ type: 'movie', url, index: i })), []);
+    // [核心重构] 背景列表：每个角色只显示 _01 场景作为入口
+    const movieList: BgConfig[] = React.useMemo(() => {
+        const result: BgConfig[] = [];
+        let flatIdx = 0;
+        for (const entry of getHallCharacterEntries()) {
+            result.push({
+                type: 'movie',
+                url: entry.scenes[0],
+                index: flatIdx++,
+                characterKey: entry.characterKey,
+                sceneIndex: 0,
+            });
+        }
+        return result;
+    }, []);
     const picList: BgConfig[] = React.useMemo(() => LOADING_SCREEN_IMAGES.map((url, i) => ({ type: 'pic', url, index: i })), []);
     const currentList = bgMode === 'movie' ? movieList : picList;
 
@@ -282,6 +301,20 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
         } else {
             onSwitchVideo(); // 没设置自定义时，调用系统默认切换
         }
+    };
+
+    // [新增] 场景切换按钮逻辑：在当前角色的 4 个场景间循环
+    const handleSwitchScene = () => {
+        if (customBg?.type !== 'movie' || !customBg.characterKey) return;
+        const nextSceneIdx = ((customBg.sceneIndex ?? 0) + 1) % 4;
+        const scenes = getCharacterScenes(customBg.characterKey);
+        if (!scenes.length) return;
+        // 直接构造新 BgConfig（保留 index 不变，使"下一张"仍能正确切到下一个角色）
+        onUpdateCustomBg({
+            ...customBg,
+            url: scenes[nextSceneIdx],
+            sceneIndex: nextSceneIdx,
+        });
     };
 
     // 全局 ESC 按键拦截 (增强版，支持多层级窗口)
@@ -457,6 +490,17 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                         </GlassButton>
                         <GlassButton onClick={handleOpenBgSelect} className="w-16 h-12 rounded-sm" label="背景">
                             <ImageIcon size={20} />
+                        </GlassButton>
+                        {/* [新增] 场景切换按钮：仅在当前背景为大厅角色视频时可用 */}
+                        <GlassButton
+                            onClick={handleSwitchScene}
+                            className={`w-16 h-12 rounded-sm transition-all duration-300 ${customBg?.characterKey ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}
+                            label="场景"
+                        >
+                            <span className="relative inline-flex items-center justify-center">
+                                <Camera size={20} />
+                                <RefreshCw size={10} className="absolute -bottom-1 -right-1 text-orange-400 drop-shadow-md" />
+                            </span>
                         </GlassButton>
                         {/* [撤销] 移除左侧违和的任务按钮，让辅助功能区保持纯粹 */}
                     </div>

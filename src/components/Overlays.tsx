@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { X, RefreshCw, ChevronUp, ChevronDown,ShoppingCart } from 'lucide-react';
+import { X, RefreshCw, ChevronUp, ChevronDown, ShoppingCart, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { CardData, GameStats } from '../types';
+import { GachaPoolEnum, type CardData, type GameStats } from '../types';
+import { POOLS, type PoolId } from '../logic/gachaLogic';
 import { KEYWORD_DB, GLOSSARY_DB } from '../data/keywords'; // [核心修改] 引入术语字典
 import { getCardLore } from '../data/loreData';
 import { ChampionLevelUp } from './ChampionLevelUp';
@@ -40,8 +41,10 @@ const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card
 
     // 1. 动态生成正则
     const glossaryKeys = Object.keys(GLOSSARY_DB).sort((a, b) => b.length - a.length);
+    // [修改 2026-07-27] 术语后允许跟数字（如"飞剑4"→匹配"飞剑"），但排除紧跟中文的情况（避免误吞）
+    const GLOSSARY_PATTERN = glossaryKeys.map(k => `${k}(?![\\u4e00-\\u9fff])`).join('|');
     // [核心修改] 增加 4. 匹配中文双引号包裹的关联卡牌 (如 “镜爻”)
-    const PARSE_REGEX = new RegExp(`(“[^”]+”|\\[.*?\\]|[+-]\\d+\\/[+-]\\d+|${glossaryKeys.join('|')})`, 'g');
+    const PARSE_REGEX = new RegExp(`(“[^”]+”|\\[.*?\\]|[+-]\\d+\\/[+-]\\d+|${GLOSSARY_PATTERN})`, 'g');
 
     // 2. 切割文本
     const parts = text.split(PARSE_REGEX);
@@ -100,7 +103,21 @@ const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card
                             </span>
                         );
                     }
-                    // 兜底：找不到配置的直接金字显示
+                    // 兜底：词条术语 (如 [觉悟])
+                    const glConfig = Object.values(GLOSSARY_DB).find(config => config.label === kw);
+                    if (glConfig) {
+                        return (
+                            <span key={index} className="group relative inline-block text-yellow-300 font-bold mx-1 border-b border-yellow-500/50 cursor-help border-dashed">
+                                {kw}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-slate-900 border border-yellow-600/50 p-3 rounded-lg shadow-2xl opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-[300] text-center translate-y-2 group-hover:translate-y-0">
+                                    <div className="font-bold text-yellow-400 mb-1 text-sm">{glConfig.label}</div>
+                                    <div className="text-gray-300 text-xs leading-relaxed font-normal">{glConfig.description}</div>
+                                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-slate-900 border-b border-r border-yellow-600/50 rotate-45"></div>
+                                </div>
+                            </span>
+                        );
+                    }
+                    // 兜底：找不到任何配置的直接金字显示
                     return <span key={index} className="text-yellow-400 font-bold mx-1">{part}</span>;
                 }
 
@@ -152,12 +169,23 @@ interface FullArtOverlayProps {
     onBuy?: (count: number, cost: number) => boolean;
     ownedCount?: number;
     playerSilver?: number;
+    // [2026-08-02] 跳转到对应卡池（备战详情页购买按钮下方）
+    onGachaNav?: (poolId: PoolId) => void;
     // [皮肤] 皮肤切换相关（不传则不显示皮肤UI）
     skinData?: SkinOverlayData;
+    // [卡牌导航] 左右翻页
+    navigation?: CardNavigation;
+}
+
+// [卡牌导航] 导航上下文
+interface CardNavigation {
+    cardList: CardData[];
+    currentIndex: number;
+    onNavigate: (index: number) => void;
 }
 
 
-export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSilver = 0, skinData }: FullArtOverlayProps) => {
+export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 0, playerSilver = 0, skinData, navigation }: FullArtOverlayProps) => {
     const [isLoreOpen, setIsLoreOpen] = useState(false);
 
     // [核心新增] 深度跳转状态接管
@@ -195,6 +223,20 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
     const isSkinCurrent = skinData ? browsingSkinId === skinData.currentSkinId : true;
     // 是否启用完整的皮肤切换功能（传了 onSkinChange 才启用）
     const enableSkinUI = !!skinData;
+
+    // [卡牌导航] 翻页逻辑
+    const canNavigate = navigation && navigation.cardList.length > 1;
+    const navigateCard = (direction: 'prev' | 'next') => {
+        if (!navigation || !canNavigate) return;
+        const { cardList, currentIndex, onNavigate } = navigation;
+        if (direction === 'prev') {
+            const newIndex = currentIndex > 0 ? currentIndex - 1 : cardList.length - 1;
+            onNavigate(newIndex);
+        } else {
+            const newIndex = currentIndex < cardList.length - 1 ? currentIndex + 1 : 0;
+            onNavigate(newIndex);
+        }
+    };
 
     const { baseCard, leveledCard } = useMemo(() => {
         const base = CARD_DB[currentCard.key] as CardData;
@@ -250,14 +292,23 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
     };
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/95 backdrop-blur-md animate-fade-in p-4 md:p-8" onClick={onClose}>
+        <div
+            className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/95 backdrop-blur-md animate-fade-in p-4 md:p-8"
+            onClick={onClose}
+            onWheel={(e) => {
+                if (!canNavigate) return;
+                e.preventDefault();
+                if (e.deltaY > 0) navigateCard('next');
+                else navigateCard('prev');
+            }}
+        >
             {/* 关闭按钮 */}
             <button onClick={onClose} className="absolute top-4 right-4 md:top-8 md:right-8 text-white/80 hover:text-white bg-black/50 hover:bg-red-500/80 rounded-full p-2 transition-all z-[210]">
                 <X size={32} />
             </button>
 
             {/* [修改] 主容器：添加 overflow-hidden 以限制动画遮罩的范围，确保遮罩只在内容区出现 */}
-            <div className="relative flex flex-col md:flex-row max-w-7xl w-full h-full md:h-[90vh] items-stretch justify-center gap-0 md:gap-8 overflow-hidden rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="relative flex flex-col md:flex-row max-w-5xl w-full h-full md:h-[90vh] items-stretch justify-center gap-0 md:gap-6 overflow-hidden rounded-2xl" onClick={e => e.stopPropagation()}>
 
                 {/* [新增] 购买确认弹窗挂载点 */}
                 {confirmState && (
@@ -407,6 +458,29 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                                                 </div>
                                             </motion.button>
                                         )}
+
+                                        {/* [2026-08-02] 前往对应卡池按钮（购买按钮下方） */}
+                                        {onGachaNav && (() => {
+                                            const navPoolId = currentCard.gachaPool ?? GachaPoolEnum.Permanent;
+                                            return (
+                                                <motion.button
+                                                    whileHover={{ scale: 1.05, x: 5 }}
+                                                    whileTap={{ scale: 0.95 }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onGachaNav(navPoolId);
+                                                    }}
+                                                    className="flex items-center gap-3 px-6 py-3 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl shadow-lg border border-white/20 backdrop-blur-md group mt-2"
+                                                    title="前往卡池"
+                                                >
+                                                    <div className="flex flex-col items-start">
+                                                        <span className="text-[10px] font-bold text-emerald-200 tracking-wider">前往卡池</span>
+                                                        <span className="text-xs font-black text-white">{POOLS[navPoolId]?.name}</span>
+                                                    </div>
+                                                    <ExternalLink size={20} className="text-emerald-200 group-hover:text-white" />
+                                                </motion.button>
+                                            );
+                                        })()}
                                     </>
                                 );
                             })()}
@@ -529,7 +603,10 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
 
                 {/* --- 右侧：详细信息面板 --- */}
                 {/* [修改] 引用 targetCard 数据 */}
-                <div className="w-full md:w-[500px] bg-gray-900/95 p-10 rounded-3xl border border-white/10 text-white shadow-2xl flex flex-col gap-8 self-center h-fit max-h-full overflow-y-auto custom-scrollbar mt-4 md:mt-0 relative z-10">
+                <div
+                    className="w-full md:w-[380px] bg-gray-900/95 p-8 rounded-3xl border border-white/10 text-white shadow-2xl flex flex-col gap-6 self-center h-fit max-h-full overflow-y-auto custom-scrollbar mt-4 md:mt-0 relative z-10"
+                    onWheel={(e) => e.stopPropagation()}
+                >
 
                     {/* 1. 顶部标题 */}
                     <div className="flex flex-col items-center text-center">
@@ -644,6 +721,32 @@ export const FullArtOverlay = ({ card, onClose, onBuy, ownedCount = 0, playerSil
                     )}
                 </div>
             </div>
+
+            {/* [卡牌导航] 蓝色矩形翻页按钮 — 改为 absolute 定位适应 ScaleWrapper */}
+            {canNavigate && (
+                <>
+                    {/* 左箭头 */}
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            navigateCard('prev');
+                        }}
+                        className="absolute left-0 top-1/2 -translate-y-1/2 z-[10001] w-14 h-40 bg-blue-600/80 hover:bg-blue-500 rounded-r-xl border border-blue-400/40 backdrop-blur-sm flex items-center justify-center transition-all hover:scale-105 hover:shadow-[0_0_25px_rgba(59,130,246,0.5)] cursor-pointer shadow-xl group/nav"
+                    >
+                        <span className="text-4xl font-black text-white group-hover/nav:translate-x-[-2px] transition-transform">◀</span>
+                    </button>
+                    {/* 右箭头 */}
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            navigateCard('next');
+                        }}
+                        className="absolute right-0 top-1/2 -translate-y-1/2 z-[10001] w-14 h-40 bg-blue-600/80 hover:bg-blue-500 rounded-l-xl border border-blue-400/40 backdrop-blur-sm flex items-center justify-center transition-all hover:scale-105 hover:shadow-[0_0_25px_rgba(59,130,246,0.5)] cursor-pointer shadow-xl group/nav"
+                    >
+                        <span className="text-4xl font-black text-white group-hover/nav:translate-x-[2px] transition-transform">▶</span>
+                    </button>
+                </>
+            )}
         </div>
     );
 };
@@ -655,9 +758,11 @@ interface LevelUpOverlayProps {
     onPrepareMovie?: (heroKey: string) => void; // [核心新增]
     onStopMovie: () => void;
     popLevelUp?: () => void;
+    playerNexusHealth?: number;
+    enemyNexusHealth?: number;
 }
 
-export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, onPlayMovie, onPrepareMovie, onStopMovie, popLevelUp }) => {
+export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, onPlayMovie, onPrepareMovie, onStopMovie, popLevelUp, playerNexusHealth, enemyNexusHealth }) => {
     return (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black">
             {/* 引入 ChampionLevelUp 组件处理所有动画流程 (旋转 -> 视频 -> 爆发) */}
@@ -666,6 +771,8 @@ export const LevelUpOverlay: React.FC<LevelUpOverlayProps> = ({ card, onClose, o
                 onPlayMovie={onPlayMovie}
                 onPrepareMovie={onPrepareMovie} // [向下透传] 交给升级动画控制器
                 onStopMovie={onStopMovie}
+                playerNexusHealth={playerNexusHealth}
+                enemyNexusHealth={enemyNexusHealth}
                 onComplete={() => {
                     if (popLevelUp) popLevelUp(); // [核心修改] 动画/视频彻底播完后，先将英雄移除队列！
                     onClose(); // 再关闭全屏弹窗，交还控制权

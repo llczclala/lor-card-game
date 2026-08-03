@@ -11,7 +11,7 @@ import { SKIN_IMAGES, getSkinImage } from '../../data/imageData'; // [皮肤]
 import type { CardData, CardCropData } from '../../types';
 
 // ================= 类型定义 =================
-type EditMode = 'hand' | 'bench' | 'combat';
+type EditMode = 'hand' | 'bench' | 'combat' | 'avatar';
 type CategoryFilter = 'ALL' | 'HERO' | 'UNIT';
 
 // [新增] 定义 Props 接收关闭回调
@@ -172,6 +172,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
             case 'hand': return { width: 288, height: 448, rounded: 'rounded-2xl' };
             case 'bench': return { width: 120, height: 162, rounded: 'rounded-md' };
             case 'combat': return { width: 240, height: 162, rounded: 'rounded-md' }; // 模拟战斗时的拉伸宽度
+            case 'avatar': return { width: 80, height: 80, rounded: 'rounded-xl' }; // 方形头像（适配教程对话等场景）
         }
     };
     const cropperDim = getCropperDimensions();
@@ -392,31 +393,48 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
 
                             {/* 提示：此处的预览会随着 CROP_UPDATED 事件，通过 Card 内部的 useCardCrop 热更新！ */}
                             {/* [修复 4] 强行放大预览图，更利于开发观察 */}
-                            <div className={`transform scale-[1.55] origin-center shadow-2xl ${activeMode === 'combat' ? 'w-[240px] h-[162px]' : ''}`}>
-                                <Card
-                                    // [皮肤] 加入 editingSkinId 以在切换皮肤时强制重建组件
-                                    key={`${targetCard.key}-${heroLevel}-${activeMode}-skin${editingSkinId}`}
-                                    data={(() => {
-                                        // [核心修复 2] 模拟游戏引擎：如果是 2 级，手动赋予数值增长
-                                        const cardInfo = { ...targetCard, level: heroLevel };
-                                        if (heroLevel === 2) {
-                                            if (cardInfo.key === 'fenny') {
-                                                cardInfo.power += 4;
-                                                cardInfo.health += 1;
-                                                cardInfo.maxHealth += 1;
-                                            } else {
-                                                cardInfo.power += 1;
-                                                cardInfo.health += 1;
-                                                cardInfo.maxHealth += 1;
+                            {activeMode === 'avatar' ? (
+                                // 头像模式：纯方形裁剪预览，不渲染卡牌 UI
+                                <div className="w-36 h-36 rounded-xl overflow-hidden border-2 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.3)] bg-black flex items-center justify-center">
+                                    <img
+                                        src={workbenchImageUrl}
+                                        alt="头像预览"
+                                        className="max-w-none block"
+                                        draggable={false}
+                                        style={{
+                                            width: '100%',
+                                            height: 'auto',
+                                            transform: `translate(${cropOffset.x}%, ${cropOffset.y}%) scale(${cropScale})`
+                                        }}
+                                    />
+                                </div>
+                            ) : (
+                                <div className={`transform scale-[1.55] origin-center shadow-2xl ${activeMode === 'combat' ? 'w-[240px] h-[162px]' : ''}`}>
+                                    <Card
+                                        // [皮肤] 加入 editingSkinId 以在切换皮肤时强制重建组件
+                                        key={`${targetCard.key}-${heroLevel}-${activeMode}-skin${editingSkinId}`}
+                                        data={(() => {
+                                            // [核心修复 2] 模拟游戏引擎：如果是 2 级，手动赋予数值增长
+                                            const cardInfo = { ...targetCard, level: heroLevel };
+                                            if (heroLevel === 2) {
+                                                if (cardInfo.key === 'fenny') {
+                                                    cardInfo.power += 4;
+                                                    cardInfo.health += 1;
+                                                    cardInfo.maxHealth += 1;
+                                                } else {
+                                                    cardInfo.power += 1;
+                                                    cardInfo.health += 1;
+                                                    cardInfo.maxHealth += 1;
+                                                }
                                             }
-                                        }
-                                        return cardInfo as CardData;
-                                    })()}
-                                    location={activeMode}
-                                    isFaceUp={true}
-                                    skinId={editingSkinId}
-                                />
-                            </div>
+                                            return cardInfo as CardData;
+                                        })()}
+                                        location={activeMode}
+                                        isFaceUp={true}
+                                        skinId={editingSkinId}
+                                    />
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
@@ -445,6 +463,12 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                                 className={`flex-1 h-16 rounded-lg flex flex-col items-center justify-center gap-1 transition-all border-2 ${activeMode === 'combat' ? 'bg-red-900/40 border-green-400 text-green-400 scale-105 shadow-[0_0_15px_rgba(74,222,128,0.2)]' : 'bg-slate-800 border-transparent text-gray-400 hover:bg-slate-700'}`}
                             >
                                 <Sword size={20} /> <span className="text-[10px] font-bold">COMBAT</span>
+                            </button>
+                            <button
+                                onClick={() => setActiveMode('avatar')}
+                                className={`flex-1 h-16 rounded-lg flex flex-col items-center justify-center gap-1 transition-all border-2 ${activeMode === 'avatar' ? 'bg-purple-900/40 border-green-400 text-green-400 scale-105 shadow-[0_0_15px_rgba(74,222,128,0.2)]' : 'bg-slate-800 border-transparent text-gray-400 hover:bg-slate-700'}`}
+                            >
+                                <User size={20} /> <span className="text-[10px] font-bold">AVATAR</span>
                             </button>
                         </div>
                     </div>

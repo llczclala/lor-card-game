@@ -16,6 +16,7 @@ import type { CropConfig } from '../types';
 import { KeywordTray } from './KeywordTray';
 // [新增] 引入事件总线用于触发音效
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于兜底替换{value}
 
 // [核心新增] 模块级卡牌位置记忆库 (突破 React 销毁重绘的失忆限制)
 const cardLocationMemory = new Map<string, string>();
@@ -162,7 +163,12 @@ interface CardProps {
   isConditionActive?: boolean; // [新增] 动态描边变色，标识前置条件已满足
   playerNexusHealth?: number; // [新增] 透传我方水晶血量，供手牌英雄升级进度判定
   enemyNexusHealth?: number;  // [新增] 透传敌方水晶血量
+  burnoutValue?: number;       // [2026-07-09] 燃尽：动态费用（法力+魔力），覆盖 data.cost
   onPointerDown?: (e: React.PointerEvent) => void; // [新增] 供战场→备战席拖拽使用
+  // [2026-07-14 锻造者] 法术伤害动态显示
+  displayParams?: Record<string, number>; // 替换 description 中 {paramName} 的值
+  damageColor?: 'boosted' | 'reduced' | null; // 法术伤害数字颜色（绿/红/白）
+  isCostReduced?: boolean; // [2026-07-14] 蕾西亚减费标记（绿色费用数字）
   // [切除] 删掉这行重复的 skinId，因为接口最上面已经声明过一遍了
 }
 // [皮肤] 智能裁剪钩子：增加 skinId 参数，支持双键索引结构
@@ -177,9 +183,10 @@ const useCardCrop = (cardKey: string, location: string, level: number = 1, skinI
     }, []);
 
     // 1. 同步计算基础形态
-    let baseMode: 'hand' | 'bench' | 'combat' = 'hand';
+    let baseMode: 'hand' | 'bench' | 'combat' | 'avatar' = 'hand';
     if (location === 'bench' || location === 'enemy_bench') baseMode = 'bench';
     else if (location === 'combat') baseMode = 'combat';
+    else if (location === 'deck-panel' || location === 'avatar') baseMode = 'avatar';
 
     // 移除未引入的 CardCropData 类型，直接作为动态属性名读取
     const mode = level === 2 ? `${baseMode}_lv2` as any : baseMode as any;
@@ -242,6 +249,26 @@ const useNumberTicker = (targetValue: number, duration: number = 1000) => {
     return [displayValue, isTicking] as const;
 };
 
+/** [2026-07-14 锻造者] 渲染卡牌描述文本，替换{paramName}占位符并着色 */
+const renderDescription = (
+    description: string,
+    displayParams?: Record<string, number>,
+    damageColor?: 'boosted' | 'reduced' | null
+): React.ReactNode => {
+    if (!displayParams) return description;
+    // 匹配 {paramName} 占位符
+    const parts = description.split(/(\{\w+\})/);
+    const colorClass = damageColor === 'boosted' ? 'text-green-400' :
+                       damageColor === 'reduced' ? 'text-red-400' : 'text-gray-200';
+    return parts.map((part, i) => {
+        const match = part.match(/^\{(\w+)\}$/);
+        if (match && match[1] in displayParams) {
+            return <span key={i} className={colorClass}>{displayParams[match[1]]}</span>;
+        }
+        return part;
+    });
+};
+
 export const Card: React.FC<CardProps> = ({
     data, location, skinId = 0, // [新增] 解构 skinId 并默认赋予 0 默认皮肤
     onClick, isBlocker, isSelected, highlightTarget, onViewArt, isEnemyCombatant, attackType = 'clash',
@@ -263,7 +290,11 @@ export const Card: React.FC<CardProps> = ({
     isConditionActive = false,
     playerNexusHealth = 20, // [修复] 透传我方水晶血量，默认20
     enemyNexusHealth = 20,   // [修复] 透传敌方水晶血量，默认20
+    burnoutValue,            // [2026-07-09] 燃尽：动态费用覆盖 data.cost
     onPointerDown,           // [新增] 战场拖拽
+    displayParams,           // [2026-07-14] 法术伤害动态显示参数
+    damageColor,             // [2026-07-14] 法术伤害数字颜色
+    isCostReduced,           // [2026-07-14] 蕾西亚减费标记(绿色费用数字)
     // [切除] 删掉这行重复的 skinId = 0，因为参数最上面已经解构过一遍了
 }) => {
     // 顶级防御
@@ -271,6 +302,8 @@ export const Card: React.FC<CardProps> = ({
         console.warn(`[Card Component] Prevented crash: 'data' is undefined at location: ${location}`);
         return null;
     }
+        // [丁型] 如果卡牌自身带有脉冲值（自脉冲），优先用它显示 +N 飘字
+    const displayTitanCount = (data as any).pulseValue ?? titanCount;
 
     // [核心修复] 计算当前使用的卡面图片（皮肤绝对优先，且完美支持判断 2 级觉醒皮肤）
     const currentImageUrl = useMemo(() => {
@@ -283,6 +316,22 @@ export const Card: React.FC<CardProps> = ({
         if (data.level === 2 && data.level2ImageUrl) return data.level2ImageUrl;
         return data.imageUrl;
     }, [data.key, data.level, data.level2ImageUrl, data.imageUrl, skinId]);
+
+    // [2026-07-14 锻造者] 兜底计算 displayParams：从效果定义读取参数替换 {value} {paramName}
+    // 当 prop displayParams 传入时，优先用 prop（支持缇坦妮娅的+1增益覆盖）
+    const resolvedDisplayParams = useMemo<Record<string, number> | undefined>(() => {
+        if (displayParams) return displayParams; // 外部传入的优先（如缇坦妮娅增益）
+        if (!data.effects || data.effects.length === 0) return undefined;
+        const effectDef = EFFECT_DB[data.effects[0]];
+        if (!effectDef?.params) return undefined;
+        const display: Record<string, number> = {};
+        for (const [key, val] of Object.entries(effectDef.params)) {
+            if (typeof val === 'number') {
+                display[key] = val;
+            }
+        }
+        return Object.keys(display).length > 0 ? display : undefined;
+    }, [displayParams, data.effects]);
 
     // [皮肤] 获取当前卡牌形态的裁剪坐标，传入 data.level + skinId 智能区分
     const crop = useCardCrop(data.key, location, data.level, skinId);
@@ -362,6 +411,70 @@ export const Card: React.FC<CardProps> = ({
     }, [data.animState, projectileActive]); // [修复] 追加 projectileActive 依赖
 
     // ==========================================
+    // [召唤入场] 数值归零生长 + 颜色恢复
+    // ==========================================
+    const [summonAnim, setSummonAnim] = useState<{ power: number; health: number } | null>(null);
+    const summonRAFRef = useRef<number | null>(null);
+    // [召唤入场 V2·三段时序] 演出分两段：
+    //   阶段A(0~0.9s) 碎片重组：summonActive=true，切片层盖住 850，灰白碎片汇聚拼合
+    //   阶段B(0.9~1.8s) 卡面成型：summonRevealed=true，850 以灰度出现 → 灰→彩(0.8s) + 数值 0→正常
+    const [summonActive, setSummonActive] = useState(data.animState === 'summoning');
+    const [summonRevealed, setSummonRevealed] = useState(false);
+
+    useEffect(() => {
+        if (data.animState !== 'summoning') {
+            // 非 summoning：立即结束演出，数值回真实值
+            setSummonActive(false);
+            setSummonRevealed(false);
+            setSummonAnim(null);
+            return;
+        }
+        // 重新进入 summoning → 重新开启演出
+        setSummonActive(true);
+        setSummonRevealed(false);
+        // 阶段A 结束：0.9s 切片层移除、850 露出，进入灰→彩 + 数值生长
+        const shardTimer = setTimeout(() => {
+            setSummonActive(false);
+            setSummonRevealed(true);
+        }, 900);
+        // 数值归零生长：0.9s(阶段B)开始，0.7s 从 0 生长到真实值（easeOutCubic）
+        const startTimer = setTimeout(() => {
+            const pTarget = currentFinalPower;
+            const hTarget = currentFinalHealth;
+            const duration = 700;
+            const startTime = performance.now();
+
+            const tick = (now: number) => {
+                const elapsed = now - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+                setSummonAnim({
+                    power: Math.round(pTarget * eased),
+                    health: Math.round(hTarget * eased),
+                });
+                if (progress < 1) summonRAFRef.current = requestAnimationFrame(tick);
+            };
+            summonRAFRef.current = requestAnimationFrame(tick);
+        }, 900);
+
+        // 阶段B 结束：1.8s 数值回真实值、取消 reveal（灰→彩动画已完成）
+        const endTimer = setTimeout(() => {
+            setSummonAnim(null);
+            setSummonRevealed(false);
+        }, 1800);
+
+        return () => {
+            clearTimeout(shardTimer);
+            clearTimeout(startTimer);
+            clearTimeout(endTimer);
+            if (summonRAFRef.current !== null) {
+                cancelAnimationFrame(summonRAFRef.current);
+                summonRAFRef.current = null;
+            }
+        };
+    }, [data.animState]);
+
+    // ==========================================
     // [新增] GSAP 单位受击特效 (Hit Effect)
     // 三阶段动画：震动冲击 → 红闪+裂纹 → 恢复
     // ==========================================
@@ -437,9 +550,9 @@ export const Card: React.FC<CardProps> = ({
     };
 
     // 计算当前的最终面板数值
-    // [修复] currentFinalPower 不加 roundBuffs.power：因为 ROUND 类 Buff 同时记入了 buffs 和 roundBuffs，
-    // 显示时再加 roundBuffs 会导致双倍显示（health 正确是因为它根本没读 roundBuffs.health）
-    const currentFinalHealth = (data.health || 0) + (data.buffs?.health || 0) - (data.damageTaken || 0);
+    // [2026-07-10 修复] roundBuffs 是 ROUND 类 Buff 的唯一账本（不 double-write 进 buffs），
+    // 所以生命值和攻击力都需要加 roundBuffs 才能正确显示临时增益
+    const currentFinalHealth = (data.health || 0) + (data.buffs?.health || 0) + (data.roundBuffs?.health || 0) - (data.damageTaken || 0);
     const currentFinalPower = (data.power || 0) + (data.buffs?.power || 0) + (data.roundBuffs?.power || 0);
     // [maxPower] 攻击力上限 clamp（底座专用）
     const clampedPower = data.maxPower !== undefined ? Math.min(currentFinalPower, data.maxPower) : currentFinalPower;
@@ -562,6 +675,11 @@ export const Card: React.FC<CardProps> = ({
     // [重构] 将攻击力的跳动时间从 1000ms 大幅缩短至 400ms，配合飘字演出爆发感
     const [displayPower] = useNumberTicker(safePower, 400);
 
+    // [召唤入场] 覆盖显示：召唤动画期间用生长数值代替真实值
+    // [V2·三段时序] 阶段A/阶段B 期间数值显示生长值（未生成时显示 0），演出结束回真实值
+    const displayNum = (summonActive || summonRevealed) ? (summonAnim ?? { power: 0, health: 0 }) : summonAnim;
+    const finalDisplayPower = displayNum ? displayNum.power : displayPower;
+    const finalDisplayHealth = displayNum ? displayNum.health : displayHealth;
     const handleMouseEnter = () => {
         if (location === 'spell_stack' || location === 'preview') return;
 
@@ -602,6 +720,58 @@ export const Card: React.FC<CardProps> = ({
     if (isRegenerating && isHealthTicking) {
         healthColor = 'text-green-400';
     }
+
+    // [坚韧] 计算生命槽位样式：持有 Tough 的单位使用金琥珀金属质感槽位
+    const hasTough = data.keywords?.includes('Tough');
+    const healthSlotBg = hasTough
+        ? 'bg-gradient-to-br from-[#be8f11] to-[#8a6508]'
+        : 'bg-gradient-to-br from-red-600 to-red-800';
+    // [坚韧] 金琥珀金属渐变（垂直光感：亮→主色→暗→深，模拟金属反射）
+    const toughMetallicBg = 'linear-gradient(180deg, #ecd067 0%, #be8f11 20%, #8a6508 55%, #5a3f04 100%)';
+    // [冻结] 攻击力槽位天蓝色
+    const hasFrostbite = data.keywords?.includes('Frostbite');
+    const isThawing = data.animState === 'thawing';
+    // [冻结] 解冻冰晶碎片飞散偏移（固定值，确保渲染一致性）
+    const SHARD_OFFSETS = [
+        { x: -40, y: -55, rot: 180 }, { x: 52, y: -38, rot: 45 },
+        { x: -32, y: 48, rot: 260 }, { x: 48, y: 42, rot: 120 },
+        { x: -58, y: 8, rot: 310 }, { x: 12, y: -58, rot: 90 },
+    ];
+
+    // [召唤入场 V2·改进①] 真·卡面切片：不规则碎裂切分——polygon 大小不一、边界错落，打破均匀网格
+    // [召唤入场 V2·改进②] 差异化归位节奏：每片独立时长+缓动——中间大块慢收、小块带 backOut 回弹、delay 乱序错峰
+    // clip = clip-path polygon 裁剪区域（相对整卡，%坐标）；offX/offY = framer 初始位移(px)；rot = 初始旋转
+    const SUMMON_SHARDS: { clip: string; offX: number; offY: number; rot: number; dur: number; delay: number; ease: any }[] = [
+        { clip: 'polygon(0% 0%, 55% 0%, 40% 30%, 18% 22%, 0% 15%)', offX: -110, offY: -110, rot: -14, dur: 0.75, delay: 0.10, ease: 'easeOut' },
+        { clip: 'polygon(55% 0%, 100% 0%, 100% 25%, 72% 40%, 40% 30%)', offX: 0, offY: -130, rot: 6, dur: 0.62, delay: 0.16, ease: 'backOut' },
+        { clip: 'polygon(100% 25%, 100% 100%, 78% 78%, 72% 40%)', offX: 130, offY: -100, rot: -10, dur: 0.90, delay: 0.04, ease: 'easeOut' },
+        { clip: 'polygon(0% 15%, 18% 22%, 40% 30%, 26% 62%, 0% 50%)', offX: -110, offY: 60, rot: 12, dur: 0.68, delay: 0.20, ease: 'backOut' },
+        { clip: 'polygon(40% 30%, 72% 40%, 78% 78%, 55% 90%, 26% 62%)', offX: 60, offY: 120, rot: -8, dur: 0.95, delay: 0.00, ease: [0.22, 1, 0.36, 1] },
+        { clip: 'polygon(0% 50%, 26% 62%, 55% 90%, 30% 100%, 0% 100%)', offX: -140, offY: 100, rot: 16, dur: 0.72, delay: 0.12, ease: 'easeOut' },
+        { clip: 'polygon(55% 90%, 78% 78%, 100% 100%, 30% 100%)', offX: 110, offY: 130, rot: -12, dur: 0.65, delay: 0.18, ease: 'backOut' },
+    ];
+
+    // [飞剑专属·时空裂隙 V1] 安卡飞剑召唤专属碎片，区别于普通召唤的"四周拼合"：
+    //   · 碎片沿 45° 斜轴分层汇聚（时空裂隙闭合感）：主斜带(\) + 副斜带(/) 各 4 片，两带于中心交叉
+    //   · 前中后三层：角落大块先落(后层) → 中带跟随(中层) → 中心菱形最后归位(前层, backOut 弹入)
+    //   · 轨迹为直线斜滑（无弧线抬升），贴"裂隙滑移"意象
+    const isAcaciaSword = data.key === 'Acacia_Flying_Sword' || data.key === 'Acacia_Great_Sword';
+    // [飞剑专属] 冰青色滤镜：阶段A 切片层起步色调（青转彩的"青"，取安卡 sky 阵营色系）
+    const ACACIA_SUMMON_FILTER = 'grayscale(0.35) sepia(1) hue-rotate(165deg) brightness(0.5) saturate(1.7)';
+    const SUMMON_SHARDS_ACACIA: { clip: string; offX: number; offY: number; rot: number; dur: number; delay: number; ease: any; z: number }[] = [
+        // --- 主斜带 (\)：左上 → 右下 ---
+        { clip: 'polygon(0% 0%, 50% 0%, 30% 40%, 0% 28%)', offX: -120, offY: -80, rot: -6, dur: 0.70, delay: 0.06, ease: 'easeOut', z: 10 },
+        { clip: 'polygon(50% 0%, 84% 36%, 60% 60%, 30% 40%)', offX: -70, offY: -40, rot: -4, dur: 0.60, delay: 0.12, ease: 'backOut', z: 20 },
+        { clip: 'polygon(84% 36%, 100% 52%, 100% 100%, 70% 100%)', offX: 110, offY: 70, rot: 5, dur: 0.75, delay: 0.08, ease: 'easeOut', z: 10 },
+        { clip: 'polygon(0% 28%, 30% 40%, 24% 70%, 0% 58%)', offX: -110, offY: 60, rot: 4, dur: 0.65, delay: 0.16, ease: 'backOut', z: 20 },
+        // --- 副斜带 (/)：右上 → 左下 ---
+        { clip: 'polygon(50% 0%, 100% 0%, 100% 30%, 76% 34%)', offX: 110, offY: -80, rot: 6, dur: 0.68, delay: 0.10, ease: 'easeOut', z: 10 },
+        { clip: 'polygon(76% 34%, 100% 30%, 100% 66%, 82% 68%)', offX: 90, offY: -30, rot: 3, dur: 0.58, delay: 0.18, ease: 'backOut', z: 20 },
+        { clip: 'polygon(0% 58%, 24% 70%, 30% 100%, 0% 100%)', offX: -120, offY: 90, rot: -5, dur: 0.72, delay: 0.05, ease: 'easeOut', z: 10 },
+        { clip: 'polygon(24% 70%, 82% 68%, 70% 100%, 30% 100%)', offX: 0, offY: 110, rot: -3, dur: 0.62, delay: 0.15, ease: 'backOut', z: 20 },
+        // --- 中心核心菱形（前层，最后归位，弹入）---
+        { clip: 'polygon(30% 40%, 60% 60%, 42% 78%, 24% 70%)', offX: 0, offY: -90, rot: 12, dur: 0.55, delay: 0.22, ease: 'backOut', z: 30 },
+    ];
 
     // --- 渲染逻辑重构：场景化设计 ---
     const BASE_WIDTH = 288;
@@ -721,7 +891,7 @@ export const Card: React.FC<CardProps> = ({
                     // [修复] 强制置于 z-10，确保它永远盖在 z-0 的龟裂贴花上面！
                     className="absolute top-0 left-0 bg-transparent overflow-hidden rounded-2xl z-10"
                 >
-                    <SpellCard data={data} />
+                    <SpellCard data={data} burnoutValue={burnoutValue} displayParams={resolvedDisplayParams} damageColor={damageColor} isCostReduced={isCostReduced} />
                     {!isPreview && isSelected && (
                         <div className="absolute inset-0 border-4 border-blue-400 rounded-2xl z-50 pointer-events-none animate-pulse shadow-[0_0_20px_#3b82f6]"></div>
                     )}
@@ -729,22 +899,90 @@ export const Card: React.FC<CardProps> = ({
                 </div>
             );
         }
+        // [召唤入场 V2] 阵营渐变背景（850 容器与切片层碎片共用）
+        const regionGradient = data.region === 'Lyfe' ? 'from-gray-950 via-blue-950 to-gray-950'
+            : data.region === 'Fenny' ? 'from-gray-950 via-orange-950 to-gray-950'
+            : data.region === 'Pupu' ? 'from-gray-950 via-red-950 to-gray-950'
+            : data.region === 'Mauxir' ? 'from-gray-950 via-purple-950 to-gray-950'
+            : data.region === 'Acacia' ? 'from-gray-950 via-sky-950 to-gray-950'
+            : data.region === 'Logistics' ? 'from-gray-950 via-gray-800 to-gray-950'
+            : 'bg-slate-900';
         return (
         <>
+        {/* [召唤入场 V2] 真·卡面切片碎片重组：卡面样式（阵营渐变+原画+边框）切成 7 片从四周飞回拼合 */}
+        {/* 阶段A：切片层盖住 850（850 opacity 0）；summonActive 结束(0.9s)移除，露出完整卡进入阶段B */}
+        {summonActive && (
+            <>
+                {/* 切片层：普通召唤灰白碎片沿弧线飞回拼合；飞剑专属走冰青色斜轴汇聚（无 overflow-hidden，碎片可从卡面外飞入） */}
+                <motion.div
+                    className={`absolute inset-0 z-[70] pointer-events-none ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'} ${isAcaciaSword ? '' : 'grayscale brightness-[0.35]'}`}
+                    style={isAcaciaSword ? { filter: ACACIA_SUMMON_FILTER } : undefined}
+                    initial={{ opacity: 1 }}
+                >
+                    {(isAcaciaSword ? SUMMON_SHARDS_ACACIA : SUMMON_SHARDS).map((piece, i) => (
+                        <motion.div
+                            key={i}
+                            // [关键] 复现 850 原画层布局 + crop，保证拼合与切片移除后无缝衔接
+                            className="absolute inset-0 flex items-center justify-center"
+                            style={{ clipPath: piece.clip, zIndex: (piece as any).z ?? 10 }}
+                            initial={{ x: piece.offX, y: piece.offY, rotate: piece.rot }}
+                            // [V2·改进③] 普通召唤弧形轨迹：y 中段抬升形成微弧；飞剑专属为直线斜滑（裂隙滑移感）
+                            animate={isAcaciaSword
+                                ? { x: [piece.offX, piece.offX * 0.5, 0], y: [piece.offY, piece.offY * 0.5, 0], rotate: [piece.rot, 0, 0] }
+                                : { x: [piece.offX, piece.offX * 0.55, 0], y: [piece.offY, piece.offY * 0.55 - 26, 0], rotate: [piece.rot, 0, 0] }}
+                            transition={{ duration: piece.dur, times: [0, 0.55, 1], ease: piece.ease }}
+                        >
+                            {/* 阵营渐变背景（整卡） */}
+                            <div className={`absolute inset-0 bg-gradient-to-b ${regionGradient}`} />
+                            {/* 原画（flex 居中 + crop） */}
+                            <img
+                                src={currentImageUrl}
+                                alt={data.name}
+                                draggable={false}
+                                className="max-w-none opacity-90 block"
+                                style={{
+                                    width: '100%',
+                                    height: 'auto',
+                                    transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
+                                }}
+                            />
+                            {/* 主题边框（整卡 overlay） */}
+                            <img src={borderImg} alt="" draggable={false} className="absolute inset-0 w-full h-full object-fill opacity-100 scale-[1.02]" />
+                        </motion.div>
+                    ))}
+                </motion.div>
+
+                {/* [V2·改进③] 汇聚光效：碎片落定瞬间的能量微光爆（飞剑专属偏青，突出棱镜感） */}
+                <motion.div
+                    className="absolute inset-0 z-[71] pointer-events-none"
+                    initial={{ opacity: isAcaciaSword ? 0.7 : 0.6, scale: 0.55 }}
+                    animate={{ opacity: isAcaciaSword ? [0.7, 0.3, 0] : [0.6, 0.25, 0], scale: isAcaciaSword ? [0.55, 1.15, 1.45] : [0.55, 1.1, 1.35] }}
+                    transition={{ duration: 0.5, delay: 0.4, ease: 'easeOut' }}
+                    style={{ background: isAcaciaSword
+                        ? 'radial-gradient(circle, rgba(56,189,248,0.5) 0%, rgba(56,189,248,0.16) 42%, transparent 72%)'
+                        : 'radial-gradient(circle, rgba(125,211,252,0.4) 0%, rgba(125,211,252,0.12) 45%, transparent 70%)' }}
+                />
+                {/* [飞剑专属·时空裂隙] 斜向棱镜光带：沿 45° 轴扫过，强化裂隙闭合感 */}
+                {isAcaciaSword && (
+                    <motion.div
+                        className="absolute inset-0 z-[72] pointer-events-none overflow-hidden"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: [0, 0.35, 0] }}
+                        transition={{ duration: 0.5, delay: 0.38, times: [0, 0.5, 1], ease: 'easeOut' }}
+                        style={{ background: 'linear-gradient(135deg, transparent 30%, rgba(56,189,248,0.35) 50%, transparent 70%)' }}
+                    />
+                )}
+            </>
+        )}
         {/* [修改] 统一外层圆角 */}
         {/* [修复] 强制置于 z-10，确保实体背景盖住 z-0 的贴花，让贴花只从边缘溢出！ */}
         {/* [核心机制] 将外层容器改为 motion.div，严格控制仅隐秘单位在场上时执行 [1, 0.3, 1] 的实体呼吸 */}
         <motion.div
-            className={`w-full h-full absolute inset-0 overflow-hidden ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'} z-10 ${
-                data.region === 'Lyfe' ? 'bg-gradient-to-b from-gray-950 via-blue-950 to-gray-950'
-                : data.region === 'Fenny' ? 'bg-gradient-to-b from-gray-950 via-orange-950 to-gray-950'
-                : data.region === 'Pupu' ? 'bg-gradient-to-b from-gray-950 via-red-950 to-gray-950'
-                : data.region === 'Mauxir' ? 'bg-gradient-to-b from-gray-950 via-purple-950 to-gray-950'
-                : data.region === 'Logistics' ? 'bg-gradient-to-b from-gray-950 via-gray-800 to-gray-950'
-                : 'bg-slate-900'
+            className={`w-full h-full absolute inset-0 overflow-hidden ${isTacticalMode ? 'rounded-md' : 'rounded-2xl'} z-10 bg-gradient-to-b ${regionGradient} ${
+                summonRevealed ? (isAcaciaSword ? 'animate-summon-reveal-color-acacia' : 'animate-summon-reveal-color') : ''
             }`}
-            animate={isElusiveOnBoard ? { opacity: [0.5, 1, 0.5] } : { opacity: 1 }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+            animate={summonActive ? { opacity: 0 } : (isElusiveOnBoard ? { opacity: [0.5, 1, 0.5] } : { opacity: 1 })}
+            transition={summonActive ? { duration: 0 } : (isElusiveOnBoard ? { duration: 3, repeat: Infinity, ease: "easeInOut" } : undefined)}
         >
             {isTacticalMode ? (
                 // --- A & C 合并：战术棋子与战场弹性模式 (Tactical Token & Elastic Combat) ---
@@ -759,6 +997,7 @@ export const Card: React.FC<CardProps> = ({
                                 : data.region === 'Fenny' ? 'from-orange-600/40 via-orange-500/20 to-orange-300/5'
                                 : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
+                                : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
                         <img
@@ -792,14 +1031,75 @@ export const Card: React.FC<CardProps> = ({
                             {/* [我方] 顶部：数值区 */}
                             {/* [修复 2] 增加底部灰色金属描边，加高尺寸到 h-8，并增加中间分割线 */}
                             <div className="relative z-30 flex w-full h-8 opacity-95 border-b-[2px] border-slate-400/80 shadow-[0_2px_5px_rgba(0,0,0,0.6)]">
-                                <div className="flex-1 bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center border-r-[2px] border-slate-400/80">
-                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${powerColor}`}>
-                                        {ephemeralEmpty ? <span className="transition-none">0</span> : displayPower}
+                                <div className="relative flex-1 flex items-center justify-center border-r-[2px] border-slate-400/80 overflow-hidden">
+                                    {/* [冻结] Layer 0: 橙色原生槽位（始终存在） */}
+                                    <div className="absolute inset-0 bg-gradient-to-br from-orange-500 to-orange-700" />
+                                    {/* [冻结] Layer 1: 冰蓝覆盖层 */}
+                                    {hasFrostbite && (
+                                        <motion.div
+                                            className="absolute inset-0 bg-gradient-to-br from-cyan-400 to-cyan-700"
+                                            animate={isThawing ? { opacity: [1, 0.8, 0] } : { opacity: 1 }}
+                                            transition={{ duration: 0.5, ease: 'easeOut' }}
+                                        />
+                                    )}
+                                    {/* [冻结] Layer 2: 解冻冰爆动画 */}
+                                    {isThawing && (
+                                        <>
+                                            {/* 冰裂纹 SVG */}
+                                            <motion.div className="absolute inset-0 z-10" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                                <svg className="w-full h-full overflow-visible" viewBox="0 0 100 28" preserveAspectRatio="none">
+                                                    <motion.path d="M10,14 L30,6 L25,18 L45,10 L40,22 L60,12 L55,20 L75,8 L70,24 L90,14"
+                                                        stroke="white" strokeWidth="1.5" fill="none"
+                                                        initial={{ pathLength: 0, opacity: 0 }}
+                                                        animate={{ pathLength: 1, opacity: [0, 0.6, 0] }}
+                                                        transition={{ duration: 0.3, ease: 'easeOut' }}
+                                                    />
+                                                </svg>
+                                            </motion.div>
+                                            {/* 冰晶碎片飞散（6片菱形） */}
+                                            {SHARD_OFFSETS.map((off, i) => (
+                                                <motion.div
+                                                    key={`shard-${i}`}
+                                                    className="absolute z-20 w-2.5 h-2.5 bg-cyan-300/90 pointer-events-none"
+                                                    style={{ top: '50%', left: '50%', clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                                                    initial={{ x: 0, y: 0, rotate: 0, opacity: 1, scale: 1 }}
+                                                    animate={{ x: [0, off.x], y: [0, off.y], rotate: [0, off.rot], opacity: [1, 0.8, 0], scale: [1, 0.4, 0.1] }}
+                                                    transition={{ duration: 0.6, delay: 0.15 + i * 0.04, ease: 'easeOut' }}
+                                                />
+                                            ))}
+                                            {/* 小型粒子飞散 */}
+                                            {[0,1,2,3].map(j => (
+                                                <motion.div
+                                                    key={`ptcl-${j}`}
+                                                    className="absolute z-20 w-1 h-1 bg-sky-200/80 rounded-full pointer-events-none"
+                                                    style={{ top: '50%', left: '50%' }}
+                                                    initial={{ x: 0, y: 0, opacity: 1 }}
+                                                    animate={{ x: [0, (j - 1.5) * 30], y: [0, ((j % 3) - 1) * 28], opacity: [1, 0] }}
+                                                    transition={{ duration: 0.8, delay: 0.25, ease: 'easeOut' }}
+                                                />
+                                            ))}
+                                        </>
+                                    )}
+                                    <span className={`relative z-5 font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${powerColor}`}>
+                                        {ephemeralEmpty ? <span className="transition-none">0</span> : finalDisplayPower}
                                     </span>
                                 </div>
-                                <div className="flex-1 bg-gradient-to-br from-red-600 to-red-800 flex items-center justify-center">
-                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${healthColor} ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>
-                                        {ephemeralEmpty ? <span className="transition-none">0</span> : displayHealth}
+                                <div className="flex-1 flex items-center justify-center relative overflow-hidden"
+                                     style={{ background: hasTough ? toughMetallicBg : 'linear-gradient(135deg, #dc2626, #991b1b)' }}>
+                                    {/* [坚韧] 金属高光层 */}
+                                    {hasTough && <div className="absolute inset-0 bg-gradient-to-b from-white/30 via-transparent to-black/40 pointer-events-none" />}
+                                    {/* [坚韧] 受击亮度闪烁 */}
+                                    {hasTough && (
+                                        <motion.div
+                                            className="absolute inset-0 pointer-events-none"
+                                            style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.3))' }}
+                                            initial={{ opacity: 0 }}
+                                            animate={data.animState === 'hit' ? { opacity: [0, 0.7, 0] } : { opacity: 0 }}
+                                            transition={{ duration: 0.5, ease: 'easeOut' }}
+                                        />
+                                    )}
+                                    <span className={`relative z-10 font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${healthColor} ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>
+                                        {ephemeralEmpty ? <span className="transition-none">0</span> : finalDisplayHealth}
                                     </span>
                                 </div>
                             </div>
@@ -816,7 +1116,7 @@ export const Card: React.FC<CardProps> = ({
                                         isDefending={isCombat && isBlocker}
                                         animState={data.animState}
                                         depletedKeywords={data.depletedKeywords}
-                                        titanCount={titanCount}
+                                        titanCount={displayTitanCount}
                                         isOnBoard={true}
                                     />
                                 </div>
@@ -834,7 +1134,7 @@ export const Card: React.FC<CardProps> = ({
                                         isDefending={isCombat && isBlocker}
                                         animState={data.animState}
                                         depletedKeywords={data.depletedKeywords}
-                                        titanCount={titanCount}
+                                        titanCount={displayTitanCount}
                                         isOnBoard={true}
                                     />
                                 </div>
@@ -845,14 +1145,75 @@ export const Card: React.FC<CardProps> = ({
                             {/* [敌方] 底部：数值区 */}
                             {/* 敌方数值区在底部，所以是上方增加灰色描边 border-t-[2px] */}
                             <div className="relative z-30 flex w-full h-8 opacity-95 border-t-[2px] border-slate-400/80 shadow-[0_-2px_5px_rgba(0,0,0,0.6)] mt-auto">
-                                <div className="flex-1 bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center border-r-[2px] border-slate-400/80">
-                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${powerColor}`}>
-                                        {ephemeralEmpty ? <span className="transition-none">0</span> : displayPower}
+                                <div className="relative flex-1 flex items-center justify-center border-r-[2px] border-slate-400/80 overflow-hidden">
+                                    {/* [冻结] Layer 0: 橙色原生槽位（始终存在） */}
+                                    <div className="absolute inset-0 bg-gradient-to-br from-orange-500 to-orange-700" />
+                                    {/* [冻结] Layer 1: 冰蓝覆盖层 */}
+                                    {hasFrostbite && (
+                                        <motion.div
+                                            className="absolute inset-0 bg-gradient-to-br from-cyan-400 to-cyan-700"
+                                            animate={isThawing ? { opacity: [1, 0.8, 0] } : { opacity: 1 }}
+                                            transition={{ duration: 0.5, ease: 'easeOut' }}
+                                        />
+                                    )}
+                                    {/* [冻结] Layer 2: 解冻冰爆动画 */}
+                                    {isThawing && (
+                                        <>
+                                            {/* 冰裂纹 SVG */}
+                                            <motion.div className="absolute inset-0 z-10" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                                <svg className="w-full h-full overflow-visible" viewBox="0 0 100 28" preserveAspectRatio="none">
+                                                    <motion.path d="M10,14 L30,6 L25,18 L45,10 L40,22 L60,12 L55,20 L75,8 L70,24 L90,14"
+                                                        stroke="white" strokeWidth="1.5" fill="none"
+                                                        initial={{ pathLength: 0, opacity: 0 }}
+                                                        animate={{ pathLength: 1, opacity: [0, 0.6, 0] }}
+                                                        transition={{ duration: 0.3, ease: 'easeOut' }}
+                                                    />
+                                                </svg>
+                                            </motion.div>
+                                            {/* 冰晶碎片飞散（6片菱形） */}
+                                            {SHARD_OFFSETS.map((off, i) => (
+                                                <motion.div
+                                                    key={`shard-e-${i}`}
+                                                    className="absolute z-20 w-2.5 h-2.5 bg-cyan-300/90 pointer-events-none"
+                                                    style={{ top: '50%', left: '50%', clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                                                    initial={{ x: 0, y: 0, rotate: 0, opacity: 1, scale: 1 }}
+                                                    animate={{ x: [0, off.x], y: [0, off.y], rotate: [0, off.rot], opacity: [1, 0.8, 0], scale: [1, 0.4, 0.1] }}
+                                                    transition={{ duration: 0.6, delay: 0.15 + i * 0.04, ease: 'easeOut' }}
+                                                />
+                                            ))}
+                                            {/* 小型粒子飞散 */}
+                                            {[0,1,2,3].map(j => (
+                                                <motion.div
+                                                    key={`ptcl-e-${j}`}
+                                                    className="absolute z-20 w-1 h-1 bg-sky-200/80 rounded-full pointer-events-none"
+                                                    style={{ top: '50%', left: '50%' }}
+                                                    initial={{ x: 0, y: 0, opacity: 1 }}
+                                                    animate={{ x: [0, (j - 1.5) * 30], y: [0, ((j % 3) - 1) * 28], opacity: [1, 0] }}
+                                                    transition={{ duration: 0.8, delay: 0.25, ease: 'easeOut' }}
+                                                />
+                                            ))}
+                                        </>
+                                    )}
+                                    <span className={`relative z-5 font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${powerColor}`}>
+                                        {ephemeralEmpty ? <span className="transition-none">0</span> : finalDisplayPower}
                                     </span>
                                 </div>
-                                <div className="flex-1 bg-gradient-to-br from-red-600 to-red-800 flex items-center justify-center">
-                                    <span className={`font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${healthColor} ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>
-                                        {ephemeralEmpty ? <span className="transition-none">0</span> : displayHealth}
+                                <div className="flex-1 flex items-center justify-center relative overflow-hidden"
+                                     style={{ background: hasTough ? toughMetallicBg : 'linear-gradient(135deg, #dc2626, #991b1b)' }}>
+                                    {/* [坚韧] 金属高光层 */}
+                                    {hasTough && <div className="absolute inset-0 bg-gradient-to-b from-white/30 via-transparent to-black/40 pointer-events-none" />}
+                                    {/* [坚韧] 受击亮度闪烁 */}
+                                    {hasTough && (
+                                        <motion.div
+                                            className="absolute inset-0 pointer-events-none"
+                                            style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.3))' }}
+                                            initial={{ opacity: 0 }}
+                                            animate={data.animState === 'hit' ? { opacity: [0, 0.7, 0] } : { opacity: 0 }}
+                                            transition={{ duration: 0.5, ease: 'easeOut' }}
+                                        />
+                                    )}
+                                    <span className={`relative z-10 font-black text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${healthColor} ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>
+                                        {ephemeralEmpty ? <span className="transition-none">0</span> : finalDisplayHealth}
                                     </span>
                                 </div>
                             </div>
@@ -873,12 +1234,14 @@ export const Card: React.FC<CardProps> = ({
                         : data.region === 'Fenny' ? 'bg-gradient-to-b from-gray-950 via-orange-950 to-gray-950'
                         : data.region === 'Pupu' ? 'bg-gradient-to-b from-gray-950 via-red-950 to-gray-950'
                         : data.region === 'Mauxir' ? 'bg-gradient-to-b from-gray-950 via-purple-950 to-gray-950'
+                        : data.region === 'Acacia' ? 'bg-gradient-to-b from-gray-950 via-sky-950 to-gray-950'
                         : data.region === 'Logistics' ? 'bg-gradient-to-b from-gray-950 via-gray-800 to-gray-950'
                         : 'bg-slate-900'
                     }`}
                 >
                     {/* [新增] 边框层 (竖向模式) - z-10 (位于原画之上) */}
                             {/* 注意：如果边框是透明通带，它会透出下面的原画。pointer-events-none 确保不阻挡交互 */}
+                            {location !== 'deck-panel' && (
                             <div className="absolute inset-0 z-10 pointer-events-none">
                                 <img
                                     src={borderImg}
@@ -887,10 +1250,12 @@ export const Card: React.FC<CardProps> = ({
                                     className="w-full h-full object-fill opacity-100"
                                 />
                             </div>
+                            )}
 
                     {/* 竖向模式原画层 (接入坐标裁剪) */}
                     <div className="absolute inset-0 bg-black overflow-hidden flex items-center justify-center">
                         {/* [核心优化] 动态兜底背景：拥有皮肤时闪耀金色光辉，默认时按阵营配色 */}
+                        {location !== 'deck-panel' && (
                         <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none ${
                             skinId > 0
                                 ? 'from-yellow-600/40 via-yellow-500/20 to-yellow-300/5'
@@ -898,15 +1263,17 @@ export const Card: React.FC<CardProps> = ({
                                 : data.region === 'Fenny' ? 'from-orange-600/40 via-orange-500/20 to-orange-300/5'
                                 : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
+                                : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
-                         <img
+                        )}
+                        <img
                             src={currentImageUrl}
                             alt={data.name}
                             draggable={false}
-                            // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的“瞬切”
-                            className="max-w-none block"
-                            style={{
+                            // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的”瞬切”
+                            className={location === 'deck-panel' ? 'w-full h-full object-cover block' : 'max-w-none block'}
+                            style={location === 'deck-panel' ? undefined : {
                                 width: data.type && data.type.includes('spell') ? 'auto' : '100%',
                                 height: data.type && data.type.includes('spell') ? '100%' : 'auto',
                                 transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
@@ -918,8 +1285,12 @@ export const Card: React.FC<CardProps> = ({
                         // [UI重构 4] 重心压低遮罩层高度，使用更密集的渐变阈值，让上半部画幅彻底干净！
                         <div className={`absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/100 via-black/80 to-transparent px-4 pb-0`} style={{ backgroundSize: '100% 60%', backgroundRepeat: 'no-repeat', backgroundPosition: 'bottom' }}>
 
-                             <div className={`absolute top-4 left-4 rounded-full bg-blue-600 border-2 border-yellow-400 flex items-center justify-center text-white font-black shadow-lg z-10 ${isBench ? 'w-16 h-16 text-4xl' : 'w-12 h-12 text-2xl'}`}>
-                                {data.cost}
+                             <div className={`absolute top-4 left-4 rounded-full bg-blue-600 border-2 border-yellow-400 flex items-center justify-center font-black shadow-lg z-10 ${isBench ? 'w-16 h-16 text-4xl' : 'w-12 h-12 text-2xl'} ${
+                                isCostReduced ? 'text-green-400' :
+                                burnoutValue != null && burnoutValue > data.cost ? 'text-red-400' :
+                                burnoutValue != null && burnoutValue < data.cost ? 'text-green-400' : 'text-white'
+                             }`}>
+                                {burnoutValue ?? data.cost}
                              </div>
 
                              {!isBench && (
@@ -949,14 +1320,14 @@ export const Card: React.FC<CardProps> = ({
                                                 keywords={data.keywords}
                                                 animState={data.animState}
                                                 depletedKeywords={data.depletedKeywords}
-                                                titanCount={titanCount}
+                                                titanCount={displayTitanCount}
                                                 className="scale-110" // 微缩以适配紧凑布局
                                                 isOnBoard={false}
                                             />
                                         </div>
                                     )}
-                                    <div className={`text-center text-gray-200 text-[16px] leading-snug font-medium drop-shadow-md px-1 flex items-center justify-center min-h-[3rem]`}>
-                                        {data.description}
+                                    <div className={`text-center text-gray-200 text-[16px] leading-snug font-medium drop-shadow-md px-1 min-h-[3rem]`}>
+                                        <p className="whitespace-pre-wrap">{renderDescription(data.description, resolvedDisplayParams, damageColor)}</p>
                                     </div>
                                  </div>
                              )}
@@ -968,7 +1339,7 @@ export const Card: React.FC<CardProps> = ({
                                         keywords={data.keywords}
                                         animState={data.animState}
                                         depletedKeywords={data.depletedKeywords}
-                                        titanCount={titanCount}
+                                        titanCount={displayTitanCount}
                                         className="scale-[1.8]"
                                         isOnBoard={true}
                                     />
@@ -979,7 +1350,7 @@ export const Card: React.FC<CardProps> = ({
                              {data.type && data.type.includes('unit') ? ( // 新增安全检查
                                 <div className="relative flex justify-between items-end px-2 pb-2 h-20 border-t border-white/20 mt-1">
                                     <div className={`font-black drop-shadow-md ${powerColor} ${isBench ? 'text-7xl' : 'text-4xl'} z-10`}>
-                                        {ephemeralEmpty ? <span className="transition-none">0</span> : displayPower}
+                                        {ephemeralEmpty ? <span className="transition-none">0</span> : finalDisplayPower}
                                     </div>
 
                                     {/* [UI重构 1] 删除了无用的多边形，将升级面板直接嵌入在这两个数字中间！ */}
@@ -1006,6 +1377,9 @@ export const Card: React.FC<CardProps> = ({
                                                 } else if (data.key === 'pupu_specular_soul') {
                                                     currentProgress = data.customProgress || 0;
                                                 } else if (data.key === 'mauxir_lotus_drive') {
+                                                    currentProgress = data.customProgress || 0;
+                                                } else if (data.key === 'acacia_chrono_echo') {
+                                                    // [2026-07-31] 场下升级：朔望之期打出后 customProgress 标记达成（1/1）
                                                     currentProgress = data.customProgress || 0;
                                                 }
 
@@ -1036,7 +1410,7 @@ export const Card: React.FC<CardProps> = ({
                                     )}
 
                                     <div className={`font-black drop-shadow-md transition-all duration-300 ease-out origin-center ${healthColor} ${isBench ? 'text-7xl' : 'text-4xl'} z-10 ${(isRegenerating && isHealthTicking) ? 'scale-125 brightness-125' : 'scale-100'}`}>
-                                        {ephemeralEmpty ? <span className="transition-none">0</span> : displayHealth}
+                                        {ephemeralEmpty ? <span className="transition-none">0</span> : finalDisplayHealth}
                                     </div>
                                 </div>
                              ) : (
@@ -1060,7 +1434,7 @@ export const Card: React.FC<CardProps> = ({
                 isChallengedTarget={isChallengedTarget}
                 highlightTarget={highlightTarget}
                 isBlocking={isBlocking}
-                titanCount={titanCount}
+                titanCount={displayTitanCount}
             />
 
             {/* [极致重构] 攻击力飘字 (Power Floater) - 左侧双向爆裂 */}
@@ -1211,6 +1585,7 @@ export const Card: React.FC<CardProps> = ({
     return (
         <motion.div
             data-entity-id={data.id}
+            data-card-key={data.key}
             ref={cardHitRef}
 
             onClick={handleCardClick} // [核心] 接入我们写的拦截器
@@ -1243,6 +1618,7 @@ export const Card: React.FC<CardProps> = ({
                     : data.region === 'Fenny' ? 'border-orange-500/20'
                     : data.region === 'Pupu' ? 'border-red-500/20'
                     : data.region === 'Mauxir' ? 'border-purple-500/20'
+                    : data.region === 'Acacia' ? 'border-sky-500/20'
                     : data.region === 'Logistics' ? 'border-white/10'
                     : 'border-transparent'}
             `}

@@ -1,4 +1,4 @@
-import type { CardData } from '../types';
+import type { CardData, GameState } from '../types';
 
 /**
  * 战斗交互结果接口
@@ -58,7 +58,8 @@ export const getPower = (c: CardData) => {
     const raw = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
     // [maxPower] 如有攻击力上限，clamp 到该值（底座专用）
     if (c.maxPower !== undefined && raw > c.maxPower) return c.maxPower;
-    return raw;
+    // [2026-07-09] 攻击力下限为 0，不因 debuff 变为负数
+    return Math.max(0, raw);
 };
 export const getHealth = (c: CardData) => (c.health || 0) + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
 
@@ -114,7 +115,19 @@ export const applyRoundEndKeywords = (cards: CardData[]): CardData[] => {
 };
 
 // ==========================================
-// [泰坦] 脉冲解析器 — 回合结束时调用
+// [Volatile] 瞬逝 — 回合结束手牌弃置
+// Volatile 不限定卡牌类型（单位/法术均可持有），
+// 触发时机固定为回合结束时，从手牌弃置。
+// 返回 { kept, discarded } 方便调用方做事件分发
+// ==========================================
+export const applyVolatileDiscard = (hand: CardData[]): { kept: CardData[], discarded: CardData[] } => {
+    const discarded = hand.filter(c => c.keywords.includes('Volatile'));
+    const kept = hand.filter(c => !c.keywords.includes('Volatile'));
+    return { kept, discarded };
+};
+
+// ==========================================
+// [泰坦] 脉冲解析器 — 事件驱动分发架构
 // ==========================================
 
 export interface TitanPulseResult {
@@ -124,46 +137,137 @@ export interface TitanPulseResult {
   pulseAmount: number;  // 本次脉冲的攻击力数值
 }
 
+/** 脉冲产生的副效果事件类型 */
+export type PulseEventType = 'random_barrage' | 'aoe_damage';
+
+/** 脉冲副效果事件 */
+export interface PulseEvent {
+  type: PulseEventType;
+  sourceId: string;
+  owner: 'player' | 'enemy';
+  params: {
+    shots?: number;   // random_barrage: 发射子弹数
+    damage: number;   // 伤害值
+  };
+}
+
+/** 增强的脉冲结果（带事件队列） */
+export interface TitanPulseResultEx extends TitanPulseResult {
+  events: PulseEvent[];
+}
+
 /**
- * 处理泰坦脉冲：数场上泰坦总数 → 给未黯淡的泰坦加攻 → 标记黯淡
+ * 处理泰坦脉冲：按单位类型分发效果
+ * - 普通泰坦：+ATK（等于全场泰坦数）→ 标记黯淡
+ * - 特殊泰坦：按 unit.key 走不同分支（不加攻 / 半额 / 产生扫射事件等）
  * @param playerBoard 我方场上单位
  * @param enemyBoard 敌方场上单位
- * @returns 更新后的双方场上单位 + 脉冲信息
+ * @returns 更新后的双方场上单位 + 脉冲信息 + 副效果事件
  */
 export const resolveTitanPulse = (
   playerBoard: CardData[],
   enemyBoard: CardData[],
 ): TitanPulseResult => {
-  const allUnits = [...playerBoard, ...enemyBoard];
+  // 直接调用新版本，丢弃 events（向上兼容）
+  const result = executeTitanPulse(playerBoard, enemyBoard);
+  return result;
+};
 
-  // 1. 计算场上泰坦总数（包括已黯淡的，关键词还在就计入）
+/** 完整的泰坦脉冲执行器（带副效果事件） */
+export const executeTitanPulse = (
+  playerBoard: CardData[],
+  enemyBoard: CardData[],
+): TitanPulseResultEx => {
+  const allUnits = [...playerBoard, ...enemyBoard];
+  const events: PulseEvent[] = [];
+
+  // 1. 计算场上泰坦总数
   const titanCount = allUnits.filter(c => c.keywords.includes('Titan')).length;
 
   if (titanCount === 0) {
-    return { playerBoard, enemyBoard, pulsedUnits: 0, pulseAmount: 0 };
+    return { playerBoard, enemyBoard, pulsedUnits: 0, pulseAmount: 0, events };
   }
 
-  // 2. 为未黯淡的泰坦加攻并标记黯淡
+  // 2. 按单位类型分发脉冲效果
   const processBoard = (board: CardData[]): CardData[] =>
     board.map(c => {
       if (!c.keywords.includes('Titan')) return c;
       if ((c.depletedKeywords || []).includes('Titan')) return c;
-      return {
-        ...c,
-        buffs: {
-          power: (c.buffs?.power || 0) + titanCount,
-          health: c.buffs?.health || 0,
-        },
-        depletedKeywords: [...(c.depletedKeywords || []), 'Titan'],
-        animState: 'buff',  // [修复] 触发前端脉冲特效（青色光柱 + 泰坦图标 + +N 数字）
-      };
+
+      // --- 按单位 key 分发 ---
+      switch (c.key) {
+        // ========== 乙型异化人：不加攻，产生随机扫射事件 ==========
+        case 'titan_type_b_mutant':
+          events.push({
+            type: 'random_barrage',
+            sourceId: c.id,
+            owner: board === playerBoard ? 'player' : 'enemy',
+            params: { shots: titanCount, damage: 1 },
+          });
+          return {
+            ...c,
+            depletedKeywords: [...(c.depletedKeywords || []), 'Titan'],
+            animState: 'buff',
+          };
+
+        // ========== 丙型异化人：不加攻，改为加生命 ==========
+        case 'titan_type_c_mutant':
+          return {
+            ...c,
+            buffs: {
+              power: c.buffs?.power || 0,
+              health: (c.buffs?.health || 0) + titanCount,
+            },
+            depletedKeywords: [...(c.depletedKeywords || []), 'Titan'],
+            animState: 'buff',
+          };
+
+        // ========== 贡露：不加攻，累计无人机充能 ==========
+        case 'titan_gonglu':
+          return {
+            ...c,
+            titanCharge: ((c as any).titanCharge || 0) + titanCount,
+            depletedKeywords: [...(c.depletedKeywords || []), 'Titan'],
+            animState: 'buff',
+          };
+
+        // ========== 盖弥尔：半额加攻 + 不黯淡 + 脉冲时全场AOE ==========
+        case 'titan_gaimer':
+          events.push({
+            type: 'aoe_damage',
+            sourceId: c.id,
+            owner: board === playerBoard ? 'player' : 'enemy',
+            params: { damage: 1 },
+          });
+          return {
+            ...c,
+            buffs: {
+              power: (c.buffs?.power || 0) + Math.floor(titanCount / 2),
+              health: c.buffs?.health || 0,
+            },
+            // 不追加 depletedKeywords → 永不黯淡
+            animState: 'buff',
+          };
+
+        // ========== 默认：普通泰坦加攻后黯淡 ==========
+        default:
+          return {
+            ...c,
+            buffs: {
+              power: (c.buffs?.power || 0) + titanCount,
+              health: c.buffs?.health || 0,
+            },
+            depletedKeywords: [...(c.depletedKeywords || []), 'Titan'],
+            animState: 'buff',
+          };
+      }
     });
 
   const newPlayerBoard = processBoard(playerBoard);
   const newEnemyBoard = processBoard(enemyBoard);
 
   // 3. 统计本次脉冲的单位数
-  const pulsedUnits = [...playerBoard, ...enemyBoard].filter(
+  const pulsedUnits = allUnits.filter(
     c => c.keywords.includes('Titan') && !(c.depletedKeywords || []).includes('Titan')
   ).length;
 
@@ -172,6 +276,7 @@ export const resolveTitanPulse = (
     enemyBoard: newEnemyBoard,
     pulsedUnits,
     pulseAmount: titanCount,
+    events,
   };
 };
 
@@ -274,4 +379,54 @@ export const calculateCombatInteraction = (
     }
 
     return { attackerDamage, blockerDamage, nexusDamage, attackerBarrierPopped, blockerBarrierPopped, quickAttackEphemeralDeath };
+};
+
+// ==========================================
+// [Channel] 充能 — 恢复 1 点法术法力，触发后黯淡
+// ==========================================
+/**
+ * 处理 Channel（充能）关键词：恢复 1 点法术法力，触发后追加 depletedKeywords
+ * 上限为 3，超出部分不累积
+ * @param card 被召唤的单位
+ * @param owner 所属方
+ * @param game 当前游戏状态
+ * @returns 更新后的游戏状态
+ */
+export const applyChannelOnSummon = (card: CardData, owner: 'player' | 'enemy', game: GameState): GameState => {
+    if (!card.keywords.includes('Channel')) return game;
+    if ((card.depletedKeywords || []).includes('Channel')) return game; // 已黯淡不再触发
+
+    const newGame = { ...game };
+    if (owner === 'player') {
+        const before = newGame.playerSpellMana;
+        newGame.playerSpellMana = Math.min(3, (newGame.playerSpellMana || 0) + 1);
+        console.log(`[Channel] ${card.name} 充能：法术法力 ${before} → ${newGame.playerSpellMana}`);
+    } else {
+        const before = newGame.enemySpellMana;
+        newGame.enemySpellMana = Math.min(3, (newGame.enemySpellMana || 0) + 1);
+        console.log(`[Channel] ${card.name} 充能：法术法力 ${before} → ${newGame.enemySpellMana}`);
+    }
+    return newGame;
+};
+
+/**
+ * 处理回合开始时未黯淡的 Channel 单位：充能 +1 法术法力
+ * @param cards 备战席上的卡牌数组
+ * @param owner 所属方
+ * @returns { cards: 更新后的卡牌数组, count: 触发充能的单位数 }
+ */
+export const applyChannelOnRoundStart = (cards: CardData[]): { cards: CardData[], count: number } => {
+    let count = 0;
+    const updatedCards = cards.map(card => {
+        if (card.keywords.includes('Channel') && !(card.depletedKeywords || []).includes('Channel')) {
+            count++;
+            return {
+                ...card,
+                animState: 'channel_pulse' as const,
+                depletedKeywords: [...(card.depletedKeywords || []), 'Channel'],
+            };
+        }
+        return card;
+    });
+    return { cards: updatedCards, count };
 };

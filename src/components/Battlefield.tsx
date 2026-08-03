@@ -102,12 +102,7 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                                 cardBackUrl={cardBackUrl}
                             />
                             </div> :
-                         <span className="text-xs text-gray-500 font-mono">未阻挡</span>}
-                    </div>
-
-                    {/* 战斗标识 */}
-                    <div className="my-auto relative z-0">
-                        <Sword size={20} className="text-red-500/50" />
+                         null}
                     </div>
 
                     {/* 我方槽位 - [修改] 宽度改为 w-full 填满弹性容器，高度统一为 162px */}
@@ -161,7 +156,7 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                             <div className="w-[120px] h-[162px] border-2 border-blue-400/50 bg-blue-400/20 rounded-md flex items-center justify-center backdrop-blur-sm animate-pulse shadow-[0_0_15px_rgba(96,165,250,0.5)]">
                                 <span className="text-blue-200 font-bold tracking-widest text-sm drop-shadow-md">灵体阻挡</span>
                             </div> :
-                         <span className="text-xs text-red-500/50 font-bold animate-pulse">直接打击</span>}
+                         null}
                     </div>
                 </div>
             ))}

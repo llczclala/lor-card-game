@@ -140,7 +140,7 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
     },
     'Lifesteal': {
         label: '吸血',
-        description: '造成的伤害将治疗我方水晶。',
+        description: '造成的伤害将治疗友方水晶。',
         color: 'rose',
         icon: icon8
     },
@@ -228,7 +228,7 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
     },
     'Support': {
         label: '支援',
-        description: '进攻时，给予右边的友军增益效果。',
+        description: '进攻时，给予右边的友方单位增益效果。',
         color: 'blue',
         icon: icon17
     },
@@ -300,7 +300,7 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
         description: '单位在场时持续生效的被动效果。',
         color: 'purple',
         icon: icon39
-    }
+    },
 };
 // ==========================================
 // [新增] 纯文本术语字典 (动作与时机词)
@@ -370,5 +370,48 @@ export const GLOSSARY_DB: Record<string, GlossaryConfig> = {
         label: '打击',
         description: '利用自身的攻击力，对目标（单位或水晶）造成等量的物理伤害。',
         color: 'rose'
+    },
+
+    // --- [布里吉小队] 新术语 ---
+    '燃尽': {
+        label: '燃尽',
+        description: '此卡的费用等于当前法力值与魔力值的总和。法力值+魔力值越高，费用越高。',
+        color: 'orange'
+    },
+    '燃尽值': {
+        label: '燃尽值',
+        description: '当前法力值与魔力值的总和。用于计算燃尽类卡牌的费用与效果数值。',
+        color: 'orange'
+    },
+
+    // --- [2026-07-11 衍生索引] 新术语 ---
+    '参战': {
+        label: '参战',
+        description: '该单位在场时，手牌中对应的法术牌会变化为天启者法术。',
+        color: 'blue'
+    },
+    '衍生': {
+        label: '衍生',
+        description: '该卡牌可以在满足条件时生成另一张指定的卡牌。',
+        color: 'blue'
+    },
+    '生成': {
+        label: '生成',
+        description: '创造一张指定的卡牌并置入手牌或牌库中。',
+        color: 'emerald'
+    },
+
+    // --- [2026-07-15 梵音小队] 新术语 ---
+    '觉悟': {
+        label: '觉悟',
+        description: '我方法力值上限达到10点时触发。',
+        color: 'teal'
+    },
+
+    // --- [2026-07-27 安卡希雅] 飞剑系列 ---
+    '飞剑': {
+        label: '飞剑',
+        description: '召唤对应数量的飞剑衍生物到战场，作为额外的攻击者发起进攻。敌方可以指派单位进行格挡。飞剑攻击不消耗进攻标识。',
+        color: 'yellow'
     }
 };

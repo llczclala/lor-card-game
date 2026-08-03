@@ -1,6 +1,14 @@
-export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'TEST';
+export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'Acacia' | 'TEST';
 export type CardType = 'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow';
 export type Race = 'summoner' | 'summon' | 'titan'; // [新增] 种族：召唤师/召唤物/泰坦
+
+// [2026-08-02 新增] 卡池枚举 —— 卡牌归属哪个卡池（数据驱动，备战详情跳转抽卡界面用）
+// 值刻意与 gachaLogic.PoolId 的字符串对齐，保证 `POOLS[card.gachaPool]` 直接可用
+export const GachaPoolEnum = {
+    Permanent: 'permanent', // 常守之誓
+    Lotus: 'lotus',         // 烬中镜火
+} as const;
+export type GachaPoolId = (typeof GachaPoolEnum)[keyof typeof GachaPoolEnum];
 // 完整的 36 个关键词定义
 export type Keyword =
     | 'Overwhelm' | 'QuickAttack' | 'Regeneration' | 'Elusive' | 'Challenger' | 'CantBlock'
@@ -30,6 +38,7 @@ export interface CardData {
   level2ImageUrl?: string;
   type: CardType;
   isCollectible?: boolean; // [新增] 构筑白名单标识。若为 false 则普通玩家无法将其加入卡组（不填默认为 true）
+  gachaPool?: GachaPoolId; // [2026-08-02 新增] 可抽取卡牌所属卡池枚举。备战详情页跳转抽卡界面时定位到对应卡池
 
   // 英雄机制字段
   associatedSpellKey?: string; // 英雄对应的技能卡Key
@@ -41,12 +50,14 @@ export interface CardData {
 
   // 运行时状态
   isDead?: boolean;         // [SBA] 逻辑死亡标记。true=已死，索敌/碰撞无视
+  deathType?: DeathType;    // [2026-07-20] 死亡类型：KILLED(阵亡) / ELIMINATED(消亡替换)
   strikeCount: number;
   roundStrikes?: number; // [新增] 本回合打击次数记账本，用于法术动态增伤判定
   customProgress?: number; // [新增] 私人记账本：专门用于记录卡牌在场上“目睹”等局部任务的进度
   // [新增] 'ephemeral_dying' 用于区分瞬息自然消散与常规受击阵亡
   // [修改] 增加 'delayed_attacking' 以支持防守方的滞后反击动画
-  animState?: 'idle' | 'attacking' | 'delayed_attacking' | 'hit' | 'dying' | 'ephemeral_dying' | 'transform' | 'regenerating' | 'buff';
+  // [新增] 'summoning' 用于召唤入场演出（碎片重组）
+  animState?: 'idle' | 'attacking' | 'delayed_attacking' | 'hit' | 'dying' | 'ephemeral_dying' | 'transform' | 'regenerating' | 'buff' | 'summoning';
   damageTaken?: number;
   buffs?: { power: number, health: number };
   roundBuffs?: { power: number, health: number }; // [新增] 临时账本：专门记录单回合(ROUND)增益，用于回合末秋后算账
@@ -68,6 +79,24 @@ export interface CardData {
       allowedTags?: string[];
     };
   };
+
+  // [2026-07-05] AI 策略配置
+  ai?: AIConfig;
+
+  // [2026-07-16] 进攻宣告时自动推入法术堆栈的卡牌Key（如银臂的首次进攻AOE）
+  onAttackSpell?: string;
+
+}
+
+// ==========================================
+// [新增] AI 策略配置类型
+// ==========================================
+export type AIPattern = 'DAMAGE' | 'BUFF' | 'RALLY' | 'DUEL' | 'HEAL' | 'DRAW' | 'KEYWORD_TRANSFER' | 'SUMMON' | 'SACRIFICE' | 'FROST'
+
+export interface AIConfig {
+  pattern: AIPattern
+  priority: number       // 同 pattern 内的优先级排序（数字越大越优先）
+  config: Record<string, any> // 模式专属配置参数
 }
 
 // ==========================================
@@ -118,6 +147,74 @@ export interface PendingAction {
 
 export type AttackTokenType = 'normal' | 'rally' | null;
 
+// [2026-07-20] 死亡类型：阵亡 vs 消亡（替换打出）
+export type DeathType = 'KILLED' | 'ELIMINATED';
+
+// [2026-07-20] 对局记录 — 操作分类
+export type GameRecordCategory =
+  | 'play_card'       // 打出卡牌
+  | 'attack'          // 攻击
+  | 'spell_cast'      // 施放法术
+  | 'unit_died'       // 单位阵亡
+  | 'unit_eliminated' // 单位消亡（替换）
+  | 'hero_levelup'    // 英雄升级
+  | 'nexus_damage'    // 水晶受伤
+  | 'heal'            // 治疗
+  | 'draw_card'       // 抽卡
+  | 'summon'          // 召唤
+  | 'pass_turn'       // 让过/回合结束
+  | 'turn_start'      // 回合开始
+  | 'combat_declare'  // [2026-07-21] 进攻/格挡宣告
+  | 'combat_fight'    // [2026-07-21] 单路战斗结算
+  | 'spell_effect'    // [2026-07-21] 法术效果（伤害/治疗等）
+  | 'volatile_discard'; // [2026-07-23] 瞬逝手牌弃置
+
+// [2026-07-21] 卡牌变化类型 — 用于法术效果的多维展示
+export type RecordChangeType =
+  | 'damage'         // ❤️ 受到伤害（红色）
+  | 'heal'           // 💚 治疗（绿色）
+  | 'buff_health'    // 🌿 生命值BUFF（绿色十字）
+  | 'buff_power'     // ⚔️ 攻击力BUFF（橙红宝剑）
+  | 'debuff_power'   // ⚔️ 攻击力DEBUFF（灰色宝剑）
+  | 'gain_keyword';  // +关键词图标
+
+export interface RecordChange {
+  type: RecordChangeType;
+  value?: number;
+  keyword?: string;
+}
+
+// [2026-07-21] 战斗记录实体 — 单个参与单位的快照
+export interface RecordEntity {
+  cardKey: string;
+  owner: 'player' | 'enemy';
+  damageTaken?: number;    // 本次受到的伤害（❤️-N）
+  died?: boolean;          // 是否阵亡（☠️）
+  /** [2026-07-21] 卡牌这一刻的完整状态快照 — 用于渲染实时数值 */
+  snapshot?: {
+    power: number;
+    health: number;
+    maxHealth: number;
+    damageTaken: number;
+    buffs?: { health?: number; power?: number };
+    roundBuffs?: { health?: number; power?: number };
+  };
+  /** [2026-07-21] 卡牌发生的具体变化列表 — 用于展示治疗/BUFF/DEBUFF等 */
+  changes?: RecordChange[];
+}
+
+// [2026-07-20] 对局记录 — 单条条目
+export interface GameRecord {
+  id: string;
+  turn: number;
+  owner: 'player' | 'enemy';
+  category: GameRecordCategory;
+  summary: string;          // 概要文本，如「打出 芬妮」
+  cardKey?: string;         // 关联卡牌 key（点击查看详情用）
+  detail?: string;          // 补充细节（灰色小字）
+  entities?: RecordEntity[]; // [2026-07-21] 多实体参与记录（进攻/格挡/战斗）
+}
+
 // [新增] 战斗统计数据接口
 export interface GameStats {
   nexusDamage: number;   // 对敌方水晶造成的伤害
@@ -150,7 +247,7 @@ export interface GameState {
 
   spellCasting: null | {
     cardId: string;
-    step: 'select_ally' | 'select_enemy' | 'select_any' | 'choose_mode';
+    step: 'select_ally' | 'select_enemy' | 'select_any' | 'choose_mode' | 'select_discard' | 'select_hand_target' | 'select_bench';
     allyId?: string;
     targets: any[];
     isHeroLeveled?: boolean; // [新增] 告知界面：当前施放英雄法术的英雄是否已升级
@@ -171,6 +268,39 @@ export interface GameState {
   selectedChallengerId: string | null;
   fullArtCard: CardData | null;
   stats: GameStats;
+  friendlyUnitDeaths: number; // [2026-07-14 梵音] 本牌局我方单位阵亡计数（用于莎罗）
+  enemyUnitDeaths: number; // [2026-07-15] 敌方单位阵亡计数（AI莎罗用）
+
+  // [2026-07-29 安卡希雅] 飞剑计数系统
+  playerFlyingSwordsTotal: number;   // 本牌局总飞剑召唤数
+  playerGreatSwordsTotal: number;    // 本牌局总大飞剑召唤数
+  playerRoundSwordUsed: boolean;     // 本回合是否召唤过飞剑
+  playerRoundFlyingSwords: number;   // [2026-07-31] 本回合已召唤的飞剑数（阿尔维娜能力按此计算）
+  enemyFlyingSwordsTotal: number;
+  enemyGreatSwordsTotal: number;
+  enemyRoundSwordUsed: boolean;
+  enemyRoundFlyingSwords: number;    // [2026-07-31] 本回合敌方已召唤的飞剑数
+
+  // [2026-07-30 安卡希雅] 灵轨月轮模式切换
+  playerAcaciaSwordFocus?: boolean;  // true=集束模式, false=扩散模式(默认)
+  enemyAcaciaSwordFocus?: boolean;
+
+  // [2026-07-17 鸦眼小队] 校准挂起状态
+  calibratePending?: CalibrateData;
+
+  // [2026-07-20] 墓地存根（未来实现）
+  graveyard?: CardData[];
+
+  // [2026-07-20] 对局操作记录（供玩家对局中查阅）
+  gameRecords: GameRecord[];
+}
+
+// [2026-07-17 鸦眼小队] 校准数据结构
+export interface CalibrateData {
+  drawnCards: { card: CardData; originalIndex: number }[];
+  deckMinus: CardData[];
+  owner: 'player' | 'enemy';
+  pendingCount?: number; // [2026-07-17 穆林] 排队校准：本轮还有多少次校准待触发
 }
 // --- [新增] 用户系统相关接口 ---
 
@@ -218,6 +348,9 @@ export interface UserSettings {
   unlockedCardBacks: number[];    // 已解锁的卡背列表
   unlockedDesks: number[];        // 已解锁的牌桌列表
   videoResolution?: '1k' | '2k' | '4k';
+  skipGameStartDrawAnimation?: boolean; // 跳过开局抽卡动画
+  skipLevelupMovie?: boolean;          // 默认跳过升级影片
+  skipVictoryMovie?: boolean;          // 默认跳过胜利影片
 }
 
 export interface UserResources {
@@ -261,9 +394,11 @@ export interface CardCropData {
     hand?: CropConfig;       // 手牌/竖向模式 (Lv1)
     bench?: CropConfig;      // 备战席/战术棋子模式 (Lv1)
     combat?: CropConfig;     // 战场/横向拉伸模式 (Lv1)
+    avatar?: CropConfig;     // [新增] 头像裁剪模式 (Lv1)
     hand_lv2?: CropConfig;   // [新增] 2级手牌
     bench_lv2?: CropConfig;  // [新增] 2级备战席
     combat_lv2?: CropConfig; // [新增] 2级战场
+    avatar_lv2?: CropConfig; // [新增] 2级头像
 }
 
 // ==========================================

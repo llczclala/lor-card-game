@@ -1,5 +1,5 @@
 // [核心修复] 引入 useState 和 useEffect 构建状态机
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 // [新增] 引入 motion 和 AnimatePresence 用于无缝淡出
 import { motion, AnimatePresence } from 'framer-motion';
 import type { CardData } from '../types';
@@ -61,8 +61,100 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
         }
     }, [data.animState]);
 
+    // [坚韧] 受击触发锁：捕获 animState:'hit' 后播放 1.2s 特效（黄绿高光 + 流光 + 图标爆发）
+    const [toughHitActive, setToughHitActive] = useState(false);
+
+    useEffect(() => {
+        if (data.animState === 'hit' && isOnBoard && data.keywords.includes('Tough')) {
+            setToughHitActive(true);
+            const timer = setTimeout(() => setToughHitActive(false), 1200);
+            return () => clearTimeout(timer);
+        }
+    }, [data.animState]);
+
+    // [Channel 充能] 捕获 animState:'channel_pulse' 后播放 1s 充能特效
+    const [channelPulseActive, setChannelPulseActive] = useState(false);
+
+    useEffect(() => {
+        if (data.animState === 'channel_pulse' && isOnBoard && data.keywords.includes('Channel')) {
+            setChannelPulseActive(true);
+            const timer = setTimeout(() => setChannelPulseActive(false), 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [data.animState]);
+
+    // [Frostbite] 入场爆发状态机：检测关键词首次出现或上战场时触发
+    const [frostEntryActive, setFrostEntryActive] = useState(false);
+    const prevHadFrostbite = useRef(false);
+
+    useEffect(() => {
+        const hasFrostbite = isOnBoard && data.keywords.includes('Frostbite');
+        if (hasFrostbite && !prevHadFrostbite.current) {
+            setFrostEntryActive(true);
+        }
+        if (!hasFrostbite && prevHadFrostbite.current) {
+            setFrostEntryActive(false);
+        }
+        prevHadFrostbite.current = hasFrostbite;
+    }, [isOnBoard, data.keywords]);
+
+    // 入场动画定时器：播放完毕后自动关闭
+    useEffect(() => {
+        if (!frostEntryActive) return;
+        const timer = setTimeout(() => setFrostEntryActive(false), 1200);
+        return () => clearTimeout(timer);
+    }, [frostEntryActive]);
+
+    // [Frostbite 解冻] 捕获 animState:'thawing' 后播放 1.3s 解冻特效
+    const [frostThawActive, setFrostThawActive] = useState(false);
+
+    useEffect(() => {
+        if (data.animState === 'thawing' && isOnBoard && data.keywords.includes('Frostbite')) {
+            setFrostThawActive(true);
+            const timer = setTimeout(() => {
+                setFrostThawActive(false);
+                eventBus.emit(GameEvents.ROUND_END_EFFECT_COMPLETE);
+            }, 1500);
+            return () => clearTimeout(timer);
+        }
+    }, [data.animState]);
+
+    // ========== 凶恶 (Fearsome) — 一次性入场 + 阻挡拒绝触发 ==========
+    const [fearsomeActive, setFearsomeActive] = useState(false);
+    const fearsomeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+    const wasFearsomeCombatRef = useRef(false);
+
+    const triggerFearsome = useCallback(() => {
+        if (fearsomeTimerRef.current) clearTimeout(fearsomeTimerRef.current);
+        setFearsomeActive(true);
+        fearsomeTimerRef.current = setTimeout(() => setFearsomeActive(false), 1200);
+    }, []);
+
+    // 触发 1：从备战席进入战场时（isCombat 从 false → true）
+    useEffect(() => {
+        const nowInCombat = isCombat && !isBlocker;
+        if (data.keywords.includes('Fearsome') && nowInCombat && !wasFearsomeCombatRef.current) {
+            triggerFearsome();
+        }
+        wasFearsomeCombatRef.current = nowInCombat;
+    }, [isCombat, isBlocker, data.keywords, triggerFearsome]);
+
+    // 触发 2：阻挡被凶恶拒绝时（FEARSOME_REJECT 事件）
+    useEffect(() => {
+        const handler = (payload: { unitId: string }) => {
+            if (payload.unitId === data.id) triggerFearsome();
+        };
+        eventBus.on('FEARSOME_REJECT', handler);
+        return () => eventBus.off('FEARSOME_REJECT', handler);
+    }, [data.id, triggerFearsome]);
+
+    // 清理定时器
+    useEffect(() => {
+        return () => { if (fearsomeTimerRef.current) clearTimeout(fearsomeTimerRef.current); };
+    }, []);
+
     // 自动收集进攻型词条 (加入 Challenger，使其享受 0.9s 的入场狂欢与常驻轮播)
-    const offensiveKeywords = data.keywords.filter(k => k === 'Overwhelm' || k === 'QuickAttack' || k === 'Challenger');
+    const offensiveKeywords = (data.keywords || []).filter(k => k === 'Overwhelm' || k === 'QuickAttack' || k === 'Challenger' || k === 'Double Attack' || k === 'Sniper' || k === 'Impact');
     const shouldTriggerOffensive = isCombat && !isBlocker && offensiveKeywords.length > 0;
 
     // 引擎 1：主引信 (控制同步爆发与进入轮播)
@@ -178,6 +270,76 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                             <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeDasharray="40% 160%" className="animate-beam-move filter drop-shadow-[0_0_3px_white]" />
                         </svg>
                     </motion.div>
+                </div>
+            )}
+
+            {/* 3a. Tough (坚韧) — 受击时黄绿高光 + 白色流光 + 图标爆发 */}
+            <AnimatePresence>
+                {toughHitActive && isOnBoard && KEYWORD_DB['Tough'] && (
+                    <motion.div
+                        key="tough-hit"
+                        className="absolute inset-0 z-[70] pointer-events-none overflow-hidden"
+                        style={{ borderRadius }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.3 }}
+                    >
+                        {/* 金琥珀高能边框 + 光晕 */}
+                        <motion.div
+                            className="absolute inset-0 border-4 border-[#be8f11] rounded-xl box-border"
+                            style={{ boxShadow: '0 0 25px rgba(190, 143, 17, 0.8), inset 0 0 20px rgba(190, 143, 17, 0.3)' }}
+                            initial={{ opacity: 0, scale: 0.9, filter: 'brightness(1.5)' }}
+                            animate={{
+                                opacity: [0, 1, 0.6, 0],
+                                scale: [0.9, 1.05, 1, 1],
+                                filter: ['brightness(1.5)', 'brightness(2)', 'brightness(1.2)', 'brightness(1)'],
+                            }}
+                            transition={{ duration: 1.0, times: [0, 0.2, 0.5, 1], ease: 'easeOut' }}
+                        />
+
+                        {/* 白色 SVG 绕边流光 */}
+                        <motion.svg
+                            className="absolute inset-0 w-full h-full overflow-visible"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: [0, 1, 0.5, 0] }}
+                            transition={{ duration: 1.0, times: [0, 0.15, 0.4, 1] }}
+                        >
+                            <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)"
+                                rx={borderRadius} ry={borderRadius}
+                                fill="none" stroke="white" strokeWidth="3"
+                                strokeLinecap="round" strokeDasharray="30% 170%"
+                                className="animate-beam-move opacity-90 filter drop-shadow-[0_0_8px_white]"
+                            />
+                        </motion.svg>
+
+                        {/* 中央图标爆发 — 膨胀淡出 */}
+                        <motion.div
+                            className="absolute inset-0 flex items-center justify-center"
+                            initial={{ opacity: 0, scale: 0.5 }}
+                            animate={{
+                                opacity: [0, 1, 0.8, 0],
+                                scale: [0.5, 1.8, 2.2, 2.8],
+                            }}
+                            transition={{ duration: 1.0, times: [0, 0.2, 0.5, 1], ease: 'easeOut' }}
+                        >
+                            <img src={KEYWORD_DB['Tough'].icon}
+                                className="w-20 h-20 object-contain drop-shadow-[0_0_25px_rgba(190,143,17,0.9)]"
+                                alt="坚韧"
+                            />
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* 3b. Thorns (反伤) — 毒绿尖刺 */}
+            {isOnBoard && data.keywords.includes('Thorns') && (
+                <div className="absolute inset-0 z-[25] pointer-events-none overflow-hidden" style={{ borderRadius }}>
+                    <motion.div
+                        className="absolute inset-0 border-4 border-lime-500 rounded-xl box-border shadow-[0_0_15px_rgba(132,204,22,0.5)]"
+                        animate={{ opacity: [0.2, 0.6, 0.2] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                    />
                 </div>
             )}
 
@@ -395,6 +557,86 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                                 )}
                             </motion.div>
                         )}
+
+                        {/* 轨道 D: 连击 (Double Attack) — 橙色双段爆发 */}
+                        {offensiveKeywords.includes('Double Attack') && (vfxState === 'intro' || (vfxState === 'loop' && activeOffensiveKeyword === 'Double Attack')) && (
+                            <motion.div
+                                key="double-attack"
+                                className="absolute inset-0"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: vfxState === 'intro' ? 0.1 : 0.5 }}
+                            >
+                                <div className="absolute inset-0 border-4 border-orange-400 rounded-xl shadow-[0_0_20px_#fb923c] box-border" />
+                                {vfxState === 'intro' && isCombat && KEYWORD_DB['Double Attack'] && (
+                                    <div className="absolute inset-0 z-50 overflow-hidden rounded-xl pointer-events-none">
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <motion.img src={KEYWORD_DB['Double Attack'].icon} className="absolute w-20 h-20 object-contain drop-shadow-[0_0_15px_#fb923c]"
+                                                initial={{ scale: 0.4, opacity: 0 }} animate={{ opacity: [0, 1, 0], scale: [0.4, 2.2, 0.4] }} transition={{ duration: 0.3, delay: 0, ease: "easeOut" }} />
+                                            <motion.img src={KEYWORD_DB['Double Attack'].icon} className="absolute w-20 h-20 object-contain drop-shadow-[0_0_20px_#f97316]"
+                                                initial={{ scale: 0.4, opacity: 0 }} animate={{ opacity: [0, 1, 0], scale: [0.4, 2.5, 0.4] }} transition={{ duration: 0.35, delay: 0.3, ease: "easeOut" }} />
+                                        </div>
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
+
+                        {/* 轨道 E: 狙击 (Sniper) — 青色十字瞄准 + 锁定 */}
+                        {offensiveKeywords.includes('Sniper') && (vfxState === 'intro' || (vfxState === 'loop' && activeOffensiveKeyword === 'Sniper')) && (
+                            <motion.div
+                                key="sniper"
+                                className="absolute inset-0"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: vfxState === 'intro' ? 0.1 : 0.5 }}
+                            >
+                                <div className="absolute inset-0 border-4 border-cyan-400 rounded-xl shadow-[0_0_20px_#22d3ee] box-border" />
+                                {vfxState === 'intro' && isCombat && (
+                                    <div className="absolute inset-0 z-50 overflow-hidden rounded-xl pointer-events-none">
+                                        <svg className="absolute inset-0 w-full h-full overflow-visible">
+                                            <motion.line x1="0" y1="50%" x2="100%" y2="50%" stroke="#22d3ee" strokeWidth="2" animate={{ opacity: [0, 1, 0] }} transition={{ duration: 0.6, ease: "easeOut" }} />
+                                            <motion.line x1="50%" y1="0" x2="50%" y2="100%" stroke="#22d3ee" strokeWidth="2" animate={{ opacity: [0, 1, 0] }} transition={{ duration: 0.6, ease: "easeOut" }} />
+                                        </svg>
+                                        {KEYWORD_DB['Sniper'] && (
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                                <motion.img src={KEYWORD_DB['Sniper'].icon} className="w-24 h-24 object-contain drop-shadow-[0_0_20px_#22d3ee]"
+                                                    initial={{ scale: 0.3, opacity: 0 }} animate={{ opacity: [0, 1, 0], scale: [0.3, 2.0, 0.3] }} transition={{ duration: 0.8, ease: "easeOut" }} />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
+
+                        {/* 轨道 F: 冲击 (Impact) — 深红爆破震波 */}
+                        {offensiveKeywords.includes('Impact') && (vfxState === 'intro' || (vfxState === 'loop' && activeOffensiveKeyword === 'Impact')) && (
+                            <motion.div
+                                key="impact"
+                                className="absolute inset-0"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: vfxState === 'intro' ? 0.1 : 0.5 }}
+                            >
+                                <div className="absolute inset-0 border-4 border-red-700 rounded-xl shadow-[0_0_20px_#b91c1c] box-border" />
+                                {vfxState === 'intro' && isCombat && (
+                                    <div className="absolute inset-0 z-50 overflow-hidden rounded-xl pointer-events-none">
+                                        {[0, 1, 2].map(i => (
+                                            <motion.div key={i} className="absolute inset-0 border-[3px] border-red-500 rounded-xl"
+                                                initial={{ scale: 0.7, opacity: 0.8 }} animate={{ scale: [0.7, 1.6], opacity: [0.8, 0] }} transition={{ duration: 0.5, delay: i * 0.15, ease: "easeOut" }} />
+                                        ))}
+                                        {KEYWORD_DB['Impact'] && (
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                                <motion.img src={KEYWORD_DB['Impact'].icon} className="w-20 h-20 object-contain drop-shadow-[0_0_20px_#e11d48]"
+                                                    initial={{ scale: 0.4, opacity: 0 }} animate={{ opacity: [0, 1, 0], scale: [0.4, 2.2, 0.4] }} transition={{ duration: 0.7, ease: "easeOut" }} />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
                     </AnimatePresence>
                 </div>
             )}
@@ -458,6 +700,236 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                             className="drop-shadow-[0_0_8px_white]"
                         />
                     </svg>
+                </div>
+            )}
+
+            {/* 5. CantAttack (无法攻击) — 灰暗禁止覆盖层 */}
+            {isOnBoard && data.keywords.includes('CantAttack') && (
+                <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden" style={{ borderRadius }}>
+                    <motion.div className="absolute inset-0 bg-gray-800/60" style={{ borderRadius }} />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-16 h-16 rounded-full border-4 border-gray-400/80 flex items-center justify-center">
+                            <div className="w-12 h-1 rounded-full bg-gray-400/80 rotate-45" />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 5b. 凶恶 (Fearsome) — 一次性入场演出：紫色边框+流光+恶魔角+图标爆闪 */}
+            <AnimatePresence>
+                {fearsomeActive && data.keywords.includes('Fearsome') && KEYWORD_DB['Fearsome'] && (
+                    <motion.div
+                        key="fearsome"
+                        className="absolute inset-0 z-[80] pointer-events-none"
+                        style={{ borderRadius }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0, transition: { duration: 0.3 } }}
+                        transition={{ duration: 0.15 }}
+                    >
+                        {/* 图标中心爆闪（一次） */}
+                        <motion.div
+                            className="absolute inset-0 flex items-center justify-center z-[100]"
+                            initial={{ opacity: 0, scale: 0.5 }}
+                            animate={{ opacity: [0, 1, 0], scale: [0.5, 1.5, 2.5] }}
+                            transition={{ duration: 0.9, ease: "easeOut" }}
+                        >
+                            <img src={KEYWORD_DB['Fearsome'].icon} className="w-20 h-20 object-contain drop-shadow-[0_0_20px_rgba(147,51,234,0.9)]" />
+                        </motion.div>
+
+                        {/* 紫色外发光边框 */}
+                        <motion.div
+                            className="absolute inset-0 border-4 border-purple-600 rounded-xl box-border shadow-[0_0_30px_rgba(147,51,234,0.8)]"
+                            animate={{ filter: ["brightness(1)", "brightness(1.5)", "brightness(1)"] }}
+                            transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+                        />
+
+                        {/* 白色流光 */}
+                        <motion.div className="absolute inset-0 w-full h-full overflow-visible z-10">
+                            <svg className="w-full h-full overflow-visible">
+                                <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)"
+                                    rx={borderRadius} ry={borderRadius}
+                                    fill="none" stroke="white" strokeWidth="3"
+                                    strokeLinecap="round" strokeDasharray="40% 160%"
+                                    className="animate-beam-move drop-shadow-[0_0_8px_white]" />
+                            </svg>
+                        </motion.div>
+
+                        {/* ④ 恶魔角（交战侧上方） */}
+                        <div
+                            className="absolute w-[90%] left-[5%] h-6 z-0"
+                            style={{
+                                bottom: isEnemyCombatant ? '-24px' : 'auto',
+                                top: isEnemyCombatant ? 'auto' : '-24px',
+                                transform: isEnemyCombatant ? 'rotate(180deg)' : 'rotate(0deg)'
+                            }}
+                        >
+                            {/* [核心修复] 增加 overflow-visible 防止边缘抗锯齿被误裁 */}
+                            <motion.svg
+                                viewBox="0 0 100 20" preserveAspectRatio="none"
+                                className="w-full h-full fill-purple-600 drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)] overflow-visible"
+                                initial={{ scaleY: 0 }}
+                                animate={{ scaleY: 1 }}
+                                transition={{ duration: 0.3, ease: "easeOut" }}
+                            >
+                                {/*
+                                    2 只真正锋利的恶魔角：
+                                    - 使用三次贝塞尔曲线 (C) 雕刻出极度尖锐的顶部转折。
+                                    - 左侧角 (28,0) 和右侧角 (72,0) 的弧度向内收拢，呈现出钳击的威吓感。
+                                    - 所有 Y 坐标严格控制在 0~20，彻底解决被削平的 Bug。
+                                */}
+                                <path d="M 12 20 C 12 8, 18 2, 28 0 C 24 6, 26 15, 34 20 L 66 20 C 74 15, 76 6, 72 0 C 82 2, 88 8, 88 20 Z" />
+                            </motion.svg>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* 6. Frostbite (冻结) — 常驻描边 + 冰裂纹（纯静态，无动画） */}
+            {isOnBoard && data.keywords.includes('Frostbite') && (
+                // [修复1] 将 z-35 改为规范的 z-40 (或 z-[35])，确保它绝对盖在 z-10 的卡面之上！
+                // [修复2] 移除 overflow-hidden，让 shadow 外发光能够自由溢出容器展现光晕！
+                <div className="absolute inset-0 z-40 pointer-events-none" style={{ borderRadius }}>
+                    {/* ① 靛蓝描边 + 外发光 */}
+                    <div className="absolute inset-0 border-4 border-indigo-500 rounded-xl box-border shadow-[0_0_20px_rgba(99,102,241,0.6)]" />
+                    {/* ② 白色冰裂纹流光 — 冻住不动 */}
+                    <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
+                        <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)"
+                            rx={borderRadius} ry={borderRadius}
+                            fill="none" stroke="white" strokeWidth="2"
+                            strokeLinecap="round" strokeDasharray="30% 170%"
+                            className="opacity-90 filter drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
+                    </svg>
+                </div>
+            )}
+
+            {/* 6b. Frostbite 入场图标爆发 — 一次性，独立于常驻部分 */}
+            <AnimatePresence>
+                {frostEntryActive && KEYWORD_DB['Frostbite'] && (
+                    <motion.div
+                        key="frost-entry"
+                        className="absolute inset-0 z-[70] pointer-events-none overflow-hidden"
+                        style={{ borderRadius }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                    >
+                        <motion.div
+                            className="absolute inset-0 flex items-center justify-center"
+                            initial={{ opacity: 0, scale: 0.5 }}
+                            animate={{ opacity: [0, 1, 0], scale: [0.5, 1.5, 2.5] }}
+                            transition={{ duration: 0.9, ease: "easeOut" }}
+                        >
+                            <img src={KEYWORD_DB['Frostbite'].icon}
+                                className="w-20 h-20 object-contain drop-shadow-[0_0_25px_rgba(125,211,252,0.9)]"
+                                alt="冻结" />
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* 6c. Frostbite 解冻 — 三段动画：流光复苏 → 冰晶碎裂 → 图标爆散 */}
+            {frostThawActive && (
+                <div className="absolute inset-0 z-[75] pointer-events-none overflow-hidden" style={{ borderRadius }}>
+                    {/* 阶段① 流光复苏（0→0.6s）：白色发光描边重新流动 → 逐渐淡出 */}
+                    {/* 发光外边框 — 亮度从暴增到消退（独立 motion.div，不参与 SVG 动画） */}
+                    <motion.div
+                        className="absolute inset-0 border-4 border-white/90 rounded-xl box-border"
+                        style={{ boxShadow: '0 0 30px rgba(255,255,255,0.9), inset 0 0 20px rgba(255,255,255,0.4)' }}
+                        initial={{ opacity: 0, filter: 'brightness(1.5)' }}
+                        animate={{ opacity: [0, 1, 0.6, 0], filter: ['brightness(1.5)', 'brightness(2.5)', 'brightness(1.2)', 'brightness(0.5)'] }}
+                        transition={{ duration: 0.6, times: [0, 0.15, 0.4, 1], ease: 'easeOut' }}
+                    />
+                    {/* 绕边白色流光 — 使用 motion.svg 直接作为动画宿主（匹配 Tough 模式） */}
+                    <motion.svg
+                        className="absolute inset-0 w-full h-full overflow-visible"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: [0, 1, 0.6, 0] }}
+                        transition={{ duration: 0.6, times: [0, 0.1, 0.4, 1], ease: 'easeOut' }}
+                    >
+                        <rect
+                            x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)"
+                            rx={borderRadius} ry={borderRadius}
+                            fill="none" stroke="white" strokeWidth="3"
+                            strokeLinecap="round" strokeDasharray="30% 170%"
+                            className="animate-beam-move opacity-90 filter drop-shadow-[0_0_8px_white]"
+                        />
+                    </motion.svg>
+
+                    {/* 阶段② 冰晶碎裂（0.3→0.7s）：描边断裂 + 六角碎片飞散 */}
+                    <motion.div
+                        className="absolute inset-0"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.3, duration: 0.05 }}
+                    >
+                        {/* 六角冰晶碎片飞散 */}
+                        {[0,1,2,3,4,5].map(i => {
+                            const angle = (i / 6) * 360;
+                            const dist = 40 + i * 8;
+                            return (
+                                <motion.div
+                                    key={`ice-chunk-${i}`}
+                                    className="absolute w-3 h-3 bg-indigo-300/70"
+                                    style={{
+                                        top: '50%', left: '50%',
+                                        clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)',
+                                        borderRadius: '2px',
+                                    }}
+                                    initial={{ x: 0, y: 0, rotate: 0, opacity: 0.8 }}
+                                    animate={{
+                                        x: Math.cos(angle * Math.PI / 180) * dist,
+                                        y: Math.sin(angle * Math.PI / 180) * dist,
+                                        rotate: 180 + i * 30,
+                                        opacity: 0,
+                                    }}
+                                    transition={{ duration: 0.5, ease: 'easeOut' }}
+                                />
+                            );
+                        })}
+                    </motion.div>
+
+                    {/* 阶段③ 解放爆散（0.7→1.3s）：图标膨胀爆散 + 冰环扩散 + 收尾闪光 */}
+                    <motion.div
+                        className="absolute inset-0"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.7, duration: 0.05 }}
+                    >
+                        {/* 冰蓝光环扩散 */}
+                        <motion.div
+                            className="absolute inset-0 rounded-xl"
+                            style={{
+                                border: '3px solid rgba(125, 211, 252, 0.8)',
+                                boxShadow: '0 0 30px rgba(125, 211, 252, 0.6), inset 0 0 30px rgba(125, 211, 252, 0.2)',
+                            }}
+                            initial={{ scale: 0.7, opacity: 0.8 }}
+                            animate={{ scale: 2.5, opacity: 0 }}
+                            transition={{ duration: 0.6, ease: 'easeOut' }}
+                        />
+                        {/* 中心图标爆发 */}
+                        {KEYWORD_DB['Frostbite'] && (
+                            <motion.div
+                                className="absolute inset-0 flex items-center justify-center"
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: [0, 1, 0], scale: [0.8, 1.8, 3.0] }}
+                                transition={{ duration: 0.6, ease: 'easeOut' }}
+                            >
+                                <img src={KEYWORD_DB['Frostbite'].icon}
+                                    className="w-16 h-16 object-contain drop-shadow-[0_0_30px_rgba(125,211,252,1)]"
+                                    alt="解冻" />
+                            </motion.div>
+                        )}
+                        {/* 收尾闪光 */}
+                        <motion.div
+                            className="absolute inset-0 rounded-xl"
+                            style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.8) 0%, transparent 70%)' }}
+                            initial={{ opacity: 0, scale: 0.3 }}
+                            animate={{ opacity: [0, 0.6, 0], scale: [0.3, 1.5, 2] }}
+                            transition={{ duration: 0.5, delay: 0.3, ease: 'easeOut' }}
+                        />
+                    </motion.div>
                 </div>
             )}
 
@@ -525,6 +997,56 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                     )}
                 </>
             )}
+
+            {/* [充能] 脉冲特效 — 1s 时序：流光环绕→图标爆发→黯淡过渡 */}
+            {channelPulseActive && KEYWORD_DB['Channel'] && (
+                <div className="absolute inset-0 z-40 pointer-events-none" style={{ borderRadius }}>:
+	                    {/* ① 淡蓝高光描边 + 白色流光快速环绕 (0~0.4s) */}
+	                    <motion.div className="absolute inset-0 overflow-visible" style={{ borderRadius }}>
+	                        <svg className="absolute inset-0 w-full h-full overflow-visible" style={{ borderRadius }}>
+	                            <rect x="-1" y="-1" width="calc(100% + 2px)" height="calc(100% + 2px)"
+	                                rx={borderRadius} ry={borderRadius}
+	                                fill="none" stroke="rgba(125, 211, 252, 0.8)" strokeWidth="3"
+	                                strokeLinecap="round" strokeDasharray="30% 170%"
+	                                className="animate-quick-beam opacity-90 drop-shadow-[0_0_8px_rgba(125,211,252,0.9)]"
+	                                style={{ filter: 'drop-shadow(0 0 6px rgba(125,211,252,0.6))' }}
+	                            />
+	                        </svg>
+	                        {/* 第二道细白光，稍快重叠，制造「流光」感 */}
+	                        <svg className="absolute inset-0 w-full h-full overflow-visible" style={{ borderRadius }}>
+	                            <rect x="-1" y="-1" width="calc(100% + 2px)" height="calc(100% + 2px)"
+	                                rx={borderRadius} ry={borderRadius}
+	                                fill="none" stroke="rgba(255, 255, 255, 0.7)" strokeWidth="2"
+	                                strokeLinecap="round" strokeDasharray="15% 185%"
+	                                className="animate-quick-beam opacity-80"
+	                                style={{ animationDelay: '0.05s' }}
+	                            />
+	                        </svg>
+	                    </motion.div>
+
+	                    {/* ② 图标爆发 (0.3s~0.7s)：中心放大 + 亮度飙升 */}
+	                    <motion.div className="absolute inset-0 flex items-center justify-center z-50"
+	                        initial={{ opacity: 0, scale: 0.5 }}
+	                        animate={{ opacity: [0, 1, 1, 0], scale: [0.5, 1.6, 1.8, 0.3] }}
+	                        transition={{ duration: 0.8, times: [0, 0.2, 0.5, 0.9], ease: "easeOut" }}
+	                    >
+	                        <img src={KEYWORD_DB['Channel'].icon}
+	                            className="w-14 h-14 object-contain"
+	                            style={{ filter: 'drop-shadow(0 0 25px rgba(125,211,252,1)) brightness(2)' }}
+	                            alt="充能" />
+	                    </motion.div>
+
+	                    {/* ③ 充能完成的确认闪烁 (0.7s) */}
+	                    <motion.div className="absolute inset-0 z-30"
+	                        initial={{ opacity: 0 }}
+	                        animate={{ opacity: [0, 0.3, 0] }}
+	                        transition={{ duration: 0.3, delay: 0.7, ease: "easeOut" }}
+	                        style={{ background: 'radial-gradient(circle, rgba(125,211,252,0.3) 0%, transparent 70%)' }}
+	                    />
+	                </div>
+	            )}
+
+            {/* [召唤入场 V2] 真·卡面切片碎片重组已迁移至 Card.tsx（renderFrontFace 切片层），此处移除 V1 白色装饰碎片 */}
 
             {/* 9. Ephemeral Dying (瞬息消散) - 终极空洞化演出 */}
             <AnimatePresence>

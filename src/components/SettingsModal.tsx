@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power } from 'lucide-react'; // 新增 Power 图标
+import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power, RotateCw, Home } from 'lucide-react';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -17,6 +17,19 @@ interface SettingsModalProps {
     // [新增] 画质控制回调
     videoResolution?: '1k' | '2k' | '4k';
     onResolutionChange?: (res: '1k' | '2k' | '4k') => void;
+    // [新增] 开局抽卡动画跳过开关
+    skipStartDrawAnimation?: boolean;
+    onToggleSkipDraw?: () => void;
+    // [新增] 默认跳过升级影片
+    skipLevelupMovie?: boolean;
+    onToggleSkipLevelup?: () => void;
+    // [新增] 默认跳过胜利影片
+    skipVictoryMovie?: boolean;
+    onToggleSkipVictory?: () => void;
+    // [新增] 对局操作
+    isInGame?: boolean;
+    onRestartMatch?: () => void;
+    onReturnToLobby?: () => void;
 }
 
 const VolumeSlider = ({ label, icon: Icon, value, onChange }: { label: string, icon: any, value: number, onChange: (val: number) => void }) => {
@@ -79,7 +92,7 @@ const VolumeSlider = ({ label, icon: Icon, value, onChange }: { label: string, i
     );
 };
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, isInGame = false, onRestartMatch, onReturnToLobby }) => {
 
     // ESC 键监听
     useEffect(() => {
@@ -187,14 +200,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                 </div>
                             )}
 
+                            {/* [新增] 开局抽卡动画跳过 + 默认跳过升级/胜利影片 */}
+                            <div className="space-y-4 pt-4 border-t border-white/5">
+                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Gameplay</h3>
+                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-bold text-gray-200">快速开局抽卡</span>
+                                        <span className="text-xs text-gray-500 mt-0.5">换牌后直接获得卡牌，跳过抽卡动画</span>
+                                    </div>
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onToggleSkipDraw?.(); }}
+                                        className={`relative w-14 h-7 rounded-full transition-all duration-300 ${skipStartDrawAnimation ? 'bg-blue-500' : 'bg-gray-700'}`}
+                                    >
+                                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${skipStartDrawAnimation ? 'left-8' : 'left-1'}`}></div>
+                                    </button>
+                                </div>
+                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-bold text-gray-200">默认跳过升级影片</span>
+                                        <span className="text-xs text-gray-500 mt-0.5">英雄升级时自动跳过动画影片</span>
+                                    </div>
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onToggleSkipLevelup?.(); }}
+                                        className={`relative w-14 h-7 rounded-full transition-all duration-300 ${skipLevelupMovie ? 'bg-blue-500' : 'bg-gray-700'}`}
+                                    >
+                                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${skipLevelupMovie ? 'left-8' : 'left-1'}`}></div>
+                                    </button>
+                                </div>
+                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-bold text-gray-200">默认跳过胜利影片</span>
+                                        <span className="text-xs text-gray-500 mt-0.5">对局胜利时自动跳过胜利动画影片</span>
+                                    </div>
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onToggleSkipVictory?.(); }}
+                                        className={`relative w-14 h-7 rounded-full transition-all duration-300 ${skipVictoryMovie ? 'bg-blue-500' : 'bg-gray-700'}`}
+                                    >
+                                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${skipVictoryMovie ? 'left-8' : 'left-1'}`}></div>
+                                    </button>
+                                </div>
+                            </div>
+
                             {/* 底部功能区 */}
                             <div className="pt-6 border-t border-white/10 flex justify-between items-center mt-6">
-                                <div className="text-xs font-mono text-gray-600">
-                                    Snowbreak Rivals Client<br/>
-                                    v4.2 (Audio Update)
+                                <div className="flex items-center gap-3">
+                                    {isInGame && (
+                                        <>
+                                        <button
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onRestartMatch?.(); }}
+                                            className="flex items-center gap-2 px-5 py-2 bg-yellow-900/30 hover:bg-yellow-600 border border-yellow-800 hover:border-yellow-500 text-yellow-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
+                                        >
+                                            <RotateCw size={16} className="group-hover:scale-110 transition-transform" />
+                                            重开对局
+                                        </button>
+                                        <button
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onReturnToLobby?.(); }}
+                                            className="flex items-center gap-2 px-5 py-2 bg-blue-900/30 hover:bg-blue-600 border border-blue-800 hover:border-blue-500 text-blue-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
+                                        >
+                                            <Home size={16} className="group-hover:scale-110 transition-transform" />
+                                            返回大厅
+                                        </button>
+                                        </>
+                                    )}
                                 </div>
 
-                                {/* [新增] 退出游戏按钮 */}
                                 <button
                                     onClick={handleExitGame}
                                     className="flex items-center gap-2 px-6 py-2 bg-red-900/30 hover:bg-red-600 border border-red-800 hover:border-red-500 text-red-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"

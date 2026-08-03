@@ -17,6 +17,7 @@ import type {
     PlayCardLogEvent,
     AttackLogEvent,
     NexusDamageLogEvent,
+    DamageDealtLogEvent,
     LevelUpLogEvent,
     GameEndLogEvent
 } from '../utils/gameLogger';
@@ -28,6 +29,16 @@ export interface MissionProgress {
     current: number;
     target: number;
     status: MissionStatus;
+    sort: number;  // 排序权重：0=已完成待领取, 1~100=进行中(越小越接近完成), 101=已领取
+}
+
+/** 根据任务状态与进度计算排序权重 */
+export function computeSort(status: MissionStatus, current: number, target: number): number {
+    if (status === 'completed') return 0;
+    if (status === 'claimed') return 101;
+    // ongoing: 进度越高(接近完成) → sort 越小
+    const pct = Math.floor((current / Math.max(target, 1)) * 100);
+    return Math.max(1, 100 - pct);
 }
 
 export interface MissionUpdateResult {
@@ -145,6 +156,15 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
             needsSave = true;
         }
 
+        // 3. 对所有任务补填/刷新排序权重（兼容旧存档 + 新任务）
+        Object.values(merged).forEach(p => {
+            const newSort = computeSort(p.status, p.current, p.target);
+            if (p.sort !== newSort) {
+                p.sort = newSort;
+                needsSave = true;
+            }
+        });
+
         if (needsSave) {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
         }
@@ -204,6 +224,23 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
                         if (playedChampion) added += 1;
                     }
                     break;
+                // [2026-07-12] 携带指定后勤小队全员获胜：检查是否打出过小队所有成员且获胜
+                case 'win_with_squad':
+                    if (isWin && mission.condition.targetKeys && mission.condition.targetKeys.length > 0) {
+                        const playedCards = new Set(
+                            logs.filter(l => l.type === 'play_card' && l.isPlayerSide)
+                                .map(l => (l as PlayCardLogEvent).cardKey)
+                        );
+                        const allPlayed = mission.condition.targetKeys.every(k => playedCards.has(k));
+                        if (allPlayed) added += 1;
+                    }
+                    break;
+                // [2026-07-22] 指定单位累计造成伤害 (用于臆莲基座等)
+                case 'damage_dealt':
+                    logs.filter(l => l.type === 'damage_dealt' && l.isPlayerSide && (l as DamageDealtLogEvent).sourceCardKey === mission.condition.targetKey).forEach(l => {
+                        added += (l as DamageDealtLogEvent).amount;
+                    });
+                    break;
                 // [2026-06-27] 直接领取：无需条件，初始即完成
                 case 'direct_claim':
                     if (prog.current === 0) added = 1;
@@ -217,6 +254,7 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
 
                 if (justCompleted) {
                     prog.status = 'completed'; // 标记完成，触发小黄点
+                    prog.sort = 0;             // 已完成未领取 → 置顶
                 }
 
                 updates.push({
@@ -254,7 +292,7 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
         // 盖上“已签收”印章
         const newProgress = {
             ...progress,
-            [missionId]: { ...prog, status: 'claimed' as MissionStatus }
+            [missionId]: { ...prog, status: 'claimed' as MissionStatus, sort: 101 }
         };
 
         setProgress(newProgress);

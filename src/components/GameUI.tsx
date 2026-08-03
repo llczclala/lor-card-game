@@ -130,8 +130,8 @@ export const SmartNexus = ({
                 <div key={heal.id}
                     className="absolute left-1/2 -translate-x-1/2 text-5xl font-black z-[100] whitespace-nowrap drop-shadow-[0_4px_4px_rgba(0,0,0,1)] text-green-400 animate-float-damage"
                     style={isEnemy
-                        ? { top: `${7 + index * 3.5}rem` }
-                        : { top: `${-7 - index * 3.5}rem` }
+                        ? { top: `${4 + index * 3.5}rem` }
+                        : { top: `${-4 - index * 3.5}rem` }
                     }
                 >
                     +{heal.amount}
@@ -209,6 +209,7 @@ export const Deck = ({
     return (
         <div
             className="relative z-10"
+            data-entity-id={isEnemy ? 'enemy-deck' : 'player-deck'}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => { setIsHovered(false); setIsPanelOpen(false); }}
         >

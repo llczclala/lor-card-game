@@ -20,7 +20,10 @@ export const DEFAULT_SETTINGS = {
     // 默认解锁的装饰品索引列表
     unlockedCardBacks: [0],
     unlockedDesks: [0],
-    videoResolution: '1k' // [新增] 默认 1k
+    videoResolution: '1k', // [新增] 默认 1k
+    skipGameStartDrawAnimation: false, // 默认播放开局抽卡动画
+    skipLevelupMovie: false,           // 默认播放升级影片
+    skipVictoryMovie: false,           // 默认播放胜利影片
 };
 
 // --- 2. 卡牌收藏定义 ---
@@ -57,8 +60,8 @@ export const FULL_COLLECTION = {
 // [皮肤] 全卡档专用设置：解锁所有卡背和棋盘
 export const FULL_SETTINGS = {
     ...DEFAULT_SETTINGS,
-    unlockedCardBacks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], // [新增] 解锁全部 13 款卡背 (含永恒之约系列)
-    unlockedDesks: [0, 1, 2, 3, 4],           // 全部 5 款棋盘
+    unlockedCardBacks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], // 全部 17 款卡背
+    unlockedDesks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],  // 全部 10 款棋盘
 };
 
 // 方案 B: 新手初始收藏 (正式上线模式)

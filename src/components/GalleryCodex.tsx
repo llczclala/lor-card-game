@@ -432,7 +432,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                     className="scale-[1] origin-center hover:scale-[1.1] transition-transform duration-300 cursor-pointer hover:z-20 hover:drop-shadow-[0_0_20px_cyan]"
                                                     onClick={() => setViewCard(c)}
                                                 >
-                                                    <Card data={c} location="collection" isFaceUp={true} isLocked={userSystem && !userSystem.collection?.ownedCards?.[c.key]} />
+                                                    <Card data={c} location="collection" isFaceUp={true} isLocked={false} />
                                                 </motion.div>
                                             ))}
                                         </div>
@@ -458,7 +458,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                     className="scale-[1] origin-center hover:scale-[1.1] transition-transform duration-300 cursor-pointer hover:z-20 hover:drop-shadow-[0_0_20px_cyan]"
                                                     onClick={() => setViewCard(c)}
                                                 >
-                                                    <Card data={c} location="collection" isFaceUp={true} isLocked={userSystem && !userSystem.collection?.ownedCards?.[c.key]} />
+                                                    <Card data={c} location="collection" isFaceUp={true} isLocked={false} />
                                                 </motion.div>
                                             ))}
                                         </div>

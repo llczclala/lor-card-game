@@ -64,38 +64,82 @@ export const resolveSingleCombat = (
     const killedUnits: CardData[] = [];
     let levelUpUpdate = undefined;
 
-    // 1. 调用关键词逻辑计算伤害
-    const interaction = calculateCombatInteraction(newAttacker, newBlocker);
+    // 检测是否有 Double Attack（连击）
+    const hasDoubleAttack = newAttacker.keywords.includes('Double Attack');
 
-    // 物理破盾：屏障抵挡伤害后标记为黯淡（保留在关键词列表中用于视觉）
-    if (interaction.attackerBarrierPopped) {
-        newAttacker.depletedKeywords = [...(newAttacker.depletedKeywords || []), 'Barrier'];
-    }
-    if (newBlocker && interaction.blockerBarrierPopped) {
-        newBlocker.depletedKeywords = [...(newBlocker.depletedKeywords || []), 'Barrier'];
-    }
+    // ==========================================
+    // 内部辅助：执行单次打击并累加伤害
+    // ==========================================
+    const executeStrike = (atk: CardData, blk: CardData | null, isQuickStrike: boolean, isGhosted: boolean) => {
+      // 先攻打击：如果单位自身没有 QuickAttack，临时附加
+      const strikeAtk = isQuickStrike && !atk.keywords.includes('QuickAttack')
+        ? { ...atk, keywords: [...atk.keywords, 'QuickAttack' as Keyword] }
+        : atk;
 
-    // [致命 Bug 修复] 绝不减 c.health，只累加 damageTaken
-    if (newBlocker) {
-        newBlocker.damageTaken = (newBlocker.damageTaken || 0) + interaction.blockerDamage;
-        newAttacker.damageTaken = (newAttacker.damageTaken || 0) + interaction.attackerDamage;
-    }
+      const inter = calculateCombatInteraction(strikeAtk, blk);
 
-    // 3. 溢出伤害或直接攻击
-    let finalNexusDamage = interaction.nexusDamage;
+      // 屏障破碎
+      if (inter.attackerBarrierPopped) {
+        atk.depletedKeywords = [...(atk.depletedKeywords || []), 'Barrier'];
+      }
+      if (blk && inter.blockerBarrierPopped) {
+        blk.depletedKeywords = [...(blk.depletedKeywords || []), 'Barrier'];
+      }
 
-    // [核心修复] 空气墙 (Ghost Blocker) 机制生效！
-    // 逻辑：如果这路交锋被空气墙阻挡，且攻击者没有【碾压】(Overwhelm)，则水晶受到 0 点伤害！
-    if (isGhostBlocked && !newAttacker.keywords.includes('Overwhelm')) {
-        finalNexusDamage = 0;
+      // 伤害累加（绝不减 health，只记 damageTaken 欠条）
+      if (blk) {
+        blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage;
+      }
+      atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage;
+
+      // 水晶伤害（空气墙过滤）
+      let nexus = inter.nexusDamage;
+      if (isGhosted && !atk.keywords.includes('Overwhelm')) {
+        nexus = 0;
         console.log(`[Combat] 攻击被空气墙完全吸收！`);
+      }
+
+      return { nexusDmg: nexus, qaEphemeral: inter.quickAttackEphemeralDeath, atkDmg: inter.attackerDamage, blkDmg: inter.blockerDamage };
+    };
+
+    // ==========================================
+    // 执行打击（无连击→一次，有连击→两次）
+    // ==========================================
+    let totalNexus = 0;
+    let qaEphemeralDeath = false;
+    let totalAttackerDmg = 0;
+    let totalBlockerDmg = 0;
+
+    // 第一击：如果连击则带先攻，否则按单位自身关键词
+    const s1 = executeStrike(newAttacker, newBlocker, hasDoubleAttack || newAttacker.keywords.includes('QuickAttack'), isGhostBlocked);
+    totalNexus += s1.nexusDmg;
+    qaEphemeralDeath = s1.qaEphemeral;
+    totalAttackerDmg += s1.atkDmg;
+    totalBlockerDmg += s1.blkDmg;
+
+    // 第二击：仅当连击且攻击者仍存活
+    if (hasDoubleAttack && getCurrentHP(newAttacker) > 0) {
+      const blkAfterFirst = newBlocker && getCurrentHP(newBlocker) > 0 ? newBlocker : null;
+      const s2 = executeStrike(newAttacker, blkAfterFirst, false, false);
+      totalNexus += s2.nexusDmg;
+      totalAttackerDmg += s2.atkDmg;
+      totalBlockerDmg += s2.blkDmg;
+
+      // 第二击是普通攻击，不改变 qaEphemeralDeath（保留第一击的值）
+
+      // 额外打击计数（初始化时 strikeCount 已 +1，这里再加 1）
+      newAttacker.strikeCount = (newAttacker.strikeCount || 0) + 1;
+      if (blkAfterFirst) {
+        newBlocker!.strikeCount = (newBlocker!.strikeCount || 0) + 1;
+      }
     }
 
-    if (finalNexusDamage > 0) {
-        nexusDmgInfo = {
-            target: (owner === 'player' ? 'enemy' : 'player') as 'player' | 'enemy',
-            amount: finalNexusDamage
-        };
+    // 合并水晶伤害
+    if (totalNexus > 0) {
+      nexusDmgInfo = {
+        target: (owner === 'player' ? 'enemy' : 'player') as 'player' | 'enemy',
+        amount: totalNexus
+      };
     }
 
     // 4. 升级判定 (简化版，仅检查攻击者)
@@ -131,7 +175,10 @@ export const resolveSingleCombat = (
     if (newBlocker) {
         // 判定阻挡者是否挥出了常规反击：
         // 如果攻击者有先攻，且（阻挡者被秒杀了 OR 攻击者因幻象自己蒸发了），则阻挡者未能挥出反击
-        const blockerDidStrike = !(newAttacker.keywords.includes('QuickAttack') && (getCurrentHP(newBlocker) <= 0 || interaction.quickAttackEphemeralDeath));
+        // 如果是连击（Double Attack）：第二击是普通攻击，只要阻挡者活着就必定反击
+        const blockerDidStrike = hasDoubleAttack
+          ? getCurrentHP(newBlocker) > 0
+          : !(newAttacker.keywords.includes('QuickAttack') && (getCurrentHP(newBlocker) <= 0 || qaEphemeralDeath));
 
         // 阻挡者触发幻象死亡的条件：它必须成功挥出了反击，且自身带有幻象
         const blockerDiesFromEphemeral = blockerDidStrike && newBlocker.keywords.includes('Ephemeral');
@@ -149,8 +196,8 @@ export const resolveSingleCombat = (
 
     return {
         updatedFight: { ...fight, attacker: newAttacker, blocker: newBlocker },
-        attackerDamage: interaction.attackerDamage,   // [修复] 透传受伤数据，供外层发射 unit_damage 事件
-        blockerDamage: interaction.blockerDamage,     // [修复] 透传受伤数据，供外层发射 unit_damage 事件
+        attackerDamage: totalAttackerDmg,   // [修复] 透传受伤数据，供外层发射 unit_damage 事件
+        blockerDamage: totalBlockerDmg,     // [修复] 透传受伤数据，供外层发射 unit_damage 事件
         nexusDamage: nexusDmgInfo,
         levelUpUpdate,
         killedUnits
