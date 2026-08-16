@@ -128,6 +128,30 @@ import acacia_chrono_echo_spell_gen3 from '../image/spells/Acacia_Chrono Echo_sp
 // [新增] 占位法术图片（用于衍生法术暂无专图）
 import abc_spell from '../image/spells/abc.png';
 
+// [2026-08-05 莉莉子] 新法术批次卡面（24~34）
+import spell_24 from '../image/spells/24.png'; // 抵抗
+import spell_25 from '../image/spells/25.png'; // 抗拒
+import spell_26 from '../image/spells/26.png'; // 拒绝
+import spell_27 from '../image/spells/27.png'; // 战术回撤
+import spell_28 from '../image/spells/28.png'; // 战术闪击
+import spell_29 from '../image/spells/29.png'; // 单刀直入
+import spell_30 from '../image/spells/30.png'; // 降临事件
+import spell_31 from '../image/spells/31.png'; // 瓦尔哈拉的呼唤
+import spell_32 from '../image/spells/32.png'; // 深思熟虑
+import spell_33 from '../image/spells/33.png'; // 正面突破
+import spell_34 from '../image/spells/34.png'; // 迂回防守
+// [2026-08-08 莉莉子] 泰坦系 + 冻结 法术真卡面
+import spell_35 from '../image/spells/35.png'; // 万钧齐鸣（泰坦脉冲）
+import spell_36 from '../image/spells/36.png'; // 泰坦重燃（点亮泰坦关键词）
+import spell_37 from '../image/spells/37.png'; // 急冻令（冻结单体）
+// [2026-08-08 莉莉子] 最后一批法术真卡面（御剑归鞘/泰坦降临/神格共鸣/芬格尼尔之冬/破军/剑鸣回响）
+import spell_38 from '../image/spells/38.png'; // 御剑归鞘（撤回+飞剑1）
+import spell_39 from '../image/spells/39.png'; // 泰坦降临（燃尽召唤泰坦）
+import spell_40 from '../image/spells/40.png'; // 神格共鸣（三选天启者+2/+2）
+import spell_41 from '../image/spells/41.png'; // 芬格尼尔之冬（冻结全场+3伤）
+import spell_42 from '../image/spells/42.png'; // 破军（单体3伤+飞剑减费）
+import spell_43 from '../image/spells/43.png'; // 剑鸣回响（回响+飞剑2）
+
 // [新增] 臆莲基座原画
 import placeholder_pedestal from '../image/units/mauxir_lotus_pedestal.png';
 
@@ -563,6 +587,28 @@ export const SPELL_IMAGES = {
 
     // [2026-07-17 鸦眼小队] 精密操作
     crows_precise_operation: spell_23,
+
+    // [2026-08-05 莉莉子] 新法术批次（11 张已命名接入真卡面，7 张未命名暂用占位图）
+    temp_spell_01: spell_30, // 降临事件
+    temp_spell_02: spell_31, // 瓦尔哈拉的呼唤
+    temp_spell_03: spell_36, // 泰坦重燃（点亮泰坦关键词）
+    temp_spell_04: spell_35, // 万钧齐鸣（泰坦脉冲）
+    temp_spell_05: spell_29, // 单刀直入
+    temp_spell_06: spell_24, // 抵抗
+    temp_spell_07: spell_25, // 抗拒
+    temp_spell_08: spell_26, // 拒绝
+    temp_spell_09: spell_38, // 御剑归鞘（撤回+飞剑1）
+    temp_spell_10: spell_27, // 战术回撤
+    temp_spell_11: spell_28, // 战术闪击
+    temp_spell_12: spell_39, // 泰坦降临（燃尽召唤泰坦）
+    temp_spell_13: spell_32, // 深思熟虑
+    temp_spell_14: spell_33, // 正面突破
+    temp_spell_15: spell_34, // 迂回防守
+    temp_spell_16: spell_40, // 神格共鸣（三选天启者+2/+2）
+    temp_spell_17: spell_41, // 芬格尼尔之冬（冻结全场+3伤）
+    temp_spell_18: spell_37, // 急冻令（冻结单体）
+    temp_spell_19: spell_42, // 破军（单体3伤+飞剑减费）
+    temp_spell_20: spell_43, // 剑鸣回响（回响+飞剑2）
 };
 
 // [新增] 导出占位图（飞剑等暂无专图的衍生物用）

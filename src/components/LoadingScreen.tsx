@@ -32,7 +32,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
         // 1. 最高优先级：如果穿了皮肤，直接提取高清皮肤原画！
         // (注：由于我们只有一张高清大图作为 base，所以这里不区分 level 2，直接拿)
         if (skinId > 0) {
-            const skinImg = getSkinImage(key, skinId, false);
+            const skinImg = getSkinImage(key, skinId); // [2026-08-16] 第三参是 fallback URL 非 boolean
             if (skinImg) return skinImg;
         }
 

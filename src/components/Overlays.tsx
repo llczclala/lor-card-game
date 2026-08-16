@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { X, RefreshCw, ChevronUp, ChevronDown, ShoppingCart, ExternalLink } from 'lucide-react';
+import { X, RefreshCw, ChevronUp, ChevronDown, ShoppingCart, ExternalLink, Zap, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GachaPoolEnum, type CardData, type GameStats } from '../types';
 import { POOLS, type PoolId } from '../logic/gachaLogic';
@@ -259,8 +259,20 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
         return region.toUpperCase();
     };
 
-    const getTypeLabel = (isChampion: boolean) => {
-        return isChampion ? 'HERO' : 'UNIT';
+    const getTypeLabel = (card: CardData) => {
+        if (card.isChampion) return 'HERO';
+        if (card.type?.includes('spell')) return 'SPELL';
+        return 'UNIT';
+    };
+
+    // [2026-08-08 莉莉子] 法术速度展示：极速/快速/慢速 文字 + 图标
+    const getSpellSpeedInfo = (type: string) => {
+        switch (type) {
+            case 'spell-burst': return { label: '极速', color: 'text-yellow-400', icon: <Zap size={22} className="text-yellow-400 fill-yellow-400" />, desc: '任意阶段打出，立即结算' };
+            case 'spell-fast': return { label: '快速', color: 'text-white', icon: <Zap size={22} className="text-white" />, desc: '战斗阶段可打出，按序结算' };
+            case 'spell-slow': return { label: '慢速', color: 'text-purple-300', icon: <Clock size={22} className="text-purple-300" />, desc: '仅主阶段打出，最晚结算' };
+            default: return null;
+        }
     };
 
     const loreText = getCardLore(currentCard.key); // [修正] 用 currentCard
@@ -271,6 +283,25 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
         setViewLevel(newCard.level);
         setIsLoreOpen(false); // 跳转后自动关闭故事抽屉，保持整洁
     };
+
+    // [2026-08-08 莉莉子] ESC 键关闭详情：按优先级 购买确认 → 故事抽屉 → 整个详情
+    // capture 阶段 + stopImmediatePropagation：拦截全局 ESC（App.tsx 会呼出设置面板），确保 ESC 只关详情
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (confirmState) {
+                setConfirmState(null); // 先取消购买确认弹窗
+            } else if (isLoreOpen) {
+                setIsLoreOpen(false);   // 再收起故事抽屉
+            } else {
+                onClose();              // 最后关闭整个详情
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown, { capture: true });
+        return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+    }, [confirmState, isLoreOpen, onClose]);
 
     // 4. 切换处理函数
     const handleLevelToggle = (e: React.MouseEvent) => {
@@ -611,11 +642,11 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                     {/* 1. 顶部标题 */}
                     <div className="flex flex-col items-center text-center">
                         <div className="text-sm font-black text-gray-500 uppercase tracking-[0.3em] mb-2 flex items-center gap-3 bg-black/40 px-4 py-1 rounded-full border border-white/5">
-                            <span className={targetCard.region === 'Lyfe' ? 'text-yellow-500' : (targetCard.region === 'Fenny' ? 'text-red-500' : 'text-purple-500')}>
+                            <span className={targetCard.region === 'Lyfe' ? 'text-yellow-500' : (targetCard.region === 'Fenny' ? 'text-red-500' : (targetCard.region === 'Analyst' ? 'text-white' : 'text-purple-500'))}>
                                 {getRegionLabel(targetCard.region, targetCard.key)}
                             </span>
                             <span className="text-gray-600">|</span>
-                            <span className="text-blue-400">{getTypeLabel(targetCard.isChampion)}</span>
+                            <span className="text-blue-400">{getTypeLabel(targetCard)}</span>
                             {/* [新增] 等级标识 */}
                             {targetCard.isChampion && (
                                 <>
@@ -658,7 +689,22 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                 </div>
                             </>
                         ) : (
-                            <div className="text-sm font-mono text-gray-500 tracking-widest px-8">SPELL CARD</div>
+                            (() => {
+                                const speed = getSpellSpeedInfo(targetCard.type);
+                                return speed ? (
+                                    <div className="flex items-center gap-3 px-4">
+                                        <div className="w-12 h-12 rounded-full bg-black/40 border border-white/10 flex items-center justify-center shadow-lg">
+                                            {speed.icon}
+                                        </div>
+                                        <div className="flex flex-col items-start">
+                                            <span className={`text-2xl font-black tracking-widest ${speed.color}`}>{speed.label}</span>
+                                            <span className="text-[10px] text-gray-500 font-bold tracking-widest">{speed.desc}</span>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-sm font-mono text-gray-500 tracking-widest px-8">SPELL CARD</div>
+                                );
+                            })()
                         )}
                     </div>
 
@@ -701,7 +747,8 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                 "{targetCard.name.includes('里芙') ? '此牌打击 2 次。' :
                                  (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 10。' :
                                  (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 3 次' :
-                                 (targetCard.name.includes('猫汐尔 莲驱') ? '召唤师和召唤衍生物累计造成30点伤害' :'满足特定条件。')))}"
+                                 (targetCard.name.includes('猫汐尔 莲驱') ? '召唤师和召唤衍生物累计造成30点伤害' :
+                                 (targetCard.name.includes('安卡希雅 时之重奏') ? '我方打出“朔望之期”' :'满足特定条件。'))))}"
                             </p>
                         </div>
                     )}

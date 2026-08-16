@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import type { Keyword } from '../types';
 import { KEYWORD_DB } from '../data/keywords';
+import { subscribeScoutState, getScoutState } from './KeywordEffects'; // [侦察] 攻击宣言期状态
 
 interface KeywordTrayProps {
     keywords: Keyword[];
@@ -24,6 +25,9 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     // [冻结] 入场动画状态机：首次激活时播放旋转入场，完成后切换至呼吸
     const [frostEntryDone, setFrostEntryDone] = useState(false);
 
+    // [侦察] 订阅攻击宣言期侦察状态（仅攻击的侦察单位图标响应）
+    const scoutState = useSyncExternalStore(subscribeScoutState, getScoutState);
+
     // [能力] 手牌中不显示能力图标
     if (keyword === 'Ability' && !isOnBoard) return null;
 
@@ -34,7 +38,7 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     let isActive = false;
     let glowColor = '';
     // [新增] 加入 shield (护盾) 类型
-    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'tough_breath' | 'frost_thaw' | 'none' = 'none';
+    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'tough_breath' | 'frost_thaw' | 'scout_scan' | 'scout_invalid' | 'none' = 'none';
 
     // [新增] 最高优先级：瞬息阵亡谢幕拦截！
     if (animState === 'ephemeral_dying' && keyword === 'Ephemeral') {
@@ -58,16 +62,16 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
         glowColor = 'rgba(6, 182, 212, 0.6)'; // 青蓝光
         animType = 'titan_breath';
     }
-    // [能力] 呼吸灯：在场上时未耗尽的能力图标保持金色呼吸，耗尽时靠 isDepleted 变灰
+    // [能力] 呼吸灯：在场上时未耗尽的能力图标保持蓝色呼吸，耗尽时靠 isDepleted 变灰
     else if (keyword === 'Ability' && isOnBoard && !isDepleted) {
         isActive = true;
-        glowColor = 'rgba(59, 130, 246, 0.8)'; // 金色统一光效
+        glowColor = 'rgba(59, 130, 246, 0.8)'; // 蓝色统一光效
         animType = 'ability_breath';
     }
     // [光环] 常亮灯：在场上时始终保持柔和光效，永不暗淡
     else if (keyword === 'Aura' && isOnBoard) {
         isActive = true;
-        glowColor = 'rgba(168, 85, 247, 0.7)'; // 紫色光环
+        glowColor = 'rgba(147, 197, 253, 0.7)'; // 淡蓝光环（与卡面淡蓝圣洁光环一致）
         animType = 'aura_constant';
     }
     // [充能] 场上淡蓝呼吸：未黯淡时保持蓄能感
@@ -111,6 +115,15 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
         isActive = true;
         glowColor = 'rgba(190, 143, 17, 0.85)'; // 金琥珀色
         animType = 'tough_breath';
+    }
+
+    // [侦察] 战斗区进攻：active=有效（翠绿旋转）/ invalid或null=无效（灰白停转）
+    if (keyword === 'Scout' && isAttacking) {
+        if (scoutState === 'active') {
+            isActive = true; glowColor = 'rgba(16, 185, 129, 0.8)'; animType = 'scout_scan';
+        } else {
+            isActive = true; glowColor = 'rgba(156, 163, 175, 0.9)'; animType = 'scout_invalid';
+        }
     }
 
     // 进攻类词条激活判断
@@ -265,7 +278,7 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
             ],
             transition: { duration: 2.5, repeat: Infinity, ease: "easeInOut" }
         },
-        // [光环] 紫色常亮灯：稳定柔和光晕，不做缩放
+        // [光环] 淡蓝常亮灯：稳定柔和光晕，不做缩放
         active_aura_constant: {
             scale: 1,
             filter: [
@@ -337,6 +350,28 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
                 repeat: Infinity,
                 ease: "easeOut"
             }
+        },
+        // [侦察] 有效：常驻缓慢左右旋转（不缩放、不改变透明度）
+        active_scout_scan: {
+            scale: 1,
+            opacity: 1,
+            rotate: [-12, 12, -12],
+            filter: [
+                `brightness(1) drop-shadow(0px 0px 3px ${glowColor})`,
+                `brightness(1.15) drop-shadow(0px 0px 10px ${glowColor})`,
+                `brightness(1) drop-shadow(0px 0px 3px ${glowColor})`,
+            ],
+            transition: { duration: 3, repeat: Infinity, ease: "easeInOut" }
+        },
+        // [侦察] 无效：黑白滤镜常驻（不旋转、不缩放、不改变透明度）
+        active_scout_invalid: {
+            scale: 1,
+            opacity: 1,
+            rotate: 0,
+            filter: [
+                `grayscale(1) brightness(1.1) drop-shadow(0px 0px 2px rgba(156,163,175,0.4))`,
+            ],
+            transition: { duration: 0.3 }
         }
     };
 

@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react';
 import type { CardData, GameState } from '../types';
 import { canAffordCard } from '../utils/gameRules';
 import { evaluate } from '../logic/aiSpellStrategies';
+import { resolveAIConfig } from '../data/aiDifficulty';
+import type { AIDifficultyLevel, AIDifficultyConfig } from '../data/aiDifficulty';
+import type { EnemyArchetype } from '../data/enemies/archetypes';
 
 type AIProps = {
     game: GameState;
@@ -12,13 +15,19 @@ type AIProps = {
     actions: any;
     setMessage: (msg: string) => void;
     disabled?: boolean; // ★ 教程模式禁用AI自动行动
+    difficulty?: AIDifficultyLevel; // [2026-08-06] AI 难度档位（默认 normal）
+    personality?: EnemyArchetype['aiPersonality']; // [2026-08-06] AI 流派性格（默认 balanced）
 };
 
-export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, actions, setMessage, disabled = false }: AIProps) => {
+export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, actions, setMessage, disabled = false, difficulty = 'normal', personality = 'balanced' }: AIProps) => {
     // [修改] 将 playerBench 加入 Ref
     const stateRef = useRef({ game, enemyHand, enemyBench, playerBench, combatField });
     // [新增] 法术冷却标记：刚打出法术后跳过一轮判断，防止 async commitSpell 期间重复施法
     const spellCooldownRef = useRef(false);
+    // [2026-08-06] 解析最终生效的 AI 参数（难度 × 性格）
+    const aiConfig: AIDifficultyConfig = resolveAIConfig(difficulty, personality);
+    const aiConfigRef = useRef(aiConfig);
+    aiConfigRef.current = aiConfig;
 
     // 实时更新 Ref
     useEffect(() => {
@@ -66,12 +75,20 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 }
 
                 setMessage("敌方正在思考格挡...");
+                const cfg = aiConfigRef.current;
 
                 // 1. 获取所有待分配的阻挡者 (复制一份备战席)
                 let availableBlockers = bench.filter((c: CardData) => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying');
                 // 2. 创建新的战场状态 (复制一份当前战场)
                 const newCombatField = field.map(f => ({ ...f }));
                 // 3. 玩家备战席 (用于判断威胁? 这里主要是处理 field 里的 attacker)
+
+                // [2026-08-06 莉莉子 格挡增强] 致命伤害预防：
+                // 计算敌方（玩家）本回合总潜在伤害，判断是否对我方水晶构成致命威胁。
+                // 威胁感知高的困难 AI 会优先格挡高攻进攻者防止被杀；
+                // 简单 AI（threatAwareness 低）可能漏判，放血水过去。
+                const lethalThreat = g.enemyNexus <= field.reduce((s, f) => s + (f.attacker?.power || 0), 0);
+                const cfg_threatAware = cfg.threatAwareness >= 0.6;
 
                 // 遍历每一个战斗槽位进行决策
                 newCombatField.forEach((fight) => {
@@ -180,7 +197,15 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                                 chosenBlocker = sacrificeCandidates.sort((a, b) => a.cost - b.cost || a.health - b.health)[0];
                             }
                         }
-                        // 4. 如果以上都不满足 (会死，且不满足价值公式，且不致死) -> 不格挡，脸接伤害
+                        // 4. 如果以上都不满足 (会死，且不满足价值公式)
+                        // [2026-08-06 莉莉子 格挡增强] 致命威胁兜底：若本回合不挡就会水晶被爆，
+                        // 威胁感知高的 AI 即使亏也强行填旋阻挡，保水晶优先
+                        if (!chosenBlocker && lethalThreat && cfg_threatAware) {
+                            // 从牺牲候选人里强制选一个填旋（哪怕纯止损）
+                            const lastResort = [...sacrificeCandidates].sort((a, b) => (a.health || 0) - (b.health || 0))[0];
+                            if (lastResort) chosenBlocker = lastResort;
+                        }
+                        // 否则不格挡，脸接伤害
                     }
 
                     // 如果选中了阻挡者
@@ -260,7 +285,11 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                             // ⚠️ 每个法术独立 try-catch，一个挂了不影响其他
                             try {
                                 const { playerBench: pBench } = stateRef.current;
-                                const result = evaluate(spell, g, bench, pBench, hand);
+                                const result = evaluate(spell, g, bench, pBench, hand, {
+                                    conservation: aiConfigRef.current.conservation,
+                                    mistakeRate: aiConfigRef.current.mistakeRate,
+                                    planningDepth: aiConfigRef.current.planningDepth,
+                                });
                                 const adjustedScore = result.shouldPlay ? (result.score + (spell.ai?.priority ?? 0) * 5) : 0;
                                 console.log(`[AI-SPELL]   🔍 ${spell.key}(${spell.name}) → shouldPlay=${result.shouldPlay} score=${adjustedScore} debug="${result.debug}" targets=`, result.targets);
                                 return { spell, result, adjustedScore };
@@ -319,7 +348,15 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 // 3. 尝试发起进攻
                 if (g.attackToken.enemy && bench.length > 0) {
                     const { playerBench: pBench } = stateRef.current;
+                    const cfg = aiConfigRef.current;
                     const attackers: CardData[] = [];
+
+                    // [2026-08-06] 斩杀线检测：敌方水晶已在所有攻击者总攻击力之下 → 困难AI全力进攻
+                    // 简单AI可能忽略（mistakeRate 高），难度越高越重视斩杀
+                    const totalPow = bench
+                        .filter(u => !u.isDead && (u.power || 0) > 0 && !u.keywords.includes('CantAttack'))
+                        .reduce((s, u) => s + (u.power || 0), 0);
+                    const lethalReachable = totalPow >= g.playerNexus;
 
                     bench.forEach(unit => {
                         if (unit.isDead || unit.animState === 'dying' || unit.animState === 'ephemeral_dying') return;
@@ -349,7 +386,21 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                             return canKillAttacker && willSurvive;
                         });
 
+                        // [2026-08-06 莉莉子 进攻增强] 换子收益评估：即使是"会被白吃"的单位，
+                        // 若攻击力≥敌方单位生命（换子不亏）或攻击力>敌方水晶剩余（斩杀价值）也值得进攻。
+                        // 难度越高（planningDepth 高、aggression 高），越愿意承担风险换价值。
+                        const tradeValue = isSuicide ? pBench.filter(b => b.power >= unit.health && b.health <= unit.power).length : 0;
+
                         if (!isSuicide) {
+                            attackers.push(unit);
+                        } else if (lethalReachable && cfg.aggression >= 0.7) {
+                            // 可斩杀时，高侵略性的困难 AI 愿意全压进攻（即使会被换）
+                            attackers.push(unit);
+                        } else if (tradeValue > 0 && cfg.aggression >= 0.8) {
+                            // 换子不亏（能拼掉对方至少一个），极端进攻型的 AI 也愿意打
+                            attackers.push(unit);
+                        } else if (Math.random() < cfg.mistakeRate) {
+                            // 简单 AI 的失误：本来该缩的也瞎冲
                             attackers.push(unit);
                         }
                     });

@@ -1,9 +1,54 @@
 import type { CardData, GameState, Keyword, Race } from '../types'; // [修改] 新增 Keyword 的引入
 import { EFFECT_DB } from '../data/effectRegistry';
-import { createCard } from '../data/cards';
+import { createCard, CARD_DB } from '../data/cards';
 import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand } from '../utils/gameRules'; // [新增] 引入牌库BUFF
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { applyFrostbite, getPower } from './keywords'; // [新增] 引入绝对零度处理器 & 真实攻击力函数
+import { applyFrostbite, getPower, executeTitanPulse } from './keywords'; // [新增] 引入绝对零度处理器 & 真实攻击力函数 & 泰坦脉冲
+
+// ==========================================
+// [2026-08-15 莉莉子] 泰坦降临·预算均衡拆分（程重定义设计）
+// 把燃尽值（费用预算）随机拆成一组泰坦费用块，满足：
+//   ① 总费用 恒 = budget（预算）
+//   ② 块数 ≤ maxCount（场上空位兜底）
+//   ③ 偏向均衡：平均单块费用接近 targetAvg(2.5) 的组合权重更高
+//      （2+2 / 1+3 这类中间态更常出，4×1 或单个大费这类极端组合概率低）
+// 例：预算2 → [1,1] 或 [2]；预算4 → [1,1,1,1] / [2,2] / [1,3] / [4] 等
+// ==========================================
+const buildBalancedBurnoutSplit = (budget: number, maxCount: number, availCosts: number[]): number[] => {
+    if (budget <= 0 || maxCount <= 0 || availCosts.length === 0) return [];
+    const maxCost = Math.max(...availCosts);
+    const splits: number[][] = [];
+    const backtrack = (remaining: number, parts: number[], minIdx: number) => {
+        if (remaining === 0) { splits.push([...parts]); return; }
+        if (parts.length >= maxCount) return;
+        for (let i = minIdx; i < availCosts.length; i++) {
+            const c = availCosts[i];
+            if (c > remaining) continue;
+            const remainParts = maxCount - parts.length - 1;
+            if (remaining - c > remainParts * maxCost) continue; // 剩余块容量不够
+            parts.push(c);
+            backtrack(remaining - c, parts, i);
+            parts.pop();
+        }
+    };
+    backtrack(budget, [], 0);
+    if (splits.length === 0) return [];
+    // 偏向均衡：平均单块费用接近 targetAvg 的组合权重更高（高斯加权）
+    const targetAvg = 2.5;
+    const sigma = 0.9;
+    const weights = splits.map(s => {
+        const avg = budget / s.length;
+        const d = (avg - targetAvg) / sigma;
+        return Math.exp(-d * d);
+    });
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = Math.random() * total;
+    for (let i = 0; i < splits.length; i++) {
+        roll -= weights[i];
+        if (roll <= 0) return splits[i];
+    }
+    return splits[splits.length - 1];
+};
 
 /**
  * 上下文接口：描述执行法术时所需的全部游戏状态
@@ -50,6 +95,37 @@ export interface EffectParams {
     spellDamageBuff?: number;    // 法术增伤光环数值
     triggerOnPlay?: boolean;     // 从手牌召唤时是否触发入场效果
     cardTypeFilter?: 'unit' | 'spell'; // 手牌选择过滤
+    // [2026-08-05 莉莉子] 燃尽召唤 / 无效化参数
+    useBurnout?: boolean;        // 燃尽：消耗全部法力后按燃尽值召唤泰坦（法术12）
+    negateAllEnemies?: boolean;  // NEGATE：无效化堆叠中所有敌方法术（法术8）
+    stackCostBelow?: number;     // SPELL_ON_STACK 目标费用上限（不含，法术6）
+    stackSpeedFilter?: string[]; // SPELL_ON_STACK 目标速度白名单（法术6/7）
+    // [2026-08-06 莉莉子] 接口字段补齐：历史效果新增参数统一登记
+    generateKey?: string;        // 生成卡牌 Key
+    placeOnTop?: boolean;        // 检索/生成目标放牌库顶
+    maxCost?: number;            // 费用上限过滤
+    sacrificeValue?: number;     // 献祭/自损数值
+    targetAllUnits?: boolean;    // 全场单位 AOE（含双方）
+    targetAllAllies?: boolean;   // 全体友方
+    targetAllEnemies?: boolean;  // 全体敌方
+    targetCombatOnly?: boolean;  // 仅交战区
+    targetEnemyNexus?: boolean;  // 目标敌方水晶
+    targetFilter?: string;       // 目标过滤暗号
+    allAlliesBuff?: { power?: number; health?: number };     // 全体友方增益
+    allEnemiesDebuff?: { power?: number; health?: number };  // 全体敌方削弱
+    ownerSide?: boolean;         // Buff 侧别（默认己方）
+    buffTag?: string;            // Buff 标签
+    everywhere?: boolean;        // 各处传染
+    removeKeywords?: string[];   // 移除关键词
+    returnToHand?: boolean;      // 撤回回手牌
+    freezeAllEnemies?: boolean;  // 冻结全体敌方
+    calibrateCount?: number;     // 校准选牌数量
+    count?: number;              // 通用数量
+    targetType?: string;         // 目标类型
+    grantMaxMana?: boolean;      // 授予最大法力
+    useDiscardCount?: boolean;   // 亡语弃牌计数
+    reduceCostIfDuplicate?: boolean; // 手牌重复减费
+    nexusFallback?: boolean;     // 无合法目标时回退水晶
 }
 
 /**
@@ -223,6 +299,42 @@ export const processEffect = (
         case 'STRIKE': {
             // 法术打击逻辑
 
+            // A0.3 [2026-08-05 莉莉子 法术1] 双方全场清场：对场上所有单位（双方备战席+交战区）造成伤害
+            // 999 伤害远超生命上限 → 走标准死亡流程（judgeLifeAndDeath），无需额外处决逻辑
+            if (effect.params.value && effect.params.targetAllUnits) {
+                const dmg = effect.params.value;
+                const dealDamage = (c: CardData): CardData => {
+                    let result: CardData = c;
+                    if (result.keywords.includes('Barrier') && dmg > 0) {
+                        events.push({ type: 'sfx_shield_break', payload: null });
+                        result.depletedKeywords = [...(result.depletedKeywords || []), 'Barrier'];
+                        result.animState = 'hit';
+                    } else {
+                        let actualDmg = dmg;
+                        if (result.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
+                        if (actualDmg > 0) {
+                            events.push({ type: 'unit_damage', payload: { id: result.id, amount: actualDmg } });
+                            result.damageTaken = (result.damageTaken || 0) + actualDmg;
+                            result.animState = 'hit';
+                        }
+                    }
+                    return result;
+                };
+                // 双方备战席
+                nextPlayerBench = nextPlayerBench.map(dealDamage);
+                nextEnemyBench = nextEnemyBench.map(dealDamage);
+                // 双方交战区
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        let newFight = { ...fight };
+                        if (newFight.attacker) newFight.attacker = dealDamage({ ...newFight.attacker });
+                        if (newFight.blocker) newFight.blocker = dealDamage({ ...newFight.blocker });
+                        return newFight;
+                    });
+                }
+                break;
+            }
+
             // A0. 献祭打击模式（如：毁灭仪式 — 先杀友方祭品，再伤敌方）
             if (effect.params.sacrificeValue) {
                 const sacrificeTarget = finalTargets[0];
@@ -232,7 +344,7 @@ export const processEffect = (
                 // ① 献祭友方（高额伤害确保击杀）
                 const applySacrifice = (c: CardData) => ({
                     ...c,
-                    damageTaken: (c.damageTaken || 0) + effect.params.sacrificeValue,
+                    damageTaken: (c.damageTaken || 0) + (effect.params.sacrificeValue || 0),
                     animState: 'hit' as const,
                 });
                 nextPlayerBench = updateCardInList(nextPlayerBench, sacrificeTarget.id, applySacrifice);
@@ -293,20 +405,25 @@ export const processEffect = (
 
                 // 击中敌方备战席
                 const dealDamage = (c: CardData): CardData => {
-                    if (c.keywords.includes('Barrier') && dmg > 0) {
+                    let result: CardData = c;
+                    if (result.keywords.includes('Barrier') && dmg > 0) {
                         events.push({ type: 'sfx_shield_break', payload: null });
-                        c.depletedKeywords = [...(c.depletedKeywords || []), 'Barrier'];
-                        c.animState = 'hit';
-                        return c;
+                        result.depletedKeywords = [...(result.depletedKeywords || []), 'Barrier'];
+                        result.animState = 'hit';
+                    } else {
+                        let actualDmg = dmg;
+                        if (result.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
+                        if (actualDmg > 0) {
+                            events.push({ type: 'unit_damage', payload: { id: result.id, amount: actualDmg } });
+                            result.damageTaken = (result.damageTaken || 0) + actualDmg;
+                            result.animState = 'hit';
+                        }
                     }
-                    let actualDmg = dmg;
-                    if (c.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
-                    if (actualDmg > 0) {
-                        events.push({ type: 'unit_damage', payload: { id: c.id, amount: actualDmg } });
-                        c.damageTaken = (c.damageTaken || 0) + actualDmg;
-                        c.animState = 'hit';
+                    // [2026-08-05 莉莉子 法术17] 全体冻结：对每个敌人额外施加冻结
+                    if (effect.params.freezeAllEnemies === true) {
+                        result = applyFrostbite(result);
                     }
-                    return c;
+                    return result;
                 };
 
                 // [2026-07-15] 根据施法者选择敌我双方的bench
@@ -823,7 +940,6 @@ export const processEffect = (
                         const damageToAtk = getPower(defender);
 
                         const applyDamage = (c: CardData, dmg: number, didStrike: boolean) => {
-                            let nextKeywords = c.keywords;
                             let finalDmg = dmg;
 
                             // 法术单挑：屏障抵挡伤害后从关键词移除
@@ -1458,11 +1574,44 @@ export const processEffect = (
 
             const params = effect.params as EffectParams;
             const keywordsToGrant = params.keywords || [];
+            // [2026-08-05 莉莉子] 撤回 vs 召回：
+            // returnToHand = true → 撤回（单位回【手牌】，洗掉所有 BUFF）
+            // 否则 → 召回（单位回【备战席】，原行为）
+            const returnToHand = params.returnToHand === true;
 
             const applyRecallBuff = (c: CardData) => ({
                 ...c,
                 keywords: Array.from(new Set([...c.keywords, ...keywordsToGrant]))
             });
+
+            // [2026-08-05 莉莉子] 撤回回手牌：洗掉所有 BUFF，生成干净模板（保留当前费用）
+            const toHandCard = (c: CardData): CardData => {
+                const clean = createCard(c.key);
+                return { ...clean, cost: c.cost };
+            };
+
+            // [2026-08-05 莉莉子] 撤回去向：按目标归属方回对应手牌；手牌满(≥10)视作抽卡爆牌销毁
+            const sendToHand = (unit: CardData, unitOwner: 'player' | 'enemy') => {
+                const handCard = toHandCard(unit);
+                const handLimit = 10;
+                if (unitOwner === 'player') {
+                    if (nextPlayerHand.length < handLimit) {
+                        nextPlayerHand = [...nextPlayerHand, handCard];
+                        events.push({ type: 'sfx_generate', payload: handCard });
+                    } else {
+                        events.push({ type: 'shatter', payload: unit });
+                        console.log(`[撤回] 手牌已满，${unit.name} 视作抽卡爆牌销毁`);
+                    }
+                } else {
+                    if (nextEnemyHand.length < handLimit) {
+                        nextEnemyHand = [...nextEnemyHand, handCard];
+                        events.push({ type: 'sfx_generate', payload: handCard });
+                    } else {
+                        events.push({ type: 'shatter', payload: unit });
+                        console.log(`[撤回] 敌方手牌已满，${unit.name} 视作抽卡爆牌销毁`);
+                    }
+                }
+            };
 
             // 检查目标是否在交战区
             if (nextCombatField) {
@@ -1475,6 +1624,11 @@ export const processEffect = (
                     // 赋予屏障等 buff
                     recalledUnit = applyRecallBuff(recalledUnit);
 
+                    // 归属方：攻击者归 fight.owner，阻挡者归对侧
+                    const unitOwner = isAttacker
+                        ? fight.owner
+                        : (fight.owner === 'player' ? 'enemy' : 'player');
+
                     // 从交战区拔除
                     if (isAttacker) {
                         nextCombatField.splice(combatIdx, 1); // 攻击者撤退，这一路交锋直接取消
@@ -1483,20 +1637,44 @@ export const processEffect = (
                         nextCombatField[combatIdx] = { ...fight, blocker: null, isGhostBlocked: true } as any;
                     }
 
-                    // 放回对应的备战席
-                    const bench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
-                    bench.push(recalledUnit);
-
-                    events.push({ type: 'sfx_recall_block', payload: null });
-                    events.push({ type: 'sfx_buff', payload: null });
+                    if (returnToHand) {
+                        // 撤回 → 回对应手牌（洗 buff；手牌满爆牌）
+                        sendToHand(recalledUnit, unitOwner);
+                        events.push({ type: 'sfx_recall_block', payload: null });
+                    } else {
+                        // 召回 → 回对应方备战席（原行为）
+                        const bench = unitOwner === 'player' ? nextPlayerBench : nextEnemyBench;
+                        bench.push(recalledUnit);
+                        events.push({ type: 'sfx_recall_block', payload: null });
+                        events.push({ type: 'sfx_buff', payload: null });
+                    }
                     break;
                 }
             }
 
-            // 如果不在交战区，就在原地赋予屏障
-            nextPlayerBench = updateCardInList(nextPlayerBench, target.id, applyRecallBuff);
-            nextEnemyBench = updateCardInList(nextEnemyBench, target.id, applyRecallBuff);
-            events.push({ type: 'sfx_buff', payload: null });
+            // 目标不在交战区 → 查找备战席
+            const playerIdx = nextPlayerBench.findIndex(c => c.id === target.id);
+            const enemyIdx = nextEnemyBench.findIndex(c => c.id === target.id);
+            const benchOwner = playerIdx >= 0 ? 'player' : (enemyIdx >= 0 ? 'enemy' : null);
+
+            if (benchOwner) {
+                const idx = benchOwner === 'player' ? playerIdx : enemyIdx;
+                const benchUnit = applyRecallBuff(benchOwner === 'player' ? nextPlayerBench[idx] : nextEnemyBench[idx]);
+
+                if (returnToHand) {
+                    // 撤回备战席单位 → 从备战席移除 → 回对应手牌
+                    if (benchOwner === 'player') nextPlayerBench = nextPlayerBench.filter(c => c.id !== target.id);
+                    else nextEnemyBench = nextEnemyBench.filter(c => c.id !== target.id);
+                    sendToHand(benchUnit, benchOwner);
+                } else {
+                    // 召回：目标在备战席时原行为 = 原地赋予屏障
+                    // [2026-08-08 莉莉子修复] 把带屏障的副本写回备战席（此前创建 benchUnit 后即丢弃，屏障从未真正生效）
+                    if (benchOwner === 'player') nextPlayerBench = nextPlayerBench.map(c => c.id === target.id ? benchUnit : c);
+                    else nextEnemyBench = nextEnemyBench.map(c => c.id === target.id ? benchUnit : c);
+                    events.push({ type: 'sfx_buff', payload: null });
+                }
+            }
+
             break;
         }
 
@@ -1606,6 +1784,27 @@ export const processEffect = (
                 }
             }
 
+            // [2026-08-06 莉莉子 法术19] 本回合飞剑 ≥4 → 手牌中"法术19"费用-2（本回合生效，绿色标记）
+            const fsCountThisRound = context.owner === 'player'
+                ? nextGame.playerRoundFlyingSwords
+                : nextGame.enemyRoundFlyingSwords;
+            if ((fsCountThisRound || 0) >= 4) {
+                const spell19Hand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+                for (let hi2 = 0; hi2 < spell19Hand.length; hi2++) {
+                    if (spell19Hand[hi2].key === 'temp_spell_19') {
+                        const target19 = { ...spell19Hand[hi2] };
+                        // 未减过费（bit2 未置位）才减，避免多次召唤飞剑重复减费
+                        if (!((target19.customProgress || 0) & 2)) {
+                            const oldCost19 = target19.cost || 0;
+                            target19.cost = Math.max(0, oldCost19 - 2);
+                            target19.customProgress = (target19.customProgress || 0) | 2; // 绿色费用标记
+                            spell19Hand[hi2] = target19;
+                            console.log(`[法术19] 本回合飞剑${fsCountThisRound}≥4 → ${target19.name}费用 ${oldCost19}→${target19.cost}`);
+                        }
+                    }
+                }
+            }
+
             // [玛格丽特] 进攻时额外点亮 Channel 充能：重置黯淡 + 获得 1 法术法力
             if (effect.id === 'effect_sacred_tree_margaret') {
                 const margBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
@@ -1660,7 +1859,13 @@ export const processEffect = (
 
                 const targetBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
 
+                // [LILITH-DEBUG] 镜爻卜卜复制排查：记录每次克隆召唤的落点
+                if (cardKey === 'Mirror_pupu') {
+                    console.log(`[LILITH-DEBUG][CLONE] 触发! source=${context.sourceCard.key}(${context.sourceCard.name}) owner=${context.owner} zone=${zone} combatLen=${nextCombatField ? nextCombatField.length : 'undefined'} benchLen=${targetBench.length} phase=${context.game?.phase}`);
+                }
+
                 // 3. 空降逻辑 (完美复用 SUMMON 的安全气囊机制)
+                // [2026-08-16 莉莉子] 镜爻卜卜特殊处理：去除安全气囊——交战区无空位直接不召唤（不回退备战席）
                 if (zone === 'combat' && nextCombatField) {
                     if (nextCombatField.length < 6) {
                         nextCombatField.push({
@@ -1669,7 +1874,13 @@ export const processEffect = (
                             owner: context.owner
                         });
                         events.push({ type: 'summon_combat', payload: clonedCard });
+                        if (cardKey === 'Mirror_pupu') console.log(`[LILITH-DEBUG][CLONE] → 落点: 交战区 (len=${nextCombatField.length})`);
                     }
+                    else if (cardKey === 'Mirror_pupu') {
+                        // 镜爻卜卜：战场（交战区）已满 → 直接不召唤
+                        console.log(`[EffectProcessor] CLONE_AND_SUMMON 镜爻卜卜：交战区已满（${nextCombatField.length}/6），直接不召唤。`);
+                    }
+                    // 其他克隆（如肉鸽暗影双生）保持原有安全气囊：交战区满 → 回退备战席
                     else if (targetBench.length < 6) {
                         targetBench.push({ ...clonedCard, animState: 'summoning' });
                         events.push({ type: 'summon', payload: clonedCard });
@@ -1678,6 +1889,7 @@ export const processEffect = (
                     if (targetBench.length < 6) {
                         targetBench.push({ ...clonedCard, animState: 'summoning' });
                         events.push({ type: 'summon', payload: clonedCard });
+                        if (cardKey === 'Mirror_pupu') console.log(`[LILITH-DEBUG][CLONE] → 落点: 备战席 (zone=${zone} 非 combat)`);
                     }
                 }
             } else {
@@ -1927,6 +2139,10 @@ export const processEffect = (
                             });
                             events.push({ type: 'summon_combat', payload: newCard });
                         }
+                        // [2026-08-16 莉莉子] 镜爻特殊处理：去除安全气囊——交战区无空位直接不召唤（不回退备战席/退手牌）
+                        else if (newCard.key === 'Mirror') {
+                            console.log(`[Summon] 镜爻：交战区已满（${nextCombatField.length}/6），直接不召唤。`);
+                        }
                         // 优先级 2 (安全气囊): 交战区已满，退格空降到备战席
                         else if (targetBench.length < 6) {
                             console.log(`[Summon] 交战区已满，${newCard.name} 退格召唤至备战席。`);
@@ -2035,7 +2251,9 @@ export const processEffect = (
                 if (target.type === 'player_nexus' || target.type === 'enemy_nexus') {
                     const isPlayer = target.type === 'player_nexus';
                     const currentHP = isPlayer ? nextGame.playerNexus : nextGame.enemyNexus;
-                    const actualHeal = Math.min(NEXUS_MAX_HP - currentHP, amount);
+                    // [2026-08-11] 玩家水晶回血上限跟随 playerNexusMax（肉鸽=run.maxHp，真衔接必需），敌方仍固定 20
+                    const nexusMax = isPlayer ? (nextGame.playerNexusMax ?? NEXUS_MAX_HP) : NEXUS_MAX_HP;
+                    const actualHeal = Math.min(nexusMax - currentHP, amount);
 
                     if (actualHeal > 0) {
                         if (isPlayer) {
@@ -2815,6 +3033,283 @@ export const processEffect = (
 
             events.push({ type: 'calibrate_start', payload: { count: drawnCards.length } });
             console.log(`[Calibrate] 从 ${deck.length} 张牌库中抽出 ${drawnCards.length} 张，等待玩家选择`);
+            break;
+        }
+
+        // =====================================
+        // [2026-08-05 莉莉子] 泰坦脉冲 (TITAN_PULSE)
+        // 法术4：立刻触发我方所有单位的泰坦脉冲（复用 executeTitanPulse）
+        // =====================================
+        case 'TITAN_PULSE': {
+            const isPlayer = context.owner === 'player';
+            // executeTitanPulse 第一参=己方板，第二参=敌方板（用于统计全场泰坦数）
+            const pulseResult = executeTitanPulse(
+                isPlayer ? nextPlayerBench : nextEnemyBench,
+                isPlayer ? nextEnemyBench : nextPlayerBench
+            );
+            nextPlayerBench = isPlayer ? pulseResult.playerBoard : pulseResult.enemyBoard;
+            nextEnemyBench = isPlayer ? pulseResult.enemyBoard : pulseResult.playerBoard;
+
+            if (pulseResult.pulsedUnits > 0) {
+                events.push({ type: 'titan_pulse', payload: { pulsedUnits: pulseResult.pulsedUnits, pulseAmount: pulseResult.pulseAmount } });
+            }
+
+            // 消费脉冲副效果事件（乙型扫射 random_barrage / 盖弥尔全场AOE aoe_damage）
+            // 简化实现：直接对敌方单位造成伤害（屏障拦截 + 坚韧减伤 + 标准受击事件）
+            for (const evt of pulseResult.events) {
+                const victimBoard = evt.owner === 'player' ? nextEnemyBench : nextPlayerBench;
+                const applyDmg = (c: CardData): CardData => {
+                    let dmg = evt.params.damage || 0;
+                    let nc = { ...c };
+                    if (nc.keywords.includes('Barrier') && dmg > 0) {
+                        events.push({ type: 'sfx_shield_break', payload: null });
+                        nc.depletedKeywords = [...(nc.depletedKeywords || []), 'Barrier'];
+                        nc.animState = 'hit' as const;
+                        dmg = 0;
+                    }
+                    if (nc.keywords.includes('Tough') && dmg > 0) {
+                        dmg = Math.max(0, dmg - 1);
+                    }
+                    if (dmg > 0) {
+                        events.push({ type: 'unit_damage', payload: { id: nc.id, amount: dmg } });
+                        nc.damageTaken = (nc.damageTaken || 0) + dmg;
+                        nc.animState = 'hit' as const;
+                    }
+                    return nc;
+                };
+
+                if (evt.type === 'random_barrage') {
+                    // 随机扫射：N 发，每发命中一个随机存活敌方单位
+                    const validIds = victimBoard
+                        .filter(c => !c.isDead && (c.damageTaken || 0) < c.maxHealth)
+                        .map(c => c.id);
+                    for (let i = 0; i < (evt.params.shots || 0) && validIds.length > 0; i++) {
+                        const pick = validIds[Math.floor(Math.random() * validIds.length)];
+                        if (evt.owner === 'player') {
+                            nextEnemyBench = updateCardInList(nextEnemyBench, pick, applyDmg);
+                        } else {
+                            nextPlayerBench = updateCardInList(nextPlayerBench, pick, applyDmg);
+                        }
+                    }
+                } else if (evt.type === 'aoe_damage') {
+                    // 全场AOE：对敌方所有单位造成伤害
+                    const allIds = victimBoard.map(c => c.id);
+                    for (const id of allIds) {
+                        if (evt.owner === 'player') {
+                            nextEnemyBench = updateCardInList(nextEnemyBench, id, applyDmg);
+                        } else {
+                            nextPlayerBench = updateCardInList(nextPlayerBench, id, applyDmg);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+
+        // =====================================
+        // [2026-08-05 莉莉子] 泰坦点亮 (TITAN_RELIGHT)
+        // 法术3：再次点亮我方所有泰坦单位的关键词（移除黯淡）
+        // =====================================
+        case 'TITAN_RELIGHT': {
+            const isPlayer = context.owner === 'player';
+            const relight = (c: CardData): CardData => {
+                if (!c.keywords.includes('Titan')) return c;
+                if (!(c.depletedKeywords || []).includes('Titan')) return c;
+                return {
+                    ...c,
+                    depletedKeywords: (c.depletedKeywords || []).filter(k => k !== 'Titan'),
+                    animState: 'buff' as const,
+                };
+            };
+
+            // 我方备战席
+            if (isPlayer) {
+                nextPlayerBench = nextPlayerBench.map(relight);
+            } else {
+                nextEnemyBench = nextEnemyBench.map(relight);
+            }
+            // 我方交战区单位
+            if (nextCombatField) {
+                nextCombatField = nextCombatField.map(fight => {
+                    let newFight = { ...fight };
+                    const allyAttacker = fight.owner === context.owner ? newFight.attacker : null;
+                    const allyBlocker = fight.owner !== context.owner ? newFight.blocker : null;
+                    if (allyAttacker) newFight.attacker = relight({ ...allyAttacker });
+                    if (allyBlocker) newFight.blocker = relight({ ...allyBlocker });
+                    return newFight;
+                });
+            }
+
+            events.push({ type: 'titan_relight', payload: {} });
+            break;
+        }
+
+        // =====================================
+        // [2026-08-05 莉莉子] 燃尽召唤 (BURNOUT_SUMMON)
+        // 法术12「泰坦降临」：消耗全部法力，把燃尽值作为「费用预算」随机拆分召唤泰坦
+        // [2026-08-15 程重定义设计]：
+        //   - 燃尽值 = 当前法力 + 法术法力（统一定义，不除2）= 总费用预算
+        //   - 随机拆分预算为若干费用块（总费用 恒 = 预算），每块从对应费用的泰坦卡里随机选一张
+        //     例：预算1 → 1×异化人；预算2 → 2×1费 或 1×2费；预算4 → 4×1 / 2×2 / 1+3 / 1×4
+        //   - 0费衍生物（贡露·辅助无人机）天然不参与（不在预算拆分内）
+        //   - 兜底：召唤数量 ≤ 场上空位（预算4但空位3 → 绝不出4只1费，只会选≤3只的组合）
+        //   - 偏向均衡：平均单块费用接近2.5的组合更常出（程拍板）
+        // =====================================
+        case 'BURNOUT_SUMMON': {
+            const isPlayer = context.owner === 'player';
+
+            // 1. 燃尽值 = 当前法力 + 法术法力（费用预算），并清零法力
+            const budget = isPlayer
+                ? (context.game.playerMana || 0) + (context.game.playerSpellMana || 0)
+                : (context.game.enemyMana || 0) + (context.game.enemySpellMana || 0);
+            if (isPlayer) {
+                nextGame.playerMana = 0;
+                nextGame.playerSpellMana = 0;
+            } else {
+                nextGame.enemyMana = 0;
+                nextGame.enemySpellMana = 0;
+            }
+            console.log(`[BurnoutSummon] 燃尽预算=${budget}`);
+
+            if (budget <= 0) {
+                console.warn('[BurnoutSummon] 燃尽值为 0，无法召唤泰坦');
+                break;
+            }
+
+            // 2. 泰坦卡池：带 'Titan' 关键词、费用≥1 的正式单位（排除测试卡与0费衍生物）
+            const titanPool = Object.values(CARD_DB).filter(c =>
+                (c.keywords as any[])?.includes('Titan')
+                && (c.type === 'unit' || c.type?.includes('unit'))
+                && (c.cost || 0) >= 1
+                && c.key !== 'test_titan'
+            );
+            if (titanPool.length === 0) {
+                console.warn('[BurnoutSummon] 泰坦卡池为空，无法召唤');
+                break;
+            }
+
+            // 3. 按费用分组 → 可用费用集合（升序）
+            const byCost = new Map<number, CardData[]>();
+            for (const t of titanPool) {
+                const c = t.cost || 1;
+                if (!byCost.has(c)) byCost.set(c, []);
+                byCost.get(c)!.push(t as CardData); // [2026-08-15] CARD_DB 值类型缺运行时字段，断言为 CardData（后续用 createCard(key) 重建完整卡）
+            }
+            const availCosts = [...byCost.keys()].sort((a, b) => a - b);
+
+            // 4. 兜底：召唤数量 ≤ 场上空位（备战席上限 6）
+            const ownerBench = isPlayer ? nextPlayerBench : nextEnemyBench;
+            const emptySlots = Math.max(1, 6 - ownerBench.length);
+
+            // 5. 预算均衡拆分：总费用=预算、块数≤空位、偏向均衡
+            const split = buildBalancedBurnoutSplit(budget, emptySlots, availCosts);
+            if (split.length === 0) {
+                console.warn('[BurnoutSummon] 无可行的预算拆分组合，未召唤泰坦');
+                break;
+            }
+
+            // 6. 逐块召唤：每块费用 → 从对应费用的泰坦卡中随机选一张
+            let summoned = 0;
+            for (const cost of split) {
+                const options = byCost.get(cost)!;
+                const template = options[Math.floor(Math.random() * options.length)];
+                const titan = createCard(template.key);
+                ownerBench.push({ ...titan, animState: 'summoning' });
+                events.push({ type: 'summon', payload: titan });
+                summoned++;
+                console.log(`[BurnoutSummon] 召唤 ${titan.name}（费${titan.cost}）`);
+            }
+            events.push({ type: 'burnout_summon', payload: { burnout: budget, summoned, split } });
+            break;
+        }
+
+        // =====================================
+        // [2026-08-05 莉莉子] 无效化 (NEGATE)
+        // 法术8：无效化堆叠中所有敌方法术（纯逻辑，无需目标选择）
+        // 法术6/7 复用：targetRequirements 带 SPELL_ON_STACK 目标，走 finalTargets 选单个法术
+        // =====================================
+        case 'NEGATE': {
+            const myOwner = context.owner;
+            const stack = nextGame.spellStack || [];
+
+            // 1. 定位要无效化的法术：
+            //    - 法术8（negateAllEnemies）：堆叠中所有敌方法术
+            //    - 法术6/7（SPELL_ON_STACK 目标）：finalTargets[0].spellId 指向的单个堆叠法术
+            let toNegate: { card: CardData; owner: 'player' | 'enemy' }[] = [];
+            if (effect.params.negateAllEnemies) {
+                toNegate = stack.filter(s => s.owner !== myOwner);
+            } else if (finalTargets.length > 0 && finalTargets[0].spellId) {
+                const targetSpell = stack.find(s => s.card.id === finalTargets[0].spellId);
+                if (targetSpell) toNegate = [targetSpell];
+            }
+
+            if (toNegate.length > 0) {
+                const negatedIds = new Set(toNegate.map(s => s.card.id));
+                nextGame.spellStack = stack.filter(s => !negatedIds.has(s.card.id));
+                events.push({ type: 'spell_negated', payload: toNegate.map(s => s.card.name) });
+                console.log(`[NEGATE] ${effect.id} 无效化 ${toNegate.length} 个法术：${toNegate.map(s => s.card.name).join('、')}`);
+            } else {
+                console.log(`[NEGATE] 堆叠中没有可无效化的法术`);
+            }
+            break;
+        }
+
+        // =====================================
+        // [2026-08-06 莉莉子] 复活 (RESURRECT)
+        // 法术2「瓦尔哈拉的呼唤」：复活我方本牌局死亡的最强的6个单位，全员带幻象(Ephemeral)
+        // 数据源：墓地（useGameState 的 UNIT_DIED 清算时写入 playerGraveyard/enemyGraveyard）
+        // =====================================
+        case 'RESURRECT': {
+            const myOwner = context.owner;
+            const graveyard = myOwner === 'player'
+                ? (nextGame.playerGraveyard || [])
+                : (nextGame.enemyGraveyard || []);
+
+            if (graveyard.length === 0) {
+                console.log('[Resurrect] 墓地为空，没有可复活单位');
+                break;
+            }
+
+            const count = effect.params.value || 6;
+            // 按真实攻击力(power+buffs)降序取前 N
+            const sorted = [...graveyard]
+                .sort((a, b) => getPower(b) - getPower(a))
+                .slice(0, count);
+
+            const bench = myOwner === 'player' ? nextPlayerBench : nextEnemyBench;
+            let resurrected = 0;
+            for (const dead of sorted) {
+                if (bench.length >= 6) {
+                    console.warn('[Resurrect] 备战席已满(6/6)，剩余复活单位未能入场');
+                    break;
+                }
+                // 复活：保留死亡时数值，清死亡状态，重置临时增益，附幻象(Ephemeral)
+                const revived = {
+                    ...dead,
+                    damageTaken: 0,
+                    isDead: false,
+                    animState: 'summoning' as const,
+                    buffs: { power: dead.buffs?.power || 0, health: dead.buffs?.health || 0 },
+                    roundBuffs: { power: 0, health: 0 },
+                    keywords: Array.from(new Set([...(dead.keywords || []), 'Ephemeral' as any])),
+                    depletedKeywords: [],
+                } as CardData;
+                bench.push(revived);
+                events.push({ type: 'summon', payload: revived });
+                resurrected++;
+                console.log(`[Resurrect] 复活 ${revived.name}（真实攻${getPower(revived)}）`);
+            }
+            events.push({ type: 'resurrect', payload: { count: resurrected } });
+            break;
+        }
+
+        // =====================================
+        // [2026-08-05 莉莉子] 占位效果 (PLACEHOLDER)
+        // 逻辑未实现的法术占位，安全空转。逻辑实现时替换为真实 class 并实现处理器。
+        // =====================================
+        case 'PLACEHOLDER': {
+            // 占位效果不产生任何动作，仅记录日志
+            console.log(`[Placeholder] ${effect.id} 逻辑未实现，空转跳过`);
             break;
         }
 

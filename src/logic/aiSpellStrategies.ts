@@ -171,9 +171,9 @@ function evaluateDAMAGE(
 // ==========================================
 
 function evaluateBUFF(
-  spell: CardData,
+  _spell: CardData,
   state: GameState,
-  enemyBench: CardData[],
+  _enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
 ): AIEvaluation {
@@ -280,9 +280,9 @@ function evaluateBUFF(
 // ==========================================
 
 function evaluateRALLY(
-  spell: CardData,
+  _spell: CardData,
   state: GameState,
-  enemyBench: CardData[],
+  _enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
 ): AIEvaluation {
@@ -324,7 +324,7 @@ function evaluateRALLY(
 // ==========================================
 
 function evaluateDUEL(
-  spell: CardData,
+  _spell: CardData,
   state: GameState,
   enemyBench: CardData[],
   playerBench: CardData[],
@@ -424,7 +424,7 @@ function evaluateDUEL(
 function evaluateHEAL(
   spell: CardData,
   state: GameState,
-  enemyBench: CardData[],
+  _enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
 ): AIEvaluation {
@@ -507,8 +507,8 @@ function evaluateHEAL(
 
 function evaluateDRAW(
   spell: CardData,
-  state: GameState,
-  enemyBench: CardData[],
+  _state: GameState,
+  _enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
   enemyHand?: CardData[],
@@ -516,7 +516,6 @@ function evaluateDRAW(
   const drawCount = config.drawCount ?? 1;
   const discardCount = config.discardCount ?? 0;
   const tutorChampion = config.tutorChampion ?? false;
-  const handFullThreshold = config.handFullThreshold ?? 10;
 
   // ——— 弃牌抽牌型（暗箱操作：弃1抽2） ———
   if (discardCount > 0 && drawCount > 0) {
@@ -584,8 +583,8 @@ function evaluateDRAW(
 // ==========================================
 
 function evaluateKEYWORD_TRANSFER(
-  spell: CardData,
-  state: GameState,
+  _spell: CardData,
+  _state: GameState,
   enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
@@ -634,9 +633,9 @@ function evaluateKEYWORD_TRANSFER(
 // ==========================================
 
 function evaluateSUMMON(
-  spell: CardData,
-  state: GameState,
-  enemyBench: CardData[],
+  _spell: CardData,
+  _state: GameState,
+  _enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
 ): AIEvaluation {
@@ -682,8 +681,8 @@ function evaluateSUMMON(
 // ==========================================
 
 function evaluateSACRIFICE(
-  spell: CardData,
-  state: GameState,
+  _spell: CardData,
+  _state: GameState,
   enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
@@ -748,10 +747,10 @@ function evaluateSACRIFICE(
 // ==========================================
 
 function evaluateFROST(
-  spell: CardData,
-  state: GameState,
+  _spell: CardData,
+  _state: GameState,
   enemyBench: CardData[],
-  playerBench: CardData[],
+  _playerBench: CardData[],
   config: Record<string, any>,
 ): AIEvaluation {
   const maxPower = config.maxPower ?? 2;
@@ -789,14 +788,13 @@ function evaluateFROST(
 // ==========================================
 
 function evaluateSTRIKE(
-  spell: CardData,
-  state: GameState,
+  _spell: CardData,
+  _state: GameState,
   enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
 ): AIEvaluation {
   const strikerKey = config.strikerKey;
-  const requireOverwhelm = config.requireOverwhelm ?? false;
 
   if (!strikerKey) {
     return { shouldPlay: false, score: 0, debug: '未配置打击者(strikerKey)' };
@@ -844,11 +842,11 @@ function evaluateSTRIKE(
 // ==========================================
 
 function evaluateRECALL_AND_REPLACE(
-  spell: CardData,
-  state: GameState,
-  enemyBench: CardData[],
+  _spell: CardData,
+  _state: GameState,
+  _enemyBench: CardData[],
   playerBench: CardData[],
-  config: Record<string, any>,
+  _config: Record<string, any>,
 ): AIEvaluation {
   const aliveAllies = filterAlive(playerBench);
 
@@ -882,11 +880,11 @@ function evaluateRECALL_AND_REPLACE(
 // ==========================================
 
 function evaluateCALIBRATE(
-  spell: CardData,
-  state: GameState,
-  enemyBench: CardData[],
-  playerBench: CardData[],
-  config: Record<string, any>,
+  _spell: CardData,
+  _state: GameState,
+  _enemyBench: CardData[],
+  _playerBench: CardData[],
+  _config: Record<string, any>,
 ): AIEvaluation {
   // 校准在任何时候都有正面价值（过滤牌库），有费即可打
   return {
@@ -907,10 +905,10 @@ function evaluateCALIBRATE(
 function evaluateCHOICE(
   spell: CardData,
   state: GameState,
-  enemyBench: CardData[],
-  playerBench: CardData[],
-  config: Record<string, any>,
-  enemyHand?: CardData[],
+  _enemyBench: CardData[],
+  _playerBench: CardData[],
+  _config: Record<string, any>,
+  _enemyHand?: CardData[],
 ): AIEvaluation {
   if (!spell.choices || spell.choices.length === 0) {
     return { shouldPlay: false, score: 0, debug: '无可选子选项' };
@@ -990,6 +988,7 @@ export function evaluate(
   enemyBench: CardData[],
   playerBench: CardData[],
   enemyHand?: CardData[],
+  difficulty?: { conservation: number; mistakeRate: number; planningDepth: number },
 ): AIEvaluation {
   const aiConfig: AIConfig | undefined = spell.ai;
 
@@ -1006,5 +1005,27 @@ export function evaluate(
   // [2026-07-08 修复] 交换 bench 参数：
   // 调用方 useAI → evaluate(spell, g, bench, pBench) 中 bench=AI方, pBench=玩家方
   // 但 Handler 内约定 playerBench=己方, enemyBench=敌方 → 需要交换
-  return handler(spell, state, playerBench, enemyBench, aiConfig.config, enemyHand);
+  const result = handler(spell, state, playerBench, enemyBench, aiConfig.config, enemyHand);
+
+  // [2026-08-06 莉莉子 法术增强] 资源保存（conservation）修正：
+  // 难度越高越"憋"伤害法术——若结果只是"打水晶"（非斩杀/非解场），高保存的困难 AI 会放弃（留牌憋斩杀），
+  // 简单 AI（conservation 低）则照样乱打。此修正仅作用于纯"打水晶"的低价值动作。
+  if (difficulty && result.shouldPlay) {
+    const isPureNexusDmg =
+      result.targets?.length === 1 && result.targets[0].type === 'player_nexus' &&
+      (aiConfig.pattern === 'DAMAGE') &&
+      (result.score || 0) < 15; // 纯打水晶（低于击杀/补刀价值）
+    if (isPureNexusDmg) {
+      // 是否有足够资源保持"憋一手"的欲望：conservation 越高越不轻易打水晶
+      if (difficulty.conservation >= 0.7 && Math.random() < (difficulty.conservation - 0.4)) {
+        return { shouldPlay: false, score: 0, debug: `[${spell.key}] 资源保存：伤害法术留手，攒斩杀` };
+      }
+    }
+    // 简单 AI 失误：偶尔浪费一张本该憋的牌（mistakeRate 驱动）
+    if (difficulty.conservation < 0.4 && Math.random() < difficulty.mistakeRate && isPureNexusDmg) {
+      return { shouldPlay: true, score: result.score, debug: `[${spell.key}] 简单AI乱丢伤害` };
+    }
+  }
+
+  return result;
 }

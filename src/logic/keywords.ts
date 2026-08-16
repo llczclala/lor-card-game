@@ -1,4 +1,5 @@
 import type { CardData, GameState } from '../types';
+import { createCard } from '../data/cards'; // [2026-08-06 莉莉子] Echo 回响：生成瞬逝复制品需要重建卡牌实例
 
 /**
  * 战斗交互结果接口
@@ -429,4 +430,37 @@ export const applyChannelOnRoundStart = (cards: CardData[]): { cards: CardData[]
         return card;
     });
     return { cards: updatedCards, count };
+};
+
+// ==========================================
+// [Echo] 回响 — 打出并结算时，在手牌生成一张该牌的瞬逝复制品
+// ==========================================
+// 触发时机固定为"卡牌打出并结算后"（单位上场 / 法术结算后各接入一次）。
+// 复制品追加 Volatile（瞬逝）关键词，与 keywordDetails 中"被强制附加易碎限制"的设定一致。
+// 手牌已满（10张）时不再生成，防止爆牌。
+// ==========================================
+export interface EchoResult {
+    hand: CardData[];
+    echoedCards: CardData[]; // 本次生成的回响复制品（供调用方播放 DRAW_START 动画）
+}
+
+export const applyEchoOnPlay = (
+    sourceCard: CardData,
+    ownerHand: CardData[],
+    _owner: 'player' | 'enemy' // [2026-08-16] 未使用，下划线前缀避免 TS6133
+): EchoResult => {
+    if (!sourceCard.keywords.includes('Echo')) return { hand: ownerHand, echoedCards: [] };
+    if (ownerHand.length >= 10) {
+        console.log(`[Echo] 手牌已满，${sourceCard.name} 的回响复制品被销毁`);
+        return { hand: ownerHand, echoedCards: [] };
+    }
+
+    const copy = createCard(sourceCard.key);
+    const echoed = {
+        ...copy,
+        keywords: Array.from(new Set([...(copy.keywords || []), 'Volatile'])),
+    } as CardData;
+
+    console.log(`[Echo] ${sourceCard.name} 回响 → 手牌生成瞬逝复制品 ${echoed.name}`);
+    return { hand: [...ownerHand, echoed], echoedCards: [echoed] };
 };

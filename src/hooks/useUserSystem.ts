@@ -317,6 +317,14 @@ export const useUserSystem = () => {
         });
     };
 
+    // [2026-08-16 莉莉子] 恢复默认设置：一键重置所有设置到 DEFAULT_SETTINGS（设置面板「系统」标签页入口）
+    // [2026-08-16] DEFAULT_SETTINGS 已加 :UserSettings 注解，去掉此前 as any 类型债兜底
+    const resetSettings = () => {
+        if (!userId) return;
+        setSettings({ ...DEFAULT_SETTINGS });
+        StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, { ...DEFAULT_SETTINGS });
+    };
+
     // [核心修改] 切换档案模式
     const switchUserMode = (mode: 'full' | 'starter') => {
         const newId = mode === 'full' ? 'dev_full_admin' : `guest_${StorageUtils.generateUUID()}`; // 如果切回 guest，生成一个新的 ID
@@ -609,6 +617,7 @@ export const useUserSystem = () => {
         deleteDeck,
         selectDeck,
         updateSettings,
+        resetSettings, // [2026-08-16] 恢复默认设置
         updateProfile, // [新增] 暴露更新名片的方法
 
         purchaseCard,

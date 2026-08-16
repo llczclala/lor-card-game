@@ -24,6 +24,11 @@ export interface EnemyArchetype {
     // 肉鸽模式下，遇到这个流派时，敌人会获得这些被动
     apocalypseTags: string[];
 
+    // [2026-08-11 节点预览·预留] 肉鸽迷宫BUFF id 列表（敌人持有的迷宫BUFF）
+    // 后续在开发者工具按「迷宫深度动态难度」配置（越深入 BUFF 越多越稀有；与设置难度/AI难度/普通机密绝密无关）
+    // 当前全流派为空，预览显示「暂无迷宫BUFF」空态
+    rogueBuffs?: string[];
+
     // AI 性格倾向 (未来可用于微调 AI 权重)
     aiPersonality: 'aggressive' | 'control' | 'balanced';
 
@@ -41,6 +46,7 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: ['effect_overwhelm_aura'],
+        rogueBuffs: ['ebuff_vanguard', 'ebuff_berserk', 'ebuff_phaseshield'], // [2026-08-11 测试数据] 敌方迷宫强化库（common/rare/epic）
         aiPersonality: 'aggressive',
     },
     'lyfe_blitz': {
@@ -52,6 +58,7 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: ['effect_quick_attack_aura'],
+        rogueBuffs: ['ebuff_armor', 'ebuff_regen', 'ebuff_wrath'], // [2026-08-11 测试数据] 敌方迷宫强化库（common/rare/epic）
         aiPersonality: 'control',
     },
     'new_archetype_1780988111375': {
@@ -63,6 +70,7 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: ['ebuff_vanguard', 'ebuff_berserk', 'ebuff_phaseshield', 'ebuff_wrath', 'ebuff_immortal'], // [2026-08-11 测试数据] 敌方迷宫强化库（全档至 legendary）
         aiPersonality: 'balanced',
     },
     'new_archetype_1781936210296': {
@@ -71,6 +79,17 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         champion: '',
         description: '七个回合后，不是你死就是我亡，会赢吗？会赢的',
         coreCards: [{ key: 'destruction', count: 40 }],
+        exactDeck: true,
+        preferredPool: [],
+        apocalypseTags: [],
+        aiPersonality: 'aggressive',
+    },
+    'new_archetype_1786176839001': {
+        id: 'new_archetype_1786176839001',
+        name: '鬼影森森',
+        champion: '',
+        description: '流派描述...',
+        coreCards: [{ key: 'ghostly_shadows', count: 40 }],
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],

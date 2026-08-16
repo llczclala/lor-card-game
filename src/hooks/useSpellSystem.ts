@@ -1,16 +1,15 @@
-import { useState, MutableRefObject, Dispatch, SetStateAction } from 'react';
+import { useState } from 'react';
+import type { MutableRefObject, Dispatch, SetStateAction } from 'react';
 import type { CardData, GameState, SpellStackItem, Race } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry';
 import type { TargetType } from '../data/effectRegistry';
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { processEffect } from '../logic/effectProcessor';
-import type { EffectContext } from '../logic/effectProcessor'; // [核心修复] 严格声明这是一个类型导入
 import { executeSpellEffect } from '../logic/spells';
+import { applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
 import { CARD_DB } from '../data/cards';
 import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck } from '../utils/gameRules';
 import { StrikeEvents } from '../utils/eventBus'; // [新增] 引入全新的打击信号总线
 import { getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
-import { getPower } from '../logic/keywords'; // [新增] 引入真实攻击力探针
 
 // ==========================================
 // [时间管理器] 独立封装的纯函数，等待通用打击特效播完
@@ -64,7 +63,6 @@ function findAITargetsForEffect(
             state.combatField.forEach(f => {
                 if (f.owner === owner && f.attacker) candidates.push(f.attacker);
                 if (f.blocker) {
-                    const blockerOwner = f.owner === owner ? owner : (owner === 'player' ? 'enemy' : 'player');
                     // blocker belongs to whoever controls it — check field ownership
                     // Actually, blocker is assigned to the non-attacker side
                     if (f.owner !== owner && f.blocker) candidates.push(f.blocker);
@@ -150,7 +148,7 @@ export interface UseSpellSystemParams {
 
 export const useSpellSystem = (params: UseSpellSystemParams) => {
     const {
-        stateRef, game, playerBench,
+        stateRef, game,
         setGame, setPlayerBench, setEnemyBench, setCombatField,
         setPlayerHand, setEnemyHand, setPlayerDeck, setEnemyDeckState,
         setMessage, createFullCard, flushMicroQueue, judgeLifeAndDeath, wait, triggerShake, onComplete
@@ -326,7 +324,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         filterKey?: string,
         targetCondition?: string, // [核心新增] 接收目标高级过滤暗号
         raceFilter?: Race[],       // [新增] 种族过滤器
-        keywordFilter?: string[]   // [2026-07-07] 关键词过滤
+        keywordFilter?: string[],   // [2026-07-07] 关键词过滤
+        stackCostBelow?: number,    // [2026-08-05 莉莉子] SPELL_ON_STACK 目标费用上限（不含）
+        stackSpeedFilter?: string[] // [2026-08-05 莉莉子] SPELL_ON_STACK 目标速度白名单
     ): boolean => {
         if (card === 'nexus') {
             // [2026-06-27 生机补充] ally_only 时我方水晶可被选，敌方不可
@@ -350,7 +350,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
 		}
 
 // [SBA] 基础存活检查 (尸体不能作为目标)
-        if (card.isDead || getCurrentHP(card) <= 0) return false;
+        // [2026-08-08 莉莉子修复] 仅单位需要存活判定——法术卡 health=0 会被 getCurrentHP 误判为死亡，
+        // 导致 SPELL_ON_STACK（反制栈上法术）等以法术为目标的选择永远被拦下（点不动敌方法术）
+        if (card.type?.includes('unit') && (card.isDead || getCurrentHP(card) <= 0)) return false;
 
         // =====================================
         // [核心新增] 种族拦截器 (Race Filter)
@@ -401,13 +403,26 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             case 'ANY_TARGET': return true; // 单位也是 Target
             case 'ALLY_CHAMPION': return isAlly && card.isChampion && (!filterKey || card.key === filterKey);
             case 'HAND_CARD': return true; // [2026-06-27] 手牌卡，来源由 handleTargetClick 前置拦截保障
+            case 'SPELL_ON_STACK': {
+                // [2026-08-05 莉莉子] 反制目标：堆叠中的敌方法术（来源由 handleTargetClick 前置拦截为 'stack'）
+                // [LILITH-DEBUG] 反制目标校验诊断
+                const _isAlly = isAlly, _type = card.type, _cost = card.cost || 0, _costBelow = stackCostBelow, _spdF = stackSpeedFilter;
+                let _onStack = true;
+                if (stateRef) _onStack = stateRef.current.game.spellStack.some(s => s.card.id === card.id);
+                const _pass = !_isAlly && (_type === 'spell-fast' || _type === 'spell-slow' || _type === 'spell-burst')
+                    && !(_costBelow !== undefined && _cost >= _costBelow)
+                    && !(_spdF && _spdF.length > 0 && !_spdF.includes(_type))
+                    && _onStack;
+                console.log(`[LILITH-DEBUG][NEGATE] 校验目标 ${card.key}(${card.name}) type=${_type} cost=${_cost} owner=${owner} stackCostBelow=${_costBelow} speedFilter=${JSON.stringify(_spdF)} onStack=${_onStack} → ${_pass ? '✅可反制' : '❌拒绝'}`);
+                return _pass;
+            }
             default: return false;
         }
     };
 
     // --- 4. 处理点击交互 ---
     // [2026-06-27 暗箱操作] 新增 source 参数区分手牌点击 vs 场上点击
-    const handleTargetClick = (target: CardData | 'nexus', owner: 'player' | 'enemy', source?: 'hand' | 'field') => {
+    const handleTargetClick = (target: CardData | 'nexus', owner: 'player' | 'enemy', source?: 'hand' | 'field' | 'stack') => {
         // [2026-07-09 瓦莱莉] 支持 select_discard 模式（无 castingCard，直接读写 game.spellCasting）
         // 注：此分支只有 useGameState 层的 useSpellSystem 有 stateRef，UI 层的走 GameSession.handleCardClick
         if (stateRef) {
@@ -437,6 +452,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         // [2026-06-27 HAND_CARD] 来源隔离：手牌操作只能由点击手牌触发
         if (requirement.type === 'HAND_CARD' && source !== 'hand') return;
         if (requirement.type !== 'HAND_CARD' && source === 'hand') return;
+        // [2026-08-05 SPELL_ON_STACK] 来源隔离：堆叠法术只能由点击堆叠卡触发
+        if (requirement.type === 'SPELL_ON_STACK' && source !== 'stack') return;
+        if (source === 'stack' && requirement.type !== 'SPELL_ON_STACK') return;
 
         // [2026-07-09 修复] 手牌弃牌：不能选正在打出的卡牌自身（按实例 ID 排，同名不同 ID 可以选）
         if (requirement.type === 'HAND_CARD' && target !== 'nexus' && castingCard && target.id === castingCard.id) {
@@ -444,8 +462,31 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             return;
         }
 
+        // [2026-08-08 莉莉子修复] HAND_CARD 类型/费用过滤（战术闪击等：只能选指定类型、费用上限的手牌）
+        if (requirement.type === 'HAND_CARD' && target !== 'nexus') {
+            if (requirement.cardTypeFilter === 'unit' && !target.type?.includes('unit')) {
+                setMessage?.("只能选择单位卡牌！");
+                return;
+            }
+            if (requirement.cardTypeFilter === 'spell' && !target.type?.includes('spell')) {
+                setMessage?.("只能选择法术卡牌！");
+                return;
+            }
+            const maxCost = effect?.params?.maxCost;
+            if (maxCost !== undefined && (target.cost || 0) >= maxCost) {
+                setMessage?.(`只能选择费用低于${maxCost}的卡牌！`);
+                return;
+            }
+        }
+
+        // [2026-08-05 莉莉子 法术16] 多目标选择去重：同一单位不可重复选（防止三连选天启者选中同一个）
+        if (target !== 'nexus' && selectedTargets.some(t => t.id === target.id)) {
+            console.log("[目标选择] 该单位已选过，不能重复选择");
+            return;
+        }
+
         // 验证合法性：将法术配置中的高级暗号和种族过滤器传给雷达
-        if (isValidTarget(target, owner, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter)) {
+        if (isValidTarget(target, owner, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter, requirement.stackCostBelow, requirement.stackSpeedFilter)) {
             // [新增] 目标合法，成功锁定！播放清脆的确认音
             eventBus.emit(GameEvents.SFX_SELECT_UNIT);
 
@@ -453,7 +494,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [核心修复 BUG 4]：为水晶目标补齐虚拟的 DOM 锚点 ID，防止特效层取不到坐标而卡死
             const targetObj = target === 'nexus'
                 ? { type: owner === 'player' ? 'player_nexus' : 'enemy_nexus', id: owner === 'player' ? 'nexus_player' : 'nexus_enemy' }
-                : { type: owner === 'player' ? 'ally' : 'enemy', id: target.id };
+                : requirement.type === 'SPELL_ON_STACK'
+                    ? { type: 'spell_on_stack', spellId: target.id, id: target.id } // [2026-08-05 莉莉子] 反制目标：指向堆叠法术实例；[2026-08-15] 补 id 让 VFXLayer 确认/持久线能按 data-entity-id 定位 DOM（此前缺 id 导致线不渲染）
+                    : { type: owner === 'player' ? 'ally' : 'enemy', id: target.id };
 
             const newTargets = [...selectedTargets, targetObj];
 
@@ -536,6 +579,31 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         let cleanSnapshot = { ...stateRef.current.game };
         const safePhase = originalPhase || (cleanSnapshot.phase === 'animating' ? 'main' : cleanSnapshot.phase);
 
+        // [2026-08-06 莉莉子 Echo 回响] 法术打出并结算后：在手牌生成一张该牌的瞬逝复制品
+        if (card.keywords.includes('Echo')) {
+            const echoOwnerHand = owner === 'player'
+                ? stateRef.current.playerHand
+                : stateRef.current.enemyHand;
+            const echoResult = applyEchoOnPlay(card, echoOwnerHand, owner);
+            if (echoResult.echoedCards.length > 0) {
+                if (owner === 'player') {
+                    setPlayerHand(echoResult.hand);
+                    stateRef.current.playerHand = echoResult.hand;
+                } else {
+                    setEnemyHand(echoResult.hand);
+                    stateRef.current.enemyHand = echoResult.hand;
+                }
+                echoResult.echoedCards.forEach(echoCard => {
+                    const animId = `echo-${echoCard.id}-${Date.now()}`;
+                    eventBus.emit(GameEvents.DRAW_START, {
+                        animId, card: echoCard, owner,
+                        skipHandAdd: true,
+                        skipDeckAnim: true,
+                    });
+                });
+            }
+        }
+
         if (card.type === 'spell-burst') {
             if (!card.parentCard) {
                 // [2026-07-10 诗人] 凯特琳减费影响实际扣费（双方均适配）
@@ -562,8 +630,12 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (owner === 'enemy') {
                 // [2026-07-07 重构] AI 法术三段式演出: 悬念 → 锁定 → 飞弹
                 // Phase 1: 入堆栈无 targets → 大圆盘出现，无瞄准线（悬念期）
+                // [2026-08-07 莉莉子修复] 清空抉择残留状态（对齐下方 enemy 慢速分支），
+                // 防止 AI 打出天启者抉择法术（如里芙的决意）后 activeCard/spellCasting 残留导致抉择界面卡死
                 setGame(prev => ({
                     ...prev,
+                    activeCard: null,
+                    spellCasting: null,
                     spellStack: [{ card, owner, targets: [] }, ...prev.spellStack],
                     phase: 'animating',
                 }));
@@ -588,12 +660,15 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     currentActiveCard.id === card.id ||
                     currentActiveCard.id === (card as any).parentCard?.id
                 );
+                // [LILITH-DEBUG] 极速法术熔断诊断
+                console.log(`[LILITH-DEBUG][BURST] 1秒悬停检查: card=${card.key}(${card.id}) currentActiveCard=${currentActiveCard ? currentActiveCard.key + '(' + currentActiveCard.id + ')' : 'null'} matches=${!!matchesActiveCard} spellCasting=${stateRef.current.game.spellCasting?.step ?? 'null'}`);
                 if (owner === 'player' && !matchesActiveCard) {
                     console.log("[SpellSystem] 极速法术在 1 秒悬停期内被撤回，执行链已安全熔断！");
                     return;
                 }
 
                 setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
+                console.log(`[LILITH-DEBUG][BURST] 已清除 spellCasting/activeCard`);
             }
 
             // Phase 3: AI 弹道飞行前清除瞄准线
@@ -976,6 +1051,13 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         setGame(prev => ({ ...prev, phase: 'animating' }));
         const stack = [...stateRef.current.game.spellStack];
         for (const spell of stack) {
+            // [2026-08-05 NEGATE] 法术可能已在堆叠中被无效化移除（法术8/6/7），跳过不再结算
+            const stillOnStack = stateRef.current.game.spellStack.some(s => s.card.id === spell.card.id);
+            if (!stillOnStack) {
+                setMessage(`${spell.card.name} 已被无效化`);
+                console.log(`[resolveStack] ${spell.card.name} 已被无效化，跳过结算`);
+                continue;
+            }
             setMessage(`结算: ${spell.card.name}`);
             await new Promise(r => setTimeout(r, 300));
 
@@ -1119,6 +1201,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         isCasting: !!castingCard,
         isSelectionComplete: !!castingCard && selectedTargets.length >= (getEffectDef(castingCard)?.targetRequirements.length || 0),
         activeCard: castingCard,
+        currentRequirement, // [2026-08-05 莉莉子] 暴露当前目标需求（SPELL_ON_STACK 判断用）
         selectedTargets,
         instruction: currentRequirement?.label,
         selectedIds: selectedTargets.map(t => t.id).filter(Boolean),
@@ -1127,7 +1210,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [2026-06-27 HAND_CARD] 手牌选择不高亮场上目标
             if (currentRequirement.type === 'HAND_CARD') return false;
             const effect = getEffectDef(castingCard);
-            return isValidTarget(card, owner, currentRequirement.type, currentRequirement.filterKey, effect?.params?.targetCondition, currentRequirement.raceFilter, currentRequirement.keywordFilter);
+            return isValidTarget(card, owner, currentRequirement.type, currentRequirement.filterKey, effect?.params?.targetCondition, currentRequirement.raceFilter, currentRequirement.keywordFilter, currentRequirement.stackCostBelow, currentRequirement.stackSpeedFilter);
         },
         startCasting,
         cancelCasting,

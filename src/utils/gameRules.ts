@@ -219,10 +219,10 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             health: card.health + 1,
             maxHealth: card.maxHealth + 1,
             level2ImageUrl: card.level2ImageUrl,
-            description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方所有【臆莲基座】造成1点伤害，之后赋予其+0 +2，【臆莲基座】可以以敌方水晶为目标。',
+            description: '【库效】回合开始时，若己方备战席没有“臆莲基座”，则召唤一个。回合结束：对我方所有“臆莲基座”造成1点伤害，之后赋予其+0 +2，“臆莲基座”可以以敌方水晶为目标。',
             keywords: [],
             effects: ['effect_mauxir_lotus_drive_lv2'],
-            ability: { id: 'mauxir_lv2_aura', label: '莲华庇佑', description: '【库效】回合开始时，若己方备战席没有【臆莲基座】，则召唤一个。回合结束：对我方所有【臆莲基座】造成1点伤害，之后赋予其+0 +3，【臆莲基座】可以以敌方水晶为目标。', trigger: 'round_start', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
+            ability: { id: 'mauxir_lv2_aura', label: '莲华庇佑', description: '【库效】回合开始时，若己方备战席没有“臆莲基座”，则召唤一个。回合结束：对我方所有“臆莲基座”造成1点伤害，之后赋予其+0 +3，“臆莲基座”可以以敌方水晶为目标。', trigger: 'round_start', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
             abilityState: 'breathing' as const,
             abilityCharges: -1,
         } as CardData;
@@ -237,7 +237,7 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             health: card.health + 1,
             maxHealth: card.maxHealth + 1,
             level2ImageUrl: card.level2ImageUrl,
-            description: '【库效】若我方手牌中没有，则在我方手牌中生成一张“安卡希雅的重锋”。\n入场及获得进攻标识时：生成一张易逝的“月镰剑势”。\n参战：变化为"安卡希雅的剑舞"。\n【飞剑强化】飞剑升级为大飞剑（2/1碾压）。',
+            description: '【库效】若我方手牌中没有，则在我方手牌中生成一张“安卡希雅的重锋”。\n入场及获得进攻标识时：生成一张易逝的“月镰剑势”。\n参战：变化为“安卡希雅的剑舞”。\n【飞剑强化】“飞剑”升级为“大飞剑”（2/1碾压）。',
             keywords: ['QuickAttack', 'Aura', 'Ability'],
             associatedSpellKey: 'acacia_chrono_echo_heavy', // [2026-07-31] 升级后关联法术切换为重锋
             effects: ['effect_acacia_chrono_echo_lv2', 'effect_acacia_chrono_echo_token_lv2'],
@@ -419,7 +419,7 @@ export const isSummonerOrSummon = (card: CardData): boolean => {
  */
 export const accumulateMauxirDamage = (
     bench: CardData[],
-    field: any[], // 兼容交战区数据类型
+    _field: any[], // 兼容交战区数据类型
     amount: number,
     setBench: (b: CardData[]) => void,
     hand?: CardData[],

@@ -97,7 +97,7 @@ export interface TutorialSubTask {
      * - 'play_card': 打出了一张手牌
      * - 'attack_declared': 发起了进攻宣言
      */
-    completionCondition: 'element_clicked' | 'block_assigned' | 'block_recalled' | 'block_confirmed' | 'free' | 'round_end' | 'play_card' | 'attack_declared' | 'attack_recalled';
+    completionCondition: 'element_clicked' | 'block_assigned' | 'block_selected' | 'block_recalled' | 'block_confirmed' | 'free' | 'round_end' | 'play_card' | 'attack_declared' | 'attack_recalled';
     /**
      * 锁死右下方"跳过"按钮
      * 防止玩家误触跳过教程，但保留上半部分"进攻"按钮可点击
@@ -136,6 +136,8 @@ export type TutorialStep =
 
 /** 初始战场配置 */
 export interface InitialBattleState {
+  /** 先手方（默认 'enemy'，由 TutorialGameWrapper 读取）。教学关卡如需玩家第一回合先手请设 'player' */
+  firstAttacker?: 'player' | 'enemy';
   /** 我方水晶 HP */
   playerCrystalHp: number;
   /** 敌方水晶 HP（可配置） */
@@ -602,7 +604,7 @@ export const BASIC_TUTORIAL_SCRIPT: TutorialScript = {
                 text: '请从手牌中打出芬妮',
                 arrowTarget: '[data-card-key="fenny"]',
                 direction: 'top',
-                arrowOffset: { x: -44 },
+                arrowOffset: { x: -44, y: 0 },
               },
             ],
             expectedAction: {
@@ -895,25 +897,25 @@ export const BASIC_TUTORIAL_SCRIPT_02: TutorialScript = {
     playerMana: 5,
     playerMaxMana: 10,
     playerField: [
-      { cardKey: 'lyfe', hp: 6, power: 2 },
       { cardKey: 'fenny', hp: 5, power: 3 },
     ],
     enemyField: [
       { cardKey: 'Ghost_Squad_Antina', hp: 3, power: 2 },
       { cardKey: 'Ghost_Squad_Vez', hp: 2, power: 2 },
     ],
-    playerBench: [],
+    // [2026-08-15 莉莉子] 里芙放备战席才能被选为格挡者（selectBlocker 仅对 bench 生效）；此前放场上导致"无法选中里芙"
+    playerBench: ['lyfe'],
     playerHand: ['single_combat', 'hidden_arrow', 'inspire'],
     disableMulligan: true,
   },
 
   steps: [
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '分析员，敌人的部队已经逼近了。我方枢纽非常脆弱，一旦被击中就会失守。但别担心——只要正确运用战术，我们就能化解危机。' } },
-    { type: 'guide_layer', data: { highlightSelectors: ['[data-entity-id="player_nexus"]', '[data-card-key="Ghost_Squad_Antina"]', '[data-card-key="Ghost_Squad_Vez"]'], annotations: [{ targetSelector: '[data-entity-id="player_nexus"]', text: '我方枢纽仅剩1点生命，绝不能让任何敌方单位击中它', position: 'bottom' }, { targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '注意这个敌人——她的攻击力是2点，足以摧毁我们最后的防线', position: 'bottom' }], dismissOnClick: true } },
+    { type: 'guide_layer', data: { highlightSelectors: ['[data-entity-id="player_nexus"]', '[data-card-key="Ghost_Squad_Antina"]', '[data-card-key="Ghost_Squad_Vez"]'], annotations: [{ targetSelector: '[data-entity-id="player_nexus"]', text: '我方枢纽仅剩1点生命，绝不能让任何敌方单位击中它', position: 'bottom' }, { targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '抵御敌人的进攻，任意对水晶的攻击都足以摧毁我们最后的防线', position: 'bottom' }], dismissOnClick: true } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '敌人开始进攻了！我们得想办法阻挡它们。' } },
     { type: 'auto_action', data: { action: 'enemy_attack', params: {} } },
     { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="lyfe"]', '[data-card-key="fenny"]', '[data-entity-id="attack-token"]'], annotations: [{ targetSelector: '[data-card-key="lyfe"]', text: '点击里芙，然后点击你要格挡的敌人来分配格挡', position: 'right' }], dismissOnClick: true } },
-    { type: 'task_group', data: { groupName: '初识隐秘', subTasks: [{ id: 'try_block_antina', description: '尝试格挡安蒂娜', guidanceSteps: [{ text: '请点击里芙选择她作为格挡者', arrowTarget: '[data-card-key="lyfe"]', direction: 'right' }, { text: '现在请点击安蒂娜——看看会发生什么', arrowTarget: '[data-card-key="Ghost_Squad_Antina"]', direction: 'right' }], expectedAction: { type: 'click_target', targetSelector: '[data-card-key="Ghost_Squad_Antina"]', completionCondition: 'block_assigned', lockActionButton: true } }] } },
+    { type: 'task_group', data: { groupName: '初识隐秘', subTasks: [{ id: 'try_block_antina', description: '尝试格挡安蒂娜', guidanceSteps: [{ text: '请点击里芙选择她作为格挡者', arrowTarget: '[data-card-key="lyfe"]', direction: 'right' }, { text: '现在请点击安蒂娜——看看会发生什么', arrowTarget: '[data-card-key="Ghost_Squad_Antina"]', direction: 'right' }], expectedAction: { type: 'click_target', targetSelector: '[data-card-key="lyfe"]', completionCondition: 'block_selected', lockActionButton: true } }] } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '不行！这个敌人有【隐秘】能力，我无法阻挡她……分析员，请右键点击那张卡牌，看看【隐秘】到底是什么效果。' } },
     { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="Ghost_Squad_Antina"]'], annotations: [{ targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '📖 在卡牌上点击【右键】，打开卡牌详情界面查看关键词说明', position: 'bottom' }], dismissOnClick: true } },
     { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="Ghost_Squad_Antina"]'], annotations: [{ targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '🔍 在详情界面中，将鼠标【悬停】到【隐秘】关键词上查看详细说明\n\n查看完毕后点击空白处或右上角关闭', position: 'bottom' }], dismissOnClick: true } },
@@ -951,6 +953,7 @@ export const OVERWHELM_TUTORIAL_SCRIPT: TutorialScript = {
 
   initialState: {
     playerCrystalHp: 10,
+    firstAttacker: 'player', // [2026-08-15] 关键词考核：玩家第一回合先手
     enemyCrystalHp: 8,
     playerMana: 3,
     playerMaxMana: 10,
@@ -1167,6 +1170,7 @@ export const REGENERATION_TUTORIAL_SCRIPT: TutorialScript = {
 
   initialState: {
     playerCrystalHp: 15,
+    firstAttacker: 'player', // [2026-08-15] 关键词考核：玩家第一回合先手
     enemyCrystalHp: 6,
     playerMana: 5,
     playerMaxMana: 10,
@@ -1471,6 +1475,7 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
 
   initialState: {
     playerCrystalHp: 15,
+    firstAttacker: 'player', // [2026-08-15] 关键词考核：玩家第一回合先手
     enemyCrystalHp: 8,
     playerMana: 5,
     playerMaxMana: 10,

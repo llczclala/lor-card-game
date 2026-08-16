@@ -2,6 +2,8 @@ import { CARD_DB } from '../data/cards';
 import { ENEMY_ARCHETYPES } from '../data/enemies/archetypes';
 import { TUTORIAL_STAGES } from '../data/tutorialStages';
 import type { EnemyHeroConfig } from '../types/gameModeTypes';
+import type { RogueDifficulty } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统]
+import { DIFFICULTY_HP_MULTIPLIER, DIFFICULTY_LEVEL_BONUS } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统]
 
 /**
  * 遭遇战结果接口
@@ -10,6 +12,7 @@ interface EncounterData {
     deck: string[];
     heroConfig: EnemyHeroConfig;
     passiveEffects: string[]; // 本场对局的全局被动 (天启)
+    aiPersonality?: 'aggressive' | 'control' | 'balanced'; // [2026-08-06] AI 流派性格
 }
 
 /**
@@ -97,19 +100,40 @@ export const buildStandardEncounter = (): EncounterData => {
             level: 1, // 标准模式默认 1 级
             customName: archetype.name // 使用流派名作为敌方名字，增加代入感
         },
-        passiveEffects: [] // 标准模式不启用天启系统
+        passiveEffects: [], // 标准模式不启用天启系统
+        aiPersonality: archetype.aiPersonality, // [2026-08-06] 把流派性格传给 AI
     };
 };
 
 /**
- * [预留] 构建 [肉鸽模式] 的遭遇战
+ * 构建 [肉鸽模式] 的遭遇战
+ * 难度曲线：Act 越高越强；精英/Boss 更高等级 + 血量倍率
+ * 框架阶段：从现有流派随机选，Boss/精英通过 level + hpMultiplier 强化
  */
-export const buildRoguelikeEncounter = (_stage: number, _difficulty: number): EncounterData => {
-    // TODO: 实现基于难度的动态构建逻辑
-    // 比如：stage > 3 时 heroLevel = 2
-    // 比如：带入 archetype.apocalypseTags
-    console.warn("Roguelike encounter builder not implemented yet.");
-    return buildStandardEncounter(); // 暂时回退到标准模式
+export const buildRoguelikeEncounter = (nodeType: 'battle' | 'elite' | 'boss', _act: number, difficulty: RogueDifficulty = 'normal', archetypeId?: string): EncounterData => {
+    const archetypeKeys = Object.keys(ENEMY_ARCHETYPES);
+    // [2026-08-10 预分配敌人] 优先用节点预分配的流派（保证地图头像与实际对手一致），否则随机
+    const archetype = archetypeId ? ENEMY_ARCHETYPES[archetypeId] : ENEMY_ARCHETYPES[archetypeKeys[Math.floor(Math.random() * archetypeKeys.length)]];
+    const parsedCoreCards = parseCoreCards(archetype.coreCards);
+    const fullDeck = (archetype as any).exactDeck || parsedCoreCards.length >= 40
+        ? parsedCoreCards.sort(() => Math.random() - 0.5)
+        : fillDeckToSize(parsedCoreCards, archetype.preferredPool, 40);
+    // [TODO] 后续可用 archetype.apocalypseTags 挂载天启遗物被动
+    // [2026-08-07 难度系统] 基础血量倍率 × 难度倍率；等级 + 难度加成（只增强敌人，不动 AI 行为）
+    const baseHp = nodeType === 'boss' ? 1.5 : nodeType === 'elite' ? 1.25 : 1;
+    const hpMultiplier = baseHp * DIFFICULTY_HP_MULTIPLIER[difficulty];
+    const level = ((nodeType === 'boss' || nodeType === 'elite') ? 2 : 1) + DIFFICULTY_LEVEL_BONUS[difficulty];
+    return {
+        deck: fullDeck,
+        heroConfig: {
+            heroKey: archetype.champion,
+            level,
+            customName: archetype.name,
+            hpMultiplier,
+        },
+        passiveEffects: [],
+        aiPersonality: archetype.aiPersonality, // [2026-08-06] 透传流派性格
+    };
 };
 
 /**

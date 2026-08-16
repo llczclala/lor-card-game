@@ -1,4 +1,5 @@
 // [核心重构] 导入标题页多分辨率 WebM
+import type { BgmKey } from './audio'; // [2026-08-16] BGM key 类型（getHallBgm 返回类型对齐 playBgm 参数）
 import title_bg_1k from '../movie/title/烬中焰火/1k.webm';
 import title_bg_2k from '../movie/title/烬中焰火/2k.webm';
 import title_bg_4k from '../movie/title/烬中焰火/4k.webm';
@@ -134,7 +135,7 @@ export interface HallCharacterEntry {
 }
 
 /** 角色 BGM 映射（按程指定的规则） */
-const HALL_BGM_BY_CHARACTER: Record<HallCharacterKey, string> = {
+const HALL_BGM_BY_CHARACTER: Record<HallCharacterKey, BgmKey> = {
   lyfe:             'hall_1',
   fenny:            'hall_1',
   marian:           'hall_2',
@@ -300,14 +301,14 @@ export const isHallCharacterVideo = (url: string): boolean => {
 /**
  * 根据角色 Key 获取对应的 BGM key
  */
-export const getHallBgmByCharacterKey = (characterKey: HallCharacterKey): string => {
+export const getHallBgmByCharacterKey = (characterKey: HallCharacterKey): BgmKey => {
     return HALL_BGM_BY_CHARACTER[characterKey] || 'default';
 };
 
 /**
  * 根据视频 URL 获取 BGM key（通过角色查找）
  */
-export const getHallBgmByVideoUrl = (url: string): string => {
+export const getHallBgmByVideoUrl = (url: string): BgmKey => {
     const entry = findCharacterByVideoUrl(url);
     if (entry) return getHallBgmByCharacterKey(entry.characterKey);
     return 'default';
@@ -317,7 +318,7 @@ export const getHallBgmByVideoUrl = (url: string): string => {
  * [向后兼容] 根据平坦列表索引获取 BGM key
  * 索引顺序与 getHallMovies() 平坦列表一致
  */
-export const getHallBgmByIndex = (index: number): string => {
+export const getHallBgmByIndex = (index: number): BgmKey => {
     const flat = getHallMovies();
     const url = flat[index % flat.length];
     return getHallBgmByVideoUrl(url);

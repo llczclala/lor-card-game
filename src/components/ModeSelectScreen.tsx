@@ -6,12 +6,14 @@ interface ModeSelectScreenProps {
     onPvESelect: () => void;
     onBack: () => void;
     onTutorialSelect?: () => void; // [新增] 教程模式入口
+    onRogueSelect?: () => void; // [新增] 肉鸽模式入口
 }
 
 export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
     onPvESelect,
     onBack,
-    onTutorialSelect
+    onTutorialSelect,
+    onRogueSelect
 }) => {
     return (
         <div className="w-full h-full flex flex-col items-center justify-center animate-fade-in z-20 relative font-sans select-none text-white">
@@ -57,17 +59,21 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
                     </div>
                 </div>
 
-                {/* 2. 右上角: Roguelike (肉鸽) - 占位 */}
+                {/* 2. 右上角: Roguelike (肉鸽) - 悖论迷宫 */}
                 <div className="col-start-3 row-start-1 w-full h-full flex justify-start items-end">
-                    <div className="w-64 h-40 group relative bg-slate-800/40 border border-white/5 rounded-2xl overflow-hidden grayscale opacity-60 cursor-not-allowed flex flex-col items-center justify-center gap-2 hover:opacity-80 transition-opacity">
-                        <Dices size={40} className="text-purple-400" />
+                    <div
+                        onClick={() => {
+                            eventBus.emit(GameEvents.UI_CLICK);
+                            onRogueSelect?.();
+                        }}
+                        className="w-64 h-40 group relative bg-gradient-to-br from-purple-900/60 to-slate-900/60 border border-purple-400/30 rounded-2xl overflow-hidden hover:border-purple-400 hover:bg-purple-900/80 transition-all hover:scale-105 hover:shadow-[0_0_30px_rgba(168,85,247,0.4)] cursor-pointer flex flex-col items-center justify-center gap-2"
+                    >
+                        <Dices size={40} className="text-purple-400 group-hover:text-white transition-colors" />
                         <div className="text-center">
-                            <h3 className="text-xl font-black tracking-widest text-gray-400">悖论迷宫</h3>
-                            <p className="text-[10px] font-mono text-gray-600">点击开启推演</p>
+                            <h3 className="text-xl font-black tracking-widest text-purple-100 group-hover:text-white">悖论迷宫</h3>
+                            <p className="text-[10px] font-mono text-purple-300/60">肉鸽 · 点击开启推演</p>
                         </div>
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
-                            <span className="text-xs font-mono font-bold text-white/80">LOCKED</span>
-                        </div>
+                        <div className="absolute top-0 left-0 w-full h-1 bg-purple-500/50 transform origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
                     </div>
                 </div>
 

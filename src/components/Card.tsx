@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Eye, Hexagon, Triangle, Sparkles, ChevronDown, ShoppingCart } from 'lucide-react';
+import { ChevronDown, ShoppingCart } from 'lucide-react';
 // [新增] 引入 Framer Motion
 import { motion } from 'framer-motion';
 import type { CardData } from '../types';
@@ -8,7 +8,7 @@ import { SpeechBubble } from './SpeechBubble';
 import { SpellCard } from './SpellCard';
 import { KeywordEffects } from './KeywordEffects';
 // [核心新增] 引入 LEVELUP_ICONS
-import { CARD_BORDERS, EFFECT_IMAGES, UI_IMAGES, LEVELUP_ICONS, getSkinImage } from '../data/imageData';
+import { CARD_BORDERS, EFFECT_IMAGES, LEVELUP_ICONS, getSkinImage } from '../data/imageData';
 // [新增] 引入卡面坐标字典与类型
 import { CARD_CROP_CONFIG } from '../data/cardCropConfig';
 import type { CropConfig } from '../types';
@@ -17,6 +17,8 @@ import { KeywordTray } from './KeywordTray';
 // [新增] 引入事件总线用于触发音效
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于兜底替换{value}
+import { getEquipmentDefs } from '../data/equipment'; // [2026-08-12 装备系统] 手牌右侧装备方块
+import { getHeroVideo } from '../data/heroVideos'; // [2026-08-16 动态卡面] 天启者动态卡面视频
 
 // [核心新增] 模块级卡牌位置记忆库 (突破 React 销毁重绘的失忆限制)
 const cardLocationMemory = new Map<string, string>();
@@ -128,9 +130,40 @@ const HitCrackOverlay = React.forwardRef<HTMLDivElement, { patternIndex: number;
 });
 HitCrackOverlay.displayName = 'HitCrackOverlay';
 
+// ==========================================
+// [2026-08-16 莉莉子] 动态卡面上下文
+// GameSession 提供 heroDynamic 开关，Card 内部读取；无 Provider（备战/图鉴/大厅等非对局场景）默认静态
+// ==========================================
+export const HeroCardMediaContext = React.createContext<boolean>(false);
+export const useHeroDynamic = () => React.useContext(HeroCardMediaContext);
+
+// ==========================================
+// [2026-08-16 莉莉子] 动态卡面播放器
+// 对齐 DeskMedia 播放方案：浏览器 autoplay 策略下 HTML autoPlay 属性不可靠，
+// 必须 ref + video.play() 显式触发，loop/muted 用属性同步保证无限循环
+// ==========================================
+const HeroCardVideo: React.FC<{ src: string; className?: string; style?: React.CSSProperties }> = ({ src, className, style }) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+
+    useEffect(() => {
+        const el = videoRef.current;
+        if (!el) return;
+        el.loop = true;
+        el.muted = true;
+        if (el.src !== src && el.src !== window.location.origin + src) {
+            el.src = src;
+            el.load();
+        }
+        const p = el.play();
+        if (p !== undefined) p.catch(() => {});
+    }, [src]);
+
+    return <video ref={videoRef} src={src} className={className} style={style} playsInline preload="auto" muted loop />;
+};
+
 interface CardProps {
   data: CardData;
-  location: 'hand' | 'bench' | 'combat' | 'enemy_bench' | 'spell_stack' | 'preview' | 'deck-builder' | 'gacha';
+  location: 'hand' | 'bench' | 'combat' | 'enemy_bench' | 'spell_stack' | 'preview' | 'deck-builder' | 'gacha' | 'collection' | 'resolving' | 'deck-panel';
   skinId?: number; // [新增] 显式接收上层传下来的皮肤 ID（0为默认，1、2为限定皮肤）
   onClick?: () => void;
   isBlocker?: boolean;
@@ -169,6 +202,7 @@ interface CardProps {
   displayParams?: Record<string, number>; // 替换 description 中 {paramName} 的值
   damageColor?: 'boosted' | 'reduced' | null; // 法术伤害数字颜色（绿/红/白）
   isCostReduced?: boolean; // [2026-07-14] 蕾西亚减费标记（绿色费用数字）
+  heroDynamic?: boolean; // [2026-08-16] 动态卡面显式覆盖（portal 悬停大图等场景 Context 无法穿透时用 prop 强制）
   // [切除] 删掉这行重复的 skinId，因为接口最上面已经声明过一遍了
 }
 // [皮肤] 智能裁剪钩子：增加 skinId 参数，支持双键索引结构
@@ -269,8 +303,18 @@ const renderDescription = (
     });
 };
 
+// [2026-08-12 装备系统] 手牌右侧装备方块：扁六边形裁剪 + 稀有度边框色（参照 RarityIcon 色值）
+const EQUIPMENT_HEXAGON_CLIP = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
+const EQUIPMENT_RARITY_COLOR: Record<string, string> = {
+    common: '#22c55e',
+    rare: '#3b82f6',
+    epic: '#a855f7',
+    legendary: '#facc15',
+};
+
 export const Card: React.FC<CardProps> = ({
     data, location, skinId = 0, // [新增] 解构 skinId 并默认赋予 0 默认皮肤
+    heroDynamic: heroDynamicProp, // [2026-08-16] 动态卡面显式覆盖（悬停大图等 portal 场景，Context 无法穿透）
     onClick, isBlocker, isSelected, highlightTarget, onViewArt, isEnemyCombatant, attackType = 'clash',
     isSpeaking, isPlayable,
     onChallengerClick, isChallengerActive, isChallengedTarget, canBeChallenged, isFacingQuickAttack,
@@ -309,13 +353,22 @@ export const Card: React.FC<CardProps> = ({
     const currentImageUrl = useMemo(() => {
         // 第一优先级：如果有皮肤，绝对优先去拿皮肤贴图（需将 2 级状态传给引擎）
         if (skinId && skinId > 0) {
-            const skinImg = getSkinImage(data.key, skinId, data.level === 2);
+            const skinImg = getSkinImage(data.key, skinId); // [2026-08-16] 第三参是 fallback URL 非 boolean，省略让无皮肤时走 level2/base 逻辑
             if (skinImg) return skinImg; // 拿到了限定皮肤，直接返回！
         }
         // 第二优先级：兜底默认逻辑（没穿皮肤，或者皮肤资源丢失）
         if (data.level === 2 && data.level2ImageUrl) return data.level2ImageUrl;
         return data.imageUrl;
     }, [data.key, data.level, data.level2ImageUrl, data.imageUrl, skinId]);
+
+    // [2026-08-16 莉莉子] 动态卡面：对局内英雄卡位置（手牌/场上/备战席）+ 悬停大图预览 + 开开关 + 未穿皮肤（皮肤无动态视频，保持静态皮肤图）+ 该英雄该形态有视频 → 用视频
+    //   heroDynamic 由 GameSession 的 Provider 提供，因此仅对局内生效；备战/图鉴/肉鸽等无 Provider 场景自动静态
+    const heroDynamicContext = useHeroDynamic();
+    const heroDynamic = heroDynamicProp ?? heroDynamicContext; // [2026-08-16] prop 优先（portal 悬停大图），否则走对局 Context
+    const isHeroBattleLocation = location === 'hand' || location === 'combat' || location === 'bench' || location === 'enemy_bench' || location === 'preview';
+    const heroVideoSrc = (heroDynamic && isHeroBattleLocation && !(skinId && skinId > 0))
+        ? getHeroVideo(data.key, data.level)
+        : undefined;
 
     // [2026-07-14 锻造者] 兜底计算 displayParams：从效果定义读取参数替换 {value} {paramName}
     // 当 prop displayParams 传入时，优先用 prop（支持缇坦妮娅的+1增益覆盖）
@@ -534,7 +587,7 @@ export const Card: React.FC<CardProps> = ({
     }, [location, prevKnownLoc, isTacticalArea]);
 
     // 3. 动作拦截器：双指捏起 -> 延迟硬切
-    const handleCardClick = (e: React.MouseEvent) => {
+    const handleCardClick = (_e: React.MouseEvent) => {
         if (isLocked) return;
 
         if (isTacticalArea && onClick && !isTargetable && !isTargeted) {
@@ -564,9 +617,22 @@ export const Card: React.FC<CardProps> = ({
     // 使用 Ref 记录上一帧的数值
     const prevHealthRef = useRef(currentFinalHealth);
     const prevPowerRef = useRef(currentFinalPower);
+    // [2026-08-10 修复] 身份闸门：各数值检测 effect 独立记录"上次检查的卡牌 id"。
+    // 当 React 复用 Card 组件实例、却把另一张卡的 data 塞进来时（典型如战场槽位缩容重排：
+    // 撤回单位 → 后一槽位卡牌前移补位，key 用索引导致实例被复用只换 data），上一帧数值 ref
+    // 不会自动重置，会把"换卡"误判为"这张卡掉血/加攻"，从而误播受击震荡飘字 / 金光增益飘字。
+    // 故对比前先校验 data.id，不一致则重置基准并跳过本次动画。
+    const prevHealthCardIdRef = useRef(data.id);
+    const prevPowerCardIdRef = useRef(data.id);
 
     // [分离] 1. 检测生命值变化
     useEffect(() => {
+        // [身份闸门] 实例被复用换入另一张卡 → 重置基准并跳过，不误播受伤/回血动画
+        if (prevHealthCardIdRef.current !== data.id) {
+            prevHealthCardIdRef.current = data.id;
+            prevHealthRef.current = currentFinalHealth;
+            return;
+        }
         const prevHealth = prevHealthRef.current;
         if (currentFinalHealth !== prevHealth) {
             const diff = currentFinalHealth - prevHealth;
@@ -595,10 +661,16 @@ export const Card: React.FC<CardProps> = ({
             }
             prevHealthRef.current = currentFinalHealth;
         }
-    }, [currentFinalHealth, data.animState]);
+    }, [currentFinalHealth, data.animState, data.id]);
 
     // [分离] 2. 检测攻击力变化
     useEffect(() => {
+        // [身份闸门] 同上：换卡时重置基准并跳过，不误播扣攻/增益动画
+        if (prevPowerCardIdRef.current !== data.id) {
+            prevPowerCardIdRef.current = data.id;
+            prevPowerRef.current = currentFinalPower;
+            return;
+        }
         const prevPower = prevPowerRef.current;
         if (currentFinalPower !== prevPower) {
             const diff = currentFinalPower - prevPower;
@@ -622,14 +694,21 @@ export const Card: React.FC<CardProps> = ({
             }
             prevPowerRef.current = currentFinalPower;
         }
-    }, [currentFinalPower]);
+    }, [currentFinalPower, data.id]);
 
     // =====================================
     // [新增分离] 3. 检测词条变化 (专为纯词条 BUFF 提供高光)
     // =====================================
     const prevKeywordsLenRef = useRef(data.keywords?.length || 0);
+    const prevKeywordsCardIdRef = useRef(data.id);
 
     useEffect(() => {
+        // [身份闸门] 换卡时重置词条基准并跳过，不误播金色高光
+        if (prevKeywordsCardIdRef.current !== data.id) {
+            prevKeywordsCardIdRef.current = data.id;
+            prevKeywordsLenRef.current = data.keywords?.length || 0;
+            return;
+        }
         const currentLen = data.keywords?.length || 0;
         // 如果新词条数量大于上一帧的词条数量，说明获得了新的词条
         if (currentLen > prevKeywordsLenRef.current) {
@@ -639,9 +718,9 @@ export const Card: React.FC<CardProps> = ({
             }, 1000); // 与数值高光保持相同的 1 秒持续时间
         }
         prevKeywordsLenRef.current = currentLen;
-    }, [data.keywords]);
+    }, [data.keywords, data.id]);
 
-    const [showEye, setShowEye] = useState(false);
+    const [_showEye, setShowEye] = useState(false);
     const shouldAnimateDraw = isNew && location === 'hand';
     const [visualFaceUp, setVisualFaceUp] = useState(shouldAnimateDraw ? false : isFaceUp);
 
@@ -723,9 +802,6 @@ export const Card: React.FC<CardProps> = ({
 
     // [坚韧] 计算生命槽位样式：持有 Tough 的单位使用金琥珀金属质感槽位
     const hasTough = data.keywords?.includes('Tough');
-    const healthSlotBg = hasTough
-        ? 'bg-gradient-to-br from-[#be8f11] to-[#8a6508]'
-        : 'bg-gradient-to-br from-red-600 to-red-800';
     // [坚韧] 金琥珀金属渐变（垂直光感：亮→主色→暗→深，模拟金属反射）
     const toughMetallicBg = 'linear-gradient(180deg, #ecd067 0%, #be8f11 20%, #8a6508 55%, #5a3f04 100%)';
     // [冻结] 攻击力槽位天蓝色
@@ -896,6 +972,21 @@ export const Card: React.FC<CardProps> = ({
                         <div className="absolute inset-0 border-4 border-blue-400 rounded-2xl z-50 pointer-events-none animate-pulse shadow-[0_0_20px_#3b82f6]"></div>
                     )}
                     {isOnBoard && isSpeaking && <SpeechBubble />}
+                    {/* [2026-08-08 莉莉子修复] 法术卡也挂载关键词特效（瞬逝火焰等）——
+                        此前法术分支早退返回 SpellCard，KeywordEffects 从未渲染，法术持瞬逝无特效 */}
+                    <KeywordEffects
+                        data={data}
+                        location={location}
+                        isBlocker={isBlocker}
+                        isEnemyCombatant={isEnemyCombatant}
+                        onChallengerClick={onChallengerClick}
+                        isChallengerActive={isChallengerActive}
+                        canBeChallenged={canBeChallenged}
+                        isChallengedTarget={isChallengedTarget}
+                        highlightTarget={highlightTarget}
+                        isBlocking={isBlocking}
+                        titanCount={displayTitanCount}
+                    />
                 </div>
             );
         }
@@ -906,6 +997,7 @@ export const Card: React.FC<CardProps> = ({
             : data.region === 'Mauxir' ? 'from-gray-950 via-purple-950 to-gray-950'
             : data.region === 'Acacia' ? 'from-gray-950 via-sky-950 to-gray-950'
             : data.region === 'Logistics' ? 'from-gray-950 via-gray-800 to-gray-950'
+            : data.region === 'Analyst' ? 'from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员黑色卡面
             : 'bg-slate-900';
         return (
         <>
@@ -998,20 +1090,34 @@ export const Card: React.FC<CardProps> = ({
                                 : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
+                                : data.region === 'Analyst' ? 'from-black/60 via-gray-950/30 to-black/5' // [2026-08-08 莉莉子] 分析员黑色卡面
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
-                        <img
-                            src={currentImageUrl}
-                            alt={data.name}
-                            draggable={false}
-                            // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的“瞬切”
-                            className="max-w-none opacity-90 block"
-                            style={{
-                                width: data.type && data.type.includes('spell') ? 'auto' : '100%',
-                                height: data.type && data.type.includes('spell') ? '100%' : 'auto',
-                                transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
-                            }}
-                        />
+                        {heroVideoSrc ? (
+                                <HeroCardVideo
+                                    src={heroVideoSrc}
+                                    className="max-w-none opacity-90 block"
+                                    style={{
+                                        width: '100%',
+                                        height: 'auto',
+                                        transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
+                                    }}
+                                />
+                            ) : (
+                            <img
+                                src={currentImageUrl}
+                                alt={data.name}
+                                draggable={false}
+                                // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的“瞬切”
+                                className="max-w-none opacity-90 block"
+                                style={{
+                                    width: data.type && data.type.includes('spell') ? 'auto' : '100%',
+                                    height: data.type && data.type.includes('spell') ? '100%' : 'auto',
+                                    transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
+                                }}
+                            />
+                            )}
+
                         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/30 pointer-events-none"></div>
                     </div>
 
@@ -1236,6 +1342,7 @@ export const Card: React.FC<CardProps> = ({
                         : data.region === 'Mauxir' ? 'bg-gradient-to-b from-gray-950 via-purple-950 to-gray-950'
                         : data.region === 'Acacia' ? 'bg-gradient-to-b from-gray-950 via-sky-950 to-gray-950'
                         : data.region === 'Logistics' ? 'bg-gradient-to-b from-gray-950 via-gray-800 to-gray-950'
+                        : data.region === 'Analyst' ? 'bg-gradient-to-b from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员黑色卡面
                         : 'bg-slate-900'
                     }`}
                 >
@@ -1264,21 +1371,35 @@ export const Card: React.FC<CardProps> = ({
                                 : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
+                                : data.region === 'Analyst' ? 'from-black/60 via-gray-950/30 to-black/5' // [2026-08-08 莉莉子] 分析员黑色卡面
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
                         )}
-                        <img
-                            src={currentImageUrl}
-                            alt={data.name}
-                            draggable={false}
-                            // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的”瞬切”
-                            className={location === 'deck-panel' ? 'w-full h-full object-cover block' : 'max-w-none block'}
-                            style={location === 'deck-panel' ? undefined : {
-                                width: data.type && data.type.includes('spell') ? 'auto' : '100%',
-                                height: data.type && data.type.includes('spell') ? '100%' : 'auto',
-                                transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
-                            }}
-                        />
+                        {heroVideoSrc ? (
+                                <HeroCardVideo
+                                    src={heroVideoSrc}
+                                    className="max-w-none block"
+                                    style={{
+                                        width: '100%',
+                                        height: 'auto',
+                                        transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
+                                    }}
+                                />
+                            ) : (
+                            <img
+                                src={currentImageUrl}
+                                alt={data.name}
+                                draggable={false}
+                                // [修复] 移除多余的 transition-transform，实现状态改变时图像坐标的”瞬切”
+                                className={location === 'deck-panel' ? 'w-full h-full object-cover block' : 'max-w-none block'}
+                                style={location === 'deck-panel' ? undefined : {
+                                    width: data.type && data.type.includes('spell') ? 'auto' : '100%',
+                                    height: data.type && data.type.includes('spell') ? '100%' : 'auto',
+                                    transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
+                                }}
+                            />
+                            )}
+
                     </div>
 
                     {location !== 'deck-panel' && (
@@ -1536,6 +1657,35 @@ export const Card: React.FC<CardProps> = ({
         );
     };
 
+    // [2026-08-12 装备系统] 手牌右侧外·右下角装备方块（多个从下往上依次堆叠，贴卡牌右轮廓）
+    // [2026-08-15] 支持 preview（悬停检视大图）也显示装备/武装图标，供肉鸽检视场景
+    const renderEquipmentPips = () => {
+        if ((location !== 'hand' && location !== 'preview') || !data.equipment?.length) return null;
+        const defs = getEquipmentDefs(data.equipment);
+        if (defs.length === 0) return null;
+
+        return (
+            <div className="absolute pointer-events-none z-[95]" style={{ right: -21, bottom: 8 }}>
+                {defs.map((def, i) => {
+                    const color = EQUIPMENT_RARITY_COLOR[def.rarity] || '#9ca3af';
+                    return (
+                        <div key={def.id} className="absolute" style={{ bottom: i * 54, left: 0, width: 42, height: 48 }}>
+                            {/* 外层：稀有度边框六边形（clip-path 裁剪不掉外发光，用底色做边框） */}
+                            <div
+                                className="absolute inset-0"
+                                style={{ clipPath: EQUIPMENT_HEXAGON_CLIP, background: color, filter: `drop-shadow(0 0 5px ${color}66)` }}
+                            />
+                            {/* 内层：深色底 + 装备卡面 */}
+                            <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: EQUIPMENT_HEXAGON_CLIP, background: '#14171d' }}>
+                                <img src={def.icon} alt={def.name} draggable={false} className="w-full h-full object-cover" />
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
+
     // --- [新增] 动态计算物理参数 ---
     let dynamicInitial: any = false;
     // [核心修复] 提供绝对兜底的“静止休息状态”！
@@ -1620,6 +1770,7 @@ export const Card: React.FC<CardProps> = ({
                     : data.region === 'Mauxir' ? 'border-purple-500/20'
                     : data.region === 'Acacia' ? 'border-sky-500/20'
                     : data.region === 'Logistics' ? 'border-white/10'
+                    : data.region === 'Analyst' ? 'border-white/20' // [2026-08-08 莉莉子] 分析员描边
                     : 'border-transparent'}
             `}
             initial={dynamicInitial}
@@ -1751,6 +1902,9 @@ export const Card: React.FC<CardProps> = ({
                     )}
                 </div>
             )}
+
+            {/* [2026-08-12 装备系统] 手牌右侧外·装备方块（卡面层之上，不受卡面 overflow 裁剪） */}
+            {renderEquipmentPips()}
         </motion.div>
     );
 };

@@ -720,7 +720,7 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
         ]
     },
     'CantAttack': {
-        id: 'CantAttack', nameEn: "CAN'T ATTACK", nameCn: '无法攻击', availableModes: ['bench', 'combat'],
+        id: 'CantAttack', nameEn: "CAN'T ATTACK", nameCn: '无法攻击', testCardId: 'test_cantattack', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',

@@ -31,7 +31,7 @@ export const StandardGameWrapper: React.FC<StandardGameWrapperProps> = (props) =
             {...props} // 透传通用属性
             enemyDeck={props.encounter.deck}
             enemyHeroConfig={props.encounter.heroConfig}
-            passiveEffects={props.encounter.passiveEffects} // [预留接口] 挂载敌方全局 Buff
+            aiPersonality={props.encounter.aiPersonality ?? 'balanced'} // [2026-08-06] 透传流派性格
             onVictory={handleVictory}
             onDefeat={handleDefeat}
         />

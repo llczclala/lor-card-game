@@ -1,6 +1,7 @@
 import React, {useState} from 'react';
 import { X, Check, Lock } from 'lucide-react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
+import { DeskMedia } from './DeskMedia'; // [2026-08-13] 动态牌桌媒体组件
 
 interface StyleSelectorProps {
     type: 'cardBack' | 'desk'; // 当前选择的是卡背还是牌桌
@@ -8,6 +9,7 @@ interface StyleSelectorProps {
     unlockedIndices: number[];
     onSelect: (index: number) => void; // 确认选择回调
     onClose: () => void;       // 关闭回调
+    deskDynamic?: boolean;     // [2026-08-13] 动态牌桌开关（牌桌类型时生效）
 }
 
 export const StyleSelector: React.FC<StyleSelectorProps> = ({
@@ -15,7 +17,8 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
     currentSelected,
     unlockedIndices,
     onSelect,
-    onClose
+    onClose,
+    deskDynamic = false
 }) => {
     // 临时预览索引 (用户在模态框里随便点，点"确认"前不生效)
     const [previewIndex, setPreviewIndex] = useState(currentSelected);
@@ -69,11 +72,15 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                                             ${type === 'cardBack' ? 'aspect-[2/3]' : 'aspect-video'}
                                         `}
                                     >
-                                        <img
-                                            src={img}
-                                            className={`w-full h-full object-contain ${!isUnlocked ? 'grayscale' : ''}`}
-                                            alt={`Style ${idx}`}
-                                        />
+                                        {type === 'cardBack' ? (
+                                            <img
+                                                src={img}
+                                                className={`w-full h-full object-contain ${!isUnlocked ? 'grayscale' : ''}`}
+                                                alt={`Style ${idx}`}
+                                            />
+                                        ) : (
+                                            <DeskMedia deskIndex={idx} className={`w-full h-full object-contain ${!isUnlocked ? 'grayscale' : ''}`} />
+                                        )}
 
                                         {/* 当前生效标记 */}
                                         {currentSelected === idx && (
@@ -111,13 +118,17 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                         `}
                         onWheel={handleWheel}
                     >
-                        {/* 切换动画需要 Key 变化 */}
-                        <img
-                            key={previewIndex}
-                            src={assets[previewIndex]}
-                            className="w-full h-full object-cover animate-fade-in"
-                            alt="预览"
-                        />
+                        {/* 切换动画需要 Key 变化（[2026-08-13] 牌桌类型用动态视频 DeskMedia） */}
+                        {type === 'cardBack' ? (
+                            <img
+                                key={previewIndex}
+                                src={assets[previewIndex]}
+                                className="w-full h-full object-cover animate-fade-in"
+                                alt="预览"
+                            />
+                        ) : (
+                            <DeskMedia key={previewIndex} deskIndex={previewIndex} dynamic={deskDynamic} className="w-full h-full object-cover animate-fade-in" />
+                        )}
 
                         {/* [新增] 未解锁时的全屏遮罩/提示 */}
                         {!isPreviewUnlocked && (

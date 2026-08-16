@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef,useMemo } from 'react';
 import { Clock, Home } from 'lucide-react';
 import type { CardData, SpellStackItem } from '../types';
-import { Card } from './Card';
+import { Card, HeroCardMediaContext } from './Card';
 import { SmartNexus, Deck } from './GameUI';
+import { RogueModPanel } from './roguelike/RogueModPanel'; // [2026-08-11] 迷宫强化战斗内状态栏
+import { RogueBuffFlash } from './roguelike/RogueBuffFlash'; // [2026-08-11] 迷宫强化触发水晶闪烁
 import { FullArtOverlay, LevelUpOverlay, GameOverScreen } from './Overlays';
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
@@ -13,11 +15,13 @@ import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
 import { useVoice } from '../hooks/useVoice';
 // [核心引入] 引入 LEVELUP_ICONS
 import { UI_IMAGES, PERSONALIZATION_ASSETS, getSkinImage, LEVELUP_ICONS } from '../data/imageData';
+import { DeskMedia } from './DeskMedia'; // [2026-08-13] 动态牌桌媒体组件（兜底静态图 + 日志）
 import { ManaGemSystem } from './ManaGemSystem';
 import { calculateNewMana } from '../utils/gameRules';
 import { getCardBackUrl} from '../utils/styleUtils';
 // [修改] 引用新的 Hook
 import { PlayerHand, EnemyHand, OpeningMulligan, CalibratePanel, HandAnimOverlay, DrawAnimOverlay } from './CardAnimations';
+import { notifyScoutState } from './KeywordEffects'; // [侦察] 攻击宣言期侦察状态广播
 import { RecordPanel } from './RecordPanel';
 import { GameAnnouncement } from './GameAnnouncement';
 import { useGameAnnouncer } from '../hooks/useGameAnnouncer';
@@ -110,11 +114,20 @@ interface GameSessionProps {
     stopMovie: (immediate?: boolean) => void;
     deskIndex: number;
     cardBackIndex?: number;
+    deskDynamic?: boolean; // [2026-08-13] 动态牌桌（开启且有对应视频时用 video 替代静态图）
+    heroDynamic?: boolean; // [2026-08-16] 动态卡面（开启时对局内手牌/场上英雄卡用视频替代静态立绘）
     enemyDeck: string[];
     enemyHeroConfig?: EnemyHeroConfig;
-    onVictory?: () => void;
-    onDefeat?: () => void;
+    onVictory?: (playerNexus?: number) => void; // [2026-08-11] 带剩余水晶（肉鸽全局 HP 衔接）
+    onDefeat?: (playerNexus?: number) => void; // [2026-08-11] 带剩余水晶（败北时不写回）
+    initialPlayerNexus?: number; // [2026-08-11] 战斗内玩家水晶初值（肉鸽=run.hp，缺省 20）
+    playerNexusMax?: number; // [2026-08-11] 玩家水晶回血上限（肉鸽=run.maxHp，缺省 20）
+    rogueEnhancements?: string[]; // [2026-08-11] 玩家迷宫强化 id（战斗内 battleEffect 被动生效）
+    rogueEquipments?: Record<string, string[]>; // [2026-08-12 天启者养成] 卡 key → 装备 id 列表（开局挂载，等级解锁）
     disableMulligan?: boolean; // [新增] 教程模式跳过换牌
+    disableAI?: boolean; // [2026-08-06 莉莉子] 关闭 AI 出牌（教程用）
+    aiPersonality?: 'aggressive' | 'control' | 'balanced'; // [2026-08-06] AI 流派性格
+    aiDifficulty?: 'easy' | 'normal' | 'hard'; // [2026-08-06] AI 难度档位（标准对战用）
     tutorialInit?: import('../hooks/useGameState').TutorialInitState; // ★ 教程初始战场
     firstAttacker?: 'player' | 'enemy'; // ★ 第一回合先手方
     missionSystem?: any;
@@ -125,15 +138,23 @@ export const GameSession: React.FC<GameSessionProps> = ({
     deck, onExit, playBgm,
     playLevelUpMovie, prepareLevelUpMovie, playVictoryMovie, prepareVictoryMovie, stopMovie, // [修改] 提取预热方法
     deskIndex, cardBackIndex = 0,
+    deskDynamic = false, // [2026-08-13] 动态牌桌
+    heroDynamic = false, // [2026-08-16] 动态卡面
     enemyDeck,
     enemyHeroConfig: _enemyHeroConfig,
     onVictory,
     missionSystem,
     onDefeat,
+    initialPlayerNexus, // [2026-08-11] 玩家水晶初值注入（肉鸽）
+    playerNexusMax, // [2026-08-11] 玩家水晶回血上限注入（肉鸽）
+    rogueEnhancements, // [2026-08-11] 玩家迷宫强化注入（肉鸽，战斗内 battleEffect）
+    rogueEquipments, // [2026-08-12 天启者养成] 玩家开局装备注入（肉鸽，卡 key → 装备列表）
     disableMulligan = false, // [新增] 教程模式跳过换牌
     tutorialInit, // ★ 教程初始战场
     firstAttacker = 'player', // ★ 第一回合先手方
     disableAI = false, // ★ 禁用AI自动行动
+    aiPersonality, // [2026-08-06] AI 流派性格
+    aiDifficulty, // [2026-08-06] AI 难度档位
     turnTimer = 99, // [新增] 倒计时秒数，默认 99，教程模式 999
 }) => {
 
@@ -144,14 +165,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
         enemyBench, setEnemyBench,
         combatField, setCombatField,
         actions,
-        message, setMessage, winningHeroKeys,
+        setMessage, winningHeroKeys,
         // 👇 新增：从useGameState解构初始卡组信息
         playerDeck,
         enemyDeckState, // ✅ 正确获取敌方牌库
         playerInitialDeckInfo,
         enemyInitialDeckInfo,
         onHandAnimComplete
-    } = useGameState(deck, enemyDeck, false, disableMulligan, tutorialInit, firstAttacker);
+    } = useGameState(deck, enemyDeck, false, disableMulligan, tutorialInit, firstAttacker, initialPlayerNexus, playerNexusMax, rogueEnhancements, rogueEquipments);
 
     // ==========================================
     // [教程] 暂停/恢复升级系统（必须放在升级仲裁前面，避免 TDZ）
@@ -346,6 +367,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 actions.instantDrawCards(count, 'player');
                 actions.instantDrawCards(count, 'enemy');
                 actions.triggerGameStartGenerate();
+                actions.triggerFirstRoundRogueEnhance(); // [2026-08-15] 换牌结束后第一回合触发 round_start 强化（暗箭等），参考安卡库效修复
                 setMulliganDrawLock(false);
                 setPostMulliganLock(false);
                 console.log(`[DrawCards] ⚡ 快速模式完成`);
@@ -359,6 +381,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 console.log(`[DrawCards] 敌方抽卡完成，回到 main 阶段`);
                 setGame(prev => ({ ...prev, phase: 'main' }));
                 actions.triggerGameStartGenerate();
+                actions.triggerFirstRoundRogueEnhance(); // [2026-08-15] 换牌结束后第一回合触发 round_start 强化（暗箭等），参考安卡库效修复
                 setMulliganDrawLock(false);
                 setPostMulliganLock(false);
                 console.log(`[DrawCards] ✅ 全部完成 — 按钮锁已释放`);
@@ -392,6 +415,20 @@ export const GameSession: React.FC<GameSessionProps> = ({
         const effectDef = EFFECT_DB[cCard.effects[0]];
         return effectDef?.targetRequirements?.some(req => req.type === 'HAND_CARD') || false;
     }, [spellSystem.isCasting, game.spellCasting, game.activeCard, playerHand]);
+
+    // [2026-08-08 莉莉子] HAND_CARD 施法瞄准的目标过滤条件（战术闪击等：类型 + 费用上限），用于手牌高亮
+    const handTargetFilter = useMemo(() => {
+        if (!isCastingForHand) return null;
+        const req = spellSystem.currentRequirement;
+        if (!req || req.type !== 'HAND_CARD') return null;
+        const castingCardDef = spellSystem.activeCard?.effects?.[0]
+            ? EFFECT_DB[spellSystem.activeCard.effects[0]]
+            : null;
+        return {
+            cardTypeFilter: req.cardTypeFilter,
+            maxCost: castingCardDef?.params?.maxCost,
+        };
+    }, [isCastingForHand, spellSystem.currentRequirement, spellSystem.activeCard]);
 
     const finalAnnouncement = announcement;
 
@@ -449,7 +486,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
         // 2. 如果底层清除了施法状态，前台也要同步关闭 (如发生异常撤销)
         else if (!game.spellCasting && spellSystem.isCasting) {
+            // [LILITH-DEBUG] 施法状态同步诊断
+            console.log(`[LILITH-DEBUG][SYNC] 检测到 spellCasting 已清空 → cancelCasting() 被调用 (isCasting=${spellSystem.isCasting})`);
             spellSystem.cancelCasting();
+        } else {
+            // [LILITH-DEBUG] 施法状态同步诊断
+            if (game.spellCasting || spellSystem.isCasting) {
+                console.log(`[LILITH-DEBUG][SYNC] 施法状态: spellCasting=${game.spellCasting?.step ?? 'null'} activeCard=${game.activeCard ? game.activeCard.key : 'null'} isCasting=${spellSystem.isCasting} (未走到 cancelCasting 分支)`);
+            }
         }
     }, [game.spellCasting, spellSystem.isCasting, game.activeCard, playerHand]);
 
@@ -488,7 +532,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
         combatField,
         setMessage,
         actions: { ...actions, setGame, setEnemyHand, setEnemyBench, setCombatField, setPlayerBench },
-        disabled: disableAI
+        disabled: disableAI,
+        difficulty: aiDifficulty ?? 'normal', // [2026-08-06] 标准对战难度（默认普通）
+        personality: aiPersonality ?? 'balanced', // [2026-08-06] 流派性格
     });
 
     // ★ 教程模式：监听剧本自动行为事件
@@ -756,7 +802,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     const { setCursor } = useCursor(); // [新增] 挂载全局指针遥控器
 
     // [新增] 统一悬停预览（备战席 & 战场 800ms 长凝视）
-    const { gazeTarget, gazeCard, bindGazeEvents } = useCardGaze({
+    const { gazeTarget, bindGazeEvents } = useCardGaze({
         delay: 800,
         isDragging: ghostState !== null,
         isCasting: spellSystem.isCasting,
@@ -774,8 +820,28 @@ export const GameSession: React.FC<GameSessionProps> = ({
     benchRef.current = playerBench;
     const combatFieldRef = useRef(combatField);
     combatFieldRef.current = combatField;
+
+    // [侦察] 观察玩家攻击宣言 → 计算侦察状态（active=全侦察有效 / invalid=混入无效 / null=无）
+    // 纯观察：只读 combatField + attackToken，不改战斗逻辑；广播给卡面/卡槽特效层
+    useEffect(() => {
+        const isFirstAttack = game.attackToken.player === 'normal';
+        const playerAttackers = combatField.filter(f => f.owner === 'player' && f.attacker);
+        const scoutCount = playerAttackers.filter(f => f.attacker?.keywords?.includes('Scout')).length;
+        let state: 'active' | 'invalid' | null = null;
+        if (isFirstAttack && playerAttackers.length > 0 && scoutCount > 0) {
+            state = scoutCount === playerAttackers.length ? 'active' : 'invalid';
+        }
+        notifyScoutState(state);
+    }, [combatField, game.attackToken.player]);
     const msgRef = useRef(setMessage);
     msgRef.current = setMessage;
+
+    // [2026-08-06 莉莉子 敌我修复] 格挡高亮前置条件：场上存在"可格的敌方进攻者"
+    // （owner==='enemy' 且尚未分配格挡者）。避免己方飞剑/己方进攻在场时备战席被误点亮，
+    // 导致玩家把单位派去格挡自己的飞剑。
+    const hasBlockableEnemyAttacker = combatField.some(f =>
+        f.owner === 'enemy' && f.blocker === null && f.attacker
+    );
 
     // ==========================================
     // [新增] 全局鼠标状态调度器 (The Cursor Director)
@@ -824,8 +890,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
             return;
         }
         const canDrag =
-            ((phase === 'main' && hasAttackToken) || phase === 'attack_declare') && isPlayerTurn ||
-            (phase === 'block_declare' && isPlayerTurn);
+            ((phase === 'main' && hasAttackToken && game.spellStack.length === 0) || phase === 'attack_declare') && isPlayerTurn ||
+            (phase === 'block_declare' && isPlayerTurn && hasBlockableEnemyAttacker);
         if (!canDrag) return;
 
         const rect = target.getBoundingClientRect();
@@ -1564,6 +1630,26 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
 
         if (spellSystem.isCasting) {
+            // [2026-08-08 莉莉子修复] HAND_CARD 施法瞄准：类型/费用过滤拦截（战术闪击等只能选指定类型与费用上限的手牌）
+            if (spellSystem.currentRequirement?.type === 'HAND_CARD' && location === 'hand') {
+                const req = spellSystem.currentRequirement;
+                const castingCardDef = spellSystem.activeCard?.effects?.[0]
+                    ? EFFECT_DB[spellSystem.activeCard.effects[0]]
+                    : null;
+                if (req.cardTypeFilter === 'unit' && !card.type?.includes('unit')) {
+                    setMessage("只能选择单位卡牌！");
+                    return false;
+                }
+                if (req.cardTypeFilter === 'spell' && !card.type?.includes('spell')) {
+                    setMessage("只能选择法术卡牌！");
+                    return false;
+                }
+                const maxCost = castingCardDef?.params?.maxCost;
+                if (maxCost !== undefined && (card.cost || 0) >= maxCost) {
+                    setMessage(`只能选择费用低于${maxCost}的卡牌！`);
+                    return false;
+                }
+            }
             spellSystem.handleTargetClick(card, owner as 'player' | 'enemy', location as 'hand' | 'field');
             return false;
         }
@@ -1630,6 +1716,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
             }
         }
         else if (game.phase === 'block_declare' && game.turnOwner === 'player' && location === 'bench') {
+            // [2026-08-06 莉莉子 敌我修复] 无"可格的敌方进攻者"时不允许选择格挡者
+            // （防止己方飞剑/己方进攻在场时，玩家把单位派去格挡自己的飞剑）
+            if (!hasBlockableEnemyAttacker) {
+                setMessage('当前没有可格挡的敌方进攻者');
+                return false;
+            }
             // ★ 教程：如果期望拖拽操作，屏蔽点击选格挡者
             if (tutorialInteractionMode.current === 'drag_target') {
                 setMessage('请使用拖拽来完成格挡');
@@ -1828,19 +1920,22 @@ export const GameSession: React.FC<GameSessionProps> = ({
         return () => clearTimeout(autoSelectTimer);
     }, [game.activeCard?.id, game.spellCasting?.step]);
 
-
+    // [2026-08-11 肉鸽全局 HP 衔接] 统一结算退出：把剩余水晶传给上层回调
+    const settleExit = () => {
+        if (game.gameResult === 'victory') {
+            if (onVictory) onVictory(game.playerNexus); else onExit();
+        } else {
+            if (onDefeat) onDefeat(game.playerNexus); else onExit();
+        }
+    };
 
     return (
+        <HeroCardMediaContext.Provider value={heroDynamic}>
         <div className="w-full h-full bg-black text-white overflow-hidden relative font-sans select-none">
 
-            {/* 1. 背景层 */}
+            {/* 1. 背景层（[2026-08-13] 动态牌桌：DeskMedia 统一处理，无视频自动兜底静态图） */}
             <div className="absolute inset-0 pointer-events-none z-0">
-                <img
-                    // [修改] 使用选定的牌桌图片
-                    src={PERSONALIZATION_ASSETS.desks[deskIndex]}
-                    className="w-full h-full object-cover"
-                    alt="棋盘"
-                />
+                <DeskMedia deskIndex={deskIndex} dynamic={deskDynamic} className="w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-black/20"></div>
             </div>
 
@@ -1853,6 +1948,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 showMousePreview={spellSystem.isCasting && (game.spellCasting?.step === 'select_discard' || (game.spellCasting?.step === 'select_bench' && (!game.spellCasting?.targets?.length)) || !spellSystem.isSelectionComplete) && !(game.spellCasting?.step === 'select_hand_target' && (game.spellCasting as any).mode === 'single' && (game.spellCasting?.targets?.length || 0) > 0)}
                 selectedTargets={[...spellSystem.selectedTargets, ...(game.spellCasting?.targets || [])]}
                 castingSpellRef={spellSystem.activeCard ? spellCenterRef : undefined}
+                // [2026-08-15 莉莉子] 抵抗/抗拒（反制堆叠法术）启用回力镖瞄准：先下坠再水平指向目标（敌方目标）
+                boomerang={(spellSystem.activeCard?.key === 'temp_spell_06' || spellSystem.activeCard?.key === 'temp_spell_07') ? 'down' : undefined}
                 // [核心修复] 将所有堆叠区的法术及其目标传入特效层，用于绘制持久化连线
                 persistentLines={[
                     // [修正] 直接提取卡牌底层的原生 id 作为起点定位符，不搞花里胡哨的自定义前缀
@@ -1874,7 +1971,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
             <div className="absolute top-4 left-4 z-[100]">
                  <button onClick={() => {
                      eventBus.emit(GameEvents.UI_BACK);
-                     onExit();
+                     // [2026-08-11 肉鸽 HP 衔接] 已判定胜负 → 走正常结算（带回滚守卫）；未判定 → 中途退出
+                     if (game.gameResult === 'victory' || game.gameResult === 'defeat') {
+                         settleExit();
+                     } else {
+                         onExit();
+                     }
                  }} className="p-2 bg-slate-800/80 rounded-full hover:bg-slate-700 text-gray-400 hover:text-white transition-colors">
                     <Home size={20} />
                 </button>
@@ -1927,14 +2029,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 <GameOverScreen
                     result={game.gameResult}
                     stats={game.stats}
-                    // [修改] 区分胜利和失败的退出逻辑
-                    onExit={() => {
-                        if (game.gameResult === 'victory') {
-                            if (onVictory) onVictory(); else onExit();
-                        } else {
-                            if (onDefeat) onDefeat(); else onExit();
-                        }
-                    }}
+                    // [修改] 区分胜利和失败的退出逻辑；[2026-08-11] 走统一 settleExit 带剩余水晶
+                    onExit={settleExit}
                     onPlayMovie={handleVictorySequence}
                     onPrepareMovie={handlePrepareVictorySequence} // [核心新增] 下发胜利预热！
                     missionSystem={missionSystem}
@@ -2046,6 +2142,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         <div className={`group relative transition-all duration-300 ${canPlay ? 'cursor-pointer hover:scale-110 hover:-translate-y-4' : ''}`}
                                              onClick={(e) => {
                                                  e.stopPropagation();
+                                                 if (game.turnOwner === 'enemy') return; // [2026-08-07 莉莉子修复] AI 的抉择，玩家不可点击（与背景取消逻辑一致）
                                                  if (canPlay) actions.resolveChoice(choiceKey); // 直接传递 Key
                                              }}>
                                             <div className={`absolute -top-16 left-1/2 -translate-x-1/2 text-2xl font-bold ${textColor} opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-4 group-hover:translate-y-0 whitespace-nowrap`}>
@@ -2118,7 +2215,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     const isDiscardSelectMode = game.spellCasting?.step === 'select_discard';
                     const isHandTargetMode = game.spellCasting?.step === 'select_hand_target';
                     const isBenchSelectMode = game.spellCasting?.step === 'select_bench';
-                    const activeSpells = [];
+                    const activeSpells: { card: CardData; mode: string; owner: string; index: number; hasNoTargets?: boolean }[] = [];
                     game.spellStack.forEach((s, idx) => activeSpells.push({ card: s.card, mode: 'stack', owner: s.owner, index: idx, hasNoTargets: s.targets.length === 0 }));
                     if (game.pendingSpell) activeSpells.push({ card: game.pendingSpell.card, mode: 'pending', owner: 'player', index: 0 });
                     if (spellSystem.isCasting && spellSystem.activeCard && !isDiscardSelectMode && !isHandTargetMode) activeSpells.push({ card: spellSystem.activeCard, mode: 'casting', owner: 'player', index: 0 });
@@ -2133,8 +2230,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         const isHandTargetSelect = mode === 'hand_target_select';
                         const isBenchSelect = mode === 'bench_select';
                         const isEnemy = owner === 'enemy';
+                        // [2026-08-05 莉莉子] 反制高亮：可被当前施法无效化的堆叠法术（法术6/7）
+                        const isStackTargetable = mode === 'stack' && spellSystem.isCasting && spellSystem.currentRequirement?.type === 'SPELL_ON_STACK' && spellSystem.checkIsTargetable(card, owner);
                         // 智能皮肤读取
-                        const currentImageUrl = skinOverrides[card.key] ? getSkinImage(card.key, skinOverrides[card.key], card.level === 2) || card.imageUrl : card.imageUrl;
+                        const currentImageUrl = skinOverrides[card.key] ? getSkinImage(card.key, skinOverrides[card.key]) || card.imageUrl : card.imageUrl;
 
                         // 动态计算目标位置与缩放（交给 Framer Motion 自动补间飞行路线）
                         // [2026-07-07] 无目标阶段放大圆盘（AI 施法悬念期）
@@ -2142,17 +2241,32 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         const yOffset = isCasting ? 0 : 0; // 预提交靠下，入栈居中
 
                         // ★ 筹码式堆叠：入栈时确定 x 位置并锁定，结算后剩余卡牌不移动
-                        const getStackXOffset = (cardId: string, i: number, total: number): number => {
-                            if (!spellStackXPositions.current.has(cardId)) {
-                                if (total <= 1) return 0;
-                                const MAX_RADIUS = 320;
-                                const step = Math.min(150, MAX_RADIUS * 2 / (total - 1));
-                                spellStackXPositions.current.set(cardId, -step * (total - 1) / 2 + i * step);
+                        // [2026-08-08 莉莉子] 施法瞄准期把「施法中/待确认」法术也纳入扇形展开，
+                        // 防止 NEGATE 类选目标法术盖住栈上目标导致无法点选。
+                        // 顺序 = LIFO 生效顺序：施法中/待确认（最新、最先生效）→ 栈上法术（新→旧）
+                        const fanGroup = [
+                            ...activeSpells.filter(s => s.mode === 'casting' || s.mode === 'pending'),
+                            ...activeSpells.filter(s => s.mode === 'stack'),
+                        ];
+                        const fanTotal = fanGroup.length;
+                        const isStackAiming = spellSystem.isCasting || !!game.pendingSpell; // 施法/待确认期间重排让位
+                        const getStackXOffset = (cardId: string, mode: string): number => {
+                            if (fanTotal <= 1) return 0;
+                            // 非施法瞄准期：堆叠法术沿用锁定缓存（结算后不移动）
+                            if (mode === 'stack' && !isStackAiming && spellStackXPositions.current.has(cardId)) {
+                                return spellStackXPositions.current.get(cardId)!;
                             }
-                            return spellStackXPositions.current.get(cardId)!;
+                            const MAX_RADIUS = 320;
+                            const step = Math.min(150, MAX_RADIUS * 2 / (fanTotal - 1));
+                            const fanIndex = fanGroup.findIndex(s => s.card.id === cardId);
+                            const x = -step * (fanTotal - 1) / 2 + fanIndex * step;
+                            // 施法瞄准期或首次入栈：刷新锁定（让老法术给施法中的卡让位）
+                            if (mode === 'stack') spellStackXPositions.current.set(cardId, x);
+                            return x;
                         };
-                        const totalStackItems = activeSpells.filter(s => s.mode === 'stack').length;
-                        const xOffset = mode === 'stack' ? getStackXOffset(card.id, index, totalStackItems) : 0;
+                        const xOffset = mode === 'stack' || mode === 'casting' || mode === 'pending'
+                            ? getStackXOffset(card.id, mode)
+                            : 0;
 
                         return (
                             <motion.div
@@ -2167,6 +2281,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 onClick={() => {
                                     if (isDiscardSelect || isHandTargetSelect || isBenchSelect) {
                                         actions.cancelPendingSpell();
+                                    } else if (spellSystem.isCasting && spellSystem.currentRequirement?.type === 'SPELL_ON_STACK' && mode === 'stack') {
+                                        // [2026-08-05 莉莉子] 反制交互：点击堆叠法术作为无效化目标（法术6/7）
+                                        // [LILITH-DEBUG] 反制点击诊断
+                                        console.log(`[LILITH-DEBUG][NEGATE-CLICK] 点击栈上法术 ${card.key}(${card.name}) owner=${owner} isCasting=${spellSystem.isCasting} req=${spellSystem.currentRequirement?.type} mode=${mode} xOffset=${xOffset}`);
+                                        spellSystem.handleTargetClick(card, owner, 'stack');
                                     } else if (isCasting) {
                                         eventBus.emit(GameEvents.UI_BACK);
                                         const cardToReturn = card.parentCard || card;
@@ -2217,7 +2336,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     <img src={UI_IMAGES.spellContainer} alt="容器" className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-all duration-300 ${isEnemy ? 'drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]'} ${!isEnemy ? 'group-hover:drop-shadow-[0_0_40px_rgba(239,68,68,0.5)]' : ''}`} />
 
                                     {/* 物理锚点：使用 data-entity-id 供特效层绝对追踪 */}
-                                    <div ref={isCasting ? spellCenterRef : undefined} data-entity-id={card.id} className="relative w-[110px] h-[110px] rounded-full overflow-hidden z-10 bg-black">
+                                    <div ref={isCasting ? spellCenterRef : undefined} data-entity-id={card.id} className={`relative w-[110px] h-[110px] rounded-full overflow-hidden z-10 bg-black ${isStackTargetable ? 'ring-4 ring-red-400/80 animate-pulse' : ''}`}>
                                         <img src={currentImageUrl} className="w-full h-full object-cover animate-pulse-slow opacity-90 mix-blend-screen" draggable={false} />
                                         {!isEnemy && (isCasting || isPending) && (
                                             <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
@@ -2253,6 +2372,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
             {/* 5. 游戏主界面 */}
             <div className={`w-full h-full relative ${game.screenShake ? 'animate-shake' : ''}`}>
+
+                {/* [2026-08-11] 迷宫强化：战斗内状态栏 + 触发时水晶闪烁 */}
+                <RogueModPanel enhancements={game.rogueEnhancements} />
+                <RogueBuffFlash />
 
                 {/* --- A. 左侧 UI 层 (绝对定位) --- */}
                 {/* [核心修复] 修正信标暗号！必须与逻辑层的 nexus_enemy 完美对齐！ */}
@@ -2314,7 +2437,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             <div className="relative w-[72px] h-[112px] rounded-lg border-2 border-yellow-400 shadow-[0_0_30px_rgba(255,215,0,0.6)] bg-slate-900 overflow-hidden bg-gradient-to-b from-yellow-500/20 to-transparent">
                                 <img
                                     // 完美继承皮肤系统的渲染规则
-                                    src={skinOverrides[levelUpToast.hero.key] ? getSkinImage(levelUpToast.hero.key, skinOverrides[levelUpToast.hero.key], levelUpToast.hero.level === 2) || levelUpToast.hero.imageUrl : levelUpToast.hero.imageUrl}
+                                    src={skinOverrides[levelUpToast.hero.key] ? getSkinImage(levelUpToast.hero.key, skinOverrides[levelUpToast.hero.key]) || levelUpToast.hero.imageUrl : levelUpToast.hero.imageUrl}
                                     className="w-full h-full object-cover opacity-90"
                                     alt="英雄头像"
                                 />
@@ -2502,7 +2625,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         // [2026-07-20] isSelected 含 spellCasting.targets 支持 select_bench 选中高亮
                                         isSelected={game.selectedBlockerId === c.id || game.spellCasting?.allyId === c.id || game.spellCasting?.targets?.some((t: any) => t.id === c.id)}
                                         // [修改] 主阶段持有攻击标识时，所有单位高亮发蓝光！
-                                        highlightTarget={(game.phase === 'attack_declare' && game.turnOwner === 'player') || (game.phase === 'block_declare' && game.turnOwner === 'player') || canAttackPhase || game.spellCasting?.step === 'select_bench'}
+                                        highlightTarget={(game.phase === 'attack_declare' && game.turnOwner === 'player') || (game.phase === 'block_declare' && game.turnOwner === 'player' && hasBlockableEnemyAttacker) || canAttackPhase || game.spellCasting?.step === 'select_bench'}
                                         isBlocking={game.phase === 'block_declare'}
                                     onClick={() => {
                                         // [2026-07-20 替换打出] 替换选择模式：选中一个备战席单位
@@ -2738,6 +2861,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 playerBench={playerBench}
                                 combatField={combatField}
                                 isCastingForHand={isCastingForHand} // [核心修复] 将索敌状态精准打通至手牌组件！
+                                handTargetFilter={handTargetFilter} // [2026-08-08 莉莉子] HAND_CARD 目标过滤条件，供手牌高亮
                                 onAnimComplete={(id) => onHandAnimComplete(id, 'player')} // [2026-07-22 莉莉子] 手牌动画完成回调
                             />
                         )}
@@ -2762,5 +2886,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
             <DrawAnimOverlay cardBackUrl={currentCardBack} skinOverrides={skinOverrides} />
             <HandAnimOverlay />
         </div>
+        </HeroCardMediaContext.Provider>
     );
 }

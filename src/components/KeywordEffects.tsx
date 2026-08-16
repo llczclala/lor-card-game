@@ -1,5 +1,5 @@
 // [核心修复] 引入 useState 和 useEffect 构建状态机
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
 // [新增] 引入 motion 和 AnimatePresence 用于无缝淡出
 import { motion, AnimatePresence } from 'framer-motion';
 import type { CardData } from '../types';
@@ -38,6 +38,30 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
     const isCombat = location === 'combat';
     const isBench = location === 'bench' || location === 'enemy_bench';
 
+    // [瞬逝保险丝] 手牌 Volatile 卡挂载计数（供全局火焰档位统计，敌我共用）
+    const isHandVolatile = location === 'hand' && data.keywords.includes('Volatile');
+    useEffect(() => {
+        if (!isHandVolatile) return;
+        notifyVolatileHand(1);
+        return () => notifyVolatileHand(-1);
+    }, [isHandVolatile]);
+
+    // [侦察] 订阅攻击宣言期侦察状态（active=全侦察有效 / invalid=混入无效 / null=非首次即已触发过）
+    const scoutState = useSyncExternalStore(subscribeScoutState, getScoutState);
+    // [侦察] 仅战斗区显示：侦察单位进入战斗区进攻时，active=有效（翠绿旋转），invalid/null=无效（灰白停转）
+    const isScoutAttacker = isCombat && !isBlocker && data.keywords.includes('Scout');
+    const isScoutActive = isScoutAttacker && scoutState === 'active';
+    const isScoutInvalid = isScoutAttacker && scoutState !== 'active';
+    // [侦察] 入场爆发锁：进入战斗区进攻时播放一次图标爆发
+    const scoutBurstCount = useRef(0);
+    const prevScoutAttacking = useRef(false);
+    useEffect(() => {
+        if (isScoutAttacker && !prevScoutAttacking.current) {
+            scoutBurstCount.current += 1;
+        }
+        prevScoutAttacking.current = isScoutAttacker;
+    }, [isScoutAttacker]);
+
     // SVG 圆角计算：保持与 CSS rounded-* 类一致
     const borderRadius = isCombat ? 16 : (isBench ? 12 : 8);
 
@@ -68,6 +92,17 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
         if (data.animState === 'hit' && isOnBoard && data.keywords.includes('Tough')) {
             setToughHitActive(true);
             const timer = setTimeout(() => setToughHitActive(false), 1200);
+            return () => clearTimeout(timer);
+        }
+    }, [data.animState]);
+
+    // [反伤] 受击触发锁：捕获 animState:'hit' 后播放 0.6s 的高频突刺特效
+    const [thornsHitActive, setThornsHitActive] = useState(false);
+
+    useEffect(() => {
+        if (data.animState === 'hit' && isOnBoard && data.keywords.includes('Thorns')) {
+            setThornsHitActive(true);
+            const timer = setTimeout(() => setThornsHitActive(false), 600);
             return () => clearTimeout(timer);
         }
     }, [data.animState]);
@@ -185,6 +220,57 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
 
     return (
         <>
+            {/* [瞬逝] 手牌白橙火焰常驻预警 */}
+            {location === 'hand' && data.keywords.includes('Volatile') && <VolatileFlame />}
+
+            {/* [侦察] 战斗区卡面特效（仅进攻的侦察单位，战场常驻） */}
+            {isScoutActive && (
+                <div className="absolute inset-0 z-[30] pointer-events-none" style={{ borderRadius }}>
+                    {/* 翠绿色高光轮廓 */}
+                    <div className="absolute inset-0 border-4 border-emerald-400 rounded-xl box-border shadow-[0_0_20px_rgba(16,185,129,0.6)]" />
+                    {/* 白色流光（沿边框流动） */}
+                    <svg className="absolute inset-0 w-full h-full overflow-visible">
+                        <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeDasharray="30% 170%" className="animate-beam-move opacity-90 filter drop-shadow-[0_0_8px_white]" />
+                    </svg>
+                    {/* 入场图标爆发（一次性，每次进入战斗区播一次） */}
+                    <motion.div
+                        key={`scout-burst-${scoutBurstCount.current}`}
+                        className="absolute inset-0 flex items-center justify-center"
+                        initial={{ opacity: 0, scale: 0.5 }}
+                        animate={{ opacity: [0, 1, 0], scale: [0.5, 1.6, 2.5] }}
+                        transition={{ duration: 0.9, ease: 'easeOut' }}
+                    >
+                        <img src={KEYWORD_DB['Scout'].icon} className="w-20 h-20 object-contain drop-shadow-[0_0_20px_rgba(16,185,129,0.9)]" alt="侦察" />
+                    </motion.div>
+                    {/* 常驻图标：中间左右旋转（不缩放、不改变透明度），带翠绿光晕 */}
+                    <motion.div
+                        className="absolute inset-0 flex items-center justify-center"
+                        animate={{ rotate: [-12, 12, -12] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                    >
+                        <img src={KEYWORD_DB['Scout'].icon} className="w-16 h-16 object-contain"
+                            style={{ filter: 'drop-shadow(0 0 10px rgba(16,185,129,0.9)) drop-shadow(0 0 26px rgba(16,185,129,0.55))' }}
+                            alt="侦察" />
+                    </motion.div>
+                </div>
+            )}
+            {isScoutInvalid && (
+                <div className="absolute inset-0 z-[30] pointer-events-none" style={{ borderRadius }}>
+                    {/* 灰色高光轮廓 */}
+                    <div className="absolute inset-0 border-4 border-gray-400 rounded-xl box-border shadow-[0_0_20px_rgba(156,163,175,0.5)]" />
+                    {/* 白色流光（无效态：停转，无 animate-beam-move） */}
+                    <svg className="absolute inset-0 w-full h-full overflow-visible">
+                        <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeDasharray="30% 170%" className="opacity-60 filter drop-shadow-[0_0_6px_rgba(156,163,175,0.7)]" />
+                    </svg>
+                    {/* 中间图标：灰白滤镜 + 停止旋转 */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <img src={KEYWORD_DB['Scout'].icon} className="w-16 h-16 object-contain"
+                            style={{ filter: 'grayscale(1) brightness(1.25) drop-shadow(0 0 8px rgba(156,163,175,0.7))' }}
+                            alt="侦察无效" />
+                    </div>
+                </div>
+            )}
+
             {/* 1. Barrier (屏障) - 动态能量护盾 (向上生长 + 中心宣告 + 破裂爆散) */}
             {/* 利用 AnimatePresence 监听词条。无论是打出还是法术赋予，只要获得屏障，立刻触发华丽展开！ */}
             <AnimatePresence>
@@ -332,26 +418,90 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                 )}
             </AnimatePresence>
 
-            {/* 3b. Thorns (反伤) — 毒绿尖刺 */}
+            {/* 3b. Thorns (反伤) — 物理拒止金属尖刺 */}
             {isOnBoard && data.keywords.includes('Thorns') && (
-                <div className="absolute inset-0 z-[25] pointer-events-none overflow-hidden" style={{ borderRadius }}>
-                    <motion.div
-                        className="absolute inset-0 border-4 border-lime-500 rounded-xl box-border shadow-[0_0_15px_rgba(132,204,22,0.5)]"
-                        animate={{ opacity: [0.2, 0.6, 0.2] }}
-                        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                    />
+                <div className="absolute inset-0 z-[25] pointer-events-none overflow-visible" style={{ borderRadius }}>
+                    {/* 静态常驻：贴合边缘的暗黑绿荆棘底座 */}
+                    <div className="absolute inset-0 border-[3px] border-[#1a2e1a] rounded-xl shadow-[inset_0_0_10px_rgba(20,40,20,0.8)]" />
+
+                    {/* 动态受击突刺层 */}
+                    <motion.svg
+                        className="absolute inset-0 w-full h-full overflow-visible"
+                        style={{ left: '-12px', top: '-12px', width: 'calc(100% + 24px)', height: 'calc(100% + 24px)' }}
+                        animate={thornsHitActive ? { scale: [1, 1.1, 1.05, 1], filter: ['brightness(1)', 'brightness(2.5)', 'brightness(1)'] } : { scale: 1 }}
+                        transition={{ duration: 0.4, ease: "easeOut" }}
+                    >
+                        {/* 利用虚线偏移结合锯齿路径，生成锐利突刺 */}
+                        <rect x="12" y="12" width="calc(100% - 24px)" height="calc(100% - 24px)" rx={borderRadius} ry={borderRadius}
+                            fill="none"
+                            stroke={thornsHitActive ? "#65a30d" : "#3f6212"} /* 触发时瞬间变为亮毒绿 */
+                            strokeWidth={thornsHitActive ? "8" : "4"}
+                            strokeDasharray="2 12 6 18 3 15" /* 不规则参差断裂 */
+                            strokeLinecap="square"
+                            className="drop-shadow-[0_0_6px_rgba(101,163,13,0.8)]"
+                        />
+                    </motion.svg>
                 </div>
             )}
 
-            {/* 3. Regeneration FX (再生) */}
+            {/* 3c. Aura (光环) — 纯 CSS 三维领域体积光 */}
+            {isOnBoard && data.keywords.includes('Aura') && (
+                <div className="absolute inset-0 z-[28] pointer-events-none overflow-hidden" style={{ borderRadius }}>
+                    {/* 纯 CSS 圣洁光束：利用重复圆锥渐变叠加与交错旋转，辅以顶部透明遮罩，生成完美丁达尔效应 */}
+                    <motion.div
+                        className="absolute inset-[-100%] origin-bottom mix-blend-screen opacity-60"
+                        style={{
+                            background: 'repeating-conic-gradient(from 0deg at 50% 100%, transparent 0deg, rgba(147,197,253,0.1) 10deg, transparent 20deg)',
+                            maskImage: 'linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 60%)',
+                            WebkitMaskImage: 'linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 60%)'
+                        }}
+                        animate={{ rotate: [-5, 5, -5] }}
+                        transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+                    />
+                    {/* 第二层光束：错开角度和旋转方向，增加光的交织厚度 */}
+                    <motion.div
+                        className="absolute inset-[-100%] origin-bottom mix-blend-screen opacity-40"
+                        style={{
+                            background: 'repeating-conic-gradient(from 15deg at 50% 100%, transparent 0deg, rgba(191,219,254,0.15) 15deg, transparent 30deg)',
+                            maskImage: 'linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 50%)',
+                            WebkitMaskImage: 'linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 50%)'
+                        }}
+                        animate={{ rotate: [3, -3, 3] }}
+                        transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+                    />
+
+                    {/* 缓慢上浮的柔焦微尘粒子 */}
+                    {Array.from({ length: 6 }).map((_, i) => (
+                        <div key={`dust-${i}`} className="absolute rounded-full bg-blue-100 blur-[1px] animate-dust-float" style={{
+                            width: `${3 + (i % 3) * 2}px`, height: `${3 + (i % 3) * 2}px`,
+                            left: `${15 + i * 15}%`,
+                            bottom: '-10%',
+                            animationDelay: `${i * 1.5}s`,
+                            ['--dust-x' as any]: `${(i % 2 === 0 ? 1 : -1) * (10 + i * 5)}px`
+                        }} />
+                    ))}
+                </div>
+            )}
+
+            {/* 3. Regeneration FX (再生) — 有机生命能量波 */}
             {isOnBoard && data.animState === 'regenerating' && KEYWORD_DB['Regeneration'] && (
-                <div className="absolute inset-0 z-[70] pointer-events-none animate-regen-fade">
-                    <div className="absolute inset-0 border-4 border-green-500 rounded-2xl shadow-[0_0_30px_#22c55e] box-border"></div>
-                    <svg className="absolute inset-0 w-full h-full overflow-visible">
-                         <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="3" strokeDasharray="50% 150%" className="animate-beam-move opacity-80" />
-                    </svg>
-                    <div className="absolute top-1/2 left-1/2 w-24 h-24 animate-regen-pop">
-                        <img src={KEYWORD_DB['Regeneration'].icon} className="w-full h-full object-contain drop-shadow-[0_0_10px_#22c55e]" />
+                <div className="absolute inset-0 z-[70] pointer-events-none overflow-hidden animate-regen-fade" style={{ borderRadius }}>
+                    {/* 液体浸润能量波：自下而上扫过卡面 */}
+                    <div className="absolute inset-0 h-[150%] w-full bg-gradient-to-t from-emerald-400/0 via-emerald-300/40 to-green-100/80 mix-blend-screen animate-organic-wave" />
+
+                    {/* 边缘逸散的高光萤火虫粒子 */}
+                    <div className="absolute inset-0 overflow-visible">
+                        {Array.from({ length: 12 }).map((_, i) => (
+                            <div key={`firefly-${i}`} className="absolute w-[3px] h-[3px] rounded-full bg-green-200 shadow-[0_0_8px_#4ade80] animate-firefly-rise" style={{
+                                left: `${(i / 11) * 100}%`,
+                                bottom: '0%',
+                                animationDelay: `${(i % 4) * 0.15}s`
+                            }} />
+                        ))}
+                    </div>
+
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-24 h-24 animate-regen-pop">
+                        <img src={KEYWORD_DB['Regeneration'].icon} className="w-full h-full object-contain drop-shadow-[0_0_20px_#4ade80]" />
                     </div>
                 </div>
             )}
@@ -1000,7 +1150,7 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
 
             {/* [充能] 脉冲特效 — 1s 时序：流光环绕→图标爆发→黯淡过渡 */}
             {channelPulseActive && KEYWORD_DB['Channel'] && (
-                <div className="absolute inset-0 z-40 pointer-events-none" style={{ borderRadius }}>:
+                <div className="absolute inset-0 z-40 pointer-events-none" style={{ borderRadius }}>
 	                    {/* ① 淡蓝高光描边 + 白色流光快速环绕 (0~0.4s) */}
 	                    <motion.div className="absolute inset-0 overflow-visible" style={{ borderRadius }}>
 	                        <svg className="absolute inset-0 w-full h-full overflow-visible" style={{ borderRadius }}>
@@ -1097,3 +1247,130 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
         </>
     );
 };
+
+// ==========================================
+// [瞬逝保险丝] 手牌 Volatile 卡总数计数器
+// 敌我手牌火焰共享：总数越多 → 火焰档位越低，防 20 张极端场景卡顿
+// ==========================================
+let volatileHandTotal = 0;
+const volatileHandListeners = new Set<() => void>();
+
+export const notifyVolatileHand = (delta: number) => {
+    volatileHandTotal = Math.max(0, volatileHandTotal + delta);
+    volatileHandListeners.forEach(l => l());
+};
+export const subscribeVolatileHand = (cb: () => void) => {
+    volatileHandListeners.add(cb);
+    return () => { volatileHandListeners.delete(cb); };
+};
+export const getVolatileHandTotal = () => volatileHandTotal;
+
+export type FlameQuality = 'full' | 'medium' | 'lite';
+const flameQualityOf = (n: number): FlameQuality => n > 12 ? 'lite' : n > 6 ? 'medium' : 'full';
+
+/**
+ * [瞬逝] 高能等离子过载版 (纯白)
+ * - 约束力场：断裂虚线
+ * - 顶部电弧：高密度交织网格
+ * - 卡面内透：隐秘高能扫描线 (z-[5])
+ * - 崩解碎片：方块双向抛射、自转 (z-[20])
+ */
+export const VolatileFlame: React.FC<{ radius?: number }> = ({ radius: _radius = 8 }) => {
+    const total = useSyncExternalStore(subscribeVolatileHand, getVolatileHandTotal);
+    const q = flameQualityOf(total);
+
+    // 档位控制：由于是双向发射，数量可适当提升
+    const shardCount = q === 'full' ? 12 : q === 'medium' ? 8 : 4;
+    const topShardCount = q === 'full' ? 8 : q === 'medium' ? 5 : 2;
+
+    return (
+        <>
+            <div className="absolute inset-0 z-[-1] pointer-events-none overflow-visible">
+                {/* 1. 约束力场崩溃：极速流动的纯白断裂虚线边框 */}
+                <svg className="absolute inset-0 w-full h-full overflow-visible" style={{ left: '-3px', top: '-3px', width: 'calc(100% + 6px)', height: 'calc(100% + 6px)' }}>
+                    <rect x="1" y="1" width="calc(100% - 2px)" height="calc(100% - 2px)" rx="10" ry="10"
+                        fill="none" stroke="#ffffff" strokeWidth="2" strokeDasharray="15 8 4 12 25 10"
+                        className="animate-plasma-dash drop-shadow-[0_0_4px_rgba(255,255,255,0.9)]" />
+                </svg>
+                <div className="absolute inset-[-1px] border-[1px] border-white/30 rounded-xl" />
+            </div>
+
+            {/* 3. 卡面内透特效 (z-[15]：卡面主体 z-10 之上、攻防文字 z-100 之下) */}
+            {/* [修复 2026-08-04] 原 z-[5] 低于卡面主体 z-10，扫描线被原画盖住不可见，故提升至 z-[15] */}
+            {/* [升级 2026-08-04] V1 仅 3% 强度不可见，V2 改为青白双色 + 亮青光晕 + 1.2s 快速扫描 */}
+            <div className="absolute inset-0 z-[15] pointer-events-none overflow-hidden rounded-xl">
+                {/* 扫描线本体：白色主线 + 青色边缘光晕 + 快速扫过 */}
+                <div
+                    className="absolute inset-0 h-[30%] animate-surface-glitch-v2"
+                    style={{
+                        background: 'linear-gradient(to bottom, transparent 0%, rgba(255,255,255,0.9) 35%, rgba(125,211,252,0.75) 50%, rgba(255,255,255,0.9) 65%, transparent 100%)',
+                        boxShadow: '0 0 12px rgba(125,211,252,0.8), 0 0 32px rgba(56,189,248,0.5)',
+                    }}
+                />
+                {/* 扫过瞬间的全局轻微白化闪屏（青色微光） */}
+                <motion.div className="absolute inset-0 bg-white/10"
+                    animate={{ opacity: [0, 0, 0.28, 0, 0] }} transition={{ duration: 1.2, times: [0, 0.55, 0.62, 0.7, 1], repeat: Infinity }} />
+            </div>
+
+            {/* 4. 物质崩解几何碎片 (方形，双向发射，独立旋转，多尺寸) */}
+            <div className="absolute inset-0 z-20 pointer-events-none overflow-visible">
+                {/* A. 底部发射阵列 */}
+                {Array.from({ length: shardCount }).map((_, i) => {
+                    const size = 3 + (i % 4) * 2; // 3px 到 9px 的方形
+                    return (
+                        <div key={`shard-b-${i}`} className="absolute bg-white animate-square-eject drop-shadow-[0_0_4px_rgba(255,255,255,1)]" style={{
+                            width: `${size}px`, height: `${size}px`,
+                            left: `${5 + i * (90 / Math.max(1, shardCount - 1))}%`,
+                            bottom: i % 2 === 0 ? '5%' : '25%', // 错落初始高度
+                            animationDelay: `${i * 0.15}s`,
+                            // 使用 CSS 变量注入随机化的参数
+                            ['--shard-x' as any]: `${(i % 2 === 0 ? 1 : -1) * (10 + (i % 3) * 8)}px`,
+                            ['--shard-y' as any]: `-${45 + (i % 3) * 20}px`,
+                            ['--rot-mid' as any]: `${90 + (i % 4) * 45}deg`,
+                            ['--rot-end' as any]: `${180 + (i % 5) * 90}deg`,
+                            ['--shard-scale' as any]: 0.5 + (i % 3) * 0.2,
+                            ['--anim-duration' as any]: `${0.9 + (i % 3) * 0.3}s`
+                        }} />
+                    )
+                })}
+
+                {/* B. 顶部发射阵列 (直接从卡牌顶端向上喷射) */}
+                {Array.from({ length: topShardCount }).map((_, i) => {
+                    const size = 2 + (i % 3) * 3; // 2px 到 8px 的方形
+                    return (
+                        <div key={`shard-t-${i}`} className="absolute bg-white animate-square-eject drop-shadow-[0_0_4px_rgba(255,255,255,1)]" style={{
+                            width: `${size}px`, height: `${size}px`,
+                            left: `${10 + i * (80 / Math.max(1, topShardCount - 1))}%`,
+                            top: '-5%',
+                            bottom: 'auto',
+                            animationDelay: `${i * 0.2}s`,
+                            ['--shard-x' as any]: `${(i % 2 === 0 ? -1 : 1) * (5 + (i % 4) * 10)}px`,
+                            ['--shard-y' as any]: `-${35 + (i % 4) * 15}px`,
+                            ['--rot-mid' as any]: `${-90 - (i % 3) * 45}deg`,
+                            ['--rot-end' as any]: `${-180 - (i % 4) * 90}deg`,
+                            ['--shard-scale' as any]: 0.4 + (i % 2) * 0.3,
+                            ['--anim-duration' as any]: `${0.7 + (i % 4) * 0.2}s`
+                        }} />
+                    )
+                })}
+            </div>
+        </>
+    );
+};
+
+// ==========================================
+// [侦察] 攻击宣言期侦察状态 store
+// 'active' = 首次进攻全侦察（有效）/ 'invalid' = 混入非侦察 / null = 无侦察或非首次
+// GameSession 观察战斗区广播 → KeywordEffects / KeywordTray 订阅
+// ==========================================
+let scoutState: 'active' | 'invalid' | null = null;
+const scoutListeners = new Set<() => void>();
+export const notifyScoutState = (s: 'active' | 'invalid' | null) => {
+    scoutState = s;
+    scoutListeners.forEach(l => l());
+};
+export const subscribeScoutState = (cb: () => void) => {
+    scoutListeners.add(cb);
+    return () => { scoutListeners.delete(cb); };
+};
+export const getScoutState = () => scoutState;

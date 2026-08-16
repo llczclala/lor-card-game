@@ -391,7 +391,7 @@ const SpellProjectile: React.FC = () => {
             const missileEl = missileRefs.current[idx];
             const explosionEl = explosionRefs.current[idx];
             const particlesEl = particlesRefs.current[idx];
-            const tailEls = (tailRefsGroup.current[idx] || []).filter(Boolean);
+            const tailEls = (tailRefsGroup.current[idx] || []).filter((el): el is HTMLDivElement => !!el); // [2026-08-16] 类型守卫收窄 possibly-null
 
             if (!container || !missileEl || !explosionEl || !particlesEl) {
                 resolve();
@@ -631,7 +631,7 @@ const SpellProjectile: React.FC = () => {
 
                     {/* 能量核心法球 */}
                     <div
-                        ref={el => missileRefs.current[idx] = el}
+                        ref={el => { missileRefs.current[idx] = el; }}
                         className="absolute rounded-full"
                         style={{
                             width: 24,
@@ -647,7 +647,7 @@ const SpellProjectile: React.FC = () => {
                     />
                     {/* 爆炸核心 */}
                     <div
-                        ref={el => explosionRefs.current[idx] = el}
+                        ref={el => { explosionRefs.current[idx] = el; }}
                         className="absolute rounded-full"
                         style={{
                             width: 80,
@@ -658,7 +658,7 @@ const SpellProjectile: React.FC = () => {
                         }}
                     />
                     {/* 粒子容器 */}
-                    <div ref={el => particlesRefs.current[idx] = el} className="absolute inset-0" />
+                    <div ref={el => { particlesRefs.current[idx] = el; }} className="absolute inset-0" />
                 </React.Fragment>
             ))}
         </div>

@@ -73,6 +73,24 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
+    // ESC 关闭：capture + stopImmediatePropagation 拦截 App.tsx 全局 ESC（避免误呼出设置面板）
+    // [逐层退] 奖励金光弹窗打开时优先关弹窗，否则关整个任务面板
+    useEffect(() => {
+        if (!isOpen) return;
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.stopImmediatePropagation();
+                if (rewardPopup) {
+                    setRewardPopup(null);
+                } else {
+                    onClose();
+                }
+            }
+        };
+        window.addEventListener('keydown', handler, { capture: true });
+        return () => window.removeEventListener('keydown', handler, { capture: true });
+    }, [isOpen, onClose, rewardPopup]);
+
     if (!isOpen) return null;
 
     // 筛选当前标签页的任务，按 sort 排序
@@ -106,7 +124,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
             if (reward.type === 'dataGold' && reward.amount) {
                 popup.amount = reward.amount;
             } else if (reward.type === 'card' && reward.cardKeys) {
-                popup.cards = reward.cardKeys.map(cardKey => {
+                popup.cards = reward.cardKeys.map((cardKey: string) => {
                     const imageSrc = getCardRewardImage(cardKey);
                     const cardDef = CARD_DB[cardKey];
                     return { imageSrc, name: cardDef?.name || cardKey, count: 1 };
@@ -279,7 +297,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                         className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-yellow-500/30 min-w-[120px] cursor-pointer"
                                                         onMouseEnter={(e) => {
                                                             const rect = e.currentTarget.getBoundingClientRect();
-                                                            setHoverPreview({ src: cosmeticPreview, x: rect.right + 12, y: rect.top - 30 });
+                                                            setHoverPreview({ src: cosmeticPreview ?? '', x: rect.right + 12, y: rect.top - 30 });
                                                         }}
                                                         onMouseMove={(e) => {
                                                             setHoverPreview(prev => prev ? { ...prev, x: e.clientX + 18, y: e.clientY - 10 } : null);

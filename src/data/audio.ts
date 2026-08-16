@@ -38,3 +38,6 @@ export const AUDIO_ASSETS = {
         hall_7: hall_bgm_7,
     }
 };
+
+// [2026-08-16] BGM key 联合（playBgm 参数 & getHallBgm 返回类型，与 AUDIO_ASSETS.bgm 对齐）
+export type BgmKey = 'title' | 'default' | 'battle' | 'victory' | 'defeat' | 'gacha' | 'deck_builder' | 'hall_1' | 'hall_2' | 'hall_3' | 'hall_4' | 'hall_5' | 'hall_6' | 'hall_7';

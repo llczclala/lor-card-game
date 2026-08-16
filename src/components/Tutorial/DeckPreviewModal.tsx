@@ -1,14 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, User, Swords, Shield, Sword, Play } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { motion } from 'framer-motion';
+import { X, Shield, Sword, Play } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
+import type { CardData } from '../../types';
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes';
 import { TUTORIAL_STAGES } from '../../data/tutorialStages';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { getCardBackUrl } from '../../utils/styleUtils';
-import { UI_IMAGES, HERO_IMAGES, PERSONALIZATION_ASSETS } from '../../data/imageData';
-import { Card } from '../Card';
-import type { CardData } from '../../types';
+import { PERSONALIZATION_ASSETS } from '../../data/imageData';
 // [新增] 悬停预览统一方案
 import { useCardGaze } from '../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../FloatingCardPreview';
@@ -21,12 +20,6 @@ interface DeckPreviewModalProps {
     onClose: () => void;
     onStart?: () => void; // [新增] 开始游戏回调
 }
-
-// [新增] 模拟生成完整的 CardData 以供悬浮预览
-const toFullCardData = (staticData: any): CardData => ({
-    ...staticData, id: 'preview_id', strikeCount: 0, animState: 'idle',
-    damageTaken: 0, buffs: { power: 0, health: 0 }
-});
 
 // [新增] 提取封面工具 (升维改造：包装为带皮肤与卡背属性的对象)
 const getDeckCovers = (deckList: any[], defaultHeroKey: string): { url: string; skinId: number; isBack: boolean }[] => {
@@ -136,7 +129,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
     const deskImage = PERSONALIZATION_ASSETS.desks[deskIndex] || PERSONALIZATION_ASSETS.desks[0];
 
     // [新增] 统一悬停预览
-    const { gazeTarget, bindGazeEvents, keepAlive, scheduleDismiss } = useCardGaze({ delay: 300 });
+    const { gazeTarget, bindGazeEvents } = useCardGaze({ delay: 300 });
 
     // 玩家卡组
     const playerDeckList = useMemo(() => {
@@ -156,7 +149,8 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
         // 兼容旧版：从 archetype 读取
         const archetype = stage.enemyArchetypeId ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
         if (!archetype) return [];
-        const fullDeck = [...archetype.coreCards, ...archetype.preferredPool];
+        // [2026-08-16] coreCards 兼容 {key,count} 格式，统一提取 key 为 string[]
+        const fullDeck = [...archetype.coreCards.map(c => typeof c === 'string' ? c : c.key), ...archetype.preferredPool];
         return countCards(fullDeck);
     }, [stage]);
 
@@ -164,8 +158,6 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
     // 加入了 ?.[0] 阻断了对空引用的属性访问，并在前面用 () 包含逻辑防止穿透！
     const playerHeroKey = stage?.playerHeroConfig?.heroKey || stage?.playerDeck?.[0] || playerCustomDeck?.[0] || 'lyfe';
     const enemyArchetype = stage?.enemyArchetypeId ? ENEMY_ARCHETYPES[stage.enemyArchetypeId] : null;
-    // ★ 优先使用关卡指定的敌方视觉配置（取不到时回退到流派默认）
-    const enemyDisplayName = stage?.enemyVisual?.displayName || enemyArchetype?.name || 'HOSTILE';
     const enemyHeroKey = stage?.enemyVisual?.cardKey || enemyArchetype?.champion || 'fenny';
 
     if (!stage) return null;
@@ -199,7 +191,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                             playerDeckList.map(({ key, name, cost, count, imageUrl, isChampion }) => (
                                 <div key={key}
                                     className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help group transition-colors"
-                                    {...(CARD_DB[key] ? bindGazeEvents(CARD_DB[key]) : {})}
+                                    {...(CARD_DB[key] ? bindGazeEvents(CARD_DB[key] as CardData) : {})}
                                 >
                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${imageUrl})` }}></div>
                                     <div className="absolute inset-0 bg-gradient-to-r from-blue-950/90 via-black/60 to-transparent"></div>
@@ -278,7 +270,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                             enemyDeckList.map(({ key, name, cost, count, imageUrl, isChampion }) => (
                                 <div key={key}
                                     className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-red-500 overflow-hidden cursor-help group transition-colors"
-                                    {...(CARD_DB[key] ? bindGazeEvents(CARD_DB[key]) : {})}
+                                    {...(CARD_DB[key] ? bindGazeEvents(CARD_DB[key] as CardData) : {})}
                                 >
                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${imageUrl})` }}></div>
                                     <div className="absolute inset-0 bg-gradient-to-r from-red-950/90 via-black/60 to-transparent"></div>

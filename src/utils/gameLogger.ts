@@ -77,7 +77,9 @@ export type LogEvent =
     | GameEndLogEvent;
 
 // 供外部调用的简易参数类型 (去除了自动生成的 timestamp)
-export type LogEventPayload = Omit<LogEvent, 'timestamp'>;
+// [2026-08-06 莉莉子] 修复：Omit 对 union 不分布会丢失判别字段，改用分布式条件类型
+type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
+export type LogEventPayload = DistributiveOmit<LogEvent, 'timestamp'>;
 
 
 // ==========================================

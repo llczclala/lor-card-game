@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Play, Eye, ChevronRight, Sword, Shield, Target, Zap, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Play, Eye, Sword, Shield, Target, Zap, RotateCcw } from 'lucide-react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { getStagesByCategory, getCategoryById } from '../../data/tutorialStages';
-import type { ExamCategoryId, TutorialStage } from '../../data/tutorialStages';
+import type { ExamCategoryId } from '../../data/tutorialStages';
 import { HERO_IMAGES } from '../../data/imageData'; // [新增]
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes'; // [新增]
 import { CARD_DB } from '../../data/cards'; // [新增]

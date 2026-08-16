@@ -1,4 +1,4 @@
-export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'Acacia' | 'TEST';
+export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'Acacia' | 'Titan' | 'Analyst' | 'TEST';
 export type CardType = 'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow';
 export type Race = 'summoner' | 'summon' | 'titan'; // [新增] 种族：召唤师/召唤物/泰坦
 
@@ -34,6 +34,7 @@ export interface CardData {
   description: string;
   keywords: Keyword[];
   effects?: string[];
+  equipment?: string[]; // [2026-08-12 装备系统] 挂载的装备 id 列表（attachEquipment 写入；视觉方块 + 打出效果用）
   imageUrl: string;
   level2ImageUrl?: string;
   type: CardType;
@@ -91,7 +92,7 @@ export interface CardData {
 // ==========================================
 // [新增] AI 策略配置类型
 // ==========================================
-export type AIPattern = 'DAMAGE' | 'BUFF' | 'RALLY' | 'DUEL' | 'HEAL' | 'DRAW' | 'KEYWORD_TRANSFER' | 'SUMMON' | 'SACRIFICE' | 'FROST'
+export type AIPattern = 'DAMAGE' | 'BUFF' | 'RALLY' | 'DUEL' | 'HEAL' | 'DRAW' | 'KEYWORD_TRANSFER' | 'SUMMON' | 'SACRIFICE' | 'FROST' | 'CHOICE' | 'STRIKE' | 'CALIBRATE' | 'RECALL_AND_REPLACE'
 
 export interface AIConfig {
   pattern: AIPattern
@@ -227,6 +228,14 @@ export interface GameStats {
 }
 
 export interface GameState {
+  // [2026-08-06 莉莉子] 补齐核心场地字段（接口此前漏声明，运行时一直存在）
+  playerBench: CardData[];
+  enemyBench: CardData[];
+  playerHand: CardData[];
+  enemyHand: CardData[];
+  playerDeck: CardData[];
+  enemyDeck: CardData[];
+  combatField: any[]; // 交战区：{ attacker, blocker, owner, isChallenged?, isGhostBlocked? }[]
   playerMana: number;
   playerMaxMana: number;
   playerSpellMana: number;
@@ -234,6 +243,9 @@ export interface GameState {
   enemyMaxMana: number;
   enemySpellMana: number;
   playerNexus: number;
+  playerNexusMax?: number; // [2026-08-11] 玩家水晶回血上限（肉鸽=全局 run.maxHp，缺省 20；effectProcessor HEAL 封顶用）
+  rogueEnhancements?: string[]; // [2026-08-11] 玩家迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
+  rogueFirstSummonDone?: boolean; // [2026-08-11] 暗影双生：本回合是否已触发过首次召唤复制（每回合开始重置）
   enemyNexus: number;
   round: number;
   attackToken: {
@@ -288,8 +300,10 @@ export interface GameState {
   // [2026-07-17 鸦眼小队] 校准挂起状态
   calibratePending?: CalibrateData;
 
-  // [2026-07-20] 墓地存根（未来实现）
-  graveyard?: CardData[];
+  // [2026-08-06 莉莉子] 墓地：本牌局死亡单位快照（正常死亡才记录，消亡替换/爆牌不计）
+  // 拆成双方独立数组，法术2「瓦尔哈拉的呼唤」按方复活
+  playerGraveyard?: CardData[];
+  enemyGraveyard?: CardData[];
 
   // [2026-07-20] 对局操作记录（供玩家对局中查阅）
   gameRecords: GameRecord[];
@@ -347,10 +361,14 @@ export interface UserSettings {
   };
   unlockedCardBacks: number[];    // 已解锁的卡背列表
   unlockedDesks: number[];        // 已解锁的牌桌列表
+  unlockedRogueDifficulties?: string[]; // [2026-08-07] 肉鸽已解锁难度（normal/secret/topsecret，全卡档视为全解锁）
   videoResolution?: '1k' | '2k' | '4k';
+  lastSeenAnnouncementVersion?: string; // [2026-08-09] 已读过的公告版本号（新版本首次进大厅弹窗标记）
   skipGameStartDrawAnimation?: boolean; // 跳过开局抽卡动画
   skipLevelupMovie?: boolean;          // 默认跳过升级影片
   skipVictoryMovie?: boolean;          // 默认跳过胜利影片
+  deskDynamic?: boolean;               // [2026-08-13] 牌桌动态/静态切换（开启=用动态视频牌桌）
+  heroDynamic?: boolean;               // [2026-08-16] 天启者动态卡面（开启=对局内手牌/场上英雄卡用动态视频）
 }
 
 export interface UserResources {
@@ -454,7 +472,9 @@ export type LogEvent =
     | LevelUpLogEvent
     | GameEndLogEvent;
 
-export type LogEventPayload = Omit<LogEvent, 'timestamp'>;
+// [2026-08-06 莉莉子] 修复：Omit 对 union 不分布会丢失判别字段，改用分布式条件类型
+type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
+export type LogEventPayload = DistributiveOmit<LogEvent, 'timestamp'>;
 
 
 // --- 2. 军功任务类型 (Mission System) ---

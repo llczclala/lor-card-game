@@ -8,8 +8,8 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUserSystem } from '../hooks/useUserSystem';
 import { HERO_IMAGES, CURRENCY_ICONS, LOADING_SCREEN_IMAGES, UNIT_IMAGES, SPELL_IMAGES } from '../data/imageData';
-import { getHallCharacterEntries, getCharacterScenes, isHallCharacterVideo } from '../data/movieData';
-import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench, Camera } from 'lucide-react'; // [修改] 新增 Camera
+import { getHallCharacterEntries, getCharacterScenes, type HallCharacterKey } from '../data/movieData';
+import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench, Camera, Megaphone } from 'lucide-react'; // [修改] 新增 Camera / [2026-08-09] 新增 Megaphone
 
 // [新增] 引入 GM 工作室主控台
 import { Studio } from './Studio/Studio';
@@ -34,6 +34,7 @@ interface GameLobbyProps {
     onOpenMission?: () => void;
     onOpenShop?: () => void;
     onOpenDeck?: () => void;
+    onOpenAnnouncement?: () => void; // [2026-08-09] 公告中心唤起
     onSelectBackground?: () => void;
     // [新增] 背景管理 Props
     customBg: BgConfig | null;
@@ -76,6 +77,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     onOpenMission,
     onOpenShop,
     onOpenDeck,
+    onOpenAnnouncement,
     onSelectBackground,
     customBg,
     onUpdateCustomBg,
@@ -307,7 +309,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     const handleSwitchScene = () => {
         if (customBg?.type !== 'movie' || !customBg.characterKey) return;
         const nextSceneIdx = ((customBg.sceneIndex ?? 0) + 1) % 4;
-        const scenes = getCharacterScenes(customBg.characterKey);
+        const scenes = getCharacterScenes(customBg.characterKey as HallCharacterKey);
         if (!scenes.length) return;
         // 直接构造新 BgConfig（保留 index 不变，使"下一张"仍能正确切到下一个角色）
         onUpdateCustomBg({
@@ -430,6 +432,11 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             </div>
                         </div>
                     </div>
+
+                    {/* [2026-08-09] 公告按钮：置于设置（齿轮）按钮左侧，仅图标 */}
+                    <GlassButton onClick={onOpenAnnouncement} className="w-12 h-10 rounded-sm">
+                        <Megaphone size={20} className="text-gray-300 group-hover:text-white transition-colors duration-300" />
+                    </GlassButton>
 
                     {/* 设置按钮 */}
                     <GlassButton onClick={onOpenSettings} className="w-12 h-10 rounded-sm">

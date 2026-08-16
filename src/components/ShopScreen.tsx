@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Image as ImageIcon, CreditCard, Search, ChevronLeft, ChevronRight, Play, Zap, Clock, ShoppingCart, CheckCircle } from 'lucide-react';
+import { X, Layers, Image as ImageIcon, CreditCard, Search, Play, Zap, Clock, ShoppingCart, CheckCircle } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
 import { KEYWORD_DB } from '../data/keywords';
-import { SKIN_IMAGES, PERSONALIZATION_ASSETS, CURRENCY_ICONS, getSkinImage } from '../data/imageData';
+import { PERSONALIZATION_ASSETS, CURRENCY_ICONS, getSkinImage } from '../data/imageData';
 import { getShopItems } from '../data/skinData'; // [核心修复] 补充引入通用商品获取 API
 import { getCardPrice } from '../logic/gachaLogic';
 import { Card } from './Card';
@@ -126,15 +126,15 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
             const cardData = CARD_DB[config.cardKey!]; // config.cardKey 必定存在于 skin 类型中
             if (!cardData) return null; // 数据库安全兜底
 
-            const isOwned = (ownedSkins[config.cardKey] || []).includes(config.skinId);
+            const isOwned = (ownedSkins[config.cardKey!] || []).includes(config.skinId);
             return {
-                cardKey: config.cardKey,
+                cardKey: config.cardKey!, // [2026-08-16] 已用 ! 断言存在（L126），返回对象直接收窄为 string
                 skinId: config.skinId,
                 isOwned,
                 cardData,
                 price: config.price || 1 // 直接读取注册单上的商品定价
             };
-        }).filter(Boolean); // 剔除 null
+        }).filter((s): s is NonNullable<typeof s> => s !== null); // 剔除 null（类型守卫，让 TS 收窄 possibly-null）
 
         // [核心修复] 皮肤阵营排序逻辑同样适配：未拥有 -> 阵营聚拢 -> 小队聚拢 -> 按费用
         skins.sort((a: any, b: any) => {
@@ -230,10 +230,10 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
     };
 
     // === 核心动画物理参数 (深蓝风+上下拉展) ===
-    const splitSpring = { type: "spring", stiffness: 120, damping: 15, delay: 0.2 };
+    const splitSpring = { type: "spring" as const, stiffness: 120, damping: 15, delay: 0.2 };
     const gridItemVariants = {
         hidden: { opacity: 0, scale: 0.8 },
-        visible: { opacity: 1, scale: 1, transition: { type: "spring", stiffness: 100, damping: 12 } }
+        visible: { opacity: 1, scale: 1, transition: { type: "spring" as const, stiffness: 100, damping: 12 } }
     };
     const pageVariants = {
         hidden: { opacity: 0 },
@@ -449,9 +449,9 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                                             <div
                                                 className="w-full aspect-[2/3] rounded-xl overflow-hidden border-2 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.2)] bg-slate-900 relative cursor-pointer group"
                                                 // [核心修复] 从写死的 1 比特金改为动态读取注册单的 s.price
-                                                onClick={() => !s.isOwned && setPurchaseModal({ type: 'skin', key: s.cardKey, skinId: s.skinId, data: s.cardData, cost: s.price, currency: 'bitGold', image: getSkinImage(s.cardKey, s.skinId, s.cardData.level===2) })}
+                                                onClick={() => !s.isOwned && setPurchaseModal({ type: 'skin', key: s.cardKey, skinId: s.skinId, data: s.cardData, cost: s.price, currency: 'bitGold', image: getSkinImage(s.cardKey, s.skinId, s.cardData.imageUrl) })}
                                             >
-                                                <img src={getSkinImage(s.cardKey, s.skinId, s.cardData.level === 2)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                                                <img src={getSkinImage(s.cardKey, s.skinId, s.cardData.imageUrl)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                                                 <div className="absolute bottom-0 w-full h-1/3 bg-gradient-to-t from-purple-950 via-purple-900/80 to-transparent flex flex-col justify-end p-4 border-t border-purple-500/30">
                                                     <span className="text-purple-300 text-[10px] font-black tracking-widest mb-1">修习一刻</span>
                                                     <span className="text-white text-sm font-bold truncate">{s.cardData.name}</span>

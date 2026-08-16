@@ -1,5 +1,5 @@
 import { CARD_DB } from '../data/cards';
-import { PERSONALIZATION_ASSETS, SKIN_IMAGES, getSkinImage } from '../data/imageData';
+import { PERSONALIZATION_ASSETS, getSkinImage } from '../data/imageData';
 import { getGachaItems } from '../data/skinData';
 import type { UserCollection } from '../types';
 
@@ -51,7 +51,15 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
         heroKeys: ['lyfe', 'fenny', 'acacia_chrono_echo'],
         cardBackIndices: [1, 2, 3],
         deskIndices: [1, 2, 3, 4],
-        includeInCommonPool: () => true,
+        // [2026-08-15 莉莉子] 常驻池排除：
+        //   ① 卜卜(Pupu)与猫汐尔(Mauxir)体系（重叶/图征后勤、相关法术/衍生物）——专属「烬中镜火」池
+        //   ② 明夷/星朗小队（半成品未做完，暂不投放）
+        includeInCommonPool: (card) => {
+            if (card.key === 'Argo_Deliberate_Infiltration') return false; // [2026-08-15] 蓄意渗透不进共鸣卡池
+            if (card.region === 'Pupu' || card.region === 'Mauxir') return false;
+            if (card.key.startsWith('Mingyi_Squad') || card.key.startsWith('Star_Bright_Squad')) return false;
+            return true;
+        },
     },
     lotus: {
         id: 'lotus',
@@ -59,8 +67,8 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
         heroKeys: ['mauxir_lotus_drive', 'pupu_specular_soul'],
         cardBackIndices: [13, 14, 15],
         deskIndices: [5, 6, 7, 8, 9],
-        // 排除 里芙(Lyfe) 和 芬妮(Fenny) 区域的后勤卡
-        includeInCommonPool: (card) => card.region !== 'Lyfe' && card.region !== 'Fenny',
+        // 排除 里芙(Lyfe) 和 芬妮(Fenny) 区域的后勤卡，以及蓄意渗透
+        includeInCommonPool: (card) => card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
     },
 };
 // ================================================================
@@ -102,16 +110,22 @@ const getRarePool = (poolId: PoolId = 'permanent') => {
     return { heroes, cardBacks, desks };
 };
 
-// 皮肤池（两个池子共用全量皮肤）
-const getSkinRarePool = () => {
-    return getGachaItems('skin') as { cardKey: string, skinId: number }[];
+// 皮肤池（[2026-08-15] 改为按池过滤，与普通池共用 includeInCommonPool 逻辑 → 抽卡与查看窗口数据互通）：
+//   常驻池排除卜卜/猫汐尔体系皮肤；莲花池排除里芙/芬妮体系皮肤
+const getSkinRarePool = (poolId: PoolId = 'permanent') => {
+    const config = POOLS[poolId];
+    return (getGachaItems('skin') as { cardKey: string, skinId: number }[]).filter(s => {
+        const card = CARD_DB[s.cardKey];
+        if (!card) return true; // 找不到对应卡的皮肤保留
+        return config.includeInCommonPool(card as any);
+    });
 };
 
 // --- 3. 卡池内容查看（放大镜弹窗数据源）---
 export const getPoolViewerData = (poolId: PoolId = 'permanent') => {
     const { heroes, cardBacks, desks } = getRarePool(poolId);
     const commons = getCommonPool(poolId);
-    const skins = getSkinRarePool();
+    const skins = getSkinRarePool(poolId); // [2026-08-15] 查看窗口皮肤与抽卡共用按池过滤，保证两边一致
     return { heroes, cardBacks, desks, commons, skins };
 };
 
@@ -127,7 +141,7 @@ export const rollOne = (
 ): GachaResult => {
     // 1. 皮肤 30 抽强保底熔断
     if (currentSkinPity >= 29) {
-        return rollSkin(collection);
+        return rollSkin(collection, poolId);
     }
 
     // 2. 百抽熔断机制
@@ -142,7 +156,7 @@ export const rollOne = (
         return rollRare(collection, targetItem, userSettings, poolId);
     }
     else if (rollVal < RARE_RATE + SKIN_RATE) {
-        return rollSkin(collection);
+        return rollSkin(collection, poolId);
     }
     else {
         return rollCommon(collection, poolId);
@@ -265,9 +279,9 @@ const rollRare = (collection: UserCollection, targetItem: string | null, userSet
     };
 };
 
-// 抽取皮肤逻辑
-const rollSkin = (collection: UserCollection): GachaResult => {
-    const skinPool = getSkinRarePool();
+// 抽取皮肤逻辑（[2026-08-15] 按池过滤皮肤池）
+const rollSkin = (collection: UserCollection, poolId: PoolId = 'permanent'): GachaResult => {
+    const skinPool = getSkinRarePool(poolId);
     const target = skinPool[Math.floor(Math.random() * skinPool.length)];
 
     const safeOwnedSkins = collection.ownedSkins || {};
@@ -291,7 +305,7 @@ const rollSkin = (collection: UserCollection): GachaResult => {
         isRare: true,
         isNew,
         convertedCurrency,
-        displayImage: getSkinImage(target.cardKey, target.skinId, cardBase?.level === 2),
+        displayImage: getSkinImage(target.cardKey, target.skinId, cardBase?.imageUrl), // [2026-08-15] 修复原 fallback 误传 boolean
         name: `${cardName} · 皮肤`
     };
 };

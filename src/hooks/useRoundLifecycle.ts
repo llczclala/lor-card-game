@@ -1,4 +1,5 @@
-import { useEffect, MutableRefObject, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
+import type { MutableRefObject } from 'react';
 import type { CardData, GameState, GameRecordCategory, RecordEntity } from '../types';
 import { calculateRoundStart } from '../logic/core';
 import { getCurrentHP } from '../logic/combat';
@@ -9,6 +10,7 @@ import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus'; // [新�
 import { applyRoundStartKeywords, applyRoundEndKeywords, applyVolatileDiscard, executeTitanPulse, applyChannelOnRoundStart } from '../logic/keywords';
 import { accumulateMauxirDamage, isSummonerOrSummon, upgradeAcaciaHand } from '../utils/gameRules'; // [新增] 引入猫汐尔经验收集器
 import { gameLogger } from '../utils/gameLogger'; // [新增] 战术审计黑匣子
+import { getRogueDefs, flashRogueBuff } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发
 
 // ==========================================
 // [时间管理器] 独立封装的纯函数，等待通用打击特效播完
@@ -77,6 +79,8 @@ export interface UseRoundLifecycleParams {
     // [2026-07-23] 对局记录
     recordAction: (category: GameRecordCategory, owner: 'player' | 'enemy', summary: string, options?: { cardKey?: string; detail?: string; entities?: RecordEntity[] }) => void;
     captureSnapshot: (card: CardData) => { power: number; health: number; maxHealth: number; damageTaken: number; buffs?: { health?: number; power?: number }; roundBuffs?: { health?: number; power?: number } };
+    // [2026-08-14 武装] 玩家是否挂载「秘法回响」武装（回合开始恢复全部法术法力）
+    armamentManaRestore?: boolean;
 }
 
 // ==========================================
@@ -89,7 +93,8 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         setPlayerHand, setPlayerDeck, setEnemyHand, setEnemyDeckState, // [核心修复] 补全被遗漏的敌方更新器解构
         setMessage, createFullCard, flushMicroQueue, judgeLifeAndDeath, wait,
         recordAction, captureSnapshot, // [2026-07-23 对局记录] 补全遗漏的解构
-        firstAttacker = 'player' // [新增] 教程模式先手偏移
+        firstAttacker = 'player', // [新增] 教程模式先手偏移
+        armamentManaRestore, // [2026-08-14 武装] 秘法回响：回合开始恢复全部法术法力
     } = params;
 
     // ==========================================
@@ -230,6 +235,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
             			// 3. [2026-06-27 共享沙盘] 建立敌方沙盘，每发子弹后刷新
 			let simEnemyBench = owner === 'player' ? [...enemyBench] : [...playerBench];
+			let simPlayerBench = owner === 'player' ? [...playerBench] : [...enemyBench]; // [2026-08-06 莉莉子] 补漏：对称沙盘声明（原漏，owner==='enemy' 时会 ReferenceError）
 			let simCombatField = [...combatField];
 
 			// [新增] Lv2 光环：将敌方水晶也纳入随机奖池
@@ -567,7 +573,38 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
     // ---------------------------------------------------------
     // 块 C: 新回合状态刷新序列
     // ---------------------------------------------------------
-    const startRound = () => {
+    // [2026-08-15 莉莉子] 迷宫强化 round_start：回合开始被动（暗箭难防生成 / 战意盎然备战）
+    // 抽成独立函数，供 startRound（每回合）与换牌后第一回合触发（triggerFirstRoundRogueEnhance）共用
+    const runRoundStartRogueEnhancements = useCallback((queryGame: GameState, targetGame: GameState): GameState => {
+        let g = targetGame;
+        getRogueDefs(queryGame.rogueEnhancements, 'round_start').forEach(def => {
+            const be = def.battleEffect!;
+            if (be.effectClass === 'GENERATE') {
+                const genKey = be.params?.generateKey as string | undefined;
+                if (genKey) {
+                    const genCard = createFullCard(genKey);
+                    if (be.params?.isVolatile) genCard.keywords = [...(genCard.keywords || []), 'Volatile' as any];
+                    setPlayerHand(prev => prev.length < 10 ? [...prev, genCard] : prev);
+                    eventBus.emit('sfx_generate', genCard);
+                }
+            } else if (be.effectClass === 'RALLY') {
+                g = { ...g, attackToken: { ...g.attackToken, player: 'rally' } };
+                eventBus.emit('gain_token_rally', { owner: 'player' });
+            }
+            flashRogueBuff(def);
+        });
+        return g;
+    }, [setPlayerHand]);
+
+    // [2026-08-15 莉莉子] 换牌结束后第一回合开始：触发 round_start 强化（暗箭等）
+    // 参考安卡库效 triggerGameStartGenerate 在换牌后执行的修复——开局 startRound 会跳过强化，由本函数在换牌后补触发
+    const triggerFirstRoundRogueEnhance = useCallback(() => {
+        const current = stateRef.current.game;
+        const next = runRoundStartRogueEnhancements(current, current);
+        if (next !== current) setGame(next);
+    }, [runRoundStartRogueEnhancements, setGame]);
+
+    const startRound = (skipRoundStartEnhance = false) => {
         heroActionHistory.current.clear();
         enemyUnitsPlayedRef.current = 0;
         // [2026-07-10 诗人·科洛] 保存上回合出牌记录（分双方）
@@ -586,6 +623,20 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             setPlayerHand(prev => upgradeAcaciaHand(prev));
             setPlayerDeck(prev => upgradeAcaciaHand(prev)); // 牌库副本同步升级，抽到即 Lv2
         }
+
+        // [2026-08-06 莉莉子 法术19] 新回合飞剑计数清零 → 恢复手牌中"法术19"被减过的费用（原价5）
+        const restoreSpell19Cost = (hand: CardData[]): CardData[] => hand.map(c => {
+            if (c.key === 'temp_spell_19' && ((c.customProgress || 0) & 2)) {
+                return {
+                    ...c,
+                    cost: 5, // 恢复到卡牌原始费用
+                    customProgress: (c.customProgress || 0) & ~2, // 清除绿色减费标记
+                };
+            }
+            return c;
+        });
+        setPlayerHand(prev => restoreSpell19Cost(prev));
+        setEnemyHand(prev => restoreSpell19Cost(prev));
 
         // 清理屏障及其黯淡标记、数值账本、词条账本、打击次数账本
         const clearRoundBuffsAndBarrier = (cards: CardData[]) => cards.map(c => {
@@ -646,7 +697,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         let tempGame = {
             ...currentGameState,
             ...nextRoundBase,
-            playerSpellMana: Math.min(3, (nextRoundBase.playerSpellMana || 0) + channelManaPlayer),
+            playerSpellMana: armamentManaRestore ? 3 : Math.min(3, (nextRoundBase.playerSpellMana || 0) + channelManaPlayer), // [2026-08-14 武装] 秘法回响：回合开始恢复全部法术法力
             enemySpellMana: Math.min(3, (nextRoundBase.enemySpellMana || 0) + channelManaEnemy),
             playerRoundFlyingSwords: 0, // [2026-07-31] 新回合清零本回合飞剑计数
             enemyRoundFlyingSwords: 0,
@@ -669,6 +720,15 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         // [2026-07-29 安卡希雅] 回合开始重置飞剑回合标记
         tempGame.playerRoundSwordUsed = false;
         tempGame.enemyRoundSwordUsed = false;
+
+        // [2026-08-11 莉莉子] 迷宫强化 round_start：回合开始被动（暗箭难防生成 / 战意盎然备战）
+        // [2026-08-15 莉莉子] 开局（换牌前）跳过：第一回合强化由 triggerFirstRoundRogueEnhance 在换牌后触发（参考安卡库效修复）
+        if (!skipRoundStartEnhance) {
+            tempGame = runRoundStartRogueEnhancements(currentGameState, tempGame);
+        }
+        // [2026-08-11 莉莉子] 重置暗影双生「每回合首次」标志
+        tempGame = { ...tempGame, rogueFirstSummonDone: false };
+
         setGame(tempGame as GameState);
         setPlayerBench(finalPlayerBench);
         setEnemyBench(finalEnemyBench);
@@ -678,6 +738,9 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
     // 块 B: 回合末综合清算序列 (幻象/鞭策/基座扫射/脉冲)
     // ---------------------------------------------------------
     const executeRoundEndSequence = async () => {
+        console.log('[LILITH-DEBUG] 🎬 executeRoundEndSequence 入口被调用');
+        // [2026-08-04 莉莉子] 收集待播瞬逝弃置动画的卡 id，供 startRound 前等待动画播完
+        const volatilePending = new Set<string>();
         // [SBA] 回合结束效果前先清尸
         judgeLifeAndDeath();
         setGame(prev => ({ ...prev, phase: 'animating' }));
@@ -686,8 +749,10 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         // --- 0. Volatile（瞬逝）手牌弃置 — 优先于其他回合末效果执行 ---
         const playerVolatileResult = applyVolatileDiscard(stateRef.current.playerHand);
         const enemyVolatileResult = applyVolatileDiscard(stateRef.current.enemyHand);
+        console.log('[LILITH-DEBUG] roundEnd volatile:', playerVolatileResult.discarded.map(c => c.name), 'hand size:', stateRef.current.playerHand.length);
         if (playerVolatileResult.discarded.length > 0) {
             playerVolatileResult.discarded.forEach(card => {
+                volatilePending.add(card.id);
                 eventBus.emit(GameEvents.HAND_VOLATILE_DISCARD, { card, owner: 'player' });
             });
             // [2026-07-22 莉莉子] 不再立即移除 — 让手牌中的卡片在原位播消散动画
@@ -695,6 +760,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         }
         if (enemyVolatileResult.discarded.length > 0) {
             enemyVolatileResult.discarded.forEach(card => {
+                volatilePending.add(card.id);
                 eventBus.emit(GameEvents.HAND_VOLATILE_DISCARD, { card, owner: 'enemy' });
             });
             // [2026-07-22 莉莉子] 同上，敌方手牌卡背原位播动画
@@ -1350,7 +1416,6 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
                     const enemyPlayer = owner === 'player' ? 'enemy' : 'player';
                     const enemyBench = enemyPlayer === 'player' ? myPlayerBench : myEnemyBench;
-                    const friendlyBench = enemyPlayer === 'player' ? myEnemyBench : myPlayerBench; // 谁发出的
 
                     // 伤害敌方备战席
                     const newEnemyBench = enemyBench.map(c => {
@@ -1435,12 +1500,38 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         const isQueueProcessed = flushMicroQueue();
         if (isQueueProcessed) await wait(50);
 
+        // --- 6.5 [2026-08-04 莉莉子] 等待瞬逝弃置动画播完再开新回合 ---
+        // 之前 emit 事件后直接 startRound()，新回合抽卡/手牌重排会反复打断 2 秒的燃尽动画，
+        // 导致动画停停走走、最后"跳着消失"。这里等全部瞬逝卡动画完成（带超时兜底防卡死）。
+        if (volatilePending.size > 0) {
+            await new Promise<void>(resolve => {
+                let settled = false;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearInterval(check);
+                    eventBus.off(GameEvents.HAND_DISCARD_ANIM_DONE, onDone);
+                    resolve();
+                };
+                const onDone = (p: { cardId: string }) => {
+                    volatilePending.delete(p.cardId);
+                    if (volatilePending.size === 0) finish();
+                };
+                const check = setInterval(() => {
+                    if (volatilePending.size === 0) finish();
+                }, 100);
+                eventBus.on(GameEvents.HAND_DISCARD_ANIM_DONE, onDone);
+                setTimeout(finish, 2600); // 超时兜底：动画总长 2.0s，预留 0.6s
+            });
+        }
+
         // 7. 开启新回合
         startRound();
     };
 
     return {
         startRound,
-        executeRoundEndSequence
+        executeRoundEndSequence,
+        triggerFirstRoundRogueEnhance, // [2026-08-15] 换牌后第一回合触发 round_start 强化（暗箭等）
     };
 }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Sword, BookOpen, Lock } from 'lucide-react';
+import { ArrowLeft, Home, Sword, BookOpen, Lock } from 'lucide-react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { EXAM_CATEGORIES } from '../../data/tutorialStages';
 import type { ExamCategoryId } from '../../data/tutorialStages';
@@ -8,6 +8,7 @@ import type { ExamCategoryId } from '../../data/tutorialStages';
 interface TutorialModeSelectProps {
     onSelectCategory: (categoryId: ExamCategoryId) => void;
     onBack: () => void;
+    onBackToLobby?: () => void; // [2026-08-07] 直达大厅
 }
 
 /** 分类图标映射 */
@@ -55,22 +56,35 @@ const CATEGORY_THEMES: Record<string, {
 export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
     onSelectCategory,
     onBack,
+    onBackToLobby,
 }) => {
     return (
         <div className="w-full h-full flex flex-col items-center justify-center bg-black font-sans select-none text-white overflow-hidden relative">
             {/* 背景氛围 */}
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.08)_0%,transparent_70%)] pointer-events-none"></div>
 
-            {/* 返回按钮 */}
-            <button
-                onClick={() => {
-                    eventBus.emit(GameEvents.UI_BACK);
-                    onBack();
-                }}
-                className="absolute top-8 right-8 z-[999] p-3 rounded-full bg-white/5 hover:bg-white/20 border border-white/10 hover:border-white/50 transition-all group"
-            >
-                <ArrowLeft size={24} className="text-gray-400 group-hover:text-white transition-colors" />
-            </button>
+            {/* 返回按钮 + 返回大厅（[2026-08-07] 返回模式选择旁补直达大厅） */}
+            <div className="absolute top-8 right-8 z-[999] flex items-center gap-3">
+                {onBackToLobby && (
+                    <button
+                        onClick={() => { eventBus.emit(GameEvents.UI_BACK); onBackToLobby(); }}
+                        className="p-3 rounded-full bg-white/5 hover:bg-white/20 border border-white/10 hover:border-white/50 transition-all group"
+                        title="返回大厅"
+                    >
+                        <Home size={24} className="text-gray-400 group-hover:text-white transition-colors" />
+                    </button>
+                )}
+                <button
+                    onClick={() => {
+                        eventBus.emit(GameEvents.UI_BACK);
+                        onBack();
+                    }}
+                    className="p-3 rounded-full bg-white/5 hover:bg-white/20 border border-white/10 hover:border-white/50 transition-all group"
+                    title="返回模式选择"
+                >
+                    <ArrowLeft size={24} className="text-gray-400 group-hover:text-white transition-colors" />
+                </button>
+            </div>
 
             {/* 标题 */}
             <motion.div

@@ -37,6 +37,9 @@ interface VFXLayerProps {
     selectedTargets: VFXTarget[];
     persistentLines?: PersistentLine[];
     castingSpellRef?: React.RefObject<HTMLElement>; // [核心修改] 接收真实 DOM 引用
+    // [2026-08-15 莉莉子] 回力镖瞄准方向（仅抵抗/抗拒等以堆叠法术为目标的特定卡启用）：
+    //   'down' = 先下坠再水平指向（敌方目标）；'up' = 先上指再水平指向（我方目标）
+    boomerang?: 'down' | 'up';
 }
 
 // ==========================================
@@ -77,10 +80,21 @@ const getLineColor = (owner: 'player' | 'enemy' | undefined, targetType: string)
 // 工具函数：数学与几何引擎
 // ==========================================
 // 1. 基础骨架路径 (供中心高光和 DrawSVG 描边使用)
-const buildCenterPath = (from: { x: number; y: number }, to: { x: number; y: number }): string => {
+// [2026-08-15 莉莉子] 新增回力镖模式：先垂直延伸（下坠/上指）→ 外展 → 水平射入目标（三次贝塞尔）
+const buildCenterPath = (from: { x: number; y: number }, to: { x: number; y: number }, boomerangDir?: 'down' | 'up'): string => {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.001);
+    if (boomerangDir) {
+        const drop = Math.min(Math.max(dist * 0.9 + 90, 120), 260); // 垂直延伸距离（随直线长度自适应）
+        const HORIZ = Math.min(Math.max(Math.abs(dx) * 0.8, 50), 120); // 水平进入段（≥ 最大箭头 81px 才稳）
+        const sgn = dx >= 0 ? 1 : -1;
+        const p1x = from.x;
+        const p1y = from.y + (boomerangDir === 'down' ? drop : -drop); // 起点切线垂直向下/向上
+        const p2x = to.x - sgn * HORIZ;
+        const p2y = to.y; // 末端切线水平 → 箭头水平指向目标
+        return `M ${from.x} ${from.y} C ${p1x} ${p1y} ${p2x} ${p2y} ${to.x} ${to.y}`;
+    }
     const midX = (from.x + to.x) / 2;
     const midY = (from.y + to.y) / 2;
     const offset = Math.min(dist * 0.3, 200);
@@ -89,15 +103,30 @@ const buildCenterPath = (from: { x: number; y: number }, to: { x: number; y: num
 };
 
 // 2. 动态宽度多边形生成 (实现"粗-细-粗"流光外壳)
-const buildDynamicWidthPath = (from: { x: number; y: number }, to: { x: number; y: number }, scale: number = 1, dynamicStartWidth: number = 30): string => {
+// [2026-08-15 莉莉子] 新增回力镖模式：三次贝塞尔采样（先垂直延伸 → 外展 → 水平射入目标），末端箭头沿水平切线
+const buildDynamicWidthPath = (from: { x: number; y: number }, to: { x: number; y: number }, scale: number = 1, dynamicStartWidth: number = 30, boomerangDir?: 'down' | 'up'): string => {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.001);
     const midX = (from.x + to.x) / 2;
     const midY = (from.y + to.y) / 2;
     const offset = Math.min(dist * 0.3, 200);
-    const ctrlX = midX;
-    const ctrlY = midY - offset;
+
+    // 路径几何：默认二次贝塞尔（ctrl）；回力镖用三次贝塞尔（ctrl=P1 + p2=P2）
+    const isBoom = !!boomerangDir;
+    let ctrlX = midX;
+    let ctrlY = midY - offset;
+    let p2x = 0;
+    let p2y = 0;
+    if (isBoom) {
+        const drop = Math.min(Math.max(dist * 0.9 + 90, 120), 260); // 垂直延伸距离
+        const HORIZ = Math.min(Math.max(Math.abs(dx) * 0.8, 50), 120); // 水平进入段（≥ 最大箭头 81px 才稳）
+        const sgn = dx >= 0 ? 1 : -1;
+        ctrlX = from.x;                                   // P1：起点垂直下坠/上指
+        ctrlY = from.y + (boomerangDir === 'down' ? drop : -drop);
+        p2x = to.x - sgn * HORIZ;                          // P2：末端水平进入
+        p2y = to.y;
+    }
 
     const STEPS = 40; // 提高采样精度以获得更丝滑的曲线
     const leftPoints = [];
@@ -108,8 +137,9 @@ const buildDynamicWidthPath = (from: { x: number; y: number }, to: { x: number; 
     const ARROW_WIDTH = 25 * scale;
 
     // 预解算终点处的切线方向，用于构建完美的垂直箭头底座
-    const endDx = to.x - ctrlX;
-    const endDy = to.y - ctrlY;
+    //   回力镖：末端切线 = P3 - P2（水平）；默认：to - ctrl
+    const endDx = isBoom ? (to.x - p2x) : (to.x - ctrlX);
+    const endDy = isBoom ? (to.y - p2y) : (to.y - ctrlY);
     const endLen = Math.max(Math.sqrt(endDx * endDx + endDy * endDy), 0.001);
     const endDirX = endDx / endLen;
     const endDirY = endDy / endLen;
@@ -122,8 +152,21 @@ const buildDynamicWidthPath = (from: { x: number; y: number }, to: { x: number; 
     for (let i = 0; i <= STEPS; i++) {
         const t = i / STEPS;
         const u = 1 - t;
-        const px = u * u * from.x + 2 * u * t * ctrlX + t * t * to.x;
-        const py = u * u * from.y + 2 * u * t * ctrlY + t * t * to.y;
+        // 采样位置 + 切线（二次 vs 三次贝塞尔）
+        let px: number, py: number, dpx: number, dpy: number;
+        if (isBoom) {
+            // B(t) = u³P0 + 3u²t·P1 + 3ut²·P2 + t³P3
+            px = u * u * u * from.x + 3 * u * u * t * ctrlX + 3 * u * t * t * p2x + t * t * t * to.x;
+            py = u * u * u * from.y + 3 * u * u * t * ctrlY + 3 * u * t * t * p2y + t * t * t * to.y;
+            // B'(t) = 3u²(P1-P0) + 6ut(P2-P1) + 3t²(P3-P2)
+            dpx = 3 * u * u * (ctrlX - from.x) + 6 * u * t * (p2x - ctrlX) + 3 * t * t * (to.x - p2x);
+            dpy = 3 * u * u * (ctrlY - from.y) + 6 * u * t * (p2y - ctrlY) + 3 * t * t * (to.y - p2y);
+        } else {
+            px = u * u * from.x + 2 * u * t * ctrlX + t * t * to.x;
+            py = u * u * from.y + 2 * u * t * ctrlY + t * t * to.y;
+            dpx = 2 * u * (ctrlX - from.x) + 2 * t * (to.x - ctrlX);
+            dpy = 2 * u * (ctrlY - from.y) + 2 * t * (to.y - ctrlY);
+        }
 
         // 一旦延伸进了大箭头的领域，立刻停止生成能量束面，为箭头底座让出空间
         const distFromEnd = Math.sqrt((to.x - px) * (to.x - px) + (to.y - py) * (to.y - py));
@@ -131,8 +174,6 @@ const buildDynamicWidthPath = (from: { x: number; y: number }, to: { x: number; 
             continue;
         }
 
-        const dpx = 2 * u * (ctrlX - from.x) + 2 * t * (to.x - ctrlX);
-        const dpy = 2 * u * (ctrlY - from.y) + 2 * t * (to.y - ctrlY);
         const len = Math.max(Math.sqrt(dpx * dpx + dpy * dpy), 0.001);
         const nx = -dpy / len;
         const ny = dpx / len;
@@ -205,6 +246,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
     selectedTargets = [],
     persistentLines = [],
     castingSpellRef,
+    boomerang, // [2026-08-15] 回力镖瞄准方向（抵抗/抗拒专用）
 }) => {
     const svgRef = useRef<SVGSVGElement>(null);
     const previewL1Ref = useRef<SVGPathElement>(null);
@@ -302,13 +344,13 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
             // [核心修复] 物理鼠标坐标也必须经过逆向映射，彻底消除偏移！
             const to = getLocalPos(svgRef.current, mousePosRef.current.x, mousePosRef.current.y);
 
-            // 1. 获取 3 种形态的几何属性
+            // 1. 获取 3 种形态的几何属性（[2026-08-15] 回力镖方向透传给预览线）
             // [外层光晕] 粗体光晕多边形面
-            const shapeL1 = buildDynamicWidthPath(start, to, 1.8);
+            const shapeL1 = buildDynamicWidthPath(start, to, 1.8, 30, boomerang);
             // [中层能量] 适中多边形面
-            const shapeL2 = buildDynamicWidthPath(start, to, 0.8);
+            const shapeL2 = buildDynamicWidthPath(start, to, 0.8, 30, boomerang);
             // [核心高光] 保留极细单线，维持中央锐度
-            const centerPath = buildCenterPath(start, to);
+            const centerPath = buildCenterPath(start, to, boomerang);
 
             // 同步物理帧渲染 (此时 shapeL1 和 shapeL2 的尾端已经自带巨大箭头了！)
             l1.setAttribute('d', shapeL1);
@@ -318,7 +360,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
 
         gsap.ticker.add(updatePreview);
         return () => { gsap.ticker.remove(updatePreview); };
-    }, [isCasting, getStartPos]);
+    }, [isCasting, getStartPos, boomerang]); // [2026-08-15] 回力镖方向变化时重建预览线
 
     // ==========================================
     // DrawSVG 入场动画
@@ -347,7 +389,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
     // 渲染单条连线 — 基于几何生成的 3层实体
     // ==========================================
     const renderLine = useCallback(
-        (from: { x: number; y: number }, to: { x: number; y: number }, color: string, isActive: boolean, idx: string, sourceId?: string) => {
+        (from: { x: number; y: number }, to: { x: number; y: number }, color: string, isActive: boolean, idx: string, sourceId?: string, boomerangDir?: 'down' | 'up') => {
 
             // [防穿帮雷达] 实时获取起点卡牌的物理半径作为光束口径
             let startRadius = 30; // 默认口径
@@ -359,9 +401,9 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
             }
 
             // [核心修复] 获取几何体数据包，注入自适应口径
-            const shapeL1 = buildDynamicWidthPath(from, to, 1.8, startRadius);
-            const shapeL2 = buildDynamicWidthPath(from, to, 0.8, startRadius);
-            const centerPath = buildCenterPath(from, to);
+            const shapeL1 = buildDynamicWidthPath(from, to, 1.8, startRadius, boomerangDir);
+            const shapeL2 = buildDynamicWidthPath(from, to, 0.8, startRadius, boomerangDir);
+            const centerPath = buildCenterPath(from, to, boomerangDir);
 
             // [性能优化] 清除已废弃的 ctrlPt 独立控制点计算，降低每帧性能损耗
 
@@ -405,7 +447,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
                             const targetPos = getElementCenter(target.id, svgRef.current);
                             if (!targetPos) return null;
                             // 传入 sourceId，开启动态口径测算！
-                            return renderLine(sourcePos, targetPos, getLineColor(line.owner, target.type), false, `p-${li}-${ti}`, line.sourceId);
+                            return renderLine(sourcePos, targetPos, getLineColor(line.owner, target.type), false, `p-${li}-${ti}`, line.sourceId, boomerang);
                         })}
                     </g>
                 );
@@ -420,7 +462,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
                     <g key={`selected-${i}`}>
                         {/* [核心修复 BUG 2] 将 isActive 设为 false，剥离纯白高光，彻底释放阵营颜色！ */}
                         {/* 施法确认期，起点就是施法圆盘，使用预设口径即可，传空 */}
-                        {renderLine(startPos, targetPos, getLineColor('player', target.type), false, `s-${i}`)}
+                        {renderLine(startPos, targetPos, getLineColor('player', target.type), false, `s-${i}`, undefined, boomerang)}
                     </g>
                 );
             })}

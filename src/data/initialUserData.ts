@@ -1,3 +1,4 @@
+import type { UserSettings } from '../types'; // [2026-08-16] DEFAULT_SETTINGS 显式注解，根治 useUserSystem 类型债
 import { CARD_DB } from './cards';
 import { SKIN_IMAGES } from './imageData'; // [皮肤] 用于构建全皮肤数据
 
@@ -7,7 +8,7 @@ import { SKIN_IMAGES } from './imageData'; // [皮肤] 用于构建全皮肤数�
  */
 
 // --- 1. 默认设置 ---
-export const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS: UserSettings = {
     volume: {
         bgm: 0.5,
         sfx: 0.6,
@@ -21,9 +22,12 @@ export const DEFAULT_SETTINGS = {
     unlockedCardBacks: [0],
     unlockedDesks: [0],
     videoResolution: '1k', // [新增] 默认 1k
+    lastSeenAnnouncementVersion: '', // [2026-08-09] 已读公告版本（空=从未看过，进大厅自动弹公告）
     skipGameStartDrawAnimation: false, // 默认播放开局抽卡动画
     skipLevelupMovie: false,           // 默认播放升级影片
     skipVictoryMovie: false,           // 默认播放胜利影片
+    deskDynamic: false,                // [2026-08-13] 默认静态牌桌
+    heroDynamic: false,                // [2026-08-16] 默认静态卡面（对局内英雄卡动态视频需玩家手动开启）
 };
 
 // --- 2. 卡牌收藏定义 ---

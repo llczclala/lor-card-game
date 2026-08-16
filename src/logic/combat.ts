@@ -1,7 +1,6 @@
 import type { CardData, GameState, Keyword } from '../types';
 import { checkCardLevelUp, getLeveledUpCard } from '../utils/gameRules';
 import { calculateCombatInteraction } from './keywords'; // [新增]
-import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 引入事件总线
 
 
 // [新增] 单次战斗结果接口
@@ -111,7 +110,7 @@ export const resolveSingleCombat = (
     let totalBlockerDmg = 0;
 
     // 第一击：如果连击则带先攻，否则按单位自身关键词
-    const s1 = executeStrike(newAttacker, newBlocker, hasDoubleAttack || newAttacker.keywords.includes('QuickAttack'), isGhostBlocked);
+    const s1 = executeStrike(newAttacker, newBlocker, hasDoubleAttack || newAttacker.keywords.includes('QuickAttack'), isGhostBlocked ?? false);
     totalNexus += s1.nexusDmg;
     qaEphemeralDeath = s1.qaEphemeral;
     totalAttackerDmg += s1.atkDmg;

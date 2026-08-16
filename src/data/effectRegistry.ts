@@ -2,7 +2,7 @@
  * Snowbreak Rivals - 法术效果注册表
  */
 
-import type { Race } from '../types';
+import type { Race, Keyword } from '../types';
 
 export type EffectClass =
     | 'STRIKE' | 'SUMMON' | 'BUFF' | 'FATES_CHOICE' | 'RALLY' | 'CLONE_AND_SUMMON'
@@ -24,7 +24,13 @@ export type EffectClass =
     | 'GRANT_MANA'        // [梵音] 额外法力类：本回合获得额外法力值
     | 'CALIBRATE'          // [鸦眼] 校准类：从牌库选4张，选1张放顶部
     | 'DECK_BUFF'          // [达努/鸦眼] 牌库强化类：对牌库内单位/法术施加buff
-    | 'FLYING_SWORD';       // [2026-07-26 安卡希雅] 飞剑类：召唤X个飞剑衍生物并立即发起进攻
+    | 'FLYING_SWORD'        // [2026-07-26 安卡希雅] 飞剑类：召唤X个飞剑衍生物并立即发起进攻
+    | 'PLACEHOLDER'         // [2026-08-05 莉莉子] 占位类：逻辑未实现时安全空转，用于暂未完成逻辑的新法术
+    | 'TITAN_PULSE'         // [2026-08-05 莉莉子] 泰坦脉冲类：立刻触发己方泰坦脉冲（法术4）
+    | 'TITAN_RELIGHT'       // [2026-08-05 莉莉子] 泰坦点亮类：移除己方泰坦黯淡关键词（法术3）
+    | 'BURNOUT_SUMMON'      // [2026-08-05 莉莉子] 燃尽召唤类：消耗全部法力、按燃尽值随机召唤泰坦（法术12）
+    | 'NEGATE'              // [2026-08-05 莉莉子] 无效化类：从法术堆叠移除目标法术（法术8/6/7）
+    | 'RESURRECT'           // [2026-08-06 莉莉子] 复活类：从墓地复活最强N个单位并附幻象（法术2）
 
 export type EffectTiming =
     | 'BURST' | 'FAST' | 'SLOW'
@@ -39,6 +45,9 @@ export type EffectTiming =
     | 'ON_FIRST_ROUND_END'   // [鸦眼] 首次回合结束时触发
     | 'ON_GET_ATTACK_TOKEN'; // [安卡希雅] 获得进攻标识时触发
 
+// [2026-08-06 莉莉子] 法术速度定义（注册表 speed 字段）
+export type EffectSpeed = 'BURST' | 'FAST' | 'SLOW';
+
 // [核心修改] 目标类型定义
 export type TargetType =
     | 'ALLY_UNIT'       // 我方场上单位
@@ -50,7 +59,8 @@ export type TargetType =
     | 'ALLY_CHAMPION'   // 我方特定英雄
     | 'HAND_CARD'       // [2026-06-27] 手牌中的卡牌（用于弃牌、检索等）
     | 'ALL_ALLIES'
-    | 'SELF';
+    | 'SELF'
+    | 'SPELL_ON_STACK'  // [2026-08-05 莉莉子] 法术堆叠中的法术（反制/无效化目标，法术6/7）
 
 export interface TargetRequirement {
     type: TargetType;
@@ -60,6 +70,8 @@ export interface TargetRequirement {
     raceFilter?: Race[]; // [新增] 种族过滤器，例如 ['summoner', 'summon']
     keywordFilter?: string[]; // [2026-07-07 新增] 关键词过滤，例如 ['Ephemeral'] 要求目标拥有幻象
     cardTypeFilter?: 'unit' | 'spell'; // [2026-07-14 锻造者] 手牌选择时的卡牌类型过滤
+    stackCostBelow?: number;      // [2026-08-05 莉莉子] SPELL_ON_STACK 目标费用上限（不含）
+    stackSpeedFilter?: string[];  // [2026-08-05 莉莉子] SPELL_ON_STACK 目标速度白名单（如 ['spell-fast']）
 }
 
 // [修改] 扁平化参数结构，移除 buffs 嵌套，与 Processor 对齐
@@ -113,6 +125,42 @@ export interface EffectParams {
     // [2026-07-14 锻造者] 法术增伤光环参数
     spellDamageBuff?: number;    // 法术增伤光环：对所有法术伤害的额外加成
     triggerOnPlay?: boolean;     // [白猎] 从手牌召唤时是否触发入场效果
+    placeholder?: boolean;       // [2026-08-05 莉莉子] 占位标记：逻辑未实现的效果条目专用
+    // [2026-08-05 莉莉子] 燃尽召唤 / 无效化参数
+    useBurnout?: boolean;        // 燃尽：消耗全部法力后按燃尽值召唤泰坦（法术12）
+    negateAllEnemies?: boolean;  // NEGATE：无效化堆叠中所有敌方法术（法术8）
+    stackCostBelow?: number;     // SPELL_ON_STACK 目标费用上限（不含，法术6）
+    stackSpeedFilter?: string[]; // SPELL_ON_STACK 目标速度白名单（法术6/7）
+    // [2026-08-06 莉莉子] 接口字段补齐：历史效果新增参数统一登记
+    generateKey?: string;        // 生成卡牌 Key
+    placeOnTop?: boolean;        // 检索/生成目标放牌库顶
+    maxCost?: number;            // 费用上限过滤
+    sacrificeValue?: number;     // 献祭/自损数值
+    targetAllUnits?: boolean;    // 全场单位 AOE（含双方）
+    targetAllAllies?: boolean;   // 全体友方
+    targetAllEnemies?: boolean;  // 全体敌方
+    targetCombatOnly?: boolean;  // 仅交战区
+    targetEnemyNexus?: boolean;  // 目标敌方水晶
+    targetFilter?: string;       // 目标过滤暗号
+    excludeSelf?: boolean;       // 排除施法者自身
+    allAlliesBuff?: { power?: number; health?: number };     // 全体友方增益
+    allEnemiesDebuff?: { power?: number; health?: number };  // 全体敌方削弱
+    ownerSide?: boolean;         // Buff 侧别（默认己方）
+    calibrateCount?: number;     // 校准选牌数量
+    count?: number;              // 通用数量
+    grantMaxMana?: boolean;      // 授予最大法力
+    useDiscardCount?: boolean;   // 亡语弃牌计数
+    costReduceSpell?: boolean;   // 减费法术标记
+    spellCostReduce?: number;    // 法术减费数值
+    discardCountMode?: string;   // 弃牌计数模式
+    firstAttackOnly?: boolean;   // 仅首次攻击
+    returnToHand?: boolean;      // 撤回回手牌
+    excludeKeys?: string[];      // 按 key 排除目标单位
+    nexusFallback?: boolean;     // 无合法目标时回退水晶
+    targetType?: string;         // 目标类型
+    reduceCostIfDuplicate?: boolean; // 手牌重复减费
+    freezeAllEnemies?: boolean;  // 冻结全体敌方
+    selfDamage?: number;         // 反噬契约：效果执行后对施法者自身造成 N 点伤害
 }
 
 export interface EffectDefinition {
@@ -259,18 +307,22 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_fenny_attack_lv1': {
         id: 'effect_fenny_attack_lv1',
         name: '芬妮1级成长',
+        description: '发起进攻时：赋予自身成长（1级）。',
         class: 'BUFF',
         timing: 'ON_ATTACK_DECLARE',
-        targetRequirements: [{ type: 'SELF', count: 1 }],
+        speed: 'BURST',
+        targetRequirements: [{ type: 'SELF', count: 1, label: '自身' }],
         params: { condition: 'fenny_first_attack_lv1' }
     },
     // [新增] 2级首次进攻
     'effect_fenny_attack_lv2': {
         id: 'effect_fenny_attack_lv2',
         name: '芬妮2级成长',
+        description: '发起进攻时：赋予自身成长（2级）。',
         class: 'BUFF',
         timing: 'ON_ATTACK_DECLARE',
-        targetRequirements: [{ type: 'SELF', count: 1 }],
+        speed: 'BURST',
+        targetRequirements: [{ type: 'SELF', count: 1, label: '自身' }],
         params: { condition: 'fenny_first_attack_lv2' }
     },
     // 强袭 (Fenny Strike) -> 星光之途 (折返与屏障)
@@ -581,7 +633,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
             health: 0,
             duration: 'ROUND', // 仅限本回合
             // [核心机制] 发放一个系统监听专属词条，战斗引擎看到它杀了人就会发攻击代币
-            keywords: ['Listening_KillToRally'] as Keyword[]
+            keywords: ['Listening_KillToRally'] as any[]
         }
     },
 
@@ -622,7 +674,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_drive_lv1': {
         id: 'effect_mauxir_lotus_drive_lv1',
         name: '感知补全',
-        description: '【库效】回合开始时，若友方备战席和手牌中没有【臆莲基座】，则召唤一个。回合结束：对友方随机一个【臆莲基座】造成1点伤害，之后赋予其+0 +1。',
+        description: '【库效】回合开始时，若友方备战席和手牌中没有“臆莲基座”，则召唤一个。回合结束：对友方随机一个“臆莲基座”造成1点伤害，之后赋予其+0 +1。',
         // 这是系统底层被动机制，class 和 timing 只是占位，主要靠 useGameState 扫描提取
         class: 'BUFF',
         timing: 'ON_PLAY',
@@ -642,7 +694,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_rush': {
         id: 'effect_mauxir_lotus_rush',
         name: '千莲叠绽',
-        description: '若猫汐尔未处于格挡状态，召唤一个【臆莲基座】；若处于格挡状态，则与一个【臆莲基座】调换位置，代替其格挡并给予其+0/+2。',
+        description: '若猫汐尔未处于格挡状态，召唤一个“臆莲基座”；若处于格挡状态，则与一个“臆莲基座”调换位置，代替其格挡并给予其+0/+2。',
         class: 'SUMMON',
         timing: 'ON_PLAY',
         speed: 'FAST',
@@ -652,7 +704,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_ultimate': {
         id: 'effect_mauxir_lotus_ultimate',
         name: '顷刻莲潮',
-        description: '立刻使全场所有友方【臆莲基座】造成一次双倍打击，完成后各基座攻击力减半。',
+        description: '立刻使全场所有友方“臆莲基座”造成一次双倍打击，完成后各基座攻击力减半。',
         class: 'STRIKE',
         timing: 'ON_PLAY',
         speed: 'SLOW',
@@ -675,7 +727,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_pedestal': {
         id: 'effect_mauxir_lotus_pedestal',
         name: '臆莲基座',
-        description: '受伤时生成梦莲无人机，回合结束造成X次1点伤害。',
+        description: '受伤时生成“梦莲无人机”，回合结束造成X次1点伤害。',
         class: 'BUFF', // TODO: 替换为受伤触发+回合结束触发
         timing: 'ON_PLAY',
         speed: 'BURST',
@@ -689,7 +741,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_drive_lv2': {
         id: 'effect_mauxir_lotus_drive_lv2',
         name: '感知补全+',
-        description: '【库效】回合开始时，若友方备战席和手牌中没有【臆莲基座】，则召唤一个。回合结束：对友方所有【臆莲基座】造成1点伤害，之后赋予其+0 +2，【臆莲基座】可以以敌方水晶为目标。',
+        description: '【库效】回合开始时，若友方备战席和手牌中没有“臆莲基座”，则召唤一个。回合结束：对友方所有“臆莲基座”造成1点伤害，之后赋予其+0 +2，“臆莲基座”可以以敌方水晶为目标。',
         class: 'BUFF', // TODO: 替换为完整Lv2逻辑
         timing: 'ON_PLAY_AND_ROUND_START',
         speed: 'BURST',
@@ -1006,7 +1058,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         class: 'BUFF',
         timing: 'ON_PLAY',
         speed: 'BURST',
-        targetRequirements: [{ type: 'ALL_ALLIES', count: 1 }],
+        targetRequirements: [{ type: 'ALL_ALLIES', count: 1, label: '全体友方' }],
         params: { health: 1, duration: 'ROUND' },
         animationDuration: 600,
     },
@@ -1544,7 +1596,8 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         description: '发起进攻时：赋予自己+3/+0。',
         class: 'BUFF',
         timing: 'ON_ATTACK_DECLARE',
-        targetRequirements: [{ type: 'SELF', count: 1 }],
+        speed: 'BURST',
+        targetRequirements: [{ type: 'SELF', count: 1, label: '自身' }],
         params: { power: 3, health: 0 }
     },
 
@@ -1558,7 +1611,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         class: 'BUFF',
         timing: 'ON_PLAY',
         speed: 'BURST',
-        targetRequirements: [{ type: 'SELF', count: 1 }],
+        targetRequirements: [{ type: 'SELF', count: 1, label: '自身' }],
         params: {
             duration: 'ROUND',
             keywords: ['Frostbite'] as Keyword[],
@@ -1729,6 +1782,277 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         class: 'FLYING_SWORD',
         timing: 'ON_ATTACK_DECLARE',
         speed: 'BURST',
+        targetRequirements: [],
+        params: { summonCount: 2 }
+    },
+
+    // ==========================================
+    // [2026-08-05 莉莉子] 新法术批次占位效果（18 张，逻辑未实现）
+    // 全部 class: 'PLACEHOLDER' → effectProcessor 安全空转。
+    // description 写明最终意图，实现逻辑时替换 class + params 并补处理器。
+    // ==========================================
+    'effect_temp_spell_01': {
+        id: 'effect_temp_spell_01',
+        name: '降临事件',
+        description: '慢速：击杀场上的所有单位（对场上所有单位造成999点伤害）。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: { targetAllUnits: true, value: 999 },
+        record: { summary: '击杀场上的所有单位' }
+    },
+    'effect_temp_spell_02': {
+        id: 'effect_temp_spell_02',
+        name: '瓦尔哈拉的呼唤',
+        description: '慢速：复活我方本牌局死亡的最强的6个单位，且全员带[幻象]。',
+        class: 'RESURRECT',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: { value: 6 },
+        record: { summary: '复活我方死亡最强的6个单位（带幻象）' }
+    },
+    'effect_temp_spell_03': {
+        id: 'effect_temp_spell_03',
+        name: '法术3',
+        description: '慢速：再次点亮我方所有泰坦单位的关键词。',
+        class: 'TITAN_RELIGHT',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: {},
+        record: { summary: '点亮我方所有泰坦单位的关键词' }
+    },
+    'effect_temp_spell_04': {
+        id: 'effect_temp_spell_04',
+        name: '法术4',
+        description: '慢速：立刻触发我方所有单位的泰坦脉冲。',
+        class: 'TITAN_PULSE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: {},
+        record: { summary: '触发我方所有单位的泰坦脉冲' }
+    },
+    'effect_temp_spell_05': {
+        id: 'effect_temp_spell_05',
+        name: '单刀直入',
+        description: '快速：对任意一个目标造成2点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ANY_TARGET', count: 1, label: '选择一个单位或水晶' }
+        ],
+        params: { value: 2 },
+        record: { summary: '对任意一个目标造成2点伤害' }
+    },
+    'effect_temp_spell_06': {
+        id: 'effect_temp_spell_06',
+        name: '抵抗',
+        description: '极速：无效化一个费用小于等于3的快速法术。',
+        class: 'NEGATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'SPELL_ON_STACK', count: 1, label: '选择一个费用小于等于3的快速法术', stackCostBelow:4, stackSpeedFilter: ['spell-fast'] }
+        ],
+        params: {},
+        record: { summary: '无效化一个费用小于3的快速法术' }
+    },
+    'effect_temp_spell_07': {
+        id: 'effect_temp_spell_07',
+        name: '抗拒',
+        description: '快速：无效化一个快速或者慢速法术。',
+        class: 'NEGATE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'SPELL_ON_STACK', count: 1, label: '选择一个快速或慢速法术', stackSpeedFilter: ['spell-fast', 'spell-slow'] }
+        ],
+        params: {},
+        record: { summary: '无效化一个快速或者慢速法术' }
+    },
+    'effect_temp_spell_08': {
+        id: 'effect_temp_spell_08',
+        name: '拒绝',
+        description: '快速：无效化当前法术堆叠中的所有敌方法术。',
+        class: 'NEGATE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [],
+        params: { negateAllEnemies: true },
+        record: { summary: '无效化当前法术堆叠中的所有敌方法术' }
+    },
+    'effect_temp_spell_09': {
+        id: 'effect_temp_spell_09',
+        name: '法术9',
+        description: '快速：撤回一个我方单位（返回手牌），并飞剑2。',
+        class: 'RECALL',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个我方单位撤回' }
+        ],
+        params: { returnToHand: true },
+        record: { summary: '撤回一个我方单位并飞剑2' }
+    },
+    'effect_temp_spell_09_flying': {
+        id: 'effect_temp_spell_09_flying',
+        name: '飞剑1',
+        description: '召唤1柄飞剑进攻。',
+        class: 'FLYING_SWORD',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [],
+        params: { summonCount: 1 }
+    },
+    'effect_temp_spell_10': {
+        id: 'effect_temp_spell_10',
+        name: '战术回撤',
+        description: '快速：撤回任意一个单位（按其归属返回对应手牌），之后在手牌中生成瞬逝的"战术闪击"。',
+        class: 'RECALL',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ANY_UNIT', count: 1, label: '选择一个单位撤回' }
+        ],
+        params: { returnToHand: true },
+        record: { summary: '撤回任意单位并生成瞬逝的法术11' }
+    },
+    'effect_temp_spell_10_generate': {
+        id: 'effect_temp_spell_10_generate',
+        name: '生成瞬逝战术闪击',
+        description: '在手牌中生成一张瞬逝的"战术闪击"。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [],
+        params: { generateKey: 'temp_spell_11', isVolatile: true }
+    },
+    'effect_temp_spell_11': {
+        id: 'effect_temp_spell_11',
+        name: '战术闪击',
+        description: '极速：选择一个手牌中费用小于等于3的单位打出',
+        class: 'SUMMON_FROM_HAND',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'HAND_CARD', count: 1, cardTypeFilter: 'unit', label: '选择一个手牌中费用小于等于3的单位' }
+        ],
+        params: { maxCost: 4, triggerOnPlay: true },
+        record: { summary: '从手牌直接打出费用小于3的单位' }
+    },
+    'effect_temp_spell_12': {
+        id: 'effect_temp_spell_12',
+        name: '法术12',
+        description: '慢速：燃尽，根据消耗的费用召唤对应的随机数量随机费用的泰坦单位。',
+        class: 'BURNOUT_SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: { useBurnout: true },
+        record: { summary: '燃尽：按消耗费用随机召唤泰坦' }
+    },
+    'effect_temp_spell_13': {
+        id: 'effect_temp_spell_13',
+        name: '深思熟虑（占位）',
+        description: '【占位·逻辑未实现】极速：抉择："正面突破" 或 "迂回防守"。',
+        class: 'PLACEHOLDER',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { placeholder: true },
+        record: { summary: '抉择：+3/+0 或 +0/+3' }
+    },
+    'effect_temp_spell_14': {
+        id: 'effect_temp_spell_14',
+        name: '正面突破',
+        description: '极速：本回合给予一个单位+3/+0。（深思熟虑的衍生）',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个友方单位' }
+        ],
+        params: { power: 3, health: 0, duration: 'ROUND' },
+        record: { summary: '本回合给予一个单位+3/+0' }
+    },
+    'effect_temp_spell_15': {
+        id: 'effect_temp_spell_15',
+        name: '迂回防守',
+        description: '极速：本回合给予一个单位+0/+3。（深思熟虑的衍生）',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个友方单位' }
+        ],
+        params: { power: 0, health: 3, duration: 'ROUND' },
+        record: { summary: '本回合给予一个单位+0/+3' }
+    },
+    'effect_temp_spell_16': {
+        id: 'effect_temp_spell_16',
+        name: '法术16',
+        description: '极速：必须选择三个天启者，之后赋予她们+2/+2。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择第一个天启者' },
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择第二个天启者' },
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择第三个天启者' }
+        ],
+        params: { power: 2, health: 2, duration: 'PERMANENT' },
+        record: { summary: '选择三个天启者并赋予+2/+2' }
+    },
+    'effect_temp_spell_17': {
+        id: 'effect_temp_spell_17',
+        name: '法术17',
+        description: '慢速：本回合冻结所有敌人，并对所有敌人造成3点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: { targetAllEnemies: true, value: 3, freezeAllEnemies: true },
+        record: { summary: '冻结所有敌人并对所有敌人造成3点伤害' }
+    },
+    'effect_temp_spell_18': {
+        id: 'effect_temp_spell_18',
+        name: '法术18',
+        description: '极速：冻结一个敌人。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
+        ],
+        params: { keywords: ['Frostbite'], duration: 'ROUND' },
+        record: { summary: '冻结一个敌人' }
+    },
+    // [2026-08-06 莉莉子] 法术19：慢速 单体3伤（占位法术）
+    'effect_temp_spell_19_strike': {
+        id: 'effect_temp_spell_19_strike',
+        name: '法术19 单体打击',
+        description: '慢速：对一个敌方单位造成3点伤害。',
+        class: 'STRIKE',
+        timing: 'SLOW',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
+        ],
+        params: { value: 3 },
+        record: { summary: '对敌方单位造成3点伤害' }
+    },
+    // [2026-08-06 莉莉子] 法术20：快速 飞剑2（占位法术；回响由 Echo 关键词逻辑层处理）
+    'effect_temp_spell_20_flying': {
+        id: 'effect_temp_spell_20_flying',
+        name: '法术20 飞剑2',
+        description: '召唤2柄飞剑。',
+        class: 'FLYING_SWORD',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
         targetRequirements: [],
         params: { summonCount: 2 }
     },

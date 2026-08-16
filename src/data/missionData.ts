@@ -416,12 +416,12 @@ export const MISSIONS: MissionDef[] = [
     // 旧 ID 的存档会自动保留，新 ID 会被视为全新任务，已领取玩家也能再次领取。
     // ==========================================
     {
-        id: 'version_old_friend_20260802',
-        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-08-02）',
+        id: 'version_old_friend_20260816',
+        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-08-16）',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'dataGold', amount: 8000 },
         condition: { type: 'direct_claim' },
-        showCondition: { accountCreatedBefore: '2026-08-02' }
+        showCondition: { accountCreatedBefore: '2026-08-16' }
     },
     {
         id: 'version_new_start',

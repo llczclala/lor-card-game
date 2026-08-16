@@ -2,19 +2,22 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, Plus, Trash2, Save, Download, X, BookOpen,
-    Swords, Box, Zap, AlertTriangle, Filter, LayoutGrid, User
+    Box, Zap, AlertTriangle, LayoutGrid, User, Sparkles
 } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes';
 // 注：教程模式已不再通过 archetype 关联，相关字段已废弃
 import { Card } from '../Card';
+import { ENEMY_ELIGIBLE_BUFFS, type MazeBuff } from '../../data/roguelike/buffs'; // [2026-08-11] 可携带迷宫强化库（仅敌人侧）
+import { RarityIcon } from '../roguelike/RarityIcon'; // [2026-08-11] 稀有度徽章
 import { FullArtOverlay } from '../Overlays'; // [植入精髓] 右键大图检视
 import type { EnemyArchetype } from '../../data/enemies/archetypes';
 import type { CardData } from '../../types';
-import { HERO_IMAGES, PERSONALIZATION_ASSETS } from '../../data/imageData'; // [植入精髓]
+import { PERSONALIZATION_ASSETS } from '../../data/imageData'; // [植入精髓]
 // [新增] 悬停预览统一方案
 import { useCardGaze } from '../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../FloatingCardPreview';
+import { CroppedAvatar } from '../CroppedAvatar'; // [2026-08-10] 圆形头像读取 avatar 裁剪配置
 
 // ============================================================
 // 常量 & 辅助工具
@@ -48,7 +51,9 @@ const getDeckCovers = (arch: EnemyArchetype): { url: string; skinId: number; isB
     const champ = CARD_DB[arch.champion || ''];
     if (champ) covers.push({ url: champ.imageUrl, skinId: 0, isBack: false });
 
-    const uniqueCoreKeys = Array.from(new Set(arch.coreCards));
+    // [2026-08-16] coreCards 兼容 string[] 与 {key,count}[] 两种格式，统一提取 key
+    const coreKeys = arch.coreCards.map(c => typeof c === 'string' ? c : c.key);
+    const uniqueCoreKeys = Array.from(new Set(coreKeys));
     const sorted = uniqueCoreKeys
         .filter(k => CARD_DB[k] && !CARD_DB[k].isChampion && k !== arch.champion)
         .sort((a, b) => CARD_DB[b].cost - CARD_DB[a].cost);
@@ -129,7 +134,7 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
 // ============================================================
 // 主组件: 敌方大本营重构版
 // ============================================================
-export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
+export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
     // --- 状态流 ---
     const [archetypes, setArchetypes] = useState<Record<string, EnemyArchetype>>({});
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -170,9 +175,22 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
 
     const createArchetype = useCallback(() => {
         const newId = `new_archetype_${Date.now()}`;
-        setArchetypes(prev => ({ ...prev, [newId]: { id: newId, name: '新流派', champion: 'fenny', description: '流派描述...', coreCards: ['fenny', 'fenny', 'fenny'], preferredPool: [], apocalypseTags: [], aiPersonality: 'balanced' } }));
+        setArchetypes(prev => ({ ...prev, [newId]: { id: newId, name: '新流派', champion: 'fenny', description: '流派描述...', coreCards: ['fenny', 'fenny', 'fenny'], preferredPool: [], apocalypseTags: [], rogueBuffs: [], aiPersonality: 'balanced' } }));
         setSelectedId(newId); setIsDirty(true);
     }, []);
+
+    // [2026-08-11] 可携带迷宫强化：勾选/取消 enemyEligible 强化 id（旧草稿可能缺 rogueBuffs 键，用 ?? [] 归一）
+    const toggleRogueBuff = useCallback((id: string) => {
+        if (!selectedId) return;
+        setArchetypes(prev => {
+            const cur = prev[selectedId];
+            if (!cur) return prev;
+            const list = cur.rogueBuffs ?? [];
+            const next = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
+            return { ...prev, [selectedId]: { ...cur, rogueBuffs: next } };
+        });
+        setIsDirty(true);
+    }, [selectedId]);
 
     // [新增] 弹窗 UI 状态
     const [confirmModal, setConfirmModal] = useState<{
@@ -248,7 +266,10 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
     const groupedActivePool = useMemo(() => {
         if (!selected) return [];
         const map: Record<string, number> = {};
-        selected[activeListTab].forEach(k => map[k] = (map[k] || 0) + 1);
+        selected[activeListTab].forEach(k => {
+            const cardKey = typeof k === 'string' ? k : k.key; // [2026-08-16] 兼容 string 与 {key,count}
+            map[cardKey] = (map[cardKey] || 0) + 1;
+        });
         return Object.entries(map).map(([key, count]) => ({ key, count }));
     }, [selected, activeListTab]);
 
@@ -267,7 +288,10 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
         for (const [id, arch] of Object.entries(archetypes)) {
             // [核心新增] 将散装的 string[] 聚合为工业级的 { key, count } 格式
             const coreMap: Record<string, number> = {};
-            arch.coreCards.forEach((k: string) => coreMap[k] = (coreMap[k] || 0) + 1);
+            arch.coreCards.forEach(k => {
+                const ck = typeof k === 'string' ? k : k.key; // [2026-08-16] 兼容两种格式
+                coreMap[ck] = (coreMap[ck] || 0) + 1;
+            });
             const coreCardsExport = Object.entries(coreMap)
                 .map(([k, count]) => `{ key: '${k}', count: ${count} }`)
                 .join(', ');
@@ -275,7 +299,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
             // [核心新增] 智能判定 exactDeck 锁：核心池>=40张时自动上锁
             const isExact = arch.coreCards.length >= 40;
 
-            lines.push(`    '${id}': {`, `        id: '${id}',`, `        name: '${arch.name}',`, `        champion: '${arch.champion}',`, `        description: '${arch.description}',`, `        coreCards: [${coreCardsExport}],`, `        exactDeck: ${isExact},`, `        preferredPool: [${arch.preferredPool.map(c => `'${c}'`).join(', ')}],`, `        apocalypseTags: [${arch.apocalypseTags.map(t => `'${t}'`).join(', ')}],`, `        aiPersonality: '${arch.aiPersonality}',`, `    },`);
+            lines.push(`    '${id}': {`, `        id: '${id}',`, `        name: '${arch.name}',`, `        champion: '${arch.champion}',`, `        description: '${arch.description}',`, `        coreCards: [${coreCardsExport}],`, `        exactDeck: ${isExact},`, `        preferredPool: [${arch.preferredPool.map(c => `'${c}'`).join(', ')}],`, `        apocalypseTags: [${arch.apocalypseTags.map(t => `'${t}'`).join(', ')}],`, `        rogueBuffs: [${(arch.rogueBuffs ?? []).map(id => `'${id}'`).join(', ')}],`, `        aiPersonality: '${arch.aiPersonality}',`, `    },`);
         }
         lines.push('};');
         navigator.clipboard.writeText(lines.join('\n')).then(() => {
@@ -497,7 +521,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                     {championOptions.map(c => (
                                         <div key={c.key} onClick={() => updateArchetype({ champion: c.key })}
                                              className={`shrink-0 w-12 h-12 rounded-full border-2 transition-all cursor-pointer ${selected.champion === c.key ? 'border-yellow-400 scale-110 shadow-[0_0_15px_rgba(250,204,21,0.5)] z-10 relative' : 'border-transparent opacity-40 hover:opacity-100 hover:border-gray-500'}`}>
-                                            <img src={c.imageUrl} className="w-full h-full object-cover rounded-full" alt={c.name} title={c.name} />
+                                            <CroppedAvatar cardKey={c.key} className="w-full h-full rounded-full" />
                                         </div>
                                     ))}
                                 </div>
@@ -514,6 +538,33 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                         </button>
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* [2026-08-11] 可携带迷宫强化（仅迷宫模式） */}
+                            <div>
+                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1">
+                                    <Sparkles size={12}/> 迷宫强化
+                                    <span className="text-[8px] text-gray-500">(ENEMY ELIGIBLE · 仅迷宫模式)</span>
+                                </div>
+                                {ENEMY_ELIGIBLE_BUFFS.length === 0 ? (
+                                    <p className="text-xs text-gray-600 italic">暂无敌方迷宫强化，请在 data/roguelike/buffs.ts 配置 enemyEligible</p>
+                                ) : (
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                        {ENEMY_ELIGIBLE_BUFFS.map((buff: MazeBuff) => {
+                                            const active = (selected.rogueBuffs ?? []).includes(buff.id);
+                                            return (
+                                                <button key={buff.id} onClick={() => toggleRogueBuff(buff.id)} title={buff.description}
+                                                    className={`flex items-center gap-2 px-2 py-2 rounded-lg border text-left transition-all
+                                                        ${active ? 'border-violet-400 bg-violet-500/20 text-white shadow-[0_0_12px_rgba(168,85,247,0.4)]'
+                                                                 : 'border-white/10 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white'}`}>
+                                                    <RarityIcon rarity={buff.rarity} size={10} />
+                                                    <span className="flex-1 text-xs font-bold truncate">{buff.name}</span>
+                                                    {active && <span className="text-[9px] text-violet-300 font-black">ON</span>}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
 
                             {/* 关联考核 — 已废弃，教程模式直接在关卡数据中指定牌组 */}
@@ -561,7 +612,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = ({ onClose })
                                         <div key={cardKey}
                                              className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help group transition-colors"
                                              onContextMenu={(e) => { e.preventDefault(); if (isValid) setViewCard(toFullCardData(card)); }}
-                                             {...(isValid ? bindGazeEvents(card) : {})}>
+                                             {...(isValid ? bindGazeEvents(card as CardData) : {})}>
 
                                             {/* 快速删除按钮 */}
                                             <button onClick={(e) => { e.stopPropagation(); removeCardFromPool(activeListTab, cardKey); }}

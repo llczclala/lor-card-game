@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Image as ImageIcon, X, Wrench, Settings, Database, Sword } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Image as ImageIcon, X, Wrench, Database, Sword } from 'lucide-react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { ArtStudio } from './ArtStudio';
 import { SandboxSession } from './SandboxSession';
 import { EnemyDeckEditor } from './EnemyDeckEditor';
+import { RogueMapEditor } from '../roguelike/RogueMapEditor';
 
 interface StudioProps {
     onClose: () => void;
@@ -83,10 +84,17 @@ export const Studio: React.FC<StudioProps> = ({ onClose }) => {
                             <span className="font-bold tracking-wide text-sm">敌方卡组编辑器</span>
                         </button>
 
-                        {/* 3. 预留：肉鸽关卡编辑 */}
-                        <button disabled className="w-full flex items-center gap-3 px-4 py-3 rounded-md text-gray-600 bg-black/20 cursor-not-allowed">
+                        {/* 4. 肉鸽地图编辑器 */}
+                        <button
+                            onClick={() => setActiveTool('level')}
+                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-md transition-all ${
+                                activeTool === 'level'
+                                ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]'
+                                : 'text-gray-400 hover:bg-white/10 hover:text-white'
+                            }`}
+                        >
                             <Database size={18} />
-                            <span className="font-bold tracking-wide text-sm">肉鸽关卡节点 (未解锁)</span>
+                            <span className="font-bold tracking-wide text-sm">肉鸽地图编辑器</span>
                         </button>
                     </div>
 
@@ -144,6 +152,16 @@ export const Studio: React.FC<StudioProps> = ({ onClose }) => {
                             className="absolute inset-0 flex"
                         >
                             <EnemyDeckEditor onClose={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} />
+                        </motion.div>
+                    )}
+                    {/* 肉鸽地图编辑器 */}
+                    {activeTool === 'level' && (
+                        <motion.div
+                            key="rogue-map-editor"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            className="absolute inset-0 flex"
+                        >
+                            <RogueMapEditor onClose={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} />
                         </motion.div>
                     )}
                 </AnimatePresence>

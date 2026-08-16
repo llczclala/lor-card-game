@@ -23,3 +23,11 @@ declare module '*.mp4' {
   const src: string;
   export default src;
 }
+
+// [2026-08-09] vite define 注入的版本号常量（公告系统使用，值来自 package.json）
+interface ImportMetaEnv {
+  readonly PACKAGE_VERSION: string;
+}
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

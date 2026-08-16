@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { X, Database } from 'lucide-react';
 import { getPoolViewerData, POOLS, type PoolId } from '../logic/gachaLogic';
 import { PERSONALIZATION_ASSETS, getSkinImage } from '../data/imageData';
@@ -35,6 +35,18 @@ const PoolSection = ({ title, rate, color, children }: { title: string, rate: st
 );
 
 export const GachaPoolViewer: React.FC<GachaPoolViewerProps> = ({ poolId, onClose }) => {
+    // [2026-08-15 莉莉子] ESC 只关闭概率查看窗口（capture 拦截，阻止 App 全局 ESC 退出共鸣）
+    useEffect(() => {
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onClose();
+        };
+        window.addEventListener('keydown', handleEsc, { capture: true });
+        return () => window.removeEventListener('keydown', handleEsc, { capture: true });
+    }, [onClose]);
+
     const poolConfig = POOLS[poolId];
     const data = useMemo(() => getPoolViewerData(poolId), [poolId]);
 

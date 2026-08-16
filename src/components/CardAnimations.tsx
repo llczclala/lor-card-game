@@ -6,6 +6,7 @@ import { Card } from './Card';
 import { canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasPoetCaitlinAura, hasForgerTatianaAura } from '../utils/gameRules';
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
+import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
     hand: CardData[];
@@ -18,6 +19,7 @@ interface PlayerHandProps {
     cardBackUrl: string;
     skinOverrides?: Record<string, number>; // [核心新增] 接收皮肤配置字典
     isCastingForHand?: boolean; // [新增] 施法选择手牌模式雷达
+    handTargetFilter?: { cardTypeFilter?: string; maxCost?: number } | null; // [2026-08-08 莉莉子] HAND_CARD 目标过滤条件
     onAnimComplete?: (cardId: string) => void; // [2026-07-22 莉莉子] 手牌离场动画完成回调
 }
 // [新增] 景深缩放配置常量，方便随时微调手感
@@ -31,10 +33,10 @@ const DRAG_SCALE = 2.7;
 const AnimatedHandCard = ({
     c, isNew, initialX, isHovered, isDragging,
     translateY, translateX, baseScale, baseRotate, cardZIndex,
-    vw, vh,
+    vh,
     onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
     game, playerBench, combatField, cardBackUrl, onViewArt, skinOverrides,
-    animType, onAnimComplete, // [2026-07-22 莉莉子] 手牌动画支持
+    animType, onAnimComplete, isCastingForHand, handTargetFilter, // [2026-08-08 莉莉子] 手牌动画支持 + HAND_CARD 高亮
 }: any) => {
     // [2026-07-07 交互修复] 局部动画状态：与 isNew 解耦
     // isNew 由父组件通过 isNewMapRef 持久化（保护 initial），
@@ -125,13 +127,28 @@ const AnimatedHandCard = ({
                 : { type: 'spring', stiffness: 300, damping: 25 }
             }
         >
-            {animType === 'dissolve' ? (
+            {console.log('[LILITH-DEBUG] AnimatedHandCard animType:', c.key, animType) || animType === 'volatile_burn' ? (
+                <VolatileBurn card={c} isPlaying onComplete={onDiscardAnimComplete}>
+                    <Card data={c} location="hand" onViewArt={onViewArt}
+                        skinId={skinOverrides?.[c.key] || 0}
+                        playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
+                        burnoutValue={(() => {
+                            if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
+                            if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
+                            if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
+                            return undefined;
+                        })()}
+                        isCostReduced={(c.customProgress || 0) & 2 ? true : false}
+                        cardBackUrl={cardBackUrl} isDragging={isDragging}
+                    />
+                </VolatileBurn>
+            ) : animType === 'dissolve' ? (
                 <EphemeralDissolve card={c} isPlaying onComplete={onDiscardAnimComplete}>
                     <Card data={c} location="hand" onViewArt={onViewArt}
                         skinId={skinOverrides?.[c.key] || 0}
                         playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
                         burnoutValue={(() => {
-                            if (c.key === 'forced_communication') return (game.playerMana || 0) + (game.playerSpellMana || 0);
+                            if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
                             if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
                             if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
                             return undefined;
@@ -146,7 +163,7 @@ const AnimatedHandCard = ({
                         skinId={skinOverrides?.[c.key] || 0}
                         playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
                         burnoutValue={(() => {
-                            if (c.key === 'forced_communication') return (game.playerMana || 0) + (game.playerSpellMana || 0);
+                            if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
                             if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
                             if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
                             return undefined;
@@ -160,7 +177,7 @@ const AnimatedHandCard = ({
                     skinId={skinOverrides?.[c.key] || 0}
                     playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
                     burnoutValue={(() => {
-                        if (c.key === 'forced_communication') return (game.playerMana || 0) + (game.playerSpellMana || 0);
+                        if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
                         if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
                         if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
                         return undefined;
@@ -185,8 +202,16 @@ const AnimatedHandCard = ({
                     })()}
                     isCostReduced={(c.customProgress || 0) & 2 ? true : false}
                     isPlayable={(() => {
+                        // [2026-08-08 莉莉子修复] HAND_CARD 施法瞄准：命中过滤条件的手牌亮蓝色可用高光（战术闪击等）
+                        if (isCastingForHand && handTargetFilter) {
+                            const { cardTypeFilter, maxCost } = handTargetFilter;
+                            if (cardTypeFilter === 'unit' && !c.type?.includes('unit')) return false;
+                            if (cardTypeFilter === 'spell' && !c.type?.includes('spell')) return false;
+                            if (maxCost !== undefined && (c.cost || 0) >= maxCost) return false;
+                            return true;
+                        }
                         if (game.turnOwner !== 'player') return false;
-                        if (c.key === 'forced_communication') {
+                        if (c.key === 'forced_communication' || c.key === 'temp_spell_12') { // [2026-08-15] 燃尽法术：法力为0时不可打（泰坦降临对齐强行通讯）
                             const burnoutCost = (game.playerMana || 0) + (game.playerSpellMana || 0);
                             if (burnoutCost <= 0) return false;
                         } else if (!canAffordCard(c, game.playerMana, game.playerSpellMana, playerBench)) return false;
@@ -207,7 +232,7 @@ const AnimatedHandCard = ({
 
 // 修改后的新的代码片段
 export const PlayerHand: React.FC<PlayerHandProps> = ({
-    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, skinOverrides, isCastingForHand, onAnimComplete // [核心解构]
+    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, skinOverrides, isCastingForHand, handTargetFilter, onAnimComplete // [核心解构]
 }) => {
     const validHand = hand.filter(c => c && c.key && c.type);
 
@@ -215,12 +240,13 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
     const [isAreaHover, setIsAreaHover] = useState(false);
     const [draggingId, setDraggingId] = useState<string | null>(null);
     // [2026-07-22 莉莉子] 手牌离场动画状态: cardId → animType
-    const [animMap, setAnimMap] = useState<Record<string, 'dissolve' | 'shatter'>>({});
+    const [animMap, setAnimMap] = useState<Record<string, 'dissolve' | 'shatter' | 'volatile_burn'>>({});
 
     // [2026-07-22 莉莉子] 订阅手牌离场动画事件
     useEffect(() => {
         const onVolatile = (p: { card: CardData }) => {
-            setAnimMap(prev => ({ ...prev, [p.card.id]: 'dissolve' }));
+            console.log('[LILITH-DEBUG] PlayerHand onVolatile:', p.card.name, p.card.id);
+            setAnimMap(prev => ({ ...prev, [p.card.id]: 'volatile_burn' }));
         };
         const onDiscard = (p: { card: CardData }) => {
             setAnimMap(prev => ({ ...prev, [p.card.id]: 'shatter' }));
@@ -297,7 +323,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
         setAnimMap(prev => {
             const stale = Object.keys(prev).some(id => !currentIds.has(id));
             if (!stale) return prev;
-            const next: Record<string, 'dissolve' | 'shatter'> = {};
+            const next: Record<string, 'dissolve' | 'shatter' | 'volatile_burn'> = {};
             for (const [id, type] of Object.entries(prev)) {
                 if (currentIds.has(id)) next[id] = type;
             }
@@ -375,6 +401,8 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             skinOverrides={skinOverrides}
                             animType={animMap[c.id] || null}
                             onAnimComplete={onAnimComplete}
+                            isCastingForHand={isCastingForHand}
+                            handTargetFilter={handTargetFilter}
                             onPointerDown={(e: any) => {
                                 if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
                                 pointerPos.current = { x: e.clientX, y: e.clientY };
@@ -434,13 +462,20 @@ export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, onAnimC
     const vh = typeof window !== 'undefined' ? window.innerHeight / 100 : 10.8;
 
     // [2026-07-22 莉莉子] 敌方手牌离场动画状态
-    const [animMap, setAnimMap] = useState<Record<string, 'dissolve' | 'shatter'>>({});
+    const [animMap, setAnimMap] = useState<Record<string, 'dissolve' | 'shatter' | 'volatile_burn'>>({});
     const [discardAnimDone, setDiscardAnimDone] = useState<Record<string, boolean>>({});
+
+    // [瞬逝保险丝] 敌方手牌 Volatile 卡计入全局总数（与玩家侧共同决定火焰档位）
+    const volatileEnemyTotal = hand.filter(c => c.keywords?.includes('Volatile')).length;
+    useEffect(() => {
+        notifyVolatileHand(volatileEnemyTotal);
+        return () => notifyVolatileHand(-volatileEnemyTotal);
+    }, [volatileEnemyTotal]);
 
     useEffect(() => {
         const onVolatile = (p: { card: CardData; owner: string }) => {
             if (p.owner !== 'enemy') return;
-            setAnimMap(prev => ({ ...prev, [p.card.id]: 'dissolve' }));
+            setAnimMap(prev => ({ ...prev, [p.card.id]: 'volatile_burn' }));
         };
         const onDiscard = (p: { card: CardData; owner: string }) => {
             if (p.owner !== 'enemy') return;
@@ -493,7 +528,11 @@ export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, onAnimC
                                     : { type: 'spring', stiffness: 350, damping: 24, mass: 0.8 }
                                 }
                             >
-                                {cardAnimType === 'dissolve' ? (
+                                {cardAnimType === 'volatile_burn' ? (
+                                    <VolatileBurn card={c} isPlaying onComplete={() => handleAnimComplete(c.id)}>
+                                        <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} />
+                                    </VolatileBurn>
+                                ) : cardAnimType === 'dissolve' ? (
                                     <EphemeralDissolve card={c} isPlaying onComplete={() => handleAnimComplete(c.id)}>
                                         <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} />
                                     </EphemeralDissolve>
@@ -505,6 +544,10 @@ export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, onAnimC
                                     <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} />
                                 )}
                             </motion.div>
+                            {/* [瞬逝] 敌方卡背白橙火焰（与我方一致，离场动画中不叠加；置于外层避免被 overflow-hidden 裁剪） */}
+                            {c.keywords?.includes('Volatile') && !cardAnimType && (
+                                <VolatileFlame radius={8} />
+                            )}
                         </div>
                     );
                 })}
@@ -876,7 +919,7 @@ FlashEffect.displayName = 'FlashEffect';
 // 效果：卡牌模糊上升消散 + 粒子飘散 + 沙粒碎片
 // ==========================================
 export const EphemeralDissolve: React.FC<CardAnimProps> = ({
-    card, isPlaying, onComplete, children
+    isPlaying, onComplete, children
 }) => {
     const { particles, sandParticles } = useMemo(() => {
         const COLORS = ['rgba(26, 58, 74, 0.95)', 'rgba(13, 27, 42, 0.95)'];
@@ -982,6 +1025,94 @@ export const EphemeralDissolve: React.FC<CardAnimProps> = ({
 };
 
 // ==========================================
+// 💠 瞬逝弃置：白橙扫描溶解（扫描线 + 白色遮罩自底向上推进 + 前沿粒子 + 纯白消散）
+// [2026-08-04 莉莉子 重构] 原实现是 10 条切片整体淡出，视觉上像"整卡一起消失"。
+// 现在改为：扫描线带着白色遮罩从底部升到顶部，扫过的区域变纯白；
+// 粒子从扫描线前沿持续发射；整卡变白后消散溶解；动画播完才卸载（配合回合引擎等待）。
+// 扫描线样式对齐 KeywordEffects 的 VolatileFlame 卡面扫描线（青白光带）。
+// ==========================================
+const VolatileBurn: React.FC<CardAnimProps> = ({
+    card, isPlaying, onComplete, children
+}) => {
+    // [核心] 粒子：从扫描线前沿持续发射，delay 错开覆盖整个扫描期（0.1s ~ 1.1s，扫描 1.2s）
+    const shards = useMemo(() => Array.from({ length: 16 }, (_, i) => ({
+        id: i,
+        x: 5 + Math.random() * 90,          // 横向位置
+        size: 3 + (i % 4) * 2,               // 3~9px 方块
+        delay: 0.1 + (i % 8) * 0.14,         // 扫描期间错开发射
+        duration: 0.6 + (i % 3) * 0.2,       // 0.6 ~ 1.0s 飞散
+        xOffset: (i % 2 === 0 ? 1 : -1) * (10 + (i % 3) * 8),
+        yOffset: -(25 + (i % 4) * 15),        // 向上飞散
+        rotMid: 90 + (i % 4) * 45,
+        rotEnd: 180 + (i % 5) * 90,
+        scale: 0.3 + (i % 3) * 0.2,
+        color: i % 5 === 0 ? 'rgba(165, 243, 252, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+    })), []);
+
+    return (
+        <AnimatePresence>
+            {isPlaying && (
+                <motion.div
+                    initial={{ opacity: 1, scale: 1, y: 0 }}
+                    animate={{ opacity: [1, 1, 0], scale: [1, 0.88, 0.82], y: [0, 0, -24] }}
+                    transition={{ duration: 2.2, ease: [0.22, 1, 0.36, 1], times: [0, 0.55, 1] }}
+                    onAnimationStart={() => console.log('[LILITH-DEBUG] 🔥 VolatileBurn 动画 START', card.key, Date.now())}
+                    onAnimationComplete={() => { console.log('[LILITH-DEBUG] 💨 VolatileBurn 动画 COMPLETE', card.key, Date.now()); onComplete(); }}
+                    style={{ position: 'relative', width: '100%', height: '100%' }}
+                >
+                    {/* 卡片本体 */}
+                    {children}
+
+                    {/* [核心] 扫描遮罩层：自底向上升顶（1.2s），扫过的区域被白色遮罩覆盖变纯白 */}
+                    <motion.div
+                        className="absolute inset-x-0 bottom-0 z-[150] pointer-events-none"
+                        initial={{ height: '0%' }}
+                        animate={{ height: '100%' }}
+                        transition={{ duration: 1.2, ease: 'easeInOut' }}
+                    >
+                        {/* 白色遮罩（已扫描区域变纯白） */}
+                        <div className="absolute inset-0" style={{ background: 'rgba(255, 255, 255, 0.95)' }} />
+
+                        {/* 扫描线本体：固定在遮罩顶端（扫描前沿），样式对齐 VolatileFlame 卡面扫描线 */}
+                        <div
+                            className="absolute inset-x-0 top-0 h-[30%]"
+                            style={{
+                                background: 'linear-gradient(to bottom, transparent 0%, rgba(255,255,255,0.9) 35%, rgba(125,211,252,0.75) 50%, rgba(255,255,255,0.9) 65%, transparent 100%)',
+                                boxShadow: '0 0 12px rgba(125,211,252,0.8), 0 0 32px rgba(56,189,248,0.5)',
+                            }}
+                        />
+
+                        {/* 方块粒子：从扫描线前沿（容器顶端）向上持续发射，随遮罩同步上移 */}
+                        {shards.map(s => (
+                            <motion.div
+                                key={s.id}
+                                style={{
+                                    position: 'absolute',
+                                    left: `${s.x}%`,
+                                    top: 0,
+                                    width: s.size, height: s.size,
+                                    background: s.color,
+                                    boxShadow: '0 0 6px rgba(255, 255, 255, 0.8), 0 0 12px rgba(125, 211, 252, 0.45)',
+                                }}
+                                initial={{ opacity: 0, x: 0, y: 0, rotate: 0, scale: 0 }}
+                                animate={{
+                                    opacity: [0, 1, 0.6, 0],
+                                    x: s.xOffset,
+                                    y: s.yOffset,
+                                    rotate: [0, s.rotMid, s.rotEnd],
+                                    scale: [0, 1, s.scale, 0],
+                                }}
+                                transition={{ duration: s.duration, delay: s.delay, ease: 'easeOut' }}
+                            />
+                        ))}
+                    </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
+    );
+};
+
+// ==========================================
 // 💥 动画 2：卡牌碎裂（法术弃牌）
 // 触发时机：暗箱交易等法术效果导致手牌被弃置
 // 效果：裂纹显现 + 闪光 + 20 不规则碎片飞散
@@ -1051,7 +1182,7 @@ const CardShatterContent: React.FC<{
 CardShatterContent.displayName = 'CardShatterContent';
 
 export const CardShatter: React.FC<CardAnimProps> = ({
-    card, isPlaying, onComplete, children
+    isPlaying, onComplete, children
 }) => {
     const shards = useMemo(() => generateShards(20), []);
 
@@ -1366,7 +1497,7 @@ export const DrawAnimOverlay: React.FC<{ cardBackUrl?: string; skinOverrides?: R
 // ──────────────────────────────────────────────
 // 🎬 手牌遗弃动画控制器 (The Hand Discard Theater)
 // ──────────────────────────────────────────────
-type AnimType = 'dissolve' | 'shatter';
+type AnimType = 'dissolve' | 'shatter' | 'volatile_burn';
 
 interface AnimState {
     type: AnimType;

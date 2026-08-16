@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 // [修正] 补充引入沙盒所需状态图标 Shield(防守撤回) 和 Sword(进攻交战)
 import { X, BookOpen, Key, Layers, Search, ChevronLeft, ChevronRight, Play, Zap, Clock, Shield, Sword } from 'lucide-react';
@@ -70,12 +70,25 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
     // === [核心新增] 图鉴专属状态机 ===
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCosts, setSelectedCosts] = useState<number[]>([]);
-    const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+    const [selectedRegions, _setSelectedRegions] = useState<string[]>([]);
     const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
     const [selectedSpellSpeeds, setSelectedSpellSpeeds] = useState<string[]>([]);
     const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]); // [新增] 用于承接 36 种机制图标的过滤状态
     const [currentPage, setCurrentPage] = useState(0);
     const [viewCard, setViewCard] = useState<CardData | null>(null); // 控制全屏鉴赏
+
+    // [2026-08-15 莉莉子] ESC 关闭图鉴（capture 拦截，避免 App 呼出设置）；卡牌详情打开时交给 FullArtOverlay 优先处理
+    useEffect(() => {
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            if (viewCard) return; // FullArtOverlay 的 capture 处理器负责关详情
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onClose();
+        };
+        window.addEventListener('keydown', handleEsc, { capture: true });
+        return () => window.removeEventListener('keydown', handleEsc, { capture: true });
+    }, [viewCard, onClose]);
 
     // [新增] 用于控制左侧两个一级抽屉的独立开合状态
     const [isCostOpen, setIsCostOpen] = useState(false);
@@ -138,7 +151,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
     };
 
     // 核心物理弹簧参数：确保长柄拉开和光幕展开的速度、弹性完全一致
-    const splitSpring = { type: "spring", stiffness: 120, damping: 15, delay: 0.2 };
+    const splitSpring = { type: "spring" as const, stiffness: 120, damping: 15, delay: 0.2 };
 
     // === [核心新增] 2D伪3D书页翻展与量子波浪化现变体大脑 ===
     const bookPageVariants = {
@@ -148,7 +161,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
             opacity: 1,
             filter: 'brightness(1)',
             transition: {
-                scaleX: { type: "spring", stiffness: 90, damping: 14 },
+                scaleX: { type: "spring" as const, stiffness: 90, damping: 14 },
                 staggerChildren: 0.04, // 18张卡牌形成波浪形依次浮现的灵魂参数
                 delayChildren: 0.15    // 等待书页横向铺展一定程度后开启卡牌化现
             }
@@ -158,13 +171,13 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
     // 左页卡牌变体：淡入并背离中缝向左顺滑弹射
     const leftCardVariants = {
         hidden: { x: 40, opacity: 0, scale: 0.85 },
-        visible: { x: 0, opacity: 1, scale: 1, transition: { type: "spring", stiffness: 100, damping: 12 } }
+        visible: { x: 0, opacity: 1, scale: 1, transition: { type: "spring" as const, stiffness: 100, damping: 12 } }
     };
 
     // 右页卡牌变体：淡入并背离中缝向右顺滑弹射
     const rightCardVariants = {
         hidden: { x: -40, opacity: 0, scale: 0.85 },
-        visible: { x: 0, opacity: 1, scale: 1, transition: { type: "spring", stiffness: 100, damping: 12 } }
+        visible: { x: 0, opacity: 1, scale: 1, transition: { type: "spring" as const, stiffness: 100, damping: 12 } }
     };
 
     return (
@@ -215,7 +228,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                             <TabButton id="tutorial" active={activeTab} icon={<BookOpen size={18} />} label="基础教程" labelCn="基础教程" onClick={() => setActiveTab('tutorial')} />
                             <AnimatePresence>
                                 {activeTab === 'tutorial' && (
-                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 100, damping: 16 }} className="flex flex-col gap-1 overflow-hidden">
+                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring" as const, stiffness: 100, damping: 16 }} className="flex flex-col gap-1 overflow-hidden">
                                         <div className="py-2 border-l-2 border-cyan-500/30 ml-4 pl-3 flex flex-col gap-2 mb-2">
                                             {/* 父目录 1：战斗 */}
                                             <CategoryButton id="combat" active={activeCategory} label="战斗 // COMBAT" onClick={() => setActiveCategory(p => p === 'combat' ? null : 'combat')} />
@@ -270,7 +283,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                             <TabButton id="keywords" active={activeTab} icon={<Key size={18} />} label="机制档案" labelCn="机制档案" onClick={() => setActiveTab('keywords')} />
                             <AnimatePresence>
                                 {activeTab === 'keywords' && (
-                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 100, damping: 16 }} className="flex flex-col gap-1 overflow-hidden pr-2 z-10 pt-2 border-l-2 border-cyan-500/30 ml-4 pl-3 mb-2">
+                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring" as const, stiffness: 100, damping: 16 }} className="flex flex-col gap-1 overflow-hidden pr-2 z-10 pt-2 border-l-2 border-cyan-500/30 ml-4 pl-3 mb-2">
                                         {/* 遍历 KEYWORD_DB 生成带有动态颜色匹配的精美图文列表 */}
                                         {Object.entries(KEYWORD_DB).map(([kw, config]) => {
                                             const isActive = activeKeywordTab === kw;
@@ -309,7 +322,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                             <TabButton id="cards" active={activeTab} icon={<Layers size={18} />} label="全图鉴" labelCn="全图鉴" onClick={() => setActiveTab('cards')} />
                             <AnimatePresence>
                                 {activeTab === 'cards' && (
-                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 100, damping: 16 }} className="flex flex-col gap-6 overflow-hidden pr-2 z-10 pt-4 border-l-2 border-cyan-500/30 ml-4 pl-4 mb-4">
+                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ type: "spring" as const, stiffness: 100, damping: 16 }} className="flex flex-col gap-6 overflow-hidden pr-2 z-10 pt-4 border-l-2 border-cyan-500/30 ml-4 pl-4 mb-4">
                                         <div className="relative">
                                             <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-cyan-500/50" />
                                             <input type="text" placeholder="检索名称或规则..." value={searchTerm} onChange={e => { setSearchTerm(e.target.value); setCurrentPage(0); }} className="w-full bg-cyan-950/40 border border-cyan-800/50 rounded text-xs text-cyan-100 pl-7 py-2.5 focus:outline-none focus:border-cyan-400" />
@@ -529,7 +542,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                     const details = KEYWORD_DETAILS[activeKeywordTab];
                                     // [核心修复] 直接使用上面 useMemo 锁定好的沙盒专属卡牌数据！不再内联生成！
                                     const fullTestCard = sandboxTestCard;
-                                    const config = KEYWORD_DB[activeKeywordTab];
+                                    const config = KEYWORD_DB[activeKeywordTab as keyof typeof KEYWORD_DB];
 
                                     // 提取该机制专属的主题色，用于高亮渲染
                                     const themeColor = config?.color || 'cyan';
@@ -588,12 +601,10 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                         }`}>
                                                             <Card
                                                                 key={`${fullTestCard.id}-${sandboxMode}`}
-                                                                data={fullTestCard}
+                                                                data={fullTestCard as CardData}
                                                                 // [真正的罪魁祸首] 删掉那个愚蠢的判定！
                                                                 // 直接把 'bench' 和 'combat' 原封不动传给 Card！
                                                                 location={sandboxMode}
-                                                                isPlayerSide={true}
-                                                                isAttacking={sandboxMode === 'combat'}
                                                             />
                                                         </div>
                                                     </div>
@@ -668,7 +679,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                 initial={{ opacity: 0, scale: 0.5, rotate: -90 }}
                 animate={{ opacity: 1, scale: 1, rotate: 0 }}
                 exit={{ opacity: 0, scale: 0.5 }}
-                transition={{ delay: 0.6, type: "spring" }}
+                transition={{ delay: 0.6, type: "spring" as const }}
             >
                 <X size={24} strokeWidth={2.5} />
             </motion.button>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Shield, Palette, Layout, AlertTriangle, Target } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
@@ -31,6 +31,18 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
     unlockedCardBacks,
     unlockedDesks,
 }) => {
+    // [2026-08-15 莉莉子] ESC 只关闭定轨窗口（capture 拦截，阻止 App 全局 ESC 退出共鸣）
+    useEffect(() => {
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            onClose();
+        };
+        window.addEventListener('keydown', handleEsc, { capture: true });
+        return () => window.removeEventListener('keydown', handleEsc, { capture: true });
+    }, [onClose]);
+
     const [activeTab, setActiveTab] = useState<TabType>('hero');
     const [selectedId, setSelectedId] = useState<string | null>(currentTarget);
     const [showConfirmModal, setShowConfirmModal] = useState(false);

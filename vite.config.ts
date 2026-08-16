@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import obfuscator from 'rollup-plugin-obfuscator';
 // [新增] 引入基于 Sharp 的图片压缩插件，完美支持 Windows
 import { ViteImageOptimizer } from 'vite-plugin-image-optimizer';
+// [2026-08-09] 读取 package.json 版本号，注入为编译期常量（公告系统用）
+import pkg from './package.json';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command }) => {
@@ -11,6 +13,10 @@ export default defineConfig(({ command }) => {
 
   return {
     base: './', // 保持相对路径
+    define: {
+      // [2026-08-09] 注入当前版本号（与 package.json 始终一致，公告系统使用）
+      'import.meta.env.PACKAGE_VERSION': JSON.stringify(pkg.version),
+    },
     plugins: [
       react(),
 

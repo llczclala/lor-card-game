@@ -3,16 +3,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, ShoppingCart, Eraser, AlertTriangle, Filter, X, User, Palette, Shuffle, LayoutGrid, GalleryHorizontalEnd, BarChart3, Clock } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
 import { KEYWORD_DB } from '../data/keywords';
-import { HERO_IMAGES, PERSONALIZATION_ASSETS, SKIN_IMAGES, getSkinImage } from '../data/imageData'; // [皮肤检视] 引入 SKIN_IMAGES
+import { PERSONALIZATION_ASSETS, SKIN_IMAGES, getSkinImage } from '../data/imageData'; // [皮肤检视] 引入 SKIN_IMAGES
+import { DeskMedia } from './DeskMedia'; // [2026-08-13] 动态牌桌媒体组件（兜底静态图 + 日志）
 import { Card } from './Card';
-import type { CardData, SavedDeck } from '../types';
+import type { CardData } from '../types';
 import type { PoolId } from '../logic/gachaLogic'; // [2026-08-02] 卡池跳转
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { FullArtOverlay } from './Overlays';
 // [移除] 彻底废弃 PersonalizationDrawer 的引入
 import { StyleSelector } from './StyleSelector'; // [核心新增] 直接复用原生的全屏选择器
 import type { useUserSystem } from '../hooks/useUserSystem';
-import { ArrowLeft } from 'lucide-react'; // [新增]
+import { ArrowLeft, Home } from 'lucide-react'; // [新增]
 // [新增] 悬停预览统一方案
 import { useCardGaze } from '../hooks/useCardGaze';
 import { FloatingCardPreview } from './FloatingCardPreview';
@@ -23,10 +24,16 @@ interface DeckBuilderProps {
     onStartGame: (deck: string[]) => void;
     userSystem: ReturnType<typeof useUserSystem>;
     onBack?: () => void;
-    // [新增] 接收来源属性
-    fromSource: 'lobby' | 'mode_select';
+    // [新增] 接收来源属性（[2026-08-13] 含肉鸽编辑来源）
+    fromSource: 'lobby' | 'mode_select' | 'rogue_edit';
     // [2026-08-02] 卡牌详情页"前往卡池"回调
     onGachaNav?: (poolId: PoolId) => void;
+    // [2026-08-06] 标准对战 AI 难度选择回调
+    onDifficultyChange?: (d: 'easy' | 'normal' | 'hard') => void;
+    // [2026-08-07] 备战界面直达大厅
+    onBackToLobby?: () => void;
+    // [2026-08-13] 个性化编辑：外部指定初始编辑牌组（进入即编辑，开发者专用）
+    initialEditDeckId?: string | null;
 }
 
 // 转全量卡牌数据
@@ -106,7 +113,7 @@ const DeckDiorama = ({ deck, covers, cardBackImg, boardImg, isCenter = false, is
         );
     }
 
-    const cardCount = Object.values(deck.cards).reduce((a: any, b: any) => a + b, 0);
+    const cardCount: number = Object.values(deck.cards).reduce((a: any, b: any) => a + b, 0) as number; // [2026-08-16] reduce 推断 unknown，断言为 number
 
     return (
         <div className={`relative ${DIORAMA_SIZE.containerWidth} ${DIORAMA_SIZE.containerHeight} transition-all duration-500 ${scaleAndFocus}`}>
@@ -199,12 +206,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     userSystem,
     onBack,
     fromSource, // [新增] 解构
-    onGachaNav // [2026-08-02] 解构
+    onGachaNav, // [2026-08-02] 解构
+    onDifficultyChange, // [2026-08-06] 解构
+    onBackToLobby, // [2026-08-07] 解构
+    initialEditDeckId // [2026-08-13] 解构
 }) => {
 
     const [localDeck, setLocalDeck] = useState<Record<string, number>>({});
     const [deckName, setDeckName] = useState("New Deck");
     const [isDirty, setIsDirty] = useState(false); // 标记是否有未保存的修改
+    // [2026-08-06] 标准对战 AI 难度选择（三选一互斥）
+    const [localDifficulty, setLocalDifficulty] = useState<'easy' | 'normal' | 'hard'>('normal');
 
     const [viewCard, setViewCard] = useState<CardData | null>(null);
     // [卡牌导航] 标记当前查看的卡牌来自左侧牌库还是右侧牌组列表
@@ -241,6 +253,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         setSelectedSpellSpeeds([]); setSelectedKeywords([]);
     };
     const [viewMode, setViewMode] = useState<'SELECTION' | 'EDITOR'>('SELECTION');
+
+    // [2026-08-13] 个性化编辑：外部指定初始编辑牌组 → 进入即编辑（开发者专用，默认 undefined 不影响 PVE）
+    useEffect(() => {
+        if (initialEditDeckId) {
+            userSystem.selectDeck(initialEditDeckId);
+            setViewMode('EDITOR');
+        }
+    }, [initialEditDeckId, userSystem]);
 
     // [核心新增] 大厅 2.0 状态机
     const [viewStyle, setViewStyle] = useState<'GRID' | 'CAROUSEL'>('CAROUSEL');
@@ -319,6 +339,41 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         onConfirm: () => void;
         type: 'danger' | 'info';
     } | null>(null);
+
+    // [2026-08-08 莉莉子] ESC 逐层退（capture 拦截全局，避免 App.tsx 呼出设置面板）：
+    //   卡牌详情 → 确认弹窗 → 备战环节(EDITOR，等效返回按钮回枢纽详情) → 枢纽详情(带❌，等效❌回牌组网格) → 牌组网格(回上级)
+    useEffect(() => {
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            if (viewCard) return; // 卡牌详情打开中 → 不拦截，让 FullArtOverlay 的 capture 处理器优先关详情
+            if (selectorType) {
+                // [2026-08-15 莉莉子] 卡背/牌桌选择窗口（StyleSelector）打开中 → ESC 只关选择窗口，下层牌组界面不动；同时清空 selectorType 防止残留导致下次进来自动弹出
+                setSelectorType(null);
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return;
+            }
+            if (confirmModal) {
+                setConfirmModal(null); // 确认弹窗 → 先关弹窗
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return;
+            }
+            e.preventDefault();
+            e.stopImmediatePropagation(); // 拦截全局 ESC
+            if (viewMode === 'EDITOR') {
+                handleGlobalBack(); // 备战环节：等效右上角返回按钮 → 回到枢纽详情（hubDeckId 未清；内部已 emit UI_BACK）
+            } else if (hubDeckId) {
+                eventBus.emit(GameEvents.UI_BACK); // 对齐❌按钮
+                setHubDeckId(null); // 枢纽详情（带❌界面）：等效点击❌ → 回到牌组选择网格
+            } else {
+                eventBus.emit(GameEvents.UI_BACK); // 对齐 handleGlobalBack
+                onBack?.(); // 牌组选择网格：返回上级
+            }
+        };
+        window.addEventListener('keydown', handleEsc, { capture: true });
+        return () => window.removeEventListener('keydown', handleEsc, { capture: true });
+    }, [viewCard, confirmModal, viewMode, hubDeckId, selectorType, onBack]);
 
 
     const clearDeck = () => {
@@ -541,7 +596,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
             // [修改] 让自动填充也遵循玩家当前的高级筛选！
             if (searchTerm && !card.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
             if (selectedTypes.length > 0) {
-                const isHero = card.isChampion === true;
+                const isHero = !!card.isChampion; // [2026-08-16] L592 已排除英雄，此处 isChampion 被收窄为 false，用 !! 规避无重叠比较（行为不变）
                 const isSpell = card.type?.toLowerCase().includes('spell');
                 const isUnit = !isHero && !isSpell;
                 if (!((selectedTypes.includes('HERO') && isHero) || (selectedTypes.includes('SPELL') && isSpell) || (selectedTypes.includes('UNIT') && isUnit))) return false;
@@ -735,6 +790,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const handleStart = () => {
         if (stats.total !== 40) return;
 
+        // [2026-08-06] 上报当前选择的 AI 难度
+        onDifficultyChange?.(localDifficulty);
+
         // 如果有未保存的修改，自动保存
         if (isDirty) {
             handleSaveDeck();
@@ -761,13 +819,18 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 {/* 2. 顶部大厅 Header 控制栏 */}
                 <div className="absolute top-0 left-0 w-full h-28 bg-black/60 backdrop-blur-md z-40 flex items-end pb-4 justify-center border-b border-white/10 shadow-2xl">
                     <h1 className="text-4xl font-black italic tracking-tighter drop-shadow-[0_0_20px_rgba(59,130,246,0.6)]">牌组选择</h1>
-                    <div className="absolute right-32 bottom-4 flex bg-black/80 p-1 rounded-lg border border-white/10 shadow-inner">
+                    <div className="absolute left-32 bottom-4 flex bg-black/80 p-1 rounded-lg border border-white/10 shadow-inner">
                         <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('GRID'); }} className={`p-2 rounded transition-colors ${viewStyle === 'GRID' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><LayoutGrid size={18} /></button> {/* [新增] 音效 */}
                         <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('CAROUSEL'); }} className={`p-2 rounded transition-colors ${viewStyle === 'CAROUSEL' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><GalleryHorizontalEnd size={18} /></button> {/* [新增] 音效 */}
                     </div>
                 </div>
 
-                <button onClick={handleGlobalBack} className="absolute top-8 right-8 z-50 p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group"><ArrowLeft size={24} className="text-gray-400 group-hover:text-white" /></button>
+                <div className="absolute top-8 right-8 z-50 flex items-center gap-3">
+                    {onBackToLobby && (
+                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onBackToLobby(); }} className="p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" title="返回大厅"><Home size={24} className="text-gray-400 group-hover:text-white" /></button>
+                    )}
+                    <button onClick={handleGlobalBack} className="p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" title="返回"><ArrowLeft size={24} className="text-gray-400 group-hover:text-white" /></button>
+                </div>
 
                 {/* 3. 核心浏览区（劫持鼠标滚轮的循环无尽舞台） */}
                 {/* 痛点 1 & 3：使用 css 批量隐藏轮播图下方原生滚条 [&::-webkit-scrollbar]:hidden */}
@@ -855,7 +918,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             const card = CARD_DB[key];
                                             if (!card) return null;
                                             return (
-                                                <div key={key} className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help" {...bindGazeEvents(card)}>
+                                                <div key={key} className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help" {...bindGazeEvents(card as CardData)}>
                                                     {/* [皮肤修复] 动态提取枢纽卡组中配置的皮肤图 */}
                                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${getSkinImage(key, hubDeck.skinOverrides?.[key] || 0) || card.imageUrl})` }}></div>
                                                     <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
@@ -881,12 +944,41 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             <div className="flex flex-col items-center gap-12 z-50 mx-6">
                                 <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards, hubDeck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
 
+                                {/* [2026-08-06 莉莉子] AI 难度选择：三选一互斥 */}
+                                <div className="flex items-center gap-3">
+                                    <span className="text-gray-400 text-xs font-bold tracking-[0.25em] mr-1">AI 难度</span>
+                                    {([
+                                        { key: 'easy', label: '简单', icon: '🌱', desc: '温和' },
+                                        { key: 'normal', label: '普通', icon: '⚔️', desc: '均衡' },
+                                        { key: 'hard', label: '困难', icon: '🔥', desc: '高压' },
+                                    ] as const).map(opt => (
+                                        <button
+                                            key={opt.key}
+                                            onClick={() => {
+                                                eventBus.emit(GameEvents.UI_CLICK);
+                                                setLocalDifficulty(opt.key);
+                                                onDifficultyChange?.(opt.key);
+                                            }}
+                                            className={`px-5 py-2.5 rounded-xl font-black text-sm tracking-widest border-2 transition-all flex items-center gap-2
+                                                ${localDifficulty === opt.key
+                                                    ? 'bg-gradient-to-r from-orange-500/30 to-red-500/30 border-orange-400 text-orange-200 shadow-[0_0_20px_rgba(249,115,22,0.4)] scale-105'
+                                                    : 'bg-black/40 border-white/15 text-gray-400 hover:border-white/40 hover:text-white'}`}
+                                        >
+                                            <span>{opt.icon}</span>
+                                            <span>{opt.label}</span>
+                                            <span className={`text-[10px] font-bold opacity-70 ${localDifficulty === opt.key ? 'text-orange-300' : 'text-gray-500'}`}>{opt.desc}</span>
+                                        </button>
+                                    ))}
+                                </div>
+
                                 {/* [修正] 根据来源区分发车/完成构筑按钮 */}
                                 {fromSource === 'mode_select' ? (
                                     <button
                                         onClick={() => {
                                             eventBus.emit(GameEvents.UI_CLICK);
                                             if (isFull) {
+                                                // [2026-08-06] 上报当前选择的 AI 难度
+                                                onDifficultyChange?.(localDifficulty);
                                                 // [核心修复] 在发车前，强行将 activeDeckId 同步为当前正在浏览的枢纽卡组 ID
                                                 userSystem.selectDeck(hubDeckId!);
                                                 onStartGame(Object.entries(hubDeck.cards).flatMap(([k, c]: any) => Array(c).fill(k)));
@@ -922,7 +1014,11 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         <div className="absolute left-[105%] top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50">
                                             <div className="absolute inset-0 bg-black/80 backdrop-blur-xl rounded-xl -m-4"></div>
                                             <div className={`relative border-2 border-orange-500/50 rounded-lg overflow-hidden shadow-2xl ${hubHoverItem === 'cardBack' ? 'w-[240px] h-[360px]' : 'w-[400px] h-[225px]'}`}>
-                                                <img src={hubHoverItem === 'cardBack' ? PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex] : PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} className="w-full h-full object-cover" alt="预览" />
+                                                {hubHoverItem === 'cardBack' ? (
+                                                    <img src={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} className="w-full h-full object-cover" alt="预览" />
+                                                ) : (
+                                                    <DeskMedia deskIndex={hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex} dynamic={(userSystem.settings as any)?.deskDynamic} className="w-full h-full object-cover" />
+                                                )}
                                                 <div className="absolute bottom-0 w-full bg-black/60 text-white text-center text-xs py-1 font-mono tracking-widest backdrop-blur-sm">PREVIEW</div>
                                             </div>
                                         </div>
@@ -953,7 +1049,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSelectorType('desk'); }} // [新增] 音效
                                         >
                                             <div className="w-48 h-28 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:-rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
-                                                <img src={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} className="w-full h-full object-cover" alt="棋盘" />
+                                                <DeskMedia deskIndex={hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex} dynamic={(userSystem.settings as any)?.deskDynamic} className="w-full h-full object-cover" />
                                             </div>
                                         </div>
                                     </div>
@@ -987,6 +1083,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 else userSystem.saveDeck({...hubDeck, boardIndex: idx});
                             }}
                             onClose={() => setSelectorType(null)}
+                            deskDynamic={(userSystem.settings as any)?.deskDynamic} // [2026-08-13] 动态牌桌
                         />
                     </div>
                 )}
@@ -1065,6 +1162,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 onMouseEnter={keepAlive}
                 onMouseLeave={scheduleDismiss}
                 onViewArt={(c) => handleViewCard(c)}
+                heroDynamic={(userSystem.settings as any)?.heroDynamic || false} // [2026-08-16] 备战悬停大图动态（跟随设置，方便直观验证实装）
             />
 
             {/* --- [重构] 中间主内容区 (包含顶部筛选台与卡牌网格) --- */}
@@ -1173,6 +1271,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                     { key: 'Pupu', label: '卜卜' },
                                                     { key: 'Mauxir', label: '猫汐尔' },
                                                     { key: 'Acacia', label: '安卡希雅' },
+                                                    { key: 'Titan', label: '泰坦' },
+                                                    { key: 'Analyst', label: '分析员' },
                                                     { key: 'Logistics', label: '后勤' },
                                                     { key: 'TEST', label: '测试' },
                                                 ].map(r => (
@@ -1493,7 +1593,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         e.preventDefault();
                                         handleViewCard(fullCard, 'list');
                                     }}
-                                    {...bindGazeEvents(card)}
+                                    {...bindGazeEvents(card as CardData)}
                                 >
                                     {/* [皮肤修复] 动态提取右侧正在编辑的卡组的皮肤图 */}
                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${getSkinImage(key, userSystem.activeDeck?.skinOverrides?.[key] || 0) || card.imageUrl})` }}></div>

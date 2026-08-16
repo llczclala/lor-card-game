@@ -145,7 +145,7 @@ const toCardData = (cardKey: string, entity?: RecordEntity): CardData | null => 
             buffs: undefined,
             roundBuffs: undefined,
         }),
-    };
+    } as CardData; // [2026-08-16] base 为 Omit<CardData>，合并快照后断言为完整 CardData
 };
 
 // ==========================================

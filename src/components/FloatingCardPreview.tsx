@@ -35,6 +35,8 @@ interface FloatingCardPreviewProps {
     /** 透传给 Card 的英雄升级进度判断用 */
     playerNexusHealth?: number;
     enemyNexusHealth?: number;
+    /** [2026-08-16] 动态卡面显式开关（portal 场景 Context 无法穿透，需 prop 透传给 Card） */
+    heroDynamic?: boolean;
 }
 
 // ─── 常量 ───────────────────────────────────────────────────────
@@ -65,6 +67,7 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
     onViewArt,
     playerNexusHealth,
     enemyNexusHealth,
+    heroDynamic,
 }) => {
     // 与 ScaleWrapper 一致的缩放比（仅 follow 模式使用，该模式通过 portal 在 ScaleWrapper 外）
     const [gameScale, setGameScale] = useState(1);
@@ -156,6 +159,7 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                         onViewArt={onViewArt}
                         playerNexusHealth={playerNexusHealth}
                         enemyNexusHealth={enemyNexusHealth}
+                        heroDynamic={heroDynamic}
                     />
                 </div>
             </motion.div>,
@@ -191,6 +195,7 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                             onViewArt={onViewArt}
                             playerNexusHealth={playerNexusHealth}
                             enemyNexusHealth={enemyNexusHealth}
+                            heroDynamic={heroDynamic}
                         />
                     </div>
                 </motion.div>

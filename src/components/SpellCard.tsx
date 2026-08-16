@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import type { CardData } from '../types';
 import { Zap, Clock } from 'lucide-react';
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14] 读取效果参数替换{value}
+import { KeywordTray } from './KeywordTray'; // [2026-08-08 莉莉子] 法术卡关键词图标位
 interface SpellCardProps {
     data: CardData;
     className?: string;
@@ -62,6 +63,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
     const isMauxir = data.region === 'Mauxir';
     const isAcacia = data.region === 'Acacia';
     const isLogistics = data.region === 'Logistics';
+    const isAnalyst = data.region === 'Analyst'; // [2026-08-08 莉莉子] 分析员黑色卡面
 
     const borderColor = isFenny
         ? 'border-orange-900'
@@ -70,6 +72,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
         : isAcacia ? 'border-sky-900'
         : isLogistics ? 'border-white-900'
         : isLyfe ? 'border-blue-900'
+        : isAnalyst ? 'border-gray-950'
         : 'border-gray-700';
 
     const bgGradient = isFenny
@@ -79,6 +82,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
         : isAcacia ? 'bg-gradient-to-b from-gray-900 via-sky-950 to-gray-900'
         : isLogistics ? 'bg-gradient-to-b from-gray-900 via-white-950 to-gray-900'
         : isLyfe ? 'bg-gradient-to-b from-gray-900 via-blue-950 to-gray-900'
+        : isAnalyst ? 'bg-gradient-to-b from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员纯黑
         : 'bg-gradient-to-b from-gray-900 via-gray-950 to-gray-900';
 
     const costColor = isFenny
@@ -88,6 +92,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
         : isAcacia ? 'bg-sky-600 border-sky-400'
         : isLogistics ? 'bg-gray-600 border-gray-400'
         : isLyfe ? 'bg-blue-600 border-blue-400'
+        : isAnalyst ? 'bg-gray-800 border-gray-500' // [2026-08-08 莉莉子] 分析员灰黑费用
         : 'bg-blue-600 border-blue-400';
     return (
         <div className={`w-full h-full relative overflow-hidden rounded-2xl border-[4px] ${borderColor} ${bgGradient} flex flex-col items-center pt-6 ${className}`}>
@@ -132,6 +137,19 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
                 </h3>
                 <div className="h-[2px] w-2/3 bg-gradient-to-r from-transparent via-[#c8aa6d] to-transparent mx-auto opacity-50 mt-2"></div>
             </div>
+
+            {/* [2026-08-08 莉莉子] 关键词图标位：法术卡持有瞬逝等关键词时在此展示（此前法术卡无关键词区） */}
+            {(data.keywords && data.keywords.length > 0) && (
+                <div className="relative z-20 mb-2 flex justify-center">
+                    <KeywordTray
+                        keywords={data.keywords}
+                        animState={data.animState}
+                        depletedKeywords={data.depletedKeywords}
+                        isOnBoard={false}
+                        className="scale-90"
+                    />
+                </div>
+            )}
 
             {/* 4. 效果描述框 (放大区域与文字) */}
             <div className="flex-1 w-[90%] mb-6 relative z-10">

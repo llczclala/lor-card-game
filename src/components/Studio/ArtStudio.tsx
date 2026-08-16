@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, Filter, X, Check, Layers, Shield, Sword,
-    ArrowUpCircle, ArrowDownCircle, Download, User, Box, AlertTriangle
+    ArrowUpCircle, ArrowDownCircle, Download, User, Box, AlertTriangle, Copy, Trash2
 } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { CARD_CROP_CONFIG } from '../../data/cardCropConfig';
@@ -54,6 +54,11 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
 
     // === 数据层 (Overrides) 支持皮肤嵌套格式 ===
     const [localOverrides, setLocalOverrides] = useState<Record<string, any>>({});
+
+    // === [2026-08-16] 导出预览框状态 ===
+    const [showExportPreview, setShowExportPreview] = useState(false);
+    const [exportCode, setExportCode] = useState('');
+    const [exportCopied, setExportCopied] = useState(false);
 
     // 1. 初始化读取 localStorage
     useEffect(() => {
@@ -144,17 +149,82 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
         window.dispatchEvent(new Event('CROP_UPDATED'));
     };
 
-    const handleExport = () => {
-        // 生成漂亮的 TypeScript 代码
-        const tsCode = `export const CARD_CROP_CONFIG: Record<string, any> = {\n${
-            Object.entries(localOverrides).map(([key, data]) => {
-                return `    '${key}': ${JSON.stringify(data).replace(/"([^"]+)":/g, '$1:')}`;
-            }).join(',\n')
-        }\n};`;
+    // ==========================================
+    // [2026-08-16 莉莉子] EXPORT 重构：完整合并导出 + 格式规范化
+    // 核心思路（程反馈）：
+    //   - 旧版只导出 localOverrides（localStorage 里改过的卡），粘贴覆盖源码会丢掉所有其他卡牌的配置
+    //   - 新版 = 源码 CARD_CROP_CONFIG ∪ 本地覆盖，深层合并后生成【完整】配置文件
+    //     → 粘贴整表替换，程只做复制粘贴一个动作，其他卡一个不丢
+    // 规范化：统一成 cardKey → skinId(数字) → mode 三层结构
+    //   - 数字键（皮肤号）：保留，本地覆盖同 mode
+    //   - 非数字键（旧平铺格式 / 源码里挂错层的脏 mode）：归一 skinId 0（源码头注释 skinId 0 = 新默认皮肤）
+    // ==========================================
+    const buildMergedConfig = (): Record<string, any> => {
+        const merged: Record<string, any> = {};
+        const allKeys = new Set([...Object.keys(CARD_CROP_CONFIG), ...Object.keys(localOverrides)]);
+        for (const key of allKeys) {
+            const baseEntry: Record<string, any> = CARD_CROP_CONFIG[key] || {};
+            const localEntry: Record<string, any> = localOverrides[key] || {};
+            const card: Record<string, any> = {};
 
-        navigator.clipboard.writeText(tsCode).then(() => {
-            alert("✅ TypeScript 代码已复制到剪贴板！请粘贴至 cardCropConfig.ts 中。");
+            const subKeys = new Set([...Object.keys(baseEntry), ...Object.keys(localEntry)]);
+            for (const subKey of subKeys) {
+                if (/^\d+$/.test(subKey)) {
+                    // 数字键 = skinId：本地覆盖同 mode（深层合并）
+                    card[subKey] = { ...(baseEntry[subKey] || {}), ...(localEntry[subKey] || {}) };
+                } else {
+                    // 非数字键 = 旧平铺/脏数据 mode：归一 skinId 0
+                    // 优先级：local[0][mode]（嵌套，最新）> local[mode]（旧平铺）> base[0][mode]（源码正确嵌套）> base[mode]（脏数据）
+                    const modeVal = localEntry[subKey] ?? baseEntry[subKey];
+                    if (modeVal) {
+                        card[0] = card[0] || { ...(baseEntry[0] || {}) };
+                        // 皮肤 0 该 mode 已有值（来自嵌套 local/源码）时保留，避免被源码脏数据覆盖本地修改
+                        if (!card[0][subKey]) {
+                            card[0][subKey] = modeVal;
+                        }
+                    }
+                }
+            }
+            if (Object.keys(card).length > 0) merged[key] = card;
+        }
+        return merged;
+    };
+
+    // 生成对齐源码格式的 TS 代码（含头部注释 + 一行一张卡，键去引号）
+    const generateTsCode = (merged: Record<string, any>): string => {
+        const header = [
+            `// [皮肤重构] 双键索引：cardKey → skinId → { mode → CropConfig }`,
+            `// skinId 0 = _00（新默认皮肤），skinId 1 = _01，skinId 2 = _02`,
+            `// [2026-08-16] 由 ArtStudio「EXPORT FULL CONFIG」完整合并导出（源码 ∪ 本地覆盖，格式已规范化）`,
+        ].join('\n');
+        const body = Object.entries(merged)
+            .map(([key, data]) => `    '${key}': ${JSON.stringify(data).replace(/"([^"]+)":/g, '$1:')}`)
+            .join(',\n');
+        return `${header}\n\nexport const CARD_CROP_CONFIG: Record<string, any> = {\n${body}\n};`;
+    };
+
+    // [2026-08-16] 点导出：生成完整合并配置 → 打开预览框（不再直接复制）
+    const handleExport = () => {
+        const merged = buildMergedConfig();
+        setExportCode(generateTsCode(merged));
+        setExportCopied(false);
+        setShowExportPreview(true);
+    };
+
+    // 预览框内复制到剪贴板
+    const handleCopyExport = () => {
+        navigator.clipboard.writeText(exportCode).then(() => {
+            setExportCopied(true);
         });
+    };
+
+    // [2026-08-16] 清空本地覆盖：防止"改了又弃"的旧配置混入导出
+    const handleClearLocal = () => {
+        if (!window.confirm('确定清空所有本地裁剪覆盖？\n清空后将从源码配置重新开始调整。')) return;
+        localStorage.removeItem('dev_crop_overrides');
+        setLocalOverrides({});
+        // 触发全局事件，让大厅和游戏里的卡牌瞬间刷新
+        window.dispatchEvent(new Event('CROP_UPDATED'));
     };
 
     const targetCard = selectedKey ? CARD_DB[selectedKey] : null;
@@ -394,19 +464,40 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                             {/* 提示：此处的预览会随着 CROP_UPDATED 事件，通过 Card 内部的 useCardCrop 热更新！ */}
                             {/* [修复 4] 强行放大预览图，更利于开发观察 */}
                             {activeMode === 'avatar' ? (
-                                // 头像模式：纯方形裁剪预览，不渲染卡牌 UI
-                                <div className="w-36 h-36 rounded-xl overflow-hidden border-2 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.3)] bg-black flex items-center justify-center">
-                                    <img
-                                        src={workbenchImageUrl}
-                                        alt="头像预览"
-                                        className="max-w-none block"
-                                        draggable={false}
-                                        style={{
-                                            width: '100%',
-                                            height: 'auto',
-                                            transform: `translate(${cropOffset.x}%, ${cropOffset.y}%) scale(${cropScale})`
-                                        }}
-                                    />
+                                // 头像模式：同时显示方形 + 圆形两个头像预览（共用同一套 scale/offset）
+                                <div className="flex gap-8 items-center justify-center">
+                                    <div className="flex flex-col items-center gap-2">
+                                        <div className="w-32 h-32 rounded-xl overflow-hidden border-2 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.3)] bg-black flex items-center justify-center">
+                                            <img
+                                                src={workbenchImageUrl}
+                                                alt="方形头像预览"
+                                                className="max-w-none block"
+                                                draggable={false}
+                                                style={{
+                                                    width: '100%',
+                                                    height: 'auto',
+                                                    transform: `translate(${cropOffset.x}%, ${cropOffset.y}%) scale(${cropScale})`
+                                                }}
+                                            />
+                                        </div>
+                                        <span className="text-[10px] font-mono text-purple-300/70">SQUARE 方形</span>
+                                    </div>
+                                    <div className="flex flex-col items-center gap-2">
+                                        <div className="w-32 h-32 rounded-full overflow-hidden border-2 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.3)] bg-black flex items-center justify-center">
+                                            <img
+                                                src={workbenchImageUrl}
+                                                alt="圆形头像预览"
+                                                className="max-w-none block"
+                                                draggable={false}
+                                                style={{
+                                                    width: '100%',
+                                                    height: 'auto',
+                                                    transform: `translate(${cropOffset.x}%, ${cropOffset.y}%) scale(${cropScale})`
+                                                }}
+                                            />
+                                        </div>
+                                        <span className="text-[10px] font-mono text-purple-300/70">CIRCLE 圆形</span>
+                                    </div>
                                 </div>
                             ) : (
                                 <div className={`transform scale-[1.55] origin-center shadow-2xl ${activeMode === 'combat' ? 'w-[240px] h-[162px]' : ''}`}>
@@ -513,18 +604,58 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                     {/* 使用说明 */}
                     <div className="bg-black/30 border border-yellow-500/20 rounded-md p-4 flex gap-3 text-sm text-gray-400 leading-relaxed">
                         <AlertTriangle size={16} className="text-yellow-500 shrink-0 mt-0.5" />
-                        <p>调整完毕后点击中间的 <b className="text-green-400">√</b> 保存至本地。所有修改完成后，点击下方按钮导出 TypeScript 配置并覆盖源代码。</p>
+                        <p>调整完毕后点击中间的 <b className="text-green-400">√</b> 保存至本地。所有修改完成后，点击下方按钮导出 <b className="text-blue-300">完整配置</b>（含源码全部卡牌 + 本地修改），预览确认后复制并整表覆盖 cardCropConfig.ts。</p>
                     </div>
 
-                    {/* 极客风导出按钮 */}
-                    <button
-                        onClick={handleExport}
-                        className="mt-auto w-full py-4 bg-gradient-to-r from-blue-700 to-indigo-600 hover:from-blue-600 hover:to-indigo-500 text-white rounded-md font-black tracking-widest flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(79,70,229,0.5)] transition-all hover:scale-[1.02] active:scale-95"
-                    >
-                        <Download size={20} /> EXPORT CONFIG TO CLIPBOARD
-                    </button>
+                    {/* 极客风导出按钮 [2026-08-16 重构]：完整合并导出 → 打开预览框 */}
+                    <div className="mt-auto space-y-3">
+                        <button
+                            onClick={handleExport}
+                            className="w-full py-4 bg-gradient-to-r from-blue-700 to-indigo-600 hover:from-blue-600 hover:to-indigo-500 text-white rounded-md font-black tracking-widest flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(79,70,229,0.5)] transition-all hover:scale-[1.02] active:scale-95"
+                        >
+                            <Download size={20} /> EXPORT FULL CONFIG
+                        </button>
+                        <button
+                            onClick={handleClearLocal}
+                            className="w-full py-2.5 bg-slate-800/60 hover:bg-red-900/30 border border-white/5 hover:border-red-800 text-gray-400 hover:text-red-300 rounded-md font-bold text-xs tracking-widest flex items-center justify-center gap-2 transition-all"
+                        >
+                            <Trash2 size={14} /> 清空本地覆盖
+                        </button>
+                    </div>
                 </div>
             </div>
+            {/* [2026-08-16] 导出预览框：可滚动代码 + 复制 + 备份提示（最外层 div 内，避免相邻顶层元素） */}
+            {showExportPreview && (
+                <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/80 backdrop-blur-md p-6 animate-fade-in" onClick={() => setShowExportPreview(false)}>
+                    <div className="w-full max-w-3xl bg-[#0f172a] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-white/5">
+                            <h3 className="text-lg font-black tracking-widest text-white flex items-center gap-2">
+                                <Download size={18} className="text-blue-400" />
+                                导出预览（完整配置）
+                            </h3>
+                            <button onClick={() => setShowExportPreview(false)} className="p-1.5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="p-4 bg-black/40 overflow-y-auto max-h-[52vh] font-mono text-xs leading-relaxed text-blue-200 whitespace-pre">
+                            {exportCode}
+                        </div>
+                        <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-4">
+                            <div className="text-xs text-gray-500 flex-1 flex items-start gap-1.5">
+                                <AlertTriangle size={14} className="text-yellow-500 shrink-0 mt-0.5" />
+                                <span>粘贴覆盖 <b className="text-yellow-400">cardCropConfig.ts</b> 前，建议确认源码已 git commit 以便回滚。导出已包含源码全部卡牌 + 本地修改。</span>
+                            </div>
+                            <button onClick={() => setShowExportPreview(false)} className="px-4 py-2 rounded-lg border border-white/10 text-gray-400 hover:bg-white/5 hover:text-white transition-all text-sm font-bold">
+                                取消
+                            </button>
+                            <button onClick={handleCopyExport} className="px-5 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 text-white transition-all font-black tracking-widest flex items-center gap-2">
+                                <Copy size={16} />
+                                {exportCopied ? '已复制 ✓' : '复制到剪贴板'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

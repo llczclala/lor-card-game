@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { AUDIO_ASSETS } from '../data/audio';
+import { AUDIO_ASSETS, type BgmKey } from '../data/audio';
 
 export const useAudio = () => {
     const bgmRef = useRef<HTMLAudioElement | null>(null);
@@ -42,7 +42,8 @@ export const useAudio = () => {
     }, []);
 
     // [修改] 扩展类型定义，加入 'gacha' 和 'deck_builder'
-    const playBgm = (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat' | 'gacha' | 'deck_builder') => {
+    // [2026-08-16] 改用 BgmKey 联合（补上 hall_1~7 大厅 BGM），对齐 AUDIO_ASSETS.bgm 实际注册的轨道
+    const playBgm = (type: BgmKey) => {
         if (!bgmRef.current) return;
 
         let src = '';

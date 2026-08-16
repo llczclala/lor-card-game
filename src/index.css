@@ -517,3 +517,163 @@ body[data-game-cursor="ATTACK"] * {
 .animate-summon-reveal-color-acacia {
   animation: summon-reveal-color-acacia 0.8s ease-out both;
 }
+
+/* =================================================================
+   【瞬逝 Volatile · 高能等离子过载】
+   纯白数字工业质感：锐利折线、闪烁电弧、几何碎片弹射，零模糊 (0 blur)
+   ================================================================= */
+
+/* 1. 等离子封锁线：极速断裂流动 */
+@keyframes plasma-dash-flow {
+  0% { stroke-dashoffset: 100; }
+  100% { stroke-dashoffset: 0; }
+}
+.animate-plasma-dash {
+  animation: plasma-dash-flow 0.6s linear infinite;
+}
+
+/* 2. 方形数据碎片抛射：多重自转上升与平滑淡出 */
+@keyframes square-eject {
+  0% { transform: translate(0, 0) rotate(0deg) scale(0); opacity: 0; }
+  15% { transform: translate(calc(var(--shard-x) * 0.2), calc(var(--shard-y) * 0.2)) rotate(var(--rot-mid)) scale(1); opacity: 1; }
+  60% { opacity: 1; } /* 保持完全可见直到 60% */
+  100% { transform: translate(var(--shard-x), var(--shard-y)) rotate(var(--rot-end)) scale(var(--shard-scale, 0.8)); opacity: 0; } /* 尾段自然淡出并完成位移 */
+}
+.animate-square-eject {
+  /* 动画时长由行内变量 --anim-duration 控制，实现错乱感 */
+  animation: square-eject var(--anim-duration, 1.2s) cubic-bezier(0.25, 1, 0.5, 1) infinite;
+}
+
+/* 3. 卡面内部高能干扰/扫描线 */
+/* 3b. 高能科幻扫描线 V2：青白双色 + 亮青光晕 + 快速扫描
+   2026-08-04 莉莉子 —— V1 只有 3% 强度（white/20 × opacity 0.15）在亮卡上不可见，
+   升级为：白色主线 + 青色边缘光晕 + 1.2s 快速扫过，科技感拉满 */
+@keyframes surface-glitch-v2 {
+  /* [2026-08-04 莉莉子] 扫描方向从上→下改为下→上，与瞬逝弃置动画的扫描方向对齐 */
+  0%   { transform: translateY(480%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(-180%); opacity: 0; }
+}
+.animate-surface-glitch-v2 {
+  animation: surface-glitch-v2 1.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+
+/* =================================================================
+   【第四梯队关键词视觉重构】
+   ================================================================= */
+
+/* --- Elusive 隐秘：全息折射扫描波 --- */
+@keyframes optical-camo-scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(50%); }
+}
+.animate-optical-camo-scan {
+  animation: optical-camo-scan 2.5s linear infinite;
+}
+
+/* --- Aura 光环：柔焦微尘粒子缓慢上浮 --- */
+@keyframes dust-float {
+  0% { transform: translate(0, 0) scale(0.5); opacity: 0; }
+  20% { opacity: 0.6; }
+  80% { opacity: 0.6; }
+  100% { transform: translate(var(--dust-x), -150px) scale(1.5); opacity: 0; }
+}
+.animate-dust-float {
+  animation: dust-float 6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* --- Regeneration 再生：有机液体能量波与萤火虫逸散 --- */
+@keyframes organic-wave {
+  0% { transform: translateY(100%); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(-100%); opacity: 0; }
+}
+.animate-organic-wave {
+  animation: organic-wave 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes firefly-rise {
+  0% { transform: translateY(0) scale(0); opacity: 0; }
+  30% { transform: translateY(-30px) scale(1); opacity: 1; }
+  100% { transform: translateY(-100px) scale(0); opacity: 0; }
+}
+.animate-firefly-rise {
+  animation: firefly-rise 1.2s ease-out forwards;
+}
+
+/* =================================================================
+   【悖论迷宫关卡选择 · 难度视觉压迫动效】2026-08-07
+   ================================================================= */
+/* 老电视白屏噪声：缩略图轮播切换瞬间的雪花闪屏 */
+@keyframes rogue-noise-flash {
+  0%   { opacity: 0; transform: scale(1); }
+  10%  { opacity: 1; }
+  50%  { opacity: 0.9; }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+/* 机密：缓慢呼吸（亮度轻微波动，被监视感） */
+@keyframes rogue-breathe {
+  0%, 100% { filter: brightness(1); }
+  50%      { filter: brightness(1.09); }
+}
+/* 绝密：红色高频脉冲（危险感） */
+@keyframes rogue-red-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+/* 机密：画面轻微晃动（压迫感） */
+@keyframes rogue-shake {
+  0%, 100% { transform: translate(0, 0); }
+  25%      { transform: translate(-1px, 1px); }
+  50%      { transform: translate(1px, -1px); }
+  75%      { transform: translate(-1px, -1px); }
+}
+/* 绝密：画面中幅度晃动 */
+@keyframes rogue-shake-mid {
+  0%, 100% { transform: translate(0, 0); }
+  25%      { transform: translate(-3px, 3px); }
+  50%      { transform: translate(3px, -3px); }
+  75%      { transform: translate(-3px, -3px); }
+}
+/* 扫描线：上下来回滚动 */
+@keyframes rogue-scanline-scroll {
+  0%   { background-position: 0 0; }
+  100% { background-position: 0 4px; }
+}
+/* 暗角呼吸（机密：轻） */
+@keyframes rogue-vignette-breathe {
+  0%, 100% { box-shadow: inset 0 0 80px 35px rgba(0,0,0,0.5); }
+  50%      { box-shadow: inset 0 0 130px 60px rgba(0,0,0,0.62); }
+}
+/* 暗角呼吸（绝密：重） */
+@keyframes rogue-vignette-breathe-heavy {
+  0%, 100% { box-shadow: inset 0 0 130px 60px rgba(0,0,0,0.65); }
+  50%      { box-shadow: inset 0 0 190px 85px rgba(0,0,0,0.75); }
+}
+
+/* =================================================================
+   【自定义滚动条】custom-scrollbar
+   2026-08-09 莉莉子 —— 全项目 16 处引用但从未定义（空类名），
+   公告面板及任务面板等滚动容器统一受益。
+   ================================================================= */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}

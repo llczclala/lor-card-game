@@ -90,6 +90,7 @@ export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
         const init = tutorialScript?.initialState;
         if (!init) return undefined;
         return {
+            firstAttacker: init.firstAttacker, // [2026-08-15] 剧本可指定先手（关键词考核需玩家先手）
             playerField: init.playerField,
             enemyField: init.enemyField,
             playerBench: init.playerBench,
@@ -181,7 +182,7 @@ export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
                 onExit={onExitGame}
                 disableMulligan={true}
                 tutorialInit={tutorialInit}
-                firstAttacker="enemy"
+                firstAttacker={tutorialInit?.firstAttacker ?? 'enemy'} // [2026-08-15] 剧本指定先手（默认敌方）；关键词考核剧本已设 'player'
                 disableAI={true}
                 turnTimer={999}
             />

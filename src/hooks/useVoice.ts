@@ -29,6 +29,9 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
     const cooldownMap = useRef<Map<string, number>>(new Map());
     const queue = useRef<VoiceTask[]>([]);
     const isPlayingRef = useRef(false);
+    // [2026-08-06 莉莉子 敌我修复] 记录当前正在播的语音属于哪个卡牌实例
+    // 用于 die 打断判定：只允许"同一个单位"的 die 打断自己，跨单位语音排队不打断
+    const currentVoiceCardIdRef = useRef<string | null>(null);
 
     // [新增] 语音音量 Ref (默认 0.8)
     const volumeRef = useRef(0.8);
@@ -77,6 +80,7 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
         const src = voices[Math.floor(Math.random() * voices.length)];
 
         setSpeakingCardId(task.card.id);
+        currentVoiceCardIdRef.current = task.card.id; // [2026-08-06] 记录当前语音归属
 
         const audio = new Audio(src);
         audioRef.current = audio;
@@ -85,6 +89,7 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
         // 播放结束回调
         audio.onended = () => {
             setSpeakingCardId(null);
+            currentVoiceCardIdRef.current = null;
             isPlayingRef.current = false;
             // 稍微停顿一下再放下一句，更自然
             setTimeout(processQueue, 300);
@@ -93,12 +98,17 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
         audio.onerror = () => {
             console.warn("Voice load failed:", src);
             setSpeakingCardId(null);
+            currentVoiceCardIdRef.current = null;
             isPlayingRef.current = false;
             processQueue();
         };
 
         audio.play().catch(() => {
+            // [2026-08-06] 播放失败时同步清理语音归属，避免残留导致 die 打断判断错乱
+            setSpeakingCardId(null);
+            currentVoiceCardIdRef.current = null;
             isPlayingRef.current = false;
+            processQueue(); // 尝试播下一个
         });
     };
 
@@ -111,13 +121,17 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
         // 冷却检查 (死亡语音无视冷却)
         if (type !== 'die' && now - lastTime < cooldown) return;
 
-        // 死亡语音插队逻辑：清空低优先级队列，置于队首
+        // 死亡语音：仅在"当前正在播的语音属于同一个单位"时打断，优先播放该单位的死亡语音
+        // （如互换：同一英雄既击杀又阵亡 → 她的 die 打断她自己的 kill）
+        // 跨单位（其他英雄/单位）的语音一律不打断，按顺序排队依次播放
         if (type === 'die') {
-            queue.current = queue.current.filter(t => t.priority >= 4); // 清除普通语音
-            if (audioRef.current && isPlayingRef.current) {
-                audioRef.current.pause(); // 打断当前
+            // 仅当正在播放的语音属于同一个卡牌实例时才打断
+            if (audioRef.current && isPlayingRef.current && currentVoiceCardIdRef.current === card.id) {
+                audioRef.current.pause(); // 打断同一单位的当前语音
                 isPlayingRef.current = false;
             }
+            // 同一单位的其他排队语音也一并清掉（她已阵亡，其余语音不再需要），保留其他单位的语音
+            queue.current = queue.current.filter(t => t.card.id !== card.id);
             queue.current.unshift({ card, type, priority });
         } else {
             // 普通语音：追加到队尾

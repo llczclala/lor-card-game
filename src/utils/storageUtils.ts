@@ -10,7 +10,9 @@ export const STORAGE_KEYS = {
     USER_ASSETS: `${STORAGE_PREFIX}assets`,
     USER_DECKS: `${STORAGE_PREFIX}decks`,
     USER_SETTINGS: `${STORAGE_PREFIX}settings`,
-    USER_INDEX: `${STORAGE_PREFIX}user_index`
+    USER_INDEX: `${STORAGE_PREFIX}user_index`,
+    ROGUE_HERO_PROGRESS: `${STORAGE_PREFIX}rogue_hero_progress`, // [2026-08-12 天启者养成] 每英雄独立等级/经验
+    ROGUE_ARMAMENT: `${STORAGE_PREFIX}rogue_armament`, // [2026-08-14 武装] 每英雄武装槽配置（局外带入）
 };
 
 // [新增] 简要用户信息接口 (用于列表展示)

@@ -112,15 +112,15 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
                 merged[m.id] = saved[m.id];
                 // [fix] 对已有存档也强制修正：direct_claim 任务若尚未领取，直接变为已完成
                 if (m.condition.type === 'direct_claim' && merged[m.id].status !== 'claimed') {
-                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed' };
+                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed', sort: 0 };
                     needsSave = true;
                 }
             } else {
                 // [fix] direct_claim 任务无需对局，初始化即完成
                 if (m.condition.type === 'direct_claim') {
-                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed' };
+                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed', sort: 0 };
                 } else {
-                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing' };
+                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing', sort: computeSort('ongoing', 0, m.targetCount) };
                 }
                 needsSave = true;
             }
@@ -138,7 +138,7 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
             // 执行跨天大重置
             MISSIONS.filter(m => m.category === 'daily').forEach(m => {
                 if (merged[m.id]) {
-                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing' };
+                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing', sort: computeSort('ongoing', 0, m.targetCount) };
                 }
             });
             localStorage.setItem(DAILY_KEY, currentLogicalDay.toString());
@@ -149,7 +149,7 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
             // 执行跨周大重置
             MISSIONS.filter(m => m.category === 'weekly').forEach(m => {
                 if (merged[m.id]) {
-                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing' };
+                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing', sort: computeSort('ongoing', 0, m.targetCount) };
                 }
             });
             localStorage.setItem(WEEKLY_KEY, currentLogicalWeek.toString());

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power, RotateCw, Home } from 'lucide-react';
+import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power, RotateCw, Home, Swords, RotateCcw } from 'lucide-react';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -26,11 +26,22 @@ interface SettingsModalProps {
     // [新增] 默认跳过胜利影片
     skipVictoryMovie?: boolean;
     onToggleSkipVictory?: () => void;
+    // [2026-08-13] 动态牌桌开关
+    deskDynamic?: boolean;
+    onToggleDeskDynamic?: () => void;
+    // [2026-08-16] 天启者动态卡面开关
+    heroDynamic?: boolean;
+    onToggleHeroDynamic?: () => void;
+    // [2026-08-16] 恢复默认设置（系统标签页入口）
+    onResetSettings?: () => void;
     // [新增] 对局操作
     isInGame?: boolean;
     onRestartMatch?: () => void;
     onReturnToLobby?: () => void;
 }
+
+// 设置标签页类型
+type SettingsTab = 'audio' | 'video' | 'game' | 'system';
 
 const VolumeSlider = ({ label, icon: Icon, value, onChange }: { label: string, icon: any, value: number, onChange: (val: number) => void }) => {
     const [lastValue, setLastValue] = useState(value > 0 ? value : 0.5);
@@ -92,7 +103,26 @@ const VolumeSlider = ({ label, icon: Icon, value, onChange }: { label: string, i
     );
 };
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, isInGame = false, onRestartMatch, onReturnToLobby }) => {
+// [2026-08-16] 通用开关行（标题 + 描述 + 右侧 toggle），避免多个设置项重复 JSX
+const ToggleRow = ({ title, desc, enabled, onToggle }: { title: string; desc: string; enabled: boolean; onToggle?: () => void }) => (
+    <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+        <div className="flex flex-col">
+            <span className="text-sm font-bold text-gray-200">{title}</span>
+            <span className="text-xs text-gray-500 mt-0.5">{desc}</span>
+        </div>
+        <button
+            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onToggle?.(); }}
+            className={`relative w-14 h-7 rounded-full transition-all duration-300 ${enabled ? 'bg-blue-500' : 'bg-gray-700'}`}
+        >
+            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${enabled ? 'left-8' : 'left-1'}`}></div>
+        </button>
+    </div>
+);
+
+export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, deskDynamic = false, onToggleDeskDynamic, heroDynamic = false, onToggleHeroDynamic, onResetSettings, isInGame = false, onRestartMatch, onReturnToLobby }) => {
+
+    // [2026-08-16] 当前激活的标签页
+    const [activeTab, setActiveTab] = useState<SettingsTab>('audio');
 
     // ESC 键监听
     useEffect(() => {
@@ -114,21 +144,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
 
     if (!isOpen) return null;
 
+    // [2026-08-16] 左侧标签栏定义（图标 + 文字，按游戏尺度分组）
+    const TABS: { key: SettingsTab; label: string; icon: any }[] = [
+        { key: 'audio', label: '音频', icon: Volume2 },
+        { key: 'video', label: '画面', icon: Film },
+        { key: 'game', label: '游戏', icon: Swords },
+        { key: 'system', label: '系统', icon: SettingsIcon },
+    ];
+
     return (
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fade-in" onClick={() => {
-                    eventBus.emit(GameEvents.UI_BACK); // [新增] 点击背景关闭音效
-                    onClose();
-                }}>
-                    <motion.div
-                        initial={{ scale: 0.9, opacity: 0, y: 20 }}
-                        animate={{ scale: 1, opacity: 1, y: 0 }}
-                        exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                        transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                        className="w-full max-w-2xl bg-[#0f172a] border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
-                        onClick={e => e.stopPropagation()}
-                    >
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="fixed inset-0 z-[1000] bg-[#0f172a] flex flex-col overflow-hidden"
+                >
                         {/* 标题栏 */}
                         <div className="flex justify-between items-center px-8 py-6 border-b border-white/10 bg-white/5">
                             <h2 className="text-2xl font-black italic tracking-widest text-white flex items-center gap-3">
@@ -146,106 +179,117 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                             </button>
                         </div>
 
-                        {/* 内容区 */}
-                        <div className="p-8 space-y-6">
-                            <div className="space-y-4">
-                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Audio Volume</h3>
-
-                                <VolumeSlider
-                                    label="音乐"
-                                    icon={Music}
-                                    value={volumes.bgm}
-                                    onChange={(v) => onVolumeChange('bgm', v)}
-                                />
-                                <VolumeSlider
-                                    label="音效"
-                                    icon={Volume2}
-                                    value={volumes.sfx}
-                                    onChange={(v) => onVolumeChange('sfx', v)}
-                                />
-                                <VolumeSlider
-                                    label="语音"
-                                    icon={Mic}
-                                    value={volumes.voice}
-                                    onChange={(v) => onVolumeChange('voice', v)}
-                                />
-                                <VolumeSlider
-                                    label="过场"
-                                    icon={Film}
-                                    value={volumes.movie}
-                                    onChange={(v) => onVolumeChange('movie', v)}
-                                />
+                        {/* [2026-08-16 重构] 主体：左侧标签栏 + 中间内容区（flex-1 min-h-0 保证内容区可滚动不撑高） */}
+                        <div className="flex flex-1 min-h-0">
+                            {/* 左侧标签栏 */}
+                            <div className="w-44 shrink-0 border-r border-white/10 p-4 space-y-1 bg-black/20 overflow-y-auto">
+                                {TABS.map(tab => (
+                                    <button
+                                        key={tab.key}
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setActiveTab(tab.key); }}
+                                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold tracking-widest transition-all ${
+                                            activeTab === tab.key
+                                                ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-900/30'
+                                                : 'text-gray-400 hover:bg-white/5 hover:text-white border border-transparent'
+                                        }`}
+                                    >
+                                        <tab.icon size={18} />
+                                        {tab.label}
+                                    </button>
+                                ))}
                             </div>
 
-                            {/* [核心新增] 影片画质设置 (Video Resolution) */}
-                            {onResolutionChange && (
-                                <div className="space-y-4 pt-4 border-t border-white/5">
-                                    <div className="flex justify-between items-center px-2">
-                                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Video Quality</h3>
-                                    </div>
-                                    <div className="flex bg-black/60 p-1 rounded-xl border border-white/5">
-                                        {(['1k', '2k', '4k'] as const).map(res => (
-                                            <button
-                                                key={res}
-                                                onClick={() => {
-                                                    eventBus.emit(GameEvents.UI_CLICK);
-                                                    onResolutionChange(res);
-                                                }}
-                                                className={`flex-1 py-2.5 text-sm font-black tracking-widest rounded-lg transition-all ${videoResolution === res ? 'bg-gradient-to-b from-blue-500 to-blue-700 text-white shadow-lg shadow-blue-900/50' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
-                                            >
-                                                {res.toUpperCase()}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                            {/* 中间内容区：随标签切换（AnimatePresence 淡入过渡）；条目多时内部鼠标滚轮滚动，不撑高面板 */}
+                            <div className="flex-1 p-6 overflow-y-auto min-h-0">
+                                <AnimatePresence mode="wait">
+                                    <motion.div
+                                        key={activeTab}
+                                        initial={{ opacity: 0, x: 12 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        exit={{ opacity: 0, x: -12 }}
+                                        transition={{ duration: 0.15 }}
+                                        className="space-y-6"
+                                    >
+                                        {/* ========== 音频标签 ========== */}
+                                        {activeTab === 'audio' && (
+                                            <div className="space-y-4">
+                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Audio Volume</h3>
+                                                <VolumeSlider label="音乐" icon={Music} value={volumes.bgm} onChange={(v) => onVolumeChange('bgm', v)} />
+                                                <VolumeSlider label="音效" icon={Volume2} value={volumes.sfx} onChange={(v) => onVolumeChange('sfx', v)} />
+                                                <VolumeSlider label="语音" icon={Mic} value={volumes.voice} onChange={(v) => onVolumeChange('voice', v)} />
+                                                <VolumeSlider label="过场" icon={Film} value={volumes.movie} onChange={(v) => onVolumeChange('movie', v)} />
+                                            </div>
+                                        )}
 
-                            {/* [新增] 开局抽卡动画跳过 + 默认跳过升级/胜利影片 */}
-                            <div className="space-y-4 pt-4 border-t border-white/5">
-                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Gameplay</h3>
-                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-gray-200">快速开局抽卡</span>
-                                        <span className="text-xs text-gray-500 mt-0.5">换牌后直接获得卡牌，跳过抽卡动画</span>
-                                    </div>
-                                    <button
-                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onToggleSkipDraw?.(); }}
-                                        className={`relative w-14 h-7 rounded-full transition-all duration-300 ${skipStartDrawAnimation ? 'bg-blue-500' : 'bg-gray-700'}`}
-                                    >
-                                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${skipStartDrawAnimation ? 'left-8' : 'left-1'}`}></div>
-                                    </button>
-                                </div>
-                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-gray-200">默认跳过升级影片</span>
-                                        <span className="text-xs text-gray-500 mt-0.5">英雄升级时自动跳过动画影片</span>
-                                    </div>
-                                    <button
-                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onToggleSkipLevelup?.(); }}
-                                        className={`relative w-14 h-7 rounded-full transition-all duration-300 ${skipLevelupMovie ? 'bg-blue-500' : 'bg-gray-700'}`}
-                                    >
-                                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${skipLevelupMovie ? 'left-8' : 'left-1'}`}></div>
-                                    </button>
-                                </div>
-                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-gray-200">默认跳过胜利影片</span>
-                                        <span className="text-xs text-gray-500 mt-0.5">对局胜利时自动跳过胜利动画影片</span>
-                                    </div>
-                                    <button
-                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onToggleSkipVictory?.(); }}
-                                        className={`relative w-14 h-7 rounded-full transition-all duration-300 ${skipVictoryMovie ? 'bg-blue-500' : 'bg-gray-700'}`}
-                                    >
-                                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${skipVictoryMovie ? 'left-8' : 'left-1'}`}></div>
-                                    </button>
-                                </div>
+                                        {/* ========== 画面标签 ========== */}
+                                        {activeTab === 'video' && (
+                                            <>
+                                                {onResolutionChange && (
+                                                    <div className="space-y-4">
+                                                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Video Quality</h3>
+                                                        <div className="flex bg-black/60 p-1 rounded-xl border border-white/5">
+                                                            {(['1k', '2k', '4k'] as const).map(res => (
+                                                                <button
+                                                                    key={res}
+                                                                    onClick={() => {
+                                                                        eventBus.emit(GameEvents.UI_CLICK);
+                                                                        onResolutionChange(res);
+                                                                    }}
+                                                                    className={`flex-1 py-2.5 text-sm font-black tracking-widest rounded-lg transition-all ${videoResolution === res ? 'bg-gradient-to-b from-blue-500 to-blue-700 text-white shadow-lg shadow-blue-900/50' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
+                                                                >
+                                                                    {res.toUpperCase()}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                <div className="space-y-4 pt-2">
+                                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">动态特效</h3>
+                                                    <ToggleRow title="动态牌桌" desc="使用动态视频牌桌（10 张牌桌全部支持）" enabled={deskDynamic} onToggle={onToggleDeskDynamic} />
+                                                    <ToggleRow title="动态卡面" desc="对局内英雄卡面使用动态视频（5 位天启者全部支持）" enabled={heroDynamic} onToggle={onToggleHeroDynamic} />
+                                                </div>
+                                            </>
+                                        )}
+
+                                        {/* ========== 游戏标签 ========== */}
+                                        {activeTab === 'game' && (
+                                            <div className="space-y-4">
+                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Gameplay</h3>
+                                                <ToggleRow title="快速开局抽卡" desc="换牌后直接获得卡牌，跳过抽卡动画" enabled={skipStartDrawAnimation} onToggle={onToggleSkipDraw} />
+                                                <ToggleRow title="默认跳过升级影片" desc="英雄升级时自动跳过动画影片" enabled={skipLevelupMovie} onToggle={onToggleSkipLevelup} />
+                                                <ToggleRow title="默认跳过胜利影片" desc="对局胜利时自动跳过胜利动画影片" enabled={skipVictoryMovie} onToggle={onToggleSkipVictory} />
+                                            </div>
+                                        )}
+
+                                        {/* ========== 系统标签 ========== */}
+                                        {activeTab === 'system' && (
+                                            <div className="space-y-4">
+                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">System</h3>
+                                                <div className="flex flex-col items-center justify-center gap-4 p-8 bg-white/5 rounded-xl border border-white/5">
+                                                    <p className="text-sm text-gray-400">
+                                                        当前版本 <span className="text-blue-300 font-black tracking-widest ml-1">v{import.meta.env.PACKAGE_VERSION}</span>
+                                                    </p>
+                                                    <button
+                                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onResetSettings?.(); }}
+                                                        className="flex items-center gap-2 px-5 py-2.5 bg-red-900/30 hover:bg-red-600 border border-red-800 hover:border-red-500 text-red-200 hover:text-white rounded-xl transition-all text-sm font-bold tracking-wider group"
+                                                    >
+                                                        <RotateCcw size={16} className="group-hover:scale-110 transition-transform" />
+                                                        恢复默认设置
+                                                    </button>
+                                                    <p className="text-xs text-gray-500">将重置音频、画面、游戏等所有设置为初始值</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </motion.div>
+                                </AnimatePresence>
                             </div>
+                        </div>
 
-                            {/* 底部功能区 */}
-                            <div className="pt-6 border-t border-white/10 flex justify-between items-center mt-6">
-                                <div className="flex items-center gap-3">
-                                    {isInGame && (
-                                        <>
+                        {/* 底部功能区（固定，始终可见） */}
+                        <div className="px-6 py-4 border-t border-white/10 flex justify-between items-center bg-black/20">
+                            <div className="flex items-center gap-3">
+                                {isInGame && (
+                                    <>
                                         <button
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onRestartMatch?.(); }}
                                             className="flex items-center gap-2 px-5 py-2 bg-yellow-900/30 hover:bg-yellow-600 border border-yellow-800 hover:border-yellow-500 text-yellow-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
@@ -260,21 +304,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                             <Home size={16} className="group-hover:scale-110 transition-transform" />
                                             返回大厅
                                         </button>
-                                        </>
-                                    )}
-                                </div>
-
-                                <button
-                                    onClick={handleExitGame}
-                                    className="flex items-center gap-2 px-6 py-2 bg-red-900/30 hover:bg-red-600 border border-red-800 hover:border-red-500 text-red-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
-                                >
-                                    <Power size={16} className="group-hover:scale-110 transition-transform" />
-                                    QUIT GAME
-                                </button>
+                                    </>
+                                )}
                             </div>
+
+                            <button
+                                onClick={handleExitGame}
+                                className="flex items-center gap-2 px-6 py-2 bg-red-900/30 hover:bg-red-600 border border-red-800 hover:border-red-500 text-red-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
+                            >
+                                <Power size={16} className="group-hover:scale-110 transition-transform" />
+                                QUIT GAME
+                            </button>
                         </div>
-                    </motion.div>
-                </div>
+                </motion.div>
             )}
         </AnimatePresence>
     );

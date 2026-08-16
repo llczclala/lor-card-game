@@ -45,6 +45,10 @@ function getWatchEvents(subTask: TutorialSubTask): string[] {
     case 'block_assigned':
       events.push(GameEvents.SFX_BLOCK);
       break;
+    case 'block_selected':
+      // [2026-08-15] 选中格挡者即完成（用于「尝试格挡隐秘单位」教学：格挡必然失败，不能等 block_assigned）
+      events.push(GameEvents.SFX_SELECT_BLOCKER_UNIT);
+      break;
     case 'block_recalled':
     case 'attack_recalled':
       events.push(GameEvents.SFX_RECALL_BLOCK);
@@ -82,6 +86,9 @@ function doesEventMatchCondition(
   switch (cond) {
     case 'block_assigned':
       return eventName === GameEvents.SFX_BLOCK;
+    case 'block_selected':
+      // [2026-08-15] 选中格挡者即完成（对应 SFX_SELECT_BLOCKER_UNIT）
+      return eventName === GameEvents.SFX_SELECT_BLOCKER_UNIT;
     case 'block_recalled':
     case 'attack_recalled':
       return eventName === GameEvents.SFX_RECALL_BLOCK;
@@ -251,11 +258,6 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
     const watchEvents = getWatchEvents(activeSubTask);
     if (watchEvents.length === 0) return;
 
-    const handler = (_payload?: unknown) => {
-      // 从闭包中取出当前事件名——用 eventName 引用
-      // 实际所有 watchEvents 绑定同一个 handler 但需要知道哪个事件触发了
-      // 改用分别绑定方式
-    };
     // 分别绑定每个事件（以便知道哪个事件名触发了）
     const handlers = watchEvents.map(ev => {
       const cb = () => handleGameEvent(ev);
@@ -423,7 +425,7 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
   }, [state.currentTaskGroup, state.subTaskStates, actions]);
 
   // ─── 获取当前活跃子任务的引导箭头配置 ───
-  const getGuidanceArrow = (): { targetSelector: string; text: string; direction?: 'top' | 'bottom' | 'left' | 'right' } | null => {
+  const getGuidanceArrow = (): { targetSelector: string; text: string; direction?: 'top' | 'bottom' | 'left' | 'right'; offset?: { x: number; y: number } } | null => {
     if (!state.currentTaskGroup) return null;
     const activeTask = state.currentTaskGroup.subTasks[state.activeSubTaskIndex];
     if (!activeTask) return null;

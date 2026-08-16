@@ -1,5 +1,5 @@
 import { GachaPoolEnum, type CardData } from '../types';
-import { HERO_IMAGES, TEST_IMAGES, SPELL_IMAGES, UNIT_IMAGES, TITAN_IMAGES, PLACEHOLDER_IMAGES } from './imageData'; // [新增] 引入 TITAN_IMAGES, PLACEHOLDER_IMAGES
+import { HERO_IMAGES, TEST_IMAGES, SPELL_IMAGES, UNIT_IMAGES, TITAN_IMAGES } from './imageData'; // [新增] 引入 TITAN_IMAGES
 
 export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'animState' | 'damageTaken' | 'buffs'>> = {
   // --- 英雄：里芙 (Lyfe) ---
@@ -28,7 +28,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   lyfe_rush: {
     key: 'lyfe_rush', name: '无尽霜刃', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
-    description: '极速：给予里芙 +1/+1。', type: 'spell-burst', keywords: [],
+    description: '极速：给予 “里芙” +1/+1。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.lyfe_rush,
     effects: ['effect_lyfe_rush'],
     isCollectible: false,
@@ -57,6 +57,35 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_lyfe_support'],
     associatedChampionKey: 'lyfe',
     ai: { pattern: 'FROST', priority: 2, config: { maxPower: 2 } },
+  },
+  // 1. 单挑 (Single Combat)
+  single_combat: {
+    key: 'single_combat', gachaPool: GachaPoolEnum.Permanent, name: '单挑', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
+    description: '一个友方单位和一个敌方单位相互打击。',
+    type: 'spell-fast',
+    keywords: [],
+    // [修改] 使用注册的图片
+    imageUrl: SPELL_IMAGES.single_combat,
+    effects: ['effect_single_combat'],
+    ai: { pattern: 'DUEL', priority: 2, config: { policies: ['favorable', 'sacrifice', 'clear_path'] } }
+  },
+
+  // 2. 祈愿 (Prayer)
+  prayer: {
+    key: 'prayer', gachaPool: GachaPoolEnum.Permanent, name: '祈愿', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
+    description: '慢速：赋予一个单位 +1/+1', type: 'spell-slow', keywords: [],
+    effects: ['effect_prayer'],
+    imageUrl: SPELL_IMAGES.prayer,
+    ai: { pattern: 'BUFF', priority: 3, config: { targetType: 'ALLY_UNIT', power: 1, health: 1 } }
+  },
+
+  // 3. 专注 (Focus)
+  focus: {
+    key: 'focus', gachaPool: GachaPoolEnum.Permanent, name: '专注', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
+    description: '慢速：进行备战', type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.focus,
+    effects: ['effect_focus'],
+    ai: { pattern: 'RALLY', priority: 1, config: { denyIfHasToken: true, minAttackers: 1 } }
   },
 
    // --- 英雄：芬妮 (Fenny) ---
@@ -115,10 +144,36 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     associatedChampionKey: 'fenny',
     ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALLY_UNIT', power: 1, health: 0 } }
   },
+  // 4. 暗箭 (Hidden Arrow)
+  hidden_arrow: {
+    key: 'hidden_arrow', gachaPool: GachaPoolEnum.Permanent, name: '暗箭', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
+    description: '极速：对任意一个单位或水晶造成{value}点伤害', type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.hidden_arrow,
+    effects: ['effect_hidden_arrow'],
+    ai: { pattern: 'DAMAGE', priority: 4, config: { targetType: 'any', canTargetSelf: true, lethalPriority: true, damageValue: 1 } }
+  },
+
+  // 5. 振奋 (Inspire)
+  inspire: {
+    key: 'inspire', gachaPool: GachaPoolEnum.Permanent, name: '振奋', cost: 5, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
+    description: '慢速：本回合给予友方全体单位+2/+1', type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.inspire,
+    effects: ['effect_inspire'],
+    ai: { pattern: 'BUFF', priority: 2, config: { minAllies: 2 } }
+  },
+
+  // 6. 破坏 (Destruction)
+  destruction: {
+    key: 'destruction', gachaPool: GachaPoolEnum.Permanent, name: '破坏', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
+    description: '慢速：对敌方水晶造成{value}点伤害', type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.destruction,
+    effects: ['effect_destruction'],
+    ai: { pattern: 'DAMAGE', priority: 3, config: { targetType: 'nexus' } }
+  },
   // --- 英雄：卜卜 灵鉴(pupu_specular_soul) ---
   pupu_specular_soul: {
     key: 'pupu_specular_soul', gachaPool: GachaPoolEnum.Lotus, name: '卜卜 灵鉴', cost: 2, power: 5, health: 3, maxHealth: 3,isChampion: true, level: 1, region: 'Pupu', race: ['summoner'],
-    description: '进攻时：召唤一个进攻状态的 “镜爻”。\n参战：变化为”卜卜的卜卦”。', type: 'unit', keywords: ['QuickAttack', 'Ability'],
+    description: '进攻时：召唤一个进攻状态的 “镜爻”。\n参战：变化为“卜卜的卜卦”。', type: 'unit', keywords: ['QuickAttack', 'Ability'],
     ability: { id: 'pupu_lv1_mirror_summon', label: '灵鉴之冲', description: '进攻时：召唤一个进攻状态的\"镜爻\"。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
     imageUrl: HERO_IMAGES.pupu_specular_soul.base,
     level2ImageUrl: HERO_IMAGES.pupu_specular_soul.level2,
@@ -169,6 +224,44 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_pupu_specular_soul_support'],
     ai: { pattern: 'RECALL_AND_REPLACE', priority: 2, config: {} },
     associatedChampionKey: 'pupu_specular_soul',
+  },
+  // 镜爻
+  Mirror: {
+    key: 'Mirror',
+    name: '镜爻',
+    region: 'Pupu',
+    cost: 1,
+    power: 1,
+    health: 1,
+    maxHealth: 1,
+    isChampion: false,
+    level: 0,
+    race: ['summon'],
+    type: 'unit',
+    keywords: ['Ephemeral'],
+    description: '', // 白板无需描述
+    imageUrl: UNIT_IMAGES.Mirror,
+    effects: [],
+    isCollectible: false
+  },
+  // 镜爻 卜卜
+  Mirror_pupu: {
+    key: 'Mirror_pupu',
+    name: '镜爻 卜卜',
+    region: 'Pupu',
+    cost: 1,
+    power: 1,
+    health: 1,
+    maxHealth: 1,
+    isChampion: false,
+    level: 0,
+    race: ['summon'],
+    type: 'unit',
+    keywords: ['Ephemeral'],
+    description: '入场：复制“卜卜 灵鉴”的面板和关键词。',
+    imageUrl: UNIT_IMAGES.Mirror_pupu,
+    effects: [],
+    isCollectible: false
   },
     // ==========================================
   // [新增] 猫汐尔 莲驱 (Mauxir - Lotus Drive)
@@ -234,6 +327,16 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_mauxir_lotus_pedestal'],
     isCollectible: false,
   },
+  // --- 通用法术：梦莲无人机 ---
+  'dream_lotus_drone': {
+    key: 'dream_lotus_drone', name: '梦莲无人机', cost: 1, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir', type: 'spell-burst', keywords: [],
+    description: '赋予一个召唤衍生物+2/+0。',
+    imageUrl: SPELL_IMAGES.dream_lotus_drone,
+    effects: ['effect_dream_lotus_drone'],
+    isCollectible: false,
+    ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALLY_UNIT', raceFilter: ['summon'], power: 2, health: 0 } },
+  },
 
   // ==========================================
   // [2026-07-26 安卡希雅 时之重奏] Acacia — Chrono Echo
@@ -242,19 +345,19 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   acacia_chrono_echo: {
     key: 'acacia_chrono_echo', gachaPool: GachaPoolEnum.Permanent, name: '安卡希雅 时之重奏', cost: 2, power: 2, health: 4, maxHealth: 4,
     isChampion: true, level: 1, region: 'Acacia',
-    description: '【库效】若我方手牌中没有，则在我方手牌中生成一张“安卡希雅的剑舞”。\n入场及获得进攻标识时：生成一张易逝的”灵轨月轮·扩散”。\n参战：变化为”安卡希雅的剑舞”。',
+    description: '【库效】若我方手牌中没有，则在我方手牌中生成一张“安卡希雅的剑舞”。\n入场及获得进攻标识时：生成一张易逝的“灵轨月轮·扩散”。\n参战：变化为“安卡希雅的剑舞”。',
     type: 'unit', keywords: ['Channel', 'Aura', 'Ability'],
     imageUrl: HERO_IMAGES.acacia_chrono_echo.base,
     level2ImageUrl: HERO_IMAGES.acacia_chrono_echo.level2,
     associatedSpellKey: 'acacia_chrono_echo_spell',
-    levelUpCondition: '我方打出”朔望之期”',
+    levelUpCondition: '我方打出“朔望之期”',
     levelUpTarget: 1,
     effects: ['effect_acacia_chrono_echo_lv1', 'effect_acacia_chrono_echo_token'],
   },
   acacia_chrono_echo_spell: {
     key: 'acacia_chrono_echo_spell', name: '安卡希雅的剑舞', cost: 0, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
-    description: '抉择：”圆缺有律”或 “朔望之期”\n使用后，在牌库里生成一张”安卡希雅 时之重奏”。',
+    description: '抉择：“圆缺有律”或 “朔望之期”\n使用后，在牌库里生成一张“安卡希雅 时之重奏”。',
     type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.acacia_chrono_echo_spell,
     associatedChampionKey: 'acacia_chrono_echo',
@@ -265,7 +368,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   acacia_chrono_echo_rush: {
     key: 'acacia_chrono_echo_rush', name: '圆缺有律', cost: 1, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
-    description: '切换”灵轨月轮·扩散/集束”。',
+    description: '切换“灵轨月轮·扩散”/“灵轨月轮·集束”。',
     type: 'spell-fast', keywords: [],
     imageUrl: SPELL_IMAGES.acacia_chrono_echo_rush,
     effects: ['effect_acacia_chrono_echo_rush'],
@@ -274,7 +377,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   acacia_chrono_echo_ultimate: {
     key: 'acacia_chrono_echo_ultimate', name: '朔望之期', cost: 16, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
-    description: '本牌局每召唤过飞剑1，此牌魔耗值减1。打出后升级”安卡希雅 时之重奏”，并回复全部费用。',
+    description: '本牌局每召唤过“飞剑”1，此牌魔耗值减1。打出后升级“安卡希雅 时之重奏”，并回复全部费用。',
     type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.acacia_chrono_echo_ultimate,
     effects: ['effect_acacia_chrono_echo_ultimate'],
@@ -288,7 +391,6 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: SPELL_IMAGES.acacia_chrono_echo_support,
     effects: ['effect_acacia_chrono_echo_support'],
     associatedChampionKey: 'acacia_chrono_echo',
-    isCollectible: false,
   },
 
   // --- 安卡希雅 衍生法术 ---
@@ -296,7 +398,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   acacia_chrono_echo_heavy: {
     key: 'acacia_chrono_echo_heavy', name: '安卡希雅的重锋', cost: 0, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
-    description: '抉择："越时斩"或 "剑痕时空"\n使用后，在牌库里生成一张"安卡希雅 时之重奏"。',
+    description: '抉择：“越时斩”或 “剑痕时空”\n使用后，在牌库里生成一张“安卡希雅 时之重奏”。',
     type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.acacia_chrono_echo_heavy,
     associatedChampionKey: 'acacia_chrono_echo',
@@ -308,7 +410,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   acacia_cross_temporal: {
     key: 'acacia_cross_temporal', name: '越时斩', cost: 3, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
-    description: '若本回合已飞剑，则对敌方战场上所有单位造成2点伤害。',
+    description: '若本回合已“飞剑”，则对敌方战场上所有单位造成2点伤害。',
     type: 'spell-fast', keywords: [],
     imageUrl: SPELL_IMAGES.acacia_cross_temporal,
     effects: ['effect_acacia_cross_temporal'],
@@ -317,7 +419,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   acacia_sword_timeline: {
     key: 'acacia_sword_timeline', name: '剑痕时空', cost: 9, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
-    description: '安卡希雅退级，且本牌局每召唤过大飞剑1，便对敌方水晶造成1点伤害。本牌局每召唤过飞剑1，此牌魔耗值减1。使用后回复全部费用。',
+    description: '“安卡希雅 时之重奏”退级，且本牌局每召唤过“大飞剑”1，便对敌方水晶造成1点伤害。本牌局每召唤过“飞剑”1，此牌魔耗值减1。使用后回复全部费用。',
     type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.acacia_sword_timeline,
     effects: ['effect_acacia_sword_timeline'],
@@ -370,47 +472,6 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: [],
     isCollectible: false,
   },
-
- // 镜爻
-  Mirror: {
-    key: 'Mirror',
-    name: '镜爻',
-    region: 'Pupu',
-    cost: 1,
-    power: 1,
-    health: 1,
-    maxHealth: 1,
-    isChampion: false,
-    level: 0,
-    race: ['summon'],
-    type: 'unit',
-    keywords: ['Ephemeral'],
-    description: '', // 白板无需描述
-    imageUrl: UNIT_IMAGES.Mirror,
-    effects: [],
-    isCollectible: false
-  },
-  // 镜爻 卜卜
-  Mirror_pupu: {
-    key: 'Mirror_pupu',
-    name: '镜爻 卜卜',
-    region: 'Pupu',
-    cost: 1,
-    power: 1,
-    health: 1,
-    maxHealth: 1,
-    isChampion: false,
-    level: 0,
-    race: ['summon'],
-    type: 'unit',
-    keywords: ['Ephemeral'],
-    description: '入场：复制 卜卜 灵鉴 的面板和关键词。',
-    imageUrl: UNIT_IMAGES.Mirror_pupu,
-    effects: [],
-    isCollectible: false
-  },
-
-
   // --- 新增单位：Logistics (后勤) ---
 
   // --- “重叶”小队 (Chongye Squad) ---
@@ -418,7 +479,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // 1. 梅贝尔 (Mabel)
   Chongye_Squad_Mabel: {
     key: 'Chongye_Squad_Mabel', gachaPool: GachaPoolEnum.Permanent,
-    name: '“重叶”\n梅贝尔 ',
+    name: '“重叶”\n 梅贝尔 ',
     region: 'Pupu',
     cost: 1,
     power: 1,
@@ -428,8 +489,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: [],
-    ability: { id: 'mabel_tutor', label: '导游向导', description: '入场：将牌库中最底部的卜卜置于牌库顶部。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
-    description: '入场：将我们牌库中最底部的卜卜置于牌库顶部。',
+    ability: { id: 'mabel_tutor', label: ' 导游向导 ', description: ' 入场：将牌库中最底部的 “卜卜 灵鉴” 置于牌库顶部。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
+    description: ' 入场：将我们牌库中最底部的 “卜卜 灵鉴” 置于牌库顶部。',
     imageUrl: UNIT_IMAGES.mabel,
     effects: ['effect_mabel_tutor']
   },
@@ -488,9 +549,60 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     type: 'unit',
     keywords: [],
     ability: { id: 'golia_buff', label: '高能碳水补给', description: '入场：本回合给予友方所有单位 +2/+0 和 [碾压]。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
-    description: ' 入场：若友方场上有”卜卜 灵鉴”，本回合给予友方所有单位 +2/+0 和 [碾压]',
+    description: ' 入场：若友方场上有“卜卜 灵鉴”，本回合给予友方所有单位 +2/+0 和 [碾压]',
     imageUrl: UNIT_IMAGES.golia,
     effects: ['effect_golia_buff']
+  },
+  // ==========================================
+    // [新增] 第 3 批法术包实装
+    // ==========================================
+
+  vitality_regen: {
+    key: 'vitality_regen', gachaPool: GachaPoolEnum.Permanent,
+    name: '活力再生',
+    cost: 1,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Pupu',
+    description: '快速：治疗一个受伤的友方单位2点生命值。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.vitality_regen,
+    effects: ['effect_vitality_regen'],
+    ai: { pattern: 'HEAL', priority: 2, config: { targetType: 'unit', healValue: 2, onlyWounded: true } }
+  },
+
+  full_purification: {
+    key: 'full_purification', gachaPool: GachaPoolEnum.Permanent,
+    name: '全力净化',
+    cost: 4,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Pupu',
+    description: '快速：赋予友方各处的“环境净化无人机”+1/+1。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.full_purification,
+    effects: ['effect_full_purification'],
+    ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALL_ALLIES', targetKeyFilter: ['Elice_scope_robot'], power: 1, health: 1, minAllies: 1 } }
+  },
+  // 3. 蟾鉴易纹
+  toad_pattern: {
+    key: 'toad_pattern', gachaPool: GachaPoolEnum.Permanent,
+    name: '蟾鉴易纹',
+    cost: 4,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Pupu',
+    description: '快速：移除友方的幻象关键词，并将它转移给所选的敌方单位。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.toad_pattern,
+    effects: ['effect_toad_pattern'],
+    ai: { pattern: 'KEYWORD_TRANSFER', priority: 3, config: { keyword: 'Ephemeral' } }
   },
 
   // ==========================================
@@ -499,7 +611,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 库兰娅丝 ---
   'Illustration_Squad_Kuranas': {
-    key: 'Illustration_Squad_Kuranas', gachaPool: GachaPoolEnum.Permanent, name: '库兰娅丝', cost: 1, power: 1, health: 1, maxHealth: 1,
+    key: 'Illustration_Squad_Kuranas', gachaPool: GachaPoolEnum.Permanent, name: '"图征"\n库兰娅丝', cost: 1, power: 1, health: 1, maxHealth: 1,
     isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
     description: '入场：召唤一个“清泉医疗鳄”。“清泉医疗鳄”提供的加成视为其造成的伤害，可以计入“猫汐尔 莲驱”的升级进度。',
     imageUrl: UNIT_IMAGES.kuranas,
@@ -518,7 +630,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 斯瓦莉 ---
   'Illustration_Squad_Swali': {
-    key: 'Illustration_Squad_Swali', gachaPool: GachaPoolEnum.Permanent, name: '斯瓦莉', cost: 3, power: 1, health: 3, maxHealth: 4,
+    key: 'Illustration_Squad_Swali', gachaPool: GachaPoolEnum.Permanent, name: '"图征"\n斯瓦莉', cost: 3, power: 1, health: 3, maxHealth: 4,
     isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
     description: '入场：召唤一个“珍馐绵羊”。每目睹使用一个“梦莲无人机”，增加“猫汐尔 莲驱” 3 点升级进度。',
     imageUrl: UNIT_IMAGES.swali,
@@ -537,7 +649,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 索莉妮 ---
   'Illustration_Squad_Soline': {
-    key: 'Illustration_Squad_Soline', gachaPool: GachaPoolEnum.Permanent, name: '索莉妮', cost: 5, power: 2, health: 4, maxHealth: 4,
+    key: 'Illustration_Squad_Soline', gachaPool: GachaPoolEnum.Permanent, name: '"图征"\n索莉妮', cost: 5, power: 2, health: 4, maxHealth: 4,
     isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
     description: '入场：召唤一个“搜救阿努比斯”。“搜救阿努比斯”造成的伤害会额外翻倍后再计入“猫汐尔 莲驱”的升级进度。',
     imageUrl: UNIT_IMAGES.soline,
@@ -576,7 +688,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: ['Channel', 'Ability'],
-    description: '打出时：飞剑2。',
+    description: '打出时：“飞剑”2。',
     ability: { id: 'sacred_tree_lumi_gen', label: '时序加速', description: '打出时：飞剑2。', trigger: 'on_play', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.sacred_tree_lumi,
     effects: ['effect_sacred_tree_lumi'],
@@ -593,7 +705,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: ['Channel','Regeneration'],
-    description: '进攻时：飞剑2并点亮充能。',
+    description: '进攻时：“飞剑”2并点亮充能。',
     ability: { id: 'sacred_tree_margaret_sword', label: '飞剑突袭', description: '进攻时：飞剑2并点亮充能。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.sacred_tree_margaret,
     effects: ['effect_sacred_tree_margaret'],
@@ -610,10 +722,36 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: ['Ability','Overwhelm'],
-    description: '入场时：本回合每飞剑1 则本回合随机给予我方全员每人1次+1/+0或+0/+1并备战。',
+    description: '入场时：本回合每“飞剑”1 则本回合随机给予我方全员每人1次+1/+0或+0/+1并备战。',
     ability: { id: 'sacred_tree_alvina_sword', label: '飞剑召来', description: '入场时：若本回合已飞剑，每飞剑1 则给予我方全员本回合随机+1/+0或+0/+1，并备战。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
     imageUrl: UNIT_IMAGES.sacred_tree_alvina,
     effects: ['effect_sacred_tree_alvina'],
+  },
+
+  // ==========================================
+  // [2026-08-06 莉莉子] 安卡阵营占位法术（名字待定）
+  // 法术9：快速 撤回我方单位 + 飞剑2（已从 TEST 区迁入安卡阵营）
+  // 法术19：慢速 单体3伤，本回合飞剑≥4 则本回合费用-2
+  // 法术20：快速 回响+飞剑2
+  // ==========================================
+
+  temp_spell_09: {
+    key: 'temp_spell_09', name: '御剑归鞘', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
+    description: '快速：撤回一个我方单位（返回手牌），并且飞剑1。', type: 'spell-fast', keywords: [],
+    effects: ['effect_temp_spell_09', 'effect_temp_spell_09_flying'],
+    imageUrl: SPELL_IMAGES.temp_spell_09,
+  },
+  temp_spell_19: {
+    key: 'temp_spell_19', name: '破军', cost: 5, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
+    description: '慢速：对一个敌方单位造成3点伤害。若本回合至少飞剑4，则本回合该法术费用-2。', type: 'spell-slow', keywords: [],
+    effects: ['effect_temp_spell_19_strike'],
+    imageUrl: SPELL_IMAGES.temp_spell_19,
+  },
+  temp_spell_20: {
+    key: 'temp_spell_20', name: '剑鸣回响', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
+    description: '快速：回响，飞剑2。', type: 'spell-slow', keywords: ['Echo'],
+    effects: ['effect_temp_spell_20_flying'],
+    imageUrl: SPELL_IMAGES.temp_spell_20,
   },
 
   // ==========================================
@@ -637,7 +775,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     keywords: ['SpellShield'], // 魔免：优秀的 1 费赖场单位
     description: '',
     imageUrl: UNIT_IMAGES.zhe_hao,
-    effects: []
+    effects: [],
+    isCollectible: false
   },
 
   // 2. 朱鹤 (Zhu He)
@@ -655,7 +794,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     keywords: ['SpellShield'], // 高血量+魔免，非常难解的肉盾
     description: '',
     imageUrl: UNIT_IMAGES.zhu_he,
-    effects: []
+    effects: [],
+    isCollectible: false
   },
 
   // 3. 金琅 (Jin Lang)
@@ -673,7 +813,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     keywords: ['SpellShield'], // 极其稳固的防线
     description: '',
     imageUrl: UNIT_IMAGES.jin_lang,
-    effects: []
+    effects: [],
+    isCollectible: false
   },
 
 
@@ -694,7 +835,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     keywords: ['Channel'], // 充能：每回合回复法术法力
     description: '',
     imageUrl: UNIT_IMAGES.doveil,
-    effects: []
+    effects: [],
+    isCollectible: false
   },
 
   // 5. 爱莉薇娅 (Alivy)
@@ -712,7 +854,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     keywords: ['Channel'],
     description: '',
     imageUrl: UNIT_IMAGES.alivy,
-    effects: []
+    effects: [],
+    isCollectible: false
   },
 
   // 6. 妲柯丝 (Dakors)
@@ -730,7 +873,84 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     keywords: ['Channel'],
     description: '',
     imageUrl: UNIT_IMAGES.dakors,
-    effects: []
+    effects: [],
+    isCollectible: false
+  },
+  temp_spell_01: {
+    key: 'temp_spell_01', name: '降临事件', cost: 9, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '慢速：击杀场上的所有单位。', type: 'spell-slow', keywords: [],
+    effects: ['effect_temp_spell_01'],
+    imageUrl: SPELL_IMAGES.temp_spell_01,
+  },
+  temp_spell_02: {
+    key: 'temp_spell_02', name: '瓦尔哈拉的呼唤', cost: 10, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '慢速：复活我方本牌局死亡的最强的6个单位，且全员带[幻象]。', type: 'spell-slow', keywords: [],
+    effects: ['effect_temp_spell_02'],
+    imageUrl: SPELL_IMAGES.temp_spell_02,
+  },
+  temp_spell_05: {
+    key: 'temp_spell_05', name: '单刀直入', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst', // [费用待定]
+    description: '快速：对任意一个目标造成2点伤害。', type: 'spell-fast', keywords: [],
+    effects: ['effect_temp_spell_05'],
+    imageUrl: SPELL_IMAGES.temp_spell_05,
+  },
+  temp_spell_06: {
+    key: 'temp_spell_06', name: '抵抗', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '极速：无效化一个费用小于等于3的快速法术。', type: 'spell-burst', keywords: [],
+    effects: ['effect_temp_spell_06'],
+    imageUrl: SPELL_IMAGES.temp_spell_06,
+  },
+  temp_spell_07: {
+    key: 'temp_spell_07', name: '抗拒', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '快速：无效化一个快速或者慢速法术。', type: 'spell-fast', keywords: [],
+    effects: ['effect_temp_spell_07'],
+    imageUrl: SPELL_IMAGES.temp_spell_07,
+  },
+  temp_spell_08: {
+    key: 'temp_spell_08', name: '拒绝', cost: 7, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '快速：无效化当前法术堆叠中的所有敌方法术。', type: 'spell-fast', keywords: [],
+    effects: ['effect_temp_spell_08'],
+    imageUrl: SPELL_IMAGES.temp_spell_08,
+  },
+  temp_spell_10: {
+    key: 'temp_spell_10', name: '战术回撤', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '快速：从战场上撤回一个友方单位，生成一张瞬逝的“战术闪击”。', type: 'spell-fast', keywords: [],
+    effects: ['effect_temp_spell_10', 'effect_temp_spell_10_generate'],
+    imageUrl: SPELL_IMAGES.temp_spell_10,
+  },
+  temp_spell_11: {
+    key: 'temp_spell_11', name: '战术闪击', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '极速：选择一个手牌中费用小于等于3的单位打出。', type: 'spell-burst', keywords: [],
+    effects: ['effect_temp_spell_11'],
+    imageUrl: SPELL_IMAGES.temp_spell_11,
+    isCollectible: false
+  },
+  temp_spell_13: {
+    key: 'temp_spell_13', name: '深思熟虑', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '极速：抉择："正面突破" 或 "迂回防守"。', type: 'spell-burst', keywords: [],
+    choices: ['temp_spell_14', 'temp_spell_15'],
+    effects: ['effect_temp_spell_13'],
+    imageUrl: SPELL_IMAGES.temp_spell_13,
+  },
+  temp_spell_14: {
+    key: 'temp_spell_14', name: '正面突破', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '极速：本回合给予一个单位+3/+0。（"深思熟虑"的衍生法术）', type: 'spell-burst', keywords: [],
+    effects: ['effect_temp_spell_14'],
+    imageUrl: SPELL_IMAGES.temp_spell_14,
+    isCollectible: false
+  },
+  temp_spell_15: {
+    key: 'temp_spell_15', name: '迂回防守', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '极速：本回合给予一个单位+0/+3。（"深思熟虑"的衍生法术）', type: 'spell-burst', keywords: [],
+    effects: ['effect_temp_spell_15'],
+    imageUrl: SPELL_IMAGES.temp_spell_15,
+    isCollectible: false
+  },
+  temp_spell_16: {
+    key: 'temp_spell_16', name: '神格共鸣', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
+    description: '极速：必须选择三个天启者，之后赋予她们+2/+2。', type: 'spell-burst', keywords: [],
+    effects: ['effect_temp_spell_16'],
+    imageUrl: SPELL_IMAGES.temp_spell_16,
   },
 
 
@@ -1049,7 +1269,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'Bridget_Squad_Valerie', gachaPool: GachaPoolEnum.Permanent, name: '”布里吉”\n瓦莱莉', region: 'Logistics',
     cost: 7, power: 2, health: 5, maxHealth: 5,
     isChampion: false, level: 0, type: 'unit', keywords: ['Ability'], race: ['summoner'],
-    description: '入场：可弃置任意数量手牌，召唤一只”夜巡猫头鹰”。',
+    description: '入场：可弃置任意数量手牌，召唤一只“夜巡猫头鹰”。',
     ability: { id: 'bridget_valerie_discard_summon', label: '夜巡', description: '入场：可弃置任意数量手牌，召唤一只”夜巡猫头鹰”。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
     imageUrl: UNIT_IMAGES.valerie, effects: ['effect_bridget_valerie_discard_summon']
   },
@@ -1058,7 +1278,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'Night_Owl', name: '夜巡猫头鹰', cost: 0,
     power: 3, health: 3, maxHealth: 2,
     isChampion: false, level: 0, region: 'Logistics', race: ['summon'],
-    description: '瓦莱莉弃置的每张手牌使此单位 +1/+1。亡语：抽取（弃置数量-1）张卡牌。',
+    description: '“瓦莱莉”弃置的每张手牌使此单位 +1/+1。亡语：抽取（弃置数量-1）张卡牌。',
     type: 'unit', keywords: ['Ephemeral', 'Last Breath','Ability'],
     ability: { id: 'night_owl_death_draw', label: '亡语抽牌', description: '亡语：抽取（弃置数量-1）张卡牌。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
     imageUrl: UNIT_IMAGES.valerie,
@@ -1520,127 +1740,6 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: UNIT_IMAGES.wasi, effects: []
   },
 
-  // --- 通用法术：梦莲无人机 ---
-  'dream_lotus_drone': {
-    key: 'dream_lotus_drone', name: '梦莲无人机', cost: 1, power: 0, health: 0, maxHealth: 0,
-    isChampion: false, level: 0, region: 'Mauxir', type: 'spell-burst', keywords: [],
-    description: '赋予一个“召唤衍生物”+2/+0。',
-    imageUrl: SPELL_IMAGES.dream_lotus_drone,
-    effects: ['effect_dream_lotus_drone'],
-    isCollectible: false,
-    ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALLY_UNIT', raceFilter: ['summon'], power: 2, health: 0 } },
-  },
-
-
-
-  // 1. 单挑 (Single Combat)
-  single_combat: {
-    key: 'single_combat', gachaPool: GachaPoolEnum.Permanent, name: '单挑', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
-    description: '一个友方单位和一个敌方单位相互打击。',
-    type: 'spell-fast',
-    keywords: [],
-    // [修改] 使用注册的图片
-    imageUrl: SPELL_IMAGES.single_combat,
-    effects: ['effect_single_combat'],
-    ai: { pattern: 'DUEL', priority: 2, config: { policies: ['favorable', 'sacrifice', 'clear_path'] } }
-  },
-
-  // 2. 祈愿 (Prayer)
-  prayer: {
-    key: 'prayer', gachaPool: GachaPoolEnum.Permanent, name: '祈愿', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
-    description: '慢速：赋予一个单位 +1/+1', type: 'spell-slow', keywords: [],
-    effects: ['effect_prayer'],
-    imageUrl: SPELL_IMAGES.prayer,
-    ai: { pattern: 'BUFF', priority: 3, config: { targetType: 'ALLY_UNIT', power: 1, health: 1 } }
-  },
-
-  // 3. 专注 (Focus)
-  focus: {
-    key: 'focus', gachaPool: GachaPoolEnum.Permanent, name: '专注', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
-    description: '慢速：进行备战', type: 'spell-slow', keywords: [],
-    imageUrl: SPELL_IMAGES.focus,
-    effects: ['effect_focus'],
-    ai: { pattern: 'RALLY', priority: 1, config: { denyIfHasToken: true, minAttackers: 1 } }
-  },
-
-  // 4. 暗箭 (Hidden Arrow)
-  hidden_arrow: {
-    key: 'hidden_arrow', gachaPool: GachaPoolEnum.Permanent, name: '暗箭', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
-    description: '极速：对任意一个单位或水晶造成{value}点伤害', type: 'spell-burst', keywords: [],
-    imageUrl: SPELL_IMAGES.hidden_arrow,
-    effects: ['effect_hidden_arrow'],
-    ai: { pattern: 'DAMAGE', priority: 4, config: { targetType: 'any', canTargetSelf: true, lethalPriority: true, damageValue: 1 } }
-  },
-
-  // 5. 振奋 (Inspire)
-  inspire: {
-    key: 'inspire', gachaPool: GachaPoolEnum.Permanent, name: '振奋', cost: 5, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
-    description: '慢速：本回合给予友方全体单位+2/+1', type: 'spell-slow', keywords: [],
-    imageUrl: SPELL_IMAGES.inspire,
-    effects: ['effect_inspire'],
-    ai: { pattern: 'BUFF', priority: 2, config: { minAllies: 2 } }
-  },
-
-  // 6. 破坏 (Destruction)
-  destruction: {
-    key: 'destruction', gachaPool: GachaPoolEnum.Permanent, name: '破坏', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Fenny',
-    description: '慢速：对敌方水晶造成{value}点伤害', type: 'spell-slow', keywords: [],
-    imageUrl: SPELL_IMAGES.destruction,
-    effects: ['effect_destruction'],
-    ai: { pattern: 'DAMAGE', priority: 3, config: { targetType: 'nexus' } }
-  },
-  // ==========================================
-    // [新增] 第 3 批法术包实装
-    // ==========================================
-
-  vitality_regen: {
-    key: 'vitality_regen', gachaPool: GachaPoolEnum.Permanent,
-    name: '活力再生',
-    cost: 1,
-    power: 0, health: 0, maxHealth: 0,
-    isChampion: false,
-    level: 0,
-    region: 'Pupu',
-    description: '快速：治疗一个受伤的友方单位2点生命值。',
-    type: 'spell-fast',
-    keywords: [],
-    imageUrl: SPELL_IMAGES.vitality_regen,
-    effects: ['effect_vitality_regen'],
-    ai: { pattern: 'HEAL', priority: 2, config: { targetType: 'unit', healValue: 2, onlyWounded: true } }
-  },
-
-  full_purification: {
-    key: 'full_purification', gachaPool: GachaPoolEnum.Permanent,
-    name: '全力净化',
-    cost: 4,
-    power: 0, health: 0, maxHealth: 0,
-    isChampion: false,
-    level: 0,
-    region: 'Pupu',
-    description: '快速：赋予友方各处的”环境净化无人机”+1/+1。',
-    type: 'spell-fast',
-    keywords: [],
-    imageUrl: SPELL_IMAGES.full_purification,
-    effects: ['effect_full_purification'],
-    ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALL_ALLIES', targetKeyFilter: ['Elice_scope_robot'], power: 1, health: 1, minAllies: 1 } }
-  },
-  // 3. 蟾鉴易纹
-  toad_pattern: {
-    key: 'toad_pattern', gachaPool: GachaPoolEnum.Permanent,
-    name: '蟾鉴易纹',
-    cost: 4,
-    power: 0, health: 0, maxHealth: 0,
-    isChampion: false,
-    level: 0,
-    region: 'Pupu',
-    description: '快速：移除友方的幻象关键词，并将它转移给所选的敌方单位。',
-    type: 'spell-fast',
-    keywords: [],
-    imageUrl: SPELL_IMAGES.toad_pattern,
-    effects: ['effect_toad_pattern'],
-    ai: { pattern: 'KEYWORD_TRANSFER', priority: 3, config: { keyword: 'Ephemeral' } }
-  },
-
   // ==========================================
   // [新增] 第 4 批通用法术
   // ==========================================
@@ -1712,42 +1811,12 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_bader_reagent_heal', 'effect_bader_reagent_buff'],
     ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALL_ALLIES', health: 1, minAllies: 1 } }
   },
-  // 1. 鬼影森森
-  ghostly_shadows: {
-    key: 'ghostly_shadows', gachaPool: GachaPoolEnum.Permanent,
-    name: '鬼影森森',
-    cost: 4,
-    power: 0, health: 0, maxHealth: 0,
-    isChampion: false,
-    level: 0,
-    region: 'Titan',
-    description: '慢速：召唤三个异化人至备战席。',
-    type: 'spell-slow',
-    keywords: [],
-    imageUrl: SPELL_IMAGES.ghostly_shadows,
-    effects: ['effect_ghostly_shadows'],
-    ai: { pattern: 'SUMMON', priority: 2, config: { minBoardSpace: 3, summonCount: 3 } },
+  temp_spell_18: {
+    key: 'temp_spell_18', name: '刻骨冰寒', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Logistics',
+    description: '极速：冻结一个敌人。', type: 'spell-burst', keywords: [],
+    effects: ['effect_temp_spell_18'],
+    imageUrl: SPELL_IMAGES.temp_spell_18,
   },
-
-  // 2. 毁灭仪式
-  destruction_ritual: {
-    key: 'destruction_ritual', gachaPool: GachaPoolEnum.Permanent,
-    name: '毁灭仪式',
-    cost: 3,
-    power: 0, health: 0, maxHealth: 0,
-    isChampion: false,
-    level: 0,
-    region: 'Titan',
-    description: '快速：击杀一个泰坦友方单位，以对一个敌方单位造成3点伤害。',
-    type: 'spell-fast',
-    keywords: [],
-    imageUrl: SPELL_IMAGES.destruction_ritual,
-    effects: ['effect_destruction_ritual'],
-    ai: { pattern: 'SACRIFICE', priority: 2, config: { damageValue: 3, requireKeyword: 'Titan', sacrificeMaxCost: 3 } },
-  },
-
-
-
   // ==========================================
   // 泰坦生态系 (Titan Units)
   // ==========================================
@@ -1798,6 +1867,66 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'titan_gaimer', gachaPool: GachaPoolEnum.Permanent, name: '盖弥尔', cost: 8, power: 2, health: 8, maxHealth: 8, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
     description: '泰坦脉冲时攻击力加成减半(向下取整)，关键词永不黯淡。每次脉冲时对敌方所有单位与水晶造成 1 点伤害。', type: 'unit', keywords: ['Titan', 'Barrier'],
     imageUrl: TITAN_IMAGES.gaimer,
+  },
+  temp_spell_03: {
+    key: 'temp_spell_03', name: '源火重燃', cost: 6, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Titan',
+    description: '慢速：再次点亮我方所有泰坦单位的关键词。', type: 'spell-slow', keywords: [],
+    effects: ['effect_temp_spell_03'],
+    imageUrl: SPELL_IMAGES.temp_spell_03,
+    isCollectible: false
+  },
+  temp_spell_04: {
+    key: 'temp_spell_04', name: '天声震落', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Titan',
+    description: '慢速：立刻触发我方所有单位的泰坦脉冲。', type: 'spell-slow', keywords: [],
+    effects: ['effect_temp_spell_04'],
+    imageUrl: SPELL_IMAGES.temp_spell_04,
+    isCollectible: false
+  },
+  // 1. 鬼影森森
+  ghostly_shadows: {
+    key: 'ghostly_shadows', gachaPool: GachaPoolEnum.Permanent,
+    name: '鬼影森森',
+    cost: 4,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Titan',
+    description: '慢速：召唤三个“异化人”至备战席。',
+    type: 'spell-slow',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.ghostly_shadows,
+    effects: ['effect_ghostly_shadows'],
+    ai: { pattern: 'SUMMON', priority: 2, config: { minBoardSpace: 3, summonCount: 3 } },
+  },
+
+  // 2. 毁灭仪式
+  destruction_ritual: {
+    key: 'destruction_ritual', gachaPool: GachaPoolEnum.Permanent,
+    name: '毁灭仪式',
+    cost: 3,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Titan',
+    description: '快速：击杀一个泰坦友方单位，以对一个敌方单位造成3点伤害。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.destruction_ritual,
+    effects: ['effect_destruction_ritual'],
+    ai: { pattern: 'SACRIFICE', priority: 2, config: { damageValue: 3, requireKeyword: 'Titan', sacrificeMaxCost: 3 } },
+  },
+  temp_spell_12: {
+    key: 'temp_spell_12', name: '泰坦降临', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Titan',
+    description: '慢速：燃尽，根据消耗的费用召唤对应的随机数量随机费用的泰坦单位。', type: 'spell-slow', keywords: [],
+    effects: ['effect_temp_spell_12'],
+    imageUrl: SPELL_IMAGES.temp_spell_12,
+  },
+
+  temp_spell_17: {
+    key: 'temp_spell_17', name: '芬格尼尔之冬', cost: 9, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Titan',
+    description: '慢速：本回合冻结所有敌人，并对所有敌人造成3点伤害。', type: 'spell-slow', keywords: [],
+    effects: ['effect_temp_spell_17'],
+    imageUrl: SPELL_IMAGES.temp_spell_17,
   },
 
   // --- 测试专用卡 ---
@@ -2066,10 +2195,6 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: TEST_IMAGES.titan,
     isCollectible: false
   },
-
-
-
-
 };
 
 

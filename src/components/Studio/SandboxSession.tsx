@@ -42,7 +42,7 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
     } = useGameState([], [], true);
 
     const spellSystem = useSpellSystem({
-        onComplete: (card, targets) => actions.finalizeSpell(card, 'player', targets)
+        onComplete: (card, targets) => { actions.finalizeSpell(card, 'player', targets); }
     });
 
     // === UI 抽屉状态 ===
@@ -522,7 +522,7 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
                     </div>
 
                     <div className="flex gap-2 mt-auto">
-                        <button onClick={actions.startRound} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded flex items-center justify-center gap-1 transition-colors"><FastForward size={14}/> 新回合</button>
+                        <button onClick={() => actions.startRound()} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded flex items-center justify-center gap-1 transition-colors"><FastForward size={14}/> 新回合</button>
                         <button onClick={() => {
                             if (sandboxIdentity === 'player') setGame(p=>({...p, playerMana: 10, playerMaxMana: 10, playerSpellMana: 3, playerNexus: 20}));
                             else setGame(p=>({...p, enemyMana: 10, enemyMaxMana: 10, enemySpellMana: 3, enemyNexus: 20}));

@@ -110,6 +110,8 @@ export const GameEvents = {
 
     // [Volatile] 手牌瞬逝弃置事件 — 回合结束时 Volatile 卡牌从手牌弃置
     HAND_VOLATILE_DISCARD: 'hand_volatile_discard',
+    // [2026-08-04 莉莉子] 手牌离场动画完成广播 — 供回合引擎等待瞬逝动画播完再开新回合
+    HAND_DISCARD_ANIM_DONE: 'hand_discard_anim_done',
 
     // ════════════════════════════════════════════════════════
     //  🎴 抽卡动画事件链 — 事件驱动替代时间锁
@@ -134,6 +136,12 @@ export const GameEvents = {
     // [抽卡] Phase 3 完成: 动画层通知逻辑层"动画播完"
     // Payload: { animId: string, card: CardData, owner: 'player' | 'enemy', isBurn: boolean }
     DRAW_COMPLETE: 'draw_complete',
+    // [2026-08-06 莉莉子] 抽卡爆牌销毁（爆牌不走死亡流程，不计墓地/阵亡）
+    DRAW_BURN: 'draw_burn',
+
+    // [2026-08-11 莉莉子] 迷宫强化战斗内触发 → 水晶处卡面淡入淡出闪烁
+    // Payload: { icon: string, name: string }
+    ROGUE_BUFF_FLASH: 'rogue_buff_flash',
 } as const;
 
 // ================= [新增] 弹道编排器专属事件 =================

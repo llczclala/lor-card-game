@@ -6,14 +6,16 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { CardData, GameState, GameRecordCategory, SpellStackItem, RecordEntity } from '../types';
 import { createCard, CARD_DB } from '../data/cards';
 import {  calculateNewMana, getLeveledUpCard, getEffectiveSpellCost, upgradeAcaciaHand } from '../utils/gameRules';
-import { executeSpellEffect } from '../logic/spells';
-import { resolveSingleCombat, getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
-import { calculateRoundStart, canAfford } from '../logic/core';
-import { eventBus, GameEvents,StrikeEvents } from '../utils/eventBus';
-import { applyRoundStartKeywords, applyRoundEndKeywords, resolveTitanPulse, getPower, applyChannelOnSummon } from '../logic/keywords'; // [新增] 引入真实攻击力探针
+import { resolveSingleCombat } from '../logic/combat'; // [新增] 引入真实血量探针
+import { canAfford } from '../logic/core';
+import { eventBus, GameEvents } from '../utils/eventBus';
+import { applyChannelOnSummon, applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
 import { checkCardLevelUp, accumulateMauxirDamage, isSummonerOrSummon } from '../utils/gameRules';
 import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
 import { useRoundLifecycle } from './useRoundLifecycle'; // [核心新增] 引入剥离的回合生命周期引擎
+import { getRogueDefs, flashRogueBuff } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发
+import { executeEquipmentOnPlay } from '../logic/equipment'; // [2026-08-12] 装备系统：打出时效果执行
+import { attachEquipment } from '../data/equipment'; // [2026-08-12 天启者养成] 开局装备挂载
 
 // [修复 A] 显式断言类型，并确保 createCard 返回的是 Partial CardData 或正确的基类
 const createFullCard = (key: string): CardData => {
@@ -46,47 +48,6 @@ const shuffleDeck = <T>(array: T[]): T[] => {
     }
     return newArray;
 };
-// ==========================================
-// [特效包装器] 拦截法术伤害，强制注入受击状态 (解决 BUG 5)
-// ==========================================
-const wrapDamageHitState = (originalSetter: React.Dispatch<React.SetStateAction<CardData[]>>) => {
-    return (action: React.SetStateAction<CardData[]>) => {
-        originalSetter(prev => {
-            const next = typeof action === 'function' ? action(prev) : action;
-            return next.map(newCard => {
-                const oldCard = prev.find(c => c.id === newCard.id);
-                // 只要新状态的累计受伤值 > 旧状态，判定为受击，强制改写动画状态！
-                if (oldCard && (newCard.damageTaken || 0) > (oldCard.damageTaken || 0)) {
-                    return { ...newCard, animState: 'hit' as const };
-                }
-                return newCard;
-            });
-        });
-    };
-};
-
-const wrapCombatHitState = (originalSetter: React.Dispatch<React.SetStateAction<any[]>>) => {
-    return (action: React.SetStateAction<any[]>) => {
-        originalSetter(prev => {
-            const next = typeof action === 'function' ? action(prev) : action;
-            return next.map(newFight => {
-                const oldFight = prev.find(f => f.attacker.id === newFight.attacker.id);
-                if (!oldFight) return newFight;
-                let updatedAttacker = newFight.attacker;
-                let updatedBlocker = newFight.blocker;
-
-                if ((updatedAttacker.damageTaken || 0) > (oldFight.attacker.damageTaken || 0)) {
-                    updatedAttacker = { ...updatedAttacker, animState: 'hit' as const };
-                }
-                if (updatedBlocker && oldFight.blocker && (updatedBlocker.damageTaken || 0) > (oldFight.blocker.damageTaken || 0)) {
-                    updatedBlocker = { ...updatedBlocker, animState: 'hit' as const };
-                }
-                return { ...newFight, attacker: updatedAttacker, blocker: updatedBlocker };
-            });
-        });
-    };
-};
-
 // ★ 教程初始战场配置
 export interface TutorialInitState {
     playerField?: { cardKey: string; hp: number; power: number }[];
@@ -102,14 +63,17 @@ export interface TutorialInitState {
 }
 
 // 1. 接收 initialDeck 参数，默认为空数组
-export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false, disableMulligan: boolean = false, tutorialInit?: TutorialInitState, firstAttacker: 'player' | 'enemy' = 'player') => {
+export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false, disableMulligan: boolean = false, tutorialInit?: TutorialInitState, firstAttacker: 'player' | 'enemy' = 'player', initialPlayerNexus?: number, playerNexusMax?: number, rogueEnhancements: string[] = [], rogueEquipments: Record<string, string[]> = {}) => {
     // --- 1. 状态定义 ---
     const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
 
     const [game, setGame] = useState<GameState>({
         playerMana: 0, playerMaxMana: 0, playerSpellMana: 0,
         enemyMana: 0, enemyMaxMana: 0, enemySpellMana: 0,
-        playerNexus: 20, enemyNexus: 20,
+        playerNexus: initialPlayerNexus ?? 20, // [2026-08-11] 肉鸽真衔接：初值=run.hp
+        playerNexusMax: playerNexusMax ?? 20, // [2026-08-11] 玩家水晶回血上限（肉鸽=run.maxHp）
+        rogueEnhancements: rogueEnhancements || [], // [2026-08-11] 玩家迷宫强化 id（战斗内 battleEffect 分发）
+        enemyNexus: 20,
         round: 0,
         attackToken: { player: null, enemy: null },
         phase: 'mulligan',
@@ -141,6 +105,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         everywhereBuffs: [], // [核心新增] 全域光环账本：用于记录各处 Buff
         friendlyUnitDeaths: 0, // [2026-07-14 梵音] 我方单位阵亡计数器
         enemyUnitDeaths: 0, // [2026-07-15] 敌方单位阵亡计数器
+        playerGraveyard: [], // [2026-08-06 莉莉子] 我方墓地（死亡单位快照）
+        enemyGraveyard: [], // [2026-08-06 莉莉子] 敌方墓地（死亡单位快照）
         // [2026-07-29 安卡希雅] 飞剑计数系统
         playerFlyingSwordsTotal: 0,
         playerGreatSwordsTotal: 0,
@@ -250,7 +216,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     // ==========================================
     // [核心重构] 挂载独立的生命周期引擎
     // ==========================================
-    const { startRound, executeRoundEndSequence } = useRoundLifecycle({
+    const { startRound, executeRoundEndSequence, triggerFirstRoundRogueEnhance } = useRoundLifecycle({
         stateRef,
         heroActionHistory,
         enemyUnitsPlayedRef,
@@ -273,6 +239,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // [2026-07-23] 对局记录注入
         recordAction,
         captureSnapshot,
+        // [2026-08-14 武装] 秘法回响：玩家挂载则回合开始恢复全部法术法力
+        armamentManaRestore: Object.values(rogueEquipments || {}).some(list => list.includes('arm_spell_mana')),
     });
 
     // --- 3. 基础操作 ---
@@ -521,6 +489,18 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         if (extra.length > 0) {
             setPlayerHand(prev => [...prev, ...extra]);
         }
+
+        // [2026-08-11 莉莉子] 迷宫强化 game_start：开局召唤单位（幽灵行动→安提娜）
+        getRogueDefs(stateRef.current.game.rogueEnhancements, 'game_start').forEach(def => {
+            const summonKey = def.battleEffect?.params?.summonKey as string | undefined;
+            if (summonKey) {
+                setPlayerBench(prev => {
+                    if (prev.some(c => c.key === summonKey) || prev.length >= 6) return prev;
+                    return [...prev, { ...createFullCard(summonKey), animState: 'summoning' as const }];
+                });
+            }
+            flashRogueBuff(def);
+        });
     }, []);
 
     // [飞剑] 检测交战区出现飞剑衍生物→自动进入格挡阶段
@@ -531,14 +511,22 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         );
         if (hasSwords && game.phase === 'main' && !flyingSwordPhaseGuardRef.current) {
             flyingSwordPhaseGuardRef.current = true;
+            // [2026-08-06 莉莉子 敌我修复] 按飞剑归属决定防守方，而非无条件翻转 turnOwner：
+            //   - 敌方飞剑（owner='enemy'）→ 玩家格挡 → turnOwner='player'
+            //   - 我方飞剑（owner='player'）→ 敌方格挡 → turnOwner='enemy'
+            // 防止玩家把自己单位派去格挡自己召唤的飞剑（结算后归位错乱）。
+            const swordOwner = combatField.find(f =>
+                f.attacker?.key === 'Acacia_Flying_Sword' || f.attacker?.key === 'Acacia_Great_Sword'
+            )?.owner;
+            const defensiveSide = swordOwner === 'player' ? 'enemy' : 'player';
             setGame(prev => ({
                 ...prev,
                 phase: 'block_declare',
-                turnOwner: prev.turnOwner === 'player' ? 'enemy' : 'player',
+                turnOwner: defensiveSide as 'player' | 'enemy',
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now(),
             }));
-            setMessage('飞剑来袭，请分配格挡！');
+            setMessage(swordOwner === 'player' ? '我方飞剑来袭，请敌方格挡' : '敌方飞剑来袭，请分配格挡！');
         }
         if (!hasSwords) {
             flyingSwordPhaseGuardRef.current = false;
@@ -1135,7 +1123,17 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
     const resetGame = () => {
         // [修复] 替换未定义的 initDeck 函数，使用正规的解析与洗牌流程
-        const pDeck = shuffleDeck(deck.filter(key => CARD_DB[key]).map(createFullCard));
+        const pDeck = shuffleDeck(deck.filter(key => CARD_DB[key]).map(key => {
+            // [2026-08-12 天启者养成] 开局装备：把 run 记录的装备挂到对应卡（目前等级解锁的装备挂起始英雄卡）
+            let card = createFullCard(key);
+            const equips = rogueEquipments?.[key];
+            if (equips?.length) {
+                // [2026-08-15] 武装/装备应用日志（排查武装断连：正常应看到英雄卡应用了武装 id）
+                console.log(`[ResetGame] 卡 ${key} 应用装备 [${equips.join(', ')}]`);
+                for (const eid of equips) card = attachEquipment(card, eid);
+            }
+            return card;
+        }));
         const eDeck = shuffleDeck(enemyDeck.filter(key => CARD_DB[key]).map(createFullCard));
 
         // 洗牌并抽初始手牌 (各4张)
@@ -1160,7 +1158,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             round: 1,
             phase: 'main',
             turnOwner: 'player',
-            playerNexus: 20,
+            playerNexus: initialPlayerNexus ?? 20, // [2026-08-11] 同步注入初值（整局重开路径）
+            playerNexusMax: playerNexusMax ?? 20, // [2026-08-11] 同步回血上限
             enemyNexus: 20,
             // [修复] 删除非法的 playerMaxManaCap 和 enemyMaxManaCap
             spellStack: [],
@@ -1256,6 +1255,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     const def = EFFECT_DB[effId];
                     // [核心修复] 放宽匹配规则
                     if (def && def.timing.includes('ON_ATTACK_DECLARE')) {
+                        // [LILITH-DEBUG] 镜爻卜卜复制排查：记录攻击宣告效果触发次数
+                        if (effId === 'effect_pupu_level2_attack' || effId === 'effect_test_pupu_attack') {
+                            console.log(`[LILITH-DEBUG][ATTACK-DECLARE] 触发 effect=${effId} attacker=${fight.attacker.key}(${fight.attacker.name}) lv=${fight.attacker.level} owner=${fight.owner} combatLen=${tempCombatField ? tempCombatField.length : 0} benchLen=${tempPlayerBench.length}`);
+                        }
                         const ctx: EffectContext = {
                             game: tempGame,
                             playerBench: tempPlayerBench,
@@ -1685,10 +1688,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 }
 
                 // [2026-07-14 梵音] 单位阵亡计数器（用于莎罗的入场BUFF，双方各计各的）
+                // [2026-08-06 莉莉子] 同步写入墓地（死亡单位快照，供法术2「瓦尔哈拉的呼唤」复活）
+                // 注意：ELIMINATED 消亡替换已在上方 return 跳过；爆牌销毁不走 UNIT_DIED 流程 → 两者天然不计入墓地
+                const makeGraveSnapshot = (u: CardData): CardData =>
+                    ({ ...u, buffs: { power: u.buffs?.power || 0, health: u.buffs?.health || 0 } } as CardData);
                 if (owner === 'player') {
                     nextGame.friendlyUnitDeaths = (nextGame.friendlyUnitDeaths || 0) + 1;
+                    nextGame.playerGraveyard = [...(nextGame.playerGraveyard || []), makeGraveSnapshot(unit)];
                 } else {
                     nextGame.enemyUnitDeaths = (nextGame.enemyUnitDeaths || 0) + 1;
+                    nextGame.enemyGraveyard = [...(nextGame.enemyGraveyard || []), makeGraveSnapshot(unit)];
                 }
 
                 if (unit.effects && unit.effects.length > 0) {
@@ -2532,6 +2541,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             };
         });
 
+        // [LILITH-DEBUG] 镜爻卜卜复制排查：幸存者里有没有镜爻卜卜被挪回备战席
+        const mirP = buffedSurvivorsP.filter((s: any) => s.key === 'Mirror_pupu');
+        const mirE = buffedSurvivorsE.filter((s: any) => s.key === 'Mirror_pupu');
+        if (mirP.length > 0 || mirE.length > 0) {
+            console.log(`[LILITH-DEBUG][SURVIVOR] 镜爻卜卜作为幸存者回归备战席! P=${mirP.length} E=${mirE.length}`);
+        }
+
         setPlayerBench(prev => [...prev, ...buffedSurvivorsP]);
         setEnemyBench(prev => [...prev, ...buffedSurvivorsE]);
         setCombatField([]);
@@ -2572,7 +2588,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
         // [底层重构] 英雄法术不再进行静默转换，而是统一进入抉择流程
         // [修正] 只有带 choices 的抉择法术才走抉择流程，支援技（无 choices）不触发
-        if (card.associatedChampionKey && card.choices) {
+        // [2026-08-05 莉莉子 法术13] 放宽：普通法术（无 associatedChampionKey）带 choices 也可抉择
+        if (card.choices && card.choices.length > 0) {
             const champKey = card.associatedChampionKey;
             const champBench = owner === 'player' ? playerBench : enemyBench;
             // [修复] 三重判定：备战席 + 交战区 + 全局升级记录
@@ -2923,6 +2940,39 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 if (owner === 'player') tempPlayerBench.push(cardWithAbility);
                 else tempEnemyBench.push(cardWithAbility);
 
+                // [2026-08-11 莉莉子] 迷宫强化 on_summon：召唤单位时被动生效
+                if (owner === 'player') {
+                    getRogueDefs(tempGame.rogueEnhancements, 'on_summon').forEach(def => {
+                        const be = def.battleEffect!;
+                        if (be.effectClass === 'BUFF') {
+                            // 机不可失：本回合给刚上场单位 +1/+1
+                            const u = tempPlayerBench[tempPlayerBench.length - 1];
+                            if (u) {
+                                tempPlayerBench[tempPlayerBench.length - 1] = {
+                                    ...u,
+                                    roundBuffs: {
+                                        power: (u.roundBuffs?.power || 0) + ((be.params?.power as number) ?? 1),
+                                        health: (u.roundBuffs?.health || 0) + ((be.params?.health as number) ?? 1),
+                                    },
+                                };
+                            }
+                        } else if (be.effectClass === 'CLONE_AND_SUMMON') {
+                            // 暗影双生：每回合首次打出单位 → 召唤临时复制（Ephemeral）
+                            if (!tempGame.rogueFirstSummonDone && tempPlayerBench.length < 6) {
+                                tempPlayerBench.push({
+                                    ...cardWithAbility,
+                                    id: Math.random().toString(36).substr(2, 9),
+                                    keywords: [...(cardWithAbility.keywords || []), 'Ephemeral'],
+                                    animState: 'summoning' as const,
+                                });
+                                tempGame = { ...tempGame, rogueFirstSummonDone: true };
+                                eventBus.emit(GameEvents.SFX_SUMMON);
+                            }
+                        }
+                        flashRogueBuff(def);
+                    });
+                }
+
                 // 2. 扫描并触发入场特效 (ON_PLAY)
                 if (card.effects && card.effects.length > 0) {
                     // [精灵小队 日志] 打印斯涅妮卡入场时的效果扫描
@@ -3083,6 +3133,36 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 tempPlayerBench = flashOnPlay(tempPlayerBench);
                 tempEnemyBench = flashOnPlay(tempEnemyBench);
 
+                // [2026-08-06 莉莉子 Echo 回响] 单位打出并结算后：在手牌生成一张该牌的瞬逝复制品
+                if (card.keywords.includes('Echo')) {
+                    const ownerHand = owner === 'player'
+                        ? stateRef.current.playerHand
+                        : stateRef.current.enemyHand;
+                    const echoResult = applyEchoOnPlay(card, ownerHand, owner);
+                    if (echoResult.echoedCards.length > 0) {
+                        if (owner === 'player') {
+                            setPlayerHand(echoResult.hand);
+                            stateRef.current.playerHand = echoResult.hand;
+                        } else {
+                            setEnemyHand(echoResult.hand);
+                            stateRef.current.enemyHand = echoResult.hand;
+                        }
+                        // 播放生成动画：中央展示 → 飞入手牌
+                        echoResult.echoedCards.forEach(echoCard => {
+                            const animId = `echo-${echoCard.id}-${Date.now()}`;
+                            eventBus.emit(GameEvents.DRAW_START, {
+                                animId, card: echoCard, owner,
+                                skipHandAdd: true,
+                                skipDeckAnim: true,
+                            });
+                        });
+                    }
+                }
+
+                // [2026-08-12 装备系统] 打出时装备效果：对敌方备战席所有单位造成伤害（装备3·备战爆破）
+                const equipEnemyBench = executeEquipmentOnPlay(tempEnemyBench, card);
+                if (equipEnemyBench) tempEnemyBench = equipEnemyBench;
+
                 // 3. 统一将上场与战吼的结果拍板，下发给 React 渲染层
                 setPlayerBench(tempPlayerBench);
                 setEnemyBench(tempEnemyBench);
@@ -3143,6 +3223,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
     const toggleAttacker = (card: CardData, toCombat: boolean) => {
         if (toCombat) {
+            // [2026-08-08 莉莉子] 堆叠非空时禁止上阵进攻（堵住拖拽绕过 initiateAttack 的洞）
+            // 引擎层兜底：无论从哪条路径调上来，法术结算期间都不得派兵进攻
+            if (stateRef.current.game.spellStack.length > 0) {
+                setMessage("法术结算中，无法进攻！");
+                return;
+            }
             // [核心修复] 拦截上限：战场最多容纳 6 人！
             // 必须在外层拦截！如果在 setCombatField 内拦截，会导致卡牌被 setPlayerBench 扣除后直接蒸发！
             if (stateRef.current.combatField.length >= 6) {
@@ -3221,6 +3307,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
         if (blocker) {
             const attacker = combatField[fightIndex].attacker;
+            // [2026-08-06 莉莉子 敌我修复] 归属校验：玩家只能格挡"敌方发起"的进攻者
+            // （如敌方飞剑）。己方进攻者（我方单位/我方飞剑，owner==='player'）不可格挡，
+            // 否则会把自己单位派去挡自己的飞剑，结算后归位错乱。
+            if (combatField[fightIndex].owner !== 'enemy') {
+                setMessage("不能格挡己方单位的进攻！");
+                return;
+            }
             // [新增] Elusive (隐秘) 判定
             // 规则：如果攻击者有隐秘，阻挡者必须也有隐秘
             if (attacker.keywords.includes('Elusive') && !blocker.keywords.includes('Elusive')) {
@@ -3395,7 +3488,7 @@ setPlayerBench(prev => [...prev, blockerCard]);
     useEffect(() => {
         // [修改] 沙盒模式下，阻止自动调用 startRound (因为我们在上面的 hook 里已经手动设好第一回合状态了)
         if (!initializedRef.current && !isSandbox) {
-            startRound();
+            startRound(true); // [2026-08-15] 开局（换牌前）跳过 round_start 强化，第一回合暗箭等由换牌后 triggerFirstRoundRogueEnhance 触发
 
             // ★ 如果指定了第一回合先手方，覆盖默认的 attackToken
             if (firstAttacker === 'enemy') {
@@ -3552,7 +3645,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
         eventBus.emit('unit_eliminated', { card: eliminatedUnit });
 
         // 2. 构建新单位，继承旧单位的 DOM id
-        const newUnit = createFullCard(activeCard.key);
+        // [2026-08-08 莉莉子修复] 直接继承手牌单位实例而非从卡库重建——
+        // 此前 createFullCard 会重置 buffs/roundBuffs=0，替换打出时把穆林等牌库 BUFF 全部清空了
+        const newUnit = { ...activeCard };
         newUnit.id = eliminatedUnit.id;
         const newCardWithAbility = newUnit.ability
             ? { ...newUnit, abilityState: 'breathing' as const, abilityCharges: newUnit.ability.maxCharges }
@@ -3600,6 +3695,10 @@ setPlayerBench(prev => [...prev, blockerCard]);
                 }
             });
         }
+
+        // [2026-08-12 装备系统] 替换打出同样触发装备打出效果（对敌方备战席造成伤害）
+        const equipEnemyBench = executeEquipmentOnPlay(stateRef.current.enemyBench, newUnit);
+        if (equipEnemyBench) setEnemyBench(equipEnemyBench);
 
         // 5. 触发入场语音
         eventBus.emit(GameEvents.PLAY_CARD_VOICE, newUnit);
@@ -3819,6 +3918,8 @@ setPlayerBench(prev => [...prev, blockerCard]);
 
     // [2026-07-22 莉莉子] 手牌卡片动画完成 → 从手牌移除
     const onHandAnimComplete = useCallback((cardId: string, owner: 'player' | 'enemy') => {
+        // [2026-08-04 莉莉子] 广播手牌离场动画完成，供 useRoundLifecycle 等待瞬逝动画播完
+        eventBus.emit(GameEvents.HAND_DISCARD_ANIM_DONE, { cardId, owner });
         if (owner === 'player') {
             setPlayerHand(prev => prev.filter(c => c.id !== cardId));
             stateRef.current.playerHand = stateRef.current.playerHand.filter(c => c.id !== cardId);
@@ -3846,6 +3947,7 @@ setPlayerBench(prev => [...prev, blockerCard]);
 
         actions: {
             startRound,
+            triggerFirstRoundRogueEnhance, // [2026-08-15] 换牌后第一回合触发 round_start 强化（暗箭等）
             resetGame,
             initiateAttack,
             commitAttack,
