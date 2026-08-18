@@ -2896,7 +2896,8 @@ export const processEffect = (
                 newUnit.power = (newUnit.power || 0) + (params.power || 0);
                 newUnit.health = (newUnit.health || 0) + (params.health || 0);
                 if (params.keywords && Array.isArray(params.keywords)) {
-                    newUnit.keywords = [...(newUnit.keywords || []), ...params.keywords];
+                    // [2026-08-16 莉莉子] string[] → Keyword[] 断言（效果参数关键词统一 string 处理）
+                    newUnit.keywords = [...(newUnit.keywords || []), ...(params.keywords as Keyword[])];
                 }
                 newUnit.animState = 'summoning';
 

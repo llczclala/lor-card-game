@@ -58,7 +58,8 @@ export interface CardData {
   // [新增] 'ephemeral_dying' 用于区分瞬息自然消散与常规受击阵亡
   // [修改] 增加 'delayed_attacking' 以支持防守方的滞后反击动画
   // [新增] 'summoning' 用于召唤入场演出（碎片重组）
-  animState?: 'idle' | 'attacking' | 'delayed_attacking' | 'hit' | 'dying' | 'ephemeral_dying' | 'transform' | 'regenerating' | 'buff' | 'summoning';
+  // [2026-08-16 莉莉子] 增加 'channel_pulse'（引导脉冲动画）、'thawing'（解冻动画）——此前类型未收录，触发 10 条 TS 错误
+  animState?: 'idle' | 'attacking' | 'delayed_attacking' | 'hit' | 'dying' | 'ephemeral_dying' | 'transform' | 'regenerating' | 'buff' | 'summoning' | 'channel_pulse' | 'thawing';
   damageTaken?: number;
   buffs?: { power: number, health: number };
   roundBuffs?: { power: number, health: number }; // [新增] 临时账本：专门记录单回合(ROUND)增益，用于回合末秋后算账

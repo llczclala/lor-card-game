@@ -1,7 +1,7 @@
 import { processEffect, processOnGetAttackToken } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
-import { useSpellSystem, waitForStrikeComplete } from './useSpellSystem'; // [核心新增] 引入法术系统引擎与时间管理器
+import { useSpellSystem } from './useSpellSystem'; // [2026-08-16] 移除未使用的 waitForStrikeComplete 导入（TS6133）
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { CardData, GameState, GameRecordCategory, SpellStackItem, RecordEntity } from '../types';
 import { createCard, CARD_DB } from '../data/cards';
@@ -174,7 +174,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     }, [game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeckState]);
 
     // 辅助函数：异步等待
-    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const wait = (ms: number): Promise<void> => new Promise<void>(resolve => setTimeout(resolve, ms));
 
     // ==========================================
     // [2026-07-20] 对局操作记录 — 写入函数
@@ -269,7 +269,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         flushMicroQueue: () => flushMicroQueue(),
         judgeLifeAndDeath: () => judgeLifeAndDeath(),   // [SBA] 生死簿同步判决
         wait,
-        waitForStrikeComplete,
+        // [2026-08-16 莉莉子] 删除多余传参 waitForStrikeComplete：useRoundLifecycle 内部自带同名局部函数（L18），接口无此字段
         triggerShake,
         onComplete: () => {} // useGameState 内部直接调用引擎，不需要处理 UI 层的完成回调
     });
@@ -1545,7 +1545,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 let damagedUnit = nextPlayerBench.find(c => c.id === targetId) || nextEnemyBench.find(c => c.id === targetId);
                 if (!damagedUnit) {
                     const fight = nextCombatField.find(f => f.attacker?.id === targetId || f.blocker?.id === targetId);
-                    if (fight) damagedUnit = fight.attacker?.id === targetId ? fight.attacker : fight.blocker;
+                    if (fight) damagedUnit = fight.attacker?.id === targetId ? fight.attacker : (fight.blocker ?? undefined);
                 }
 
                 // 🕵️ [探针 1] 追踪微队列是否正确接收到事件并找到了单位
@@ -2590,7 +2590,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // [修正] 只有带 choices 的抉择法术才走抉择流程，支援技（无 choices）不触发
         // [2026-08-05 莉莉子 法术13] 放宽：普通法术（无 associatedChampionKey）带 choices 也可抉择
         if (card.choices && card.choices.length > 0) {
-            const champKey = card.associatedChampionKey;
+            const champKey = card.associatedChampionKey ?? '';
+            // [2026-08-16 莉莉子] champKey 兜底 '' 避免 string | undefined 传参（TS2345）
             const champBench = owner === 'player' ? playerBench : enemyBench;
             // [修复] 三重判定：备战席 + 交战区 + 全局升级记录
             const champCombat = combatField.some(f =>
@@ -2762,9 +2763,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 ...stateRef.current.enemyBench,
                 ...stateRef.current.combatField.flatMap(f => [f.attacker, f.blocker].filter(Boolean)),
             ];
-            const titanCount = allOnField.filter(c => c.keywords?.includes('Titan')).length;
+            const titanCount = allOnField.filter(c => c?.keywords?.includes('Titan')).length;
             // 丁型自己也算在内（它入场后带着 Titan 关键词）
             const totalPulse = titanCount + 1;
+
+            // [2026-08-16 莉莉子] 上方 c?.keywords 可选链处理 null（TS18047）
 
             // 自脉冲：加攻击 + 立即黯淡
             const pulsedCard = {
@@ -2810,8 +2813,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 ...stateRef.current.enemyBench,
                 ...stateRef.current.combatField.flatMap(f => [f.attacker, f.blocker].filter(Boolean)),
             ];
-            const titanCount = allOnField.filter(c => c.keywords?.includes('Titan')).length;
+            const titanCount = allOnField.filter(c => c?.keywords?.includes('Titan')).length;
             const totalPulse = titanCount + 1;
+
+            // [2026-08-16 莉莉子] 上方 c?.keywords 可选链处理 null（TS18047）
 
             // 自脉冲：加攻击 + 立即黯淡
             const pulsedCard = {

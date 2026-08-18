@@ -127,7 +127,7 @@ const AnimatedHandCard = ({
                 : { type: 'spring', stiffness: 300, damping: 25 }
             }
         >
-            {console.log('[LILITH-DEBUG] AnimatedHandCard animType:', c.key, animType) || animType === 'volatile_burn' ? (
+            {animType === 'volatile_burn' ? (
                 <VolatileBurn card={c} isPlaying onComplete={onDiscardAnimComplete}>
                     <Card data={c} location="hand" onViewArt={onViewArt}
                         skinId={skinOverrides?.[c.key] || 0}
@@ -1057,7 +1057,7 @@ const VolatileBurn: React.FC<CardAnimProps> = ({
                     animate={{ opacity: [1, 1, 0], scale: [1, 0.88, 0.82], y: [0, 0, -24] }}
                     transition={{ duration: 2.2, ease: [0.22, 1, 0.36, 1], times: [0, 0.55, 1] }}
                     onAnimationStart={() => console.log('[LILITH-DEBUG] 🔥 VolatileBurn 动画 START', card.key, Date.now())}
-                    onAnimationComplete={() => { console.log('[LILITH-DEBUG] 💨 VolatileBurn 动画 COMPLETE', card.key, Date.now()); onComplete(); }}
+                    onAnimationComplete={() => { console.log('[LILITH-DEBUG] 💨 VolatileBurn 动画 COMPLETE', card.key, Date.now()); onComplete?.(); }}
                     style={{ position: 'relative', width: '100%', height: '100%' }}
                 >
                     {/* 卡片本体 */}
@@ -1353,7 +1353,7 @@ const DrawAnimItem = ({ anim, cardBackUrl, skinOverrides }: { anim: DrawAnimStat
                     ease: [0.25, 0.46, 0.45, 0.94],
                     // scaleX 4个关键帧 [1,0,1,1]，用时序 [0,0.5,0.75,1] 做翻面
                     scaleX: isPlayer ? { duration: 0.8, times: [0, 0.5, 0.75, 1] } : undefined,
-                };
+                } as any; // [2026-08-16 莉莉子] framer-motion Transition 类型过严（scaleX 内嵌 keyframe 配置），断言绕过版本差异
             case 'idle':
                 return { duration: 0 };
             case 'fly_to_hand':

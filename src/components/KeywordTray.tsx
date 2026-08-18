@@ -38,7 +38,8 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     let isActive = false;
     let glowColor = '';
     // [新增] 加入 shield (护盾) 类型
-    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'tough_breath' | 'frost_thaw' | 'scout_scan' | 'scout_invalid' | 'none' = 'none';
+    // [2026-08-16 莉莉子] 补充 channel_breath（充能呼吸）/ frost_breath·frost_entry（冻结两阶段）/ fearsome（凶恶双段爆闪）
+    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'tough_breath' | 'frost_thaw' | 'frost_breath' | 'frost_entry' | 'channel_breath' | 'fearsome' | 'scout_scan' | 'scout_invalid' | 'none' = 'none';
 
     // [新增] 最高优先级：瞬息阵亡谢幕拦截！
     if (animState === 'ephemeral_dying' && keyword === 'Ephemeral') {

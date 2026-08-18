@@ -426,7 +426,8 @@ export default function App() {
   const handleRogueBattle = (nodeType: RogueNodeType, archetypeId?: string, nodeId?: string) => {
     if (!rogue.run) return;
     // [2026-08-10] 用节点预分配的敌人流派（保证地图头像与实际对手一致）
-    const encounter = buildRoguelikeEncounter(nodeType, rogue.run.act, rogue.run.difficulty, archetypeId);
+    // [2026-08-16 莉莉子] nodeType 断言收窄：buildRoguelikeEncounter 仅支持 battle/elite/boss（其余节点不会进战斗）
+    const encounter = buildRoguelikeEncounter(nodeType as 'battle' | 'elite' | 'boss', rogue.run.act, rogue.run.difficulty, archetypeId);
     setRogueEncounter(encounter);
     setRogueBattleType(nodeType);
     setRogueBattleNodeId(nodeId ?? null); // [2026-08-10] 记录当前战斗节点，胜利后标记击败

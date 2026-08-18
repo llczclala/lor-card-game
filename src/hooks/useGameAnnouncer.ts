@@ -130,7 +130,8 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase, disableMull
     useEffect(() => {
         // 只要脱离了静态的主阶段（进入动画 animating、战斗阶段、施法瞄准等）
         // 或者检测到任何一方执行了动作（lastActionTimestamp 刷新），立刻无条件执行最高级别打断！
-        if (game.phase !== 'main' || game.phase === 'animating') {
+        // [2026-08-16 莉莉子] 删除 `|| game.phase === 'animating'`：animating 已含于 !=='main'，冗余死条件（TS2367）
+        if (game.phase !== 'main') {
             if (announcerTimeoutRef.current) clearTimeout(announcerTimeoutRef.current);
             if (sequenceTimeoutRef.current) {
                 console.log(`[Announcer] ⛔ 清除 sequenceTimeout — phase=${game.phase}`);

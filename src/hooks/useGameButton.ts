@@ -193,14 +193,7 @@ export const useGameButton = ({
 
         // [核心修复] --- 5.5. 格挡后响应阶段 (React to Block) ---
         if (phase === 'react_to_block') {
-            // 如果优先权在敌方，按钮置灰等待
-            if (turnOwner === 'enemy') {
-                return {
-                    style: `${baseStyle} bg-slate-800/80 border-slate-600 text-slate-400 cursor-not-allowed`,
-                    text: "等待敌方...",
-                    disabled: true
-                };
-            }
+            // [2026-08-16 莉莉子] 删除 turnOwner==='enemy' 死分支：129 行已拦截敌方回合（turnOwner!=='player' 提前 return），此处恒为 player 回合（TS2367）
 
             // 如果玩家当前正在把一张法术牌拖拽悬停在目标上（预提交状态）
             if (spellState?.hasPendingSpell) {

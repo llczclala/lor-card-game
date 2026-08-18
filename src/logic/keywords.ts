@@ -1,4 +1,4 @@
-import type { CardData, GameState } from '../types';
+import type { CardData, GameState, Keyword } from '../types';
 import { createCard } from '../data/cards'; // [2026-08-06 莉莉子] Echo 回响：生成瞬逝复制品需要重建卡牌实例
 
 /**
@@ -424,7 +424,7 @@ export const applyChannelOnRoundStart = (cards: CardData[]): { cards: CardData[]
             return {
                 ...card,
                 animState: 'channel_pulse' as const,
-                depletedKeywords: [...(card.depletedKeywords || []), 'Channel'],
+                depletedKeywords: [...(card.depletedKeywords || []), 'Channel' as Keyword],
             };
         }
         return card;

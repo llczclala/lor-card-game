@@ -85,7 +85,7 @@ export interface EffectParams {
     strikeMode?: 'MUTUAL' | 'ONE_WAY'; // [新增] 打击模式
     condition?: string;
     summonKey?: string;              // [新增] 召唤物的卡牌 Key
-    summonZone?: 'bench' | 'combat'; // [新增] 召唤的降落点（备战席 或 交战区）
+    summonZone?: 'bench' | 'combat' | 'hand'; // [修改] 召唤的降落点（备战席 / 交战区 / 手牌）——'hand' 用于撤回类法术回手牌
     presenceRequirement?: string[];  // [新增] 通用在场条件扫描名单 (写入需要的卡牌 Key)
     targetKeyRequirement?: string[]; // [新增] 定向发牌白名单：只给拥有这些 Key 的单位发放 Buff
     raceFilter?: Race[];             // [新增] 种族过滤器：只给指定种族的单位发放效果

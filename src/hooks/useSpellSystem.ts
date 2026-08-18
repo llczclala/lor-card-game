@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { MutableRefObject, Dispatch, SetStateAction } from 'react';
-import type { CardData, GameState, SpellStackItem, Race } from '../types';
+import type { CardData, GameState, SpellStackItem, Race, Keyword } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry';
 import type { TargetType } from '../data/effectRegistry';
 import { eventBus, GameEvents } from '../utils/eventBus';
@@ -74,15 +74,13 @@ function findAITargetsForEffect(
             if (type === 'ALLY_CHAMPION') {
                 candidates = candidates.filter(c => c.isChampion);
             }
-        } else if (type === 'ENEMY_UNIT' || type === 'ENEMY_CHAMPION') {
+        } else if (type === 'ENEMY_UNIT') {
             candidates = [...hostileBench];
             state.combatField.forEach(f => {
                 if (f.owner !== owner && f.attacker) candidates.push(f.attacker);
                 if (f.blocker && f.owner === owner) candidates.push(f.blocker);
             });
-            if (type === 'ENEMY_CHAMPION') {
-                candidates = candidates.filter(c => c.isChampion);
-            }
+            // [2026-08-16 莉莉子] 删除 'ENEMY_CHAMPION' 幽灵分支：TargetType 仅 ALLY_CHAMPION，`type === 'ENEMY_CHAMPION'` 永假（TS2367 死代码）
         } else if (type === 'ANY_UNIT') {
             candidates = [...friendlyBench, ...hostileBench];
             state.combatField.forEach(f => {
@@ -368,7 +366,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         // =====================================
         if (keywordFilter && keywordFilter.length > 0) {
             // 目标必须拥有 keywordFilter 中的至少一个关键词
-            const hasKeyword = keywordFilter.some(kw => card.keywords?.includes(kw));
+            // [2026-08-16 莉莉子] string → Keyword 断言（关键词数据统一 string 处理，见 design 约定）
+            const hasKeyword = keywordFilter.some(kw => card.keywords?.includes(kw as Keyword));
             if (!hasKeyword) return false;
         }
 
@@ -402,7 +401,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             case 'ANY_UNIT': return true;
             case 'ANY_TARGET': return true; // 单位也是 Target
             case 'ALLY_CHAMPION': return isAlly && card.isChampion && (!filterKey || card.key === filterKey);
-            case 'HAND_CARD': return true; // [2026-06-27] 手牌卡，来源由 handleTargetClick 前置拦截保障
+            // [2026-08-16 莉莉子] 删除 case 'HAND_CARD'：348 行已提前 return 拦截，此 case 不可达（TS2678 死代码）
             case 'SPELL_ON_STACK': {
                 // [2026-08-05 莉莉子] 反制目标：堆叠中的敌方法术（来源由 handleTargetClick 前置拦截为 'stack'）
                 // [LILITH-DEBUG] 反制目标校验诊断

@@ -156,7 +156,7 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
 
     // ========== 凶恶 (Fearsome) — 一次性入场 + 阻挡拒绝触发 ==========
     const [fearsomeActive, setFearsomeActive] = useState(false);
-    const fearsomeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+    const fearsomeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
     const wasFearsomeCombatRef = useRef(false);
 
     const triggerFearsome = useCallback(() => {

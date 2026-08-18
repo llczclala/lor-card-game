@@ -539,7 +539,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     // ★ 教程模式：监听剧本自动行为事件
     useEffect(() => {
-        const handleTutorialAction = (payload) => {
+        const handleTutorialAction = (payload: { action: string; params?: any }) => {
             if (payload.action === 'spell_show') {
                 tutorialSpellShowRef.current?.(payload.params);
                 return;
@@ -1947,7 +1947,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 isCasting={spellSystem.isCasting}
                 showMousePreview={spellSystem.isCasting && (game.spellCasting?.step === 'select_discard' || (game.spellCasting?.step === 'select_bench' && (!game.spellCasting?.targets?.length)) || !spellSystem.isSelectionComplete) && !(game.spellCasting?.step === 'select_hand_target' && (game.spellCasting as any).mode === 'single' && (game.spellCasting?.targets?.length || 0) > 0)}
                 selectedTargets={[...spellSystem.selectedTargets, ...(game.spellCasting?.targets || [])]}
-                castingSpellRef={spellSystem.activeCard ? spellCenterRef : undefined}
+                castingSpellRef={spellSystem.activeCard ? spellCenterRef as React.RefObject<HTMLElement> : undefined}
                 // [2026-08-15 莉莉子] 抵抗/抗拒（反制堆叠法术）启用回力镖瞄准：先下坠再水平指向目标（敌方目标）
                 boomerang={(spellSystem.activeCard?.key === 'temp_spell_06' || spellSystem.activeCard?.key === 'temp_spell_07') ? 'down' : undefined}
                 // [核心修复] 将所有堆叠区的法术及其目标传入特效层，用于绘制持久化连线
@@ -2223,7 +2223,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     if (isHandTargetMode && game.activeCard) activeSpells.push({ card: game.activeCard, mode: 'hand_target_select', owner: 'player', index: 0 });
                     if (isBenchSelectMode && game.activeCard) activeSpells.push({ card: game.activeCard, mode: 'bench_select', owner: 'player', index: 0 });
 
-                    return activeSpells.map(({ card, mode, owner, index, hasNoTargets = false }) => {
+                    return activeSpells.map(({ card, mode, owner, index: _index, hasNoTargets = false }) => {
                         const isCasting = mode === 'casting' || mode === 'discard_select' || mode === 'hand_target_select' || mode === 'bench_select';
                         const isPending = mode === 'pending';
                         const isDiscardSelect = mode === 'discard_select';
@@ -2231,7 +2231,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         const isBenchSelect = mode === 'bench_select';
                         const isEnemy = owner === 'enemy';
                         // [2026-08-05 莉莉子] 反制高亮：可被当前施法无效化的堆叠法术（法术6/7）
-                        const isStackTargetable = mode === 'stack' && spellSystem.isCasting && spellSystem.currentRequirement?.type === 'SPELL_ON_STACK' && spellSystem.checkIsTargetable(card, owner);
+                        const isStackTargetable = mode === 'stack' && spellSystem.isCasting && spellSystem.currentRequirement?.type === 'SPELL_ON_STACK' && spellSystem.checkIsTargetable(card, owner as 'player' | 'enemy');
                         // 智能皮肤读取
                         const currentImageUrl = skinOverrides[card.key] ? getSkinImage(card.key, skinOverrides[card.key]) || card.imageUrl : card.imageUrl;
 
@@ -2285,7 +2285,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         // [2026-08-05 莉莉子] 反制交互：点击堆叠法术作为无效化目标（法术6/7）
                                         // [LILITH-DEBUG] 反制点击诊断
                                         console.log(`[LILITH-DEBUG][NEGATE-CLICK] 点击栈上法术 ${card.key}(${card.name}) owner=${owner} isCasting=${spellSystem.isCasting} req=${spellSystem.currentRequirement?.type} mode=${mode} xOffset=${xOffset}`);
-                                        spellSystem.handleTargetClick(card, owner, 'stack');
+                                        spellSystem.handleTargetClick(card, owner as 'player' | 'enemy', 'stack');
                                     } else if (isCasting) {
                                         eventBus.emit(GameEvents.UI_BACK);
                                         const cardToReturn = card.parentCard || card;
