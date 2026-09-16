@@ -2745,7 +2745,18 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     data={c}
                                     location="enemy_bench"
                                     skinId={skinOverrides[c.key] || 0} // [新增]
-                                    canBeChallenged={game.phase === 'attack_declare' && game.selectedChallengerId !== null}
+                                    // [2026-09-16 1.0.16 茉莉安 · T11] 高亮口径收紧为「真正拉得动的」：
+                                    //   发起方带【挑战者】→ 敌方全体可拉
+                                    //   发起方无挑战者   → 只有带【暴露】的敌人可拉
+                                    //   ⚠️ 配色区分（挑战者=金橙 / 暴露=紫）是 T12 的活，此处先共用一套高亮
+                                    canBeChallenged={
+                                        game.phase === 'attack_declare' && game.selectedChallengerId !== null &&
+                                        (
+                                            !!combatField.find(f => f.attacker?.id === game.selectedChallengerId)
+                                                ?.attacker?.keywords?.includes('Challenger')
+                                            || (c.keywords || []).includes('Exposed')
+                                        )
+                                    }
                                     onClick={() => {
 
                                         if (spellSystem.isCasting) {
@@ -2801,7 +2812,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                          return;
                                      }
                                      if (l === 'combat' && o === 'player') {
-                                         if (game.phase === 'attack_declare' && c.keywords.includes('Challenger')) {
+                                         // [2026-09-16 1.0.16 茉莉安 · T11] 【暴露】实装：
+                                         //   门槛从「必须带【挑战者】」放宽为「任意我方攻击者都能选中」——
+                                         //   因为暴露是【防守方的公开漏洞】，不需要任何特权即可拉取。
+                                         //   挑战者仍然只决定「能不能拉没暴露的目标」，资格最终由
+                                         //   challengeEnemy（引擎侧）判定，UI 只负责让玩家点得动。
+                                         if (game.phase === 'attack_declare') {
                                              if (game.selectedChallengerId === c.id) {
                                                  actions.selectChallenger(c.id);
                                              } else if (game.selectedChallengerId !== c.id) {

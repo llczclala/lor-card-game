@@ -4140,6 +4140,24 @@ setPlayerBench(prev => [...prev, blockerCard]);
         const combatIndex = combatField.findIndex(f => f.attacker.id === attackerId);
         if (combatIndex === -1) return;
 
+        // =====================================
+        // [2026-09-16 1.0.16 茉莉安 · T11] 拉取合法性最终判定（引擎侧安全网）
+        // ── 挑战者 = 进攻方权限：可以拉【任意】敌方备战席单位
+        // ── 暴露   = 防守方漏洞：不需要挑战者，**任意敌方单位进攻时都能拉它**
+        //    （设计文档 2.3：两者方向相反、不可混为一谈）
+        // ── 两种资格满足其一即可；都不满足则拒绝 —— UI 层也会拦，这里是防绕过
+        // =====================================
+        {
+            const attacker = combatField[combatIndex].attacker;
+            const isChallenger = (attacker.keywords || []).includes('Challenger');
+            const isExposed = (enemyUnit.keywords || []).includes('Exposed');
+            if (!isChallenger && !isExposed) {
+                console.log(`[ExposedDebug] 拉取被拒：攻击者无【挑战者】且目标无【暴露】(${enemyUnit.name})`);
+                return;
+            }
+            console.log(`[ExposedDebug] 拉取放行：${isChallenger ? '发起方带挑战者' : '目标带暴露'} → ${enemyUnit.name}`);
+        }
+
         // 如果该位置已经有阻挡者了，先把它踢回备战席
         const oldBlocker = combatField[combatIndex].blocker;
 
