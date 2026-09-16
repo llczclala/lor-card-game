@@ -80,6 +80,7 @@ export interface EffectParams {
     summonZone?: 'bench' | 'combat' | 'hand'; // [修改] 增加 hand 选项，支持生成衍生卡到手牌
     summonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 召唤落点的阵营：'self' 己方（默认）/ 'opponent' 落到对方半场（獠牙信标）
     gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
+    spreadDamageTotal?: number;       // [2026-09-16 茉莉安] SPREAD_DAMAGE：对己方全体分摊的总伤害量
     gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
                                       // ⚠️ 本接口与 effectRegistry.ts:80 的同名接口是【两份独立定义】，已分叉。
                                       //    新增字段需【两边同步补】，否则数据侧能写、消费侧 TS 报错。
@@ -3540,6 +3541,79 @@ export const processEffect = (
         case 'PLACEHOLDER': {
             // 占位效果不产生任何动作，仅记录日志
             console.log(`[Placeholder] ${effect.id} 逻辑未实现，空转跳过`);
+            break;
+        }
+
+        // =====================================
+        // [2026-09-16 1.0.16 茉莉安 · T09] 分摊伤害（獠牙信标亡语）
+        // ── 对【本方】备战席 + 交战区【全体】分摊总量伤害
+        // ── 分配口径（设计文档 3.4）：**让宿主吃满，不浪费** ——
+        //    先 floor(总量 / N) 打底，**余数随机**分给其中 N 个单位。
+        //    不是算平均值；铺场能稀释「单人承受量」，但改变不了「总伤害」。
+        // ── 本方 = 谁：本效果由亡语触发，派发方已把 context.owner 设为【亡者阵营】
+        //    （useGameState 亡语清算中心：owner = 亡者阵营），故「本方」即宿主方 ✅
+        // ── 现有实现里没有任何「亡语造成伤害」的先例，本类为新建（见问题记录 I11）
+        // =====================================
+        case 'SPREAD_DAMAGE': {
+            const sdParams = effect.params as EffectParams;
+            const total = sdParams.spreadDamageTotal || 0;
+            if (total <= 0) break;
+
+            const isLive = (c: CardData | null | undefined) =>
+                !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+
+            // ① 收集本方全体（备战席 + 交战区）的 id
+            const ownBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+            const targetIds: string[] = ownBench.filter(isLive).map(c => c.id);
+            if (nextCombatField) {
+                nextCombatField.forEach(f => {
+                    if (f.owner !== context.owner) return; // 只算本方
+                    if (isLive(f.attacker)) targetIds.push(f.attacker.id);
+                    if (isLive(f.blocker)) targetIds.push(f.blocker.id);
+                });
+            }
+            const N = targetIds.length;
+            if (N === 0) {
+                console.log('[BeaconDebug] 亡语分摊：本方无存活单位，伤害落空');
+                break;
+            }
+
+            // ② 分配：先打底 floor，余数随机
+            const base = Math.floor(total / N);
+            const remainder = total - base * N;
+            const order = targetIds.map((_, i) => i);
+            for (let i = order.length - 1; i > 0; i--) {   // Fisher-Yates
+                const j = Math.floor(Math.random() * (i + 1));
+                [order[i], order[j]] = [order[j], order[i]];
+            }
+            const bonusSet = new Set(order.slice(0, remainder));
+
+            const amountById = new Map<string, number>();
+            targetIds.forEach((id, i) => amountById.set(id, base + (bonusSet.has(i) ? 1 : 0)));
+
+            // ③ 施加（复用 selfDamage 那套：先播受击事件，再写 damageTaken + hit 动画）
+            const applySpread = (c: CardData): CardData => {
+                const amt = amountById.get(c.id);
+                if (!amt) return c;
+                events.push({ type: 'unit_damage', payload: { id: c.id, amount: amt } });
+                return { ...c, damageTaken: (c.damageTaken || 0) + amt, animState: 'hit' as const };
+            };
+
+            if (context.owner === 'player') {
+                nextPlayerBench = nextPlayerBench.map(applySpread);
+            } else {
+                nextEnemyBench = nextEnemyBench.map(applySpread);
+            }
+            if (nextCombatField) {
+                nextCombatField = nextCombatField.map(f => {
+                    const nf = { ...f };
+                    if (isLive(nf.attacker) && amountById.has(nf.attacker.id)) nf.attacker = applySpread(nf.attacker);
+                    if (nf.blocker && amountById.has(nf.blocker.id)) nf.blocker = applySpread(nf.blocker);
+                    return nf;
+                }) as any;
+            }
+
+            console.log(`[BeaconDebug] 亡语分摊：总量 ${total} → ${N} 个单位（每人 ${base}${remainder > 0 ? ` + 余数 ${remainder} 随机` : ''}）`);
             break;
         }
 

@@ -26,6 +26,7 @@ export type EffectClass =
     | 'DECK_BUFF'          // [达努/鸦眼] 牌库强化类：对牌库内单位/法术施加buff
     | 'FLYING_SWORD'        // [2026-07-26 安卡希雅] 飞剑类：召唤X个飞剑衍生物并立即发起进攻
     | 'PLACEHOLDER'         // [2026-08-05 莉莉子] 占位类：逻辑未实现时安全空转，用于暂未完成逻辑的新法术
+    | 'SPREAD_DAMAGE'       // [2026-09-16 茉莉安] 分摊伤害类：对己方全体（备战席+交战区）分摊总量伤害
     | 'TITAN_PULSE'         // [2026-08-05 莉莉子] 泰坦脉冲类：立刻触发己方泰坦脉冲（法术4）
     | 'TITAN_RELIGHT'       // [2026-08-05 莉莉子] 泰坦点亮类：移除己方泰坦黯淡关键词（法术3）
     | 'BURNOUT_SUMMON'      // [2026-08-05 莉莉子] 燃尽召唤类：消耗全部法力、按燃尽值随机召唤泰坦（法术12）
@@ -116,6 +117,7 @@ export interface EffectParams {
     deckAuraSummon?: string;     // [新增] 库效召唤：回合开始时，若场上没有该Key的单位，则召唤一个
     gameStartGenerate?: string;  // [安卡希雅] 牌局开始：生成指定卡牌到手牌
     gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
+    spreadDamageTotal?: number;       // [2026-09-16 茉莉安] SPREAD_DAMAGE：对己方全体分摊的总伤害量
     gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
     isVolatile?: boolean;        // [安卡希雅] 生成的卡牌带上易逝(Volatile)关键词
     roundEndSelfDamageBuff?: {   // [新增] 回合末鞭策：对我方指定单位造成伤害并强化
@@ -2145,6 +2147,23 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
             gameStartSummon: 'Marian_Wolf_Tooth_Beacon',
             gameStartSummonSide: 'opponent',
             // [T13 待补] 入场 & 回合开始：若敌方备战席没有「獠牙信标」则召唤一个
+        }
+    },
+
+    // --- 獠牙信标 亡语：对宿主方全体分摊伤害 ---
+    // ⚠️ 现有全部 LAST_BREATH 效果只有 SUMMON / DRAW / GENERATE 三类，没有伤害类 ——
+    //    本效果所需的 SPREAD_DAMAGE 类是【新建】的（见问题记录 I11）。
+    //    设计文档 11.2 所称「照抄丁型异化人」不成立：那条是 params:{} 的空壳，无任何逻辑消费。
+    'effect_marian_beacon_lastbreath': {
+        id: 'effect_marian_beacon_lastbreath',
+        name: '獠牙引爆',
+        description: '【亡语】阵亡时，对本方全体分摊伤害。',
+        class: 'SPREAD_DAMAGE',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            spreadDamageTotal: 6, // ⚠️ 待数值复核 —— 设计文档 10.3：信标血量 6→20 后，6 点收益是否还配得上投入
         }
     },
 };

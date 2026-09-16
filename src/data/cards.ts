@@ -2039,7 +2039,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Last Breath'],
     description: '【亡语】阵亡时，对本方全体分摊伤害。\n敌方每有 1 个单位进攻，本单位 -1 血；若这次进攻拉取了我方暴露单位挡刀，则再 -1 血。',
     imageUrl: UNIT_IMAGES.wolf_tooth_beacon,
-    effects: [], // [T09 待补] 亡语分摊伤害 —— 现有全部 LAST_BREATH 效果只有 SUMMON/DRAW/GENERATE，需新建
+    effects: ['effect_marian_beacon_lastbreath'], // [T09 已完成] 亡语分摊伤害（SPREAD_DAMAGE 新建类）
     isCollectible: false,
   },
 
