@@ -204,6 +204,20 @@ export const getCardPrice = (cost: number): number => {
 };
 
 export const getLeveledUpCard = (card: CardData): CardData => {
+    // [2026-09-16 1.0.16 茉莉安 · T13] Lv2 变化（设计文档 4.1）：
+    //   ① 攻击力 5 → 6（同时【就是大招斩杀线】，给茉莉安加攻 = 给大招加斩杀线，收益跳档）
+    //   ② 之后召唤的信标附带【复活】
+    if (card.key === 'marian') {
+        return {
+            ...card,
+            level: 2,
+            power: card.power + 1, // 5 → 6
+            level2ImageUrl: card.level2ImageUrl,
+            effects: [...(card.effects || [])],
+            // ⚠️ [T09② 待补] 「之后召唤的信标附带【复活】」阻塞于 Reborn 关键词实装（见问题记录 I12）
+        } as CardData;
+    }
+
     if (card.key === 'lyfe') {
         return {
             ...card,

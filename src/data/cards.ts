@@ -2008,7 +2008,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '对“獠牙信标”造成 1 点伤害，以暴露两个敌人。\n场上没有“獠牙信标”时无法打出。',
     type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.marian_rush,
-    effects: [], // [T14 待补] 伤害部分可先做；「暴露两个敌人」依赖 T10 暴露引擎
+    effects: ['effect_marian_rush'], // [T14 完成]
     isCollectible: false,
   },
   marian_ultimate: {
@@ -2017,7 +2017,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '选择并打击一个敌方单位，造成等同于“茉莉安 霄鹰”攻击力的伤害。\n若将其击杀，则自动锁定当前生命值最低的敌方单位再次打击，直到未能击杀、或打击敌方水晶为止。',
     type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.marian_ultimate,
-    effects: [], // [T15 待补] 续击循环引擎
+    effects: ['effect_marian_ultimate'], // [T15 完成]
     isCollectible: false,
   },
   marian_support: {
@@ -2027,7 +2027,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.marian_support,
     associatedChampionKey: 'marian',
-    effects: [], // [T16 待补]
+    effects: ['effect_marian_support'], // [T16 完成]
   },
 
   // --- 衍生物：獠牙信标 ---

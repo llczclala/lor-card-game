@@ -81,6 +81,8 @@ export interface EffectParams {
     summonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 召唤落点的阵营：'self' 己方（默认）/ 'opponent' 落到对方半场（獠牙信标）
     gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
     spreadDamageTotal?: number;       // [2026-09-16 茉莉安] SPREAD_DAMAGE：对己方全体分摊的总伤害量
+    summonOnlyIfAbsent?: boolean;     // [2026-09-16 茉莉安] SUMMON：落点已有同名单位则不召唤（信标「最多 1 个」）
+    damageBeaconBy?: number;          // [2026-09-16 茉莉安] 标记射击：对獠牙信标造成 N 点伤害（来源=法术卡本身）
     gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
                                       // ⚠️ 本接口与 effectRegistry.ts:80 的同名接口是【两份独立定义】，已分叉。
                                       //    新增字段需【两边同步补】，否则数据侧能写、消费侧 TS 报错。
@@ -1580,6 +1582,25 @@ export const processEffect = (
             // =====================================
             // [新增] 血魔法反噬：效果执行完毕后，要求施法者支付设定的生命代价
             // =====================================
+            // =====================================
+            // [2026-09-16 1.0.16 茉莉安 · T14] 标记射击：对獠牙信标造成 N 点伤害
+            // ── 伤害【来源于这张法术卡本身】，不归属茉莉安（设计文档 5.2）
+            // ── 刻意不规避宿主的受伤类效果 —— 宿主给信标叠 buff 本来就是它的防守手段
+            // ── 无信标则伤害落空（可打出性由 UI 层另行拦截）
+            // =====================================
+            if (params.damageBeaconBy && params.damageBeaconBy > 0) {
+                const beaconDmg = params.damageBeaconBy;
+                const hitBeacon = (c: CardData): CardData => {
+                    if (c.key !== 'Marian_Wolf_Tooth_Beacon' || c.isDead || c.animState === 'dying') return c;
+                    events.push({ type: 'unit_damage', payload: { id: c.id, amount: beaconDmg } });
+                    return { ...c, damageTaken: (c.damageTaken || 0) + beaconDmg, animState: 'hit' as const };
+                };
+                // 信标只会站在【施法者的对面】备战席
+                nextPlayerBench = nextPlayerBench.map(hitBeacon);
+                nextEnemyBench = nextEnemyBench.map(hitBeacon);
+                console.log(`[BeaconDebug] 标记射击：对獠牙信标造成 ${beaconDmg} 点伤害`);
+            }
+
             if (params.selfDamage && context.sourceCard) {
                 const dmgAmount = params.selfDamage;
                 const sourceId = context.sourceCard.id;
@@ -2244,6 +2265,13 @@ export const processEffect = (
                     //    「手牌」与「交战区」两个落点仍恒为施法者自己一侧 —— 本版无此需求，不做推测性实现
                     const targetBench = landingOwner === 'player' ? nextPlayerBench : nextEnemyBench;
                     const targetHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+
+                    // [2026-09-16 茉莉安 T13] 落点已有同名单位 → 不召唤
+                    //   用于信标的「场上最多 1 个」（设计文档 3.6）
+                    if (params.summonOnlyIfAbsent && cardKey && targetBench.some(c => c.key === cardKey)) {
+                        console.log(`[Summon] ${landingOwner} 备战席已有「${cardKey}」，summonOnlyIfAbsent 跳过`);
+                        continue;
+                    }
 
                     if (zone === 'hand') {
                         // =====================================
@@ -3541,6 +3569,100 @@ export const processEffect = (
         case 'PLACEHOLDER': {
             // 占位效果不产生任何动作，仅记录日志
             console.log(`[Placeholder] ${effect.id} 逻辑未实现，空转跳过`);
+            break;
+        }
+
+        // =====================================
+        // [2026-09-16 1.0.16 茉莉安 · T15] 大招·逐一清除（续击循环）
+        // ── ① 玩家瞄准一个敌方单位 → 单向打击（不吃反击），伤害 = 茉莉安攻击力
+        // ── ② 若将其【击杀】，自动锁定【当前生命值最低】的敌方单位再打一次，如此反复
+        // ── ③ 直到某次未击杀 → 断链；场上无单位 → 转打敌方水晶后结束
+        // ── 设计文档 5.1 要求的两道护栏，本实现均已落实：
+        //      护栏① 每次续击【重新取实时快照】，不复用上一击的陈旧数据
+        //      护栏② 循环次数【兜底上限】MAX_CHAIN，防意外死循环
+        // =====================================
+        case 'CHAIN_STRIKE': {
+            const csParams = effect.params as EffectParams;
+            const mySide = context.owner;
+            const foeSide: 'player' | 'enemy' = mySide === 'player' ? 'enemy' : 'player';
+
+            const powerOf = (c: CardData) =>
+                (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
+            const hpOf = (c: CardData) =>
+                (c.health || 0) + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
+            const isLive = (c: any) =>
+                !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying' && hpOf(c) > 0;
+
+            // 伤害源 = 我方场上的茉莉安攻击力（Lv2 时为 6 → 斩杀线 6）
+            const myAll: CardData[] = [
+                ...(mySide === 'player' ? nextPlayerBench : nextEnemyBench),
+                ...((nextCombatField || [])
+                    .filter(f => f.owner === mySide)
+                    .flatMap(f => [f.attacker, f.blocker].filter(Boolean) as CardData[])),
+            ];
+            const marianUnit = myAll.find(c => c.key === 'marian');
+            const strikeDmg = marianUnit ? powerOf(marianUnit) : (csParams.value || 0);
+            if (strikeDmg <= 0) {
+                console.log('[ChainStrike] 找不到茉莉安或攻击力为 0，链中止');
+                break;
+            }
+
+            const MAX_CHAIN = 20; // 护栏②：循环兜底上限
+            let chain = 0;
+            let nexusHit = false;
+            let curId: string | null = finalTargets[0]?.id ?? null; // 首击目标由玩家指定
+
+            for (let step = 0; step < MAX_CHAIN; step++) {
+                // 护栏①：每一击都重新取实时快照
+                const foeBenchNow: CardData[] = foeSide === 'player' ? nextPlayerBench : nextEnemyBench;
+                const foeFieldNow: CardData[] = (nextCombatField || [])
+                    .filter(f => f.owner === foeSide)
+                    .flatMap(f => [f.attacker, f.blocker].filter(Boolean) as CardData[]);
+                const live = [...foeBenchNow, ...foeFieldNow].filter(isLive);
+
+                if (live.length === 0) { nexusHit = true; break; } // 场上清空 → 转打水晶
+
+                // 首击用玩家指定的目标（若已死则自动改选最低血）；续击一律取最低血
+                const victim: CardData =
+                    (step === 0 && curId ? live.find(c => c.id === curId) : undefined)
+                    ?? live.reduce((a, b) => (hpOf(b) < hpOf(a) ? b : a));
+                const victimId = victim.id;
+
+                const applyHit = (c: CardData): CardData =>
+                    c.id === victimId
+                        ? { ...c, damageTaken: (c.damageTaken || 0) + strikeDmg, animState: 'hit' as const }
+                        : c;
+
+                events.push({ type: 'unit_damage', payload: { id: victimId, amount: strikeDmg } });
+
+                if (foeSide === 'player') nextPlayerBench = nextPlayerBench.map(applyHit);
+                else nextEnemyBench = nextEnemyBench.map(applyHit);
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(f => ({
+                        ...f,
+                        attacker: f.attacker ? applyHit(f.attacker) : f.attacker,
+                        blocker: f.blocker ? applyHit(f.blocker) : f.blocker,
+                    })) as any;
+                }
+
+                chain++;
+                const remain = hpOf(victim) - strikeDmg;
+                console.log(`[ChainStrike] 第 ${chain} 击 → ${victim.name}（${hpOf(victim)} → ${Math.max(0, remain)}）`);
+
+                if (remain > 0) break; // 未击杀 → 断链
+                curId = null;          // 已击杀 → 续击改为自动锁最低血
+            }
+
+            // 场上清空 → 打敌方水晶后结束
+            if (nexusHit) {
+                if (foeSide === 'player') {
+                    nextGame.playerNexus = Math.max(0, (nextGame.playerNexus || 0) - strikeDmg);
+                } else {
+                    nextGame.enemyNexus = Math.max(0, (nextGame.enemyNexus || 0) - strikeDmg);
+                }
+                console.log(`[ChainStrike] 场上清空 → 打击 ${foeSide} 水晶 ${strikeDmg} 点，链结束`);
+            }
+            console.log(`[ChainStrike] 结算完毕：共 ${chain} 击`);
             break;
         }
 

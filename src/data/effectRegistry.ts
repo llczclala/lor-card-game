@@ -27,6 +27,7 @@ export type EffectClass =
     | 'FLYING_SWORD'        // [2026-07-26 安卡希雅] 飞剑类：召唤X个飞剑衍生物并立即发起进攻
     | 'PLACEHOLDER'         // [2026-08-05 莉莉子] 占位类：逻辑未实现时安全空转，用于暂未完成逻辑的新法术
     | 'SPREAD_DAMAGE'       // [2026-09-16 茉莉安] 分摊伤害类：对己方全体（备战席+交战区）分摊总量伤害
+    | 'CHAIN_STRIKE'        // [2026-09-16 茉莉安] 续击收割类：击杀后自动锁定最低血量目标连续打击
     | 'TITAN_PULSE'         // [2026-08-05 莉莉子] 泰坦脉冲类：立刻触发己方泰坦脉冲（法术4）
     | 'TITAN_RELIGHT'       // [2026-08-05 莉莉子] 泰坦点亮类：移除己方泰坦黯淡关键词（法术3）
     | 'BURNOUT_SUMMON'      // [2026-08-05 莉莉子] 燃尽召唤类：消耗全部法力、按燃尽值随机召唤泰坦（法术12）
@@ -118,6 +119,8 @@ export interface EffectParams {
     gameStartGenerate?: string;  // [安卡希雅] 牌局开始：生成指定卡牌到手牌
     gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
     spreadDamageTotal?: number;       // [2026-09-16 茉莉安] SPREAD_DAMAGE：对己方全体分摊的总伤害量
+    summonOnlyIfAbsent?: boolean;     // [2026-09-16 茉莉安] SUMMON：落点已有同名单位则不召唤（信标「最多 1 个」）
+    damageBeaconBy?: number;          // [2026-09-16 茉莉安] 标记射击：对獠牙信标造成 N 点伤害（来源=法术卡本身）
     gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
     isVolatile?: boolean;        // [安卡希雅] 生成的卡牌带上易逝(Volatile)关键词
     roundEndSelfDamageBuff?: {   // [新增] 回合末鞭策：对我方指定单位造成伤害并强化
@@ -2140,13 +2143,72 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         name: '狂轰滥炸',
         description: '【库效】对局开始时，在敌方备战席召唤一个「獠牙信标」。',
         class: 'SUMMON',
+        timing: 'ON_PLAY_AND_ROUND_START', // [T13] 入场 & 回合开始
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            // 【库效】对局开始（由 useGameState.triggerGameStartGenerate 扫描触发，只管这一条）
+            gameStartSummon: 'Marian_Wolf_Tooth_Beacon',
+            gameStartSummonSide: 'opponent',
+            // 入场 & 回合开始：若敌方备战席没有「獠牙信标」则召唤一个
+            //   summonSide:'opponent' 复用 T04 的跨阵营落点；summonOnlyIfAbsent 保证「场上最多 1 个」
+            //   ⚠️ 这两条与【库效】并存、互不取代（设计文档 3.2）
+            summonKey: 'Marian_Wolf_Tooth_Beacon',
+            summonSide: 'opponent',
+            summonCount: 1,
+            summonOnlyIfAbsent: true,
+        }
+    },
+
+    // --- 茉莉安 抉择① 小技能：标记射击（T14）---
+    'effect_marian_rush': {
+        id: 'effect_marian_rush',
+        name: '标记射击',
+        description: '对“獠牙信标”造成 1 点伤害，以暴露两个敌人。',
+        class: 'BUFF',            // 复用 BUFF：它已完整支持「施加关键词」（含 ROUND / PERMANENT 两形态）
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ENEMY_UNIT', count: 2, label: '选择两个敌方单位，使其暴露' }
+        ],
+        params: {
+            damageBeaconBy: 1,    // 对信标的伤害（来源=法术卡本身，不归属茉莉安）
+            keywords: ['Exposed'],
+            duration: 'PERMANENT', // ⚠️ 设计文档 2.2 允许两种形态，本卡先取「永久赋予」；改 ROUND 即单回合
+        }
+    },
+
+    // --- 茉莉安 抉择② 大招：逐一清除（T15）---
+    // ⚠️ 设计文档 5.1 注记：伤害 = 茉莉安攻击力 → **Lv2 斩杀线 6**。
+    //    这意味着它本质更像「连斩中血量单位」而非原定的「残血收割机」（原定性基于斩杀线 3）。
+    //    设计文档已把「大招定位需复核」列为 🔴 待程定（见待程决策 D2）。
+    'effect_marian_ultimate': {
+        id: 'effect_marian_ultimate',
+        name: '逐一清除',
+        description: '打击一个敌方单位，造成等同于“茉莉安 霄鹰”攻击力的伤害。若将其击杀，则自动锁定当前生命值最低的敌方单位再次打击。',
+        class: 'CHAIN_STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位作为首个目标' }
+        ],
+        params: {}
+    },
+
+    // --- 茉莉安 支援技：前哨投送（T16）---
+    'effect_marian_support': {
+        id: 'effect_marian_support',
+        name: '前哨投送',
+        description: '在敌方备战席召唤一个“獠牙信标”。',
+        class: 'SUMMON',
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [],
         params: {
-            gameStartSummon: 'Marian_Wolf_Tooth_Beacon',
-            gameStartSummonSide: 'opponent',
-            // [T13 待补] 入场 & 回合开始：若敌方备战席没有「獠牙信标」则召唤一个
+            summonKey: 'Marian_Wolf_Tooth_Beacon',
+            summonSide: 'opponent',   // 跨阵营落点（T04）
+            summonCount: 1,
+            summonOnlyIfAbsent: true, // 场上最多 1 个信标
         }
     },
 
