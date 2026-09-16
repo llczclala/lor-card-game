@@ -1639,6 +1639,50 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             setEnemyBench(hasEffectTriggered ? tempEnemyBench : stateRef.current.enemyBench);
             setCombatField((hasEffectTriggered || statBalanceApplied) ? (tempCombatField as any) : stateRef.current.combatField);
         }
+
+        // =====================================
+        // [2026-09-16 1.0.16 茉莉安 · T08①] 獠牙信标引爆倒计时
+        // ── 规则（设计文档 3.3）：某一方派出 N 个单位进攻 → 【对面】备战席上的信标 −N
+        //    「信标永远站在召唤者的对面」→ 谁在进攻，就决定哪边的信标掉血
+        // ── 计数口径：**每个进攻单位各算 1**（不是按进攻动作算），故数 initialFighters 里的人数
+        //    initialFighters 是「宣告时的参战者」快照，不含后续空降的单位 —— 正合「宣告了几个人」
+        // ── 死亡不在此处宣判：交给 runResolveCombatAnimation 开头的 judgeLifeAndDeath 收尸。
+        //    那函数读的是 stateRef.current，此处同步调用只会拿到旧快照、并把本次伤害覆盖掉。
+        // ⚠️ [T08② 待补] 「该次进攻拉取了宿主方带暴露的单位格挡 → 再 −1」依赖 T10 暴露引擎
+        // =====================================
+        {
+            const attackersBySide: Record<'player' | 'enemy', number> = { player: 0, enemy: 0 };
+            initialFighters.forEach(f => {
+                if (f.attacker) attackersBySide[f.owner === 'enemy' ? 'enemy' : 'player'] += 1;
+            });
+
+            /** 给备战席上的獠牙信标挂伤害；没有信标就原样返回（保持引用不变，便于判空） */
+            const damageBeacon = (bench: CardData[], amount: number): CardData[] => {
+                if (amount <= 0) return bench;
+                let hit = false;
+                const next = bench.map(c => {
+                    if (c.key === 'Marian_Wolf_Tooth_Beacon' && !c.isDead && c.animState !== 'dying') {
+                        hit = true;
+                        return { ...c, damageTaken: (c.damageTaken || 0) + amount, animState: 'hit' as const };
+                    }
+                    return c;
+                });
+                return hit ? next : bench;
+            };
+
+            // 玩家进攻 → 敌方备战席的信标掉血；敌方进攻 → 我方备战席的信标掉血
+            const nextEnemyBenchAfterBeacon = damageBeacon(tempEnemyBench, attackersBySide.player);
+            const nextPlayerBenchAfterBeacon = damageBeacon(tempPlayerBench, attackersBySide.enemy);
+
+            if (nextEnemyBenchAfterBeacon !== tempEnemyBench) {
+                setEnemyBench(nextEnemyBenchAfterBeacon);
+                console.log(`[BeaconDebug] 引爆倒计时：玩家进攻 ${attackersBySide.player} 个单位 → 敌方信标 −${attackersBySide.player}`);
+            }
+            if (nextPlayerBenchAfterBeacon !== tempPlayerBench) {
+                setPlayerBench(nextPlayerBenchAfterBeacon);
+                console.log(`[BeaconDebug] 引爆倒计时：敌方进攻 ${attackersBySide.enemy} 个单位 → 我方信标 −${attackersBySide.enemy}`);
+            }
+        }
         setGame(prev => ({
             ...(hasEffectTriggered ? tempGame : prev),
             spellStack: [...pendingSpells, ...(prev.spellStack || [])],
