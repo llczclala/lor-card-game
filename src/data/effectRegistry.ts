@@ -115,6 +115,8 @@ export interface EffectParams {
     // =====================================
     deckAuraSummon?: string;     // [新增] 库效召唤：回合开始时，若场上没有该Key的单位，则召唤一个
     gameStartGenerate?: string;  // [安卡希雅] 牌局开始：生成指定卡牌到手牌
+    gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
+    gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
     isVolatile?: boolean;        // [安卡希雅] 生成的卡牌带上易逝(Volatile)关键词
     roundEndSelfDamageBuff?: {   // [新增] 回合末鞭策：对我方指定单位造成伤害并强化
         targetKey: string;
@@ -2121,6 +2123,29 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         speed: 'BURST',
         targetRequirements: [],
         params: { value: 3 }
+    },
+
+    // ==========================================
+    // [2026-09-16 1.0.16 茉莉安大版本]
+    // ==========================================
+
+    // --- 茉莉安 Lv1：狂轰滥炸 ---
+    // 🔑 【库效】基因必须挂在【茉莉安本体】上，不能挂在信标上 ——
+    //    信标是 isCollectible:false 的衍生物，永远不会出现在牌库里，挂它身上永远不触发。
+    //    （设计文档 3.2 把这条列为「实装待确认」，结论是唯一的）
+    'effect_marian_lv1': {
+        id: 'effect_marian_lv1',
+        name: '狂轰滥炸',
+        description: '【库效】对局开始时，在敌方备战席召唤一个「獠牙信标」。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            gameStartSummon: 'Marian_Wolf_Tooth_Beacon',
+            gameStartSummonSide: 'opponent',
+            // [T13 待补] 入场 & 回合开始：若敌方备战席没有「獠牙信标」则召唤一个
+        }
     },
 };
 

@@ -572,6 +572,50 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             runRogueTrigger(ctx, stateRef.current.game.rogueEnhancements, 'game_start');
             ctx.owner = 'enemy';
             runRogueTrigger(ctx, stateRef.current.game.enemyEnhancements, 'game_start');
+
+            // =====================================
+            // [2026-09-16 1.0.16 茉莉安] ④【库效】对局开始召唤（可指定对方半场）
+            // ── 与 gameStartGenerate 的两点区别：
+            //    ① 走「落场」而非「入手牌」
+            //    ② 落点可指向【对方半场】（獠牙信标要落在对手备战席）
+            // ── 载体只能是茉莉安本体：信标是 isCollectible:false 的衍生物，
+            //    永远不会出现在牌库里，库效基因挂在它身上永远不会触发
+            // ── 对局开始只发生一次 → 天然「只触发一次」，不会因信标被拆而重生
+            // ⚠️ 复用 ctx 的 dirty 标记提交，避免与上方强化触发抢同一批 setState
+            // =====================================
+            (['player', 'enemy'] as Side[]).forEach(side => {
+                const hand = side === 'player' ? ctx.playerHand : ctx.enemyHand;
+                const deck = side === 'player' ? ctx.playerDeck : ctx.enemyDeck;
+
+                // 从该侧的手牌 + 牌库找出携带库效基因的卡
+                const carrier = [...(hand || []), ...(deck || [])].find(c =>
+                    c.effects?.some(id => EFFECT_DB[id]?.params?.gameStartSummon)
+                );
+                if (!carrier) return;
+
+                const effId = carrier.effects!.find(id => EFFECT_DB[id]?.params?.gameStartSummon)!;
+                const p = EFFECT_DB[effId].params!;
+                const summonKey = p.gameStartSummon!;
+                const toOpponent = p.gameStartSummonSide === 'opponent';
+                const landSide: Side = toOpponent ? (side === 'player' ? 'enemy' : 'player') : side;
+
+                const bench = landSide === 'player' ? ctx.playerBench : ctx.enemyBench;
+
+                // 召唤限制（与设计文档 3.6 一致）：已有同名单位 / 备战席无空位 → 不召唤
+                if (bench.some(c => c.key === summonKey)) {
+                    console.log(`[GameStart] ④库效：${landSide} 备战席已有「${summonKey}」，跳过`);
+                    return;
+                }
+                if (bench.length >= 6) {
+                    console.log(`[GameStart] ④库效：${landSide} 备战席已满（${bench.length}/6），跳过`);
+                    return;
+                }
+
+                bench.push({ ...ctx.createFullCard(summonKey), animState: 'summoning' });
+                ctx.dirty.bench.add(landSide);
+                console.log(`[GameStart] ④库效：【${carrier.name}】发动 → 在 ${landSide} 备战席召唤「${summonKey}」`);
+            });
+
             if (ctx.dirty.bench.has('player')) setPlayerBench(ctx.playerBench);
             if (ctx.dirty.bench.has('enemy')) setEnemyBench(ctx.enemyBench);
             if (ctx.dirty.field) setCombatField(ctx.combatField);

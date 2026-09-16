@@ -79,6 +79,8 @@ export interface EffectParams {
     summonKey?: string;              // [新增] 召唤物的卡牌 Key
     summonZone?: 'bench' | 'combat' | 'hand'; // [修改] 增加 hand 选项，支持生成衍生卡到手牌
     summonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 召唤落点的阵营：'self' 己方（默认）/ 'opponent' 落到对方半场（獠牙信标）
+    gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
+    gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
                                       // ⚠️ 本接口与 effectRegistry.ts:80 的同名接口是【两份独立定义】，已分叉。
                                       //    新增字段需【两边同步补】，否则数据侧能写、消费侧 TS 报错。
     summonCount?: number;            // [新增] 生成数量，支持一次性召唤/生成多张
