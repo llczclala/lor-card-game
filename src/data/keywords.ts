@@ -258,8 +258,13 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
     },
     'Exposed': {
         label: '暴露',
-        description: '可以被敌方任意单位挑战（强制阻挡）。',
-        color: 'orange',
+        // [2026-09-16 1.0.16 T03] 原文案「可以被敌方任意单位挑战（强制阻挡）」与定义不符：
+        //   「强制阻挡」是另一套机制，且暴露【不需要挑战者】—— 它是防守方的公开漏洞，而非进攻方的权限。
+        description: '任意敌方单位进攻时，都可以把你从备战席拉上场格挡。',
+        // [2026-09-16 T03] orange → purple，与设计文档一致：
+        //   挑战者 = 金橙(05 完整准星) / 暴露 = 紫(27 碎裂准星)，两者本就是一对镜像图标，
+        //   同场时必须一眼可分，配色不能撞。
+        color: 'purple',
         icon: icon27
     },
     'Volatile': {

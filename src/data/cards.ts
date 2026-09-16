@@ -2163,7 +2163,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 27. Exposed (暴露) ---
   test_exposed: {
     key: 'test_exposed', name: '测试：暴露', cost: 1, power: 5, health: 5, maxHealth: 5, isChampion: false, level: 0, region: 'TEST',
-    description: '可被任意敌人挑战。', type: 'unit', keywords: ['Exposed'],
+    description: '任意敌方单位进攻时，都可以把你从备战席拉上场格挡。', // [2026-09-16 1.0.16 T03] 同步新语义
+    type: 'unit', keywords: ['Exposed'],
     imageUrl: TEST_IMAGES.exposed,
     isCollectible: false
   },
