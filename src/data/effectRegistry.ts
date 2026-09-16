@@ -90,6 +90,7 @@ export interface EffectParams {
     condition?: string;
     summonKey?: string;              // [新增] 召唤物的卡牌 Key
     summonZone?: 'bench' | 'combat' | 'hand'; // [修改] 召唤的降落点（备战席 / 交战区 / 手牌）——'hand' 用于撤回类法术回手牌
+    summonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 召唤落点的阵营：'self' 己方（默认，保持原有行为）/ 'opponent' 落到对方半场（獠牙信标）
     presenceRequirement?: string[];  // [新增] 通用在场条件扫描名单 (写入需要的卡牌 Key)
     targetKeyRequirement?: string[]; // [新增] 定向发牌白名单：只给拥有这些 Key 的单位发放 Buff
     raceFilter?: Race[];             // [新增] 种族过滤器：只给指定种族的单位发放效果
