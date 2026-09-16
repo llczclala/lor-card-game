@@ -52,6 +52,9 @@ import mauxir_lotus_drive_2 from '../image/hero/猫汐尔莲驱2.webp';
 // [新增] 引入安卡希雅 时之重奏的原画
 import acacia_chrono_echo_1 from '../image/hero/安卡希雅时之重奏1.webp';
 import acacia_chrono_echo_2 from '../image/hero/安卡希雅时之重奏2.webp';
+// [2026-09-16 1.0.16] 引入茉莉安 霄鹰的原画
+import marian_skyhawk_1 from '../image/hero/茉莉安霄鹰1.webp';
+import marian_skyhawk_2 from '../image/hero/茉莉安霄鹰2.webp';
 
 // --- 法术卡面 (Spells) ---
 // 通用法术
@@ -129,6 +132,12 @@ import acacia_chrono_echo_spell_02_m1 from '../image/spells/Acacia_Chrono Echo_s
 import acacia_chrono_echo_spell_gen1 from '../image/spells/Acacia_Chrono Echo_spell_gen1.webp'; // 灵轨月轮·扩散
 import acacia_chrono_echo_spell_gen2 from '../image/spells/Acacia_Chrono Echo_spell_gen2.webp'; // 灵轨月轮·集束
 import acacia_chrono_echo_spell_gen3 from '../image/spells/Acacia_Chrono Echo_spell_gen3.webp'; // 月镰剑势
+
+// [2026-09-16 1.0.16] 引入茉莉安 霄鹰专属法术
+import marian_spell_base from '../image/spells/marian_spell.webp';     // 茉莉安的猎场（抉择基牌）
+import marian_spell_01 from '../image/spells/marian_spell01.webp';     // 抉择① 小技能
+import marian_spell_02 from '../image/spells/marian_spell02.webp';     // 抉择② 大招
+import marian_spell_03 from '../image/spells/marian_spell03.webp';     // 支援技
 
 // [新增] 占位法术图片（用于衍生法术暂无专图）
 import abc_spell from '../image/spells/abc.webp';
@@ -480,7 +489,9 @@ export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
     fenny: { base: fenny_1, level2: fenny_2 },
     pupu_specular_soul: { base: pupu_specular_soul_1, level2: pupu_specular_soul_2 },
     mauxir_lotus_drive: { base: mauxir_lotus_drive_1, level2: mauxir_lotus_drive_2 },
-    acacia_chrono_echo: { base: acacia_chrono_echo_1, level2: acacia_chrono_echo_2 }
+    acacia_chrono_echo: { base: acacia_chrono_echo_1, level2: acacia_chrono_echo_2 },
+    // [2026-09-16 1.0.16 茉莉安]
+    marian: { base: marian_skyhawk_1, level2: marian_skyhawk_2 }
 };
 // [皮肤] 导出正式单位图片集合（从 glob 自动构建）
 export const UNIT_IMAGES: Record<string, string> = {};
@@ -558,6 +569,12 @@ export const SPELL_IMAGES = {
     mauxir_lotus_ultimate: mauxir_lotus_spell_02,
     mauxir_lotus_support: mauxir_lotus_spell_03,
     mauxir_lotus_pedestal: placeholder_pedestal,
+
+    // [2026-09-16 1.0.16 茉莉安]
+    marian_spell: marian_spell_base,
+    marian_rush: marian_spell_01,
+    marian_ultimate: marian_spell_02,
+    marian_support: marian_spell_03,
 
     // [2026-08-23 莉莉子] 猫汐尔阵营法术（正式卡面）
     mauxir_zhishui_ningxing: mauxir_zhishui_img,

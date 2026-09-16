@@ -1973,7 +1973,62 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // ===========================================================
   // [2026-09-16 1.0.16 茉莉安大版本] 新增内容
+  // ⚠️ 法术名【暂定】：设计文档只定了规格没定名，此处按现有命名风格
+  //    （「猫汐尔的演算」「安卡希雅的剑舞」）提议，程可随时改
   // ===========================================================
+
+  // --- 天启者：茉莉安 · 霄鹰 ---
+  marian: {
+    key: 'marian', gachaPool: GachaPoolEnum.Zenith, name: '茉莉安 霄鹰', cost: 4, power: 5, health: 5, maxHealth: 5,
+    isChampion: true, level: 1, region: 'Marian',
+    description: '【库效】对局开始时，在敌方备战席召唤一个“獠牙信标”。\n入场及回合开始时：若敌方备战席没有“獠牙信标”，则召唤一个。\n参战：变化为“茉莉安的猎场”。',
+    type: 'unit', keywords: [],
+    imageUrl: HERO_IMAGES.marian.base,
+    level2ImageUrl: HERO_IMAGES.marian.level2,
+    associatedSpellKey: 'marian_spell',
+    levelUpCondition: '我方召唤的“獠牙信标”被破坏 2 次',
+    levelUpTarget: 2,
+    effects: ['effect_marian_lv1'], // [T13 待补] 入场 & 回合开始的召唤；[T07] 升级计数
+  },
+  marian_spell: {
+    key: 'marian_spell', name: '茉莉安的猎场', cost: 0, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '抉择：“标记射击” 或 “逐一清除”\n使用后，在牌库里生成一张“茉莉安 霄鹰”。',
+    type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_spell,
+    associatedChampionKey: 'marian',
+    isLevel2Choice: true,
+    choices: ['marian_rush', 'marian_ultimate'],
+    ai: { pattern: 'CHOICE', priority: 3, config: {} },
+    isCollectible: false,
+  },
+  marian_rush: {
+    key: 'marian_rush', name: '标记射击', cost: 0, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '对“獠牙信标”造成 1 点伤害，以暴露两个敌人。\n场上没有“獠牙信标”时无法打出。',
+    type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_rush,
+    effects: [], // [T14 待补] 伤害部分可先做；「暴露两个敌人」依赖 T10 暴露引擎
+    isCollectible: false,
+  },
+  marian_ultimate: {
+    key: 'marian_ultimate', name: '逐一清除', cost: 5, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '选择并打击一个敌方单位，造成等同于“茉莉安 霄鹰”攻击力的伤害。\n若将其击杀，则自动锁定当前生命值最低的敌方单位再次打击，直到未能击杀、或打击敌方水晶为止。',
+    type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_ultimate,
+    effects: [], // [T15 待补] 续击循环引擎
+    isCollectible: false,
+  },
+  marian_support: {
+    key: 'marian_support', gachaPool: GachaPoolEnum.Zenith, name: '前哨投送', cost: 3, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '在敌方备战席召唤一个“獠牙信标”。\n敌方备战席已满时无法打出。',
+    type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_support,
+    associatedChampionKey: 'marian',
+    effects: [], // [T16 待补]
+  },
 
   // --- 衍生物：獠牙信标 ---
   // 站位在【对手】的备战席 —— 由 ④【库效】/ 茉莉安本体入场 / 支援技召唤
