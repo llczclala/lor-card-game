@@ -45,6 +45,13 @@ const BASE_HEIGHT = 448;      // 卡牌的基础物理高度
 const OFFSET = 8;             // 与实体卡牌的贴合间距 (越小越紧密)
 
 /**
+ * [2026-09-10 莉莉子] 卡牌大图的"保持区"标记。
+ * useCardGaze 的 holdSelector 传这个选择器后：鼠标移到大图身上不关闭大图，
+ * 便于移到大图上的武装图标继续检视（否则鼠标一离开原卡，大图就消失）。
+ */
+export const CARD_GAZE_HOLD_SELECTOR = '[data-card-gaze-preview]';
+
+/**
  * FloatingCardPreview
  *
  * 纯展示层——浮动卡牌大图预览。
@@ -127,6 +134,7 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
         return createPortal(
             <motion.div
                 key={followCard.key}
+                data-card-gaze-preview="" // [2026-09-10 莉莉子] 大图保持区标记（useCardGaze holdSelector 用）
                 style={{
                     position: 'fixed',
                     left,

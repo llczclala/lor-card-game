@@ -10,6 +10,17 @@ interface UseCardGazeConfig {
     isDragging?: boolean;
     /** 是否正在施法（施法时禁用） */
     isCasting?: boolean;
+    /**
+     * [2026-09-10 莉莉子] 抑制开关：为 true 时完全不弹卡牌大图（并关闭已弹的）。
+     * 场景：鼠标停在卡牌关键词图标上检视关键词时，不要让卡牌大图跟着弹出来打架。
+     */
+    suppress?: boolean;
+    /**
+     * [2026-09-10 莉莉子] 保持选择器：鼠标停留在这些元素上时，大图不关闭。
+     * 场景：鼠标移到卡牌大图身上、再落到大图上的武装图标时，大图应保持（便于逐个检视武装）。
+     * 传 CSS 选择器，如 '[data-card-gaze-preview]'。
+     */
+    holdSelector?: string;
 }
 
 interface GazeEvents {
@@ -46,6 +57,8 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
         leaveBuffer = 150,
         isDragging = false,
         isCasting = false,
+        suppress = false,
+        holdSelector,
     } = config;
 
     const [gazeTarget, setGazeTarget] = useState<GazeTarget<T> | null>(null);
@@ -53,6 +66,9 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
     const leaveTimerRef = useRef<number | null>(null);
     const currentGazeRef = useRef<GazeTarget<T> | null>(null);
     const isGazingRef = useRef(false);
+    // [2026-09-10] 保持监控开关：鼠标离开触发源后，改为持续检测是否停留在保持区内
+    const holdingRef = useRef(false);
+    const lastMouseRef = useRef<{ x: number; y: number } | null>(null); // 最后已知鼠标位置（兜底复核用）
 
     // 清理所有定时器
     const clearAllTimers = useCallback(() => {
@@ -72,23 +88,61 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
         setGazeTarget(null);
         currentGazeRef.current = null;
         isGazingRef.current = false;
+        holdingRef.current = false; // [2026-09-10] 一并复位保持监控
     }, [clearAllTimers]);
 
-    // 当 isDragging / isCasting 变化时自动关闭
+    // 当 isDragging / isCasting / suppress 变化时自动关闭
     useEffect(() => {
-        if (isDragging || isCasting) {
+        if (isDragging || isCasting || suppress) {
             dismissGaze();
         }
-    }, [isDragging, isCasting, dismissGaze]);
+    }, [isDragging, isCasting, suppress, dismissGaze]);
 
     // 组件卸载时清理
     useEffect(() => {
         return () => clearAllTimers();
     }, [clearAllTimers]);
 
+    // [2026-09-10 莉莉子] 鼠标是否位于「触发卡牌 ∪ 保持元素」区域内。
+    // 触发卡牌用进入时抓到的 cardRect（即使鼠标已离开，矩形仍有效）；
+    // 保持元素（如卡牌大图本体）实时查询 —— 它们随 gazeTarget 渲染/卸载。
+    const inHoldRegion = useCallback((x: number, y: number): boolean => {
+        const trig = currentGazeRef.current?.cardRect;
+        if (trig && x >= trig.left && x <= trig.right && y >= trig.top && y <= trig.bottom) return true;
+        if (holdSelector) {
+            for (const el of Array.from(document.querySelectorAll(holdSelector))) {
+                const r = el.getBoundingClientRect();
+                if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+            }
+        }
+        return false;
+    }, [holdSelector]);
+
+    // [2026-09-10 莉莉子] 保持监控：鼠标离开触发源后不再"到点即关"，
+    // 改为持续看鼠标在不在保持区内 —— 移到大图上检视武装时不关闭，离开才关。
+    useEffect(() => {
+        if (!holdSelector) return;
+        const onMove = (e: MouseEvent) => {
+            lastMouseRef.current = { x: e.clientX, y: e.clientY };
+            if (!holdingRef.current) return;
+            if (inHoldRegion(e.clientX, e.clientY)) return; // 仍在保持区 → 继续显示
+            // 真正离开了 → 关闭（同原 dismiss 语义）
+            holdingRef.current = false;
+            if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null; }
+            setGazeTarget(null);
+            currentGazeRef.current = null;
+            isGazingRef.current = false;
+        };
+        window.addEventListener('mousemove', onMove);
+        return () => {
+            window.removeEventListener('mousemove', onMove);
+            holdingRef.current = false;
+        };
+    }, [holdSelector, inHoldRegion]);
+
     const bindGazeEvents = useCallback((card: T): GazeEvents => ({
         onMouseEnter: (e: React.MouseEvent) => {
-            if (isDragging || isCasting) return;
+            if (isDragging || isCasting || suppress) return;
 
             // [终极解法] 智能物理探针：兼顾"实体列表行"与"空气伪装盒"
             let cardRect: DOMRect;
@@ -152,6 +206,24 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
                 }
             }
 
+            // [2026-09-10 莉莉子] 配了保持选择器 → 不再"到点即关"，转为持续检测：
+            //   鼠标若停留在保持区（卡牌大图本体）内就继续保持，真正离开才关。
+            if (holdSelector) {
+                holdingRef.current = true;
+                if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+                // 兜底定时器：鼠标离开后若"停住不动"（不再派发 mousemove），到点用最后已知坐标复核一次
+                leaveTimerRef.current = window.setTimeout(() => {
+                    leaveTimerRef.current = null;
+                    const m = lastMouseRef.current;
+                    if (holdingRef.current && m && inHoldRegion(m.x, m.y)) return; // 已停在保持区内 → 继续显示
+                    holdingRef.current = false;
+                    setGazeTarget(null);
+                    currentGazeRef.current = null;
+                    isGazingRef.current = false;
+                }, leaveBuffer);
+                return;
+            }
+
             // 用 leaveBuffer 缓冲，让鼠标能移到预览图上
             if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
             leaveTimerRef.current = window.setTimeout(() => {
@@ -161,7 +233,7 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
                 leaveTimerRef.current = null;
             }, leaveBuffer);
         },
-    }), [isDragging, isCasting, delay, leaveBuffer]);
+    }), [isDragging, isCasting, suppress, delay, leaveBuffer, holdSelector, inHoldRegion]);
 
     // 鼠标进入预览图时阻止关闭（配合 FloatingCardPreview interactive 模式使用）
     const keepAlive = useCallback(() => {

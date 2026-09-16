@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
-import { Card } from './Card';
+import { Card, CardBackVideo } from './Card'; // [2026-08-23] 动态卡背视频组件
 import { eventBus, GameEvents } from '../utils/eventBus';
 
 const useNumberTicker = (targetValue: number, duration: number = 1000) => {
@@ -193,6 +193,7 @@ export const NexusDisplay = ({
 export const Deck = ({
     isEnemy,
     cardBackIndex = 0,
+    cardBackVideoUrl, // [2026-08-23 莉莉子] 动态卡背视频 URL
     deckCount = 0,
     handCount = 0,
     initialHeroes = [],
@@ -226,7 +227,11 @@ export const Deck = ({
 
                     {/* 2. 顶部卡背 (封面) */}
                     <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-[#1a1a1a]">
-                        <img src={cardBackImg} alt="牌库" className="w-full h-full object-cover" />
+                        {cardBackVideoUrl ? (
+                            <CardBackVideo src={cardBackVideoUrl} className="w-full h-full object-cover" />
+                        ) : (
+                            <img src={cardBackImg} alt="牌库" className="w-full h-full object-cover" />
+                        )}
                         <div className={`absolute inset-0 bg-white transition-opacity duration-300 pointer-events-none ${isHovered ? 'opacity-20' : 'opacity-0'}`}></div>
                     </div>
                 </div>

@@ -151,6 +151,45 @@ export const checkCardLevelUp = (card: CardData, playerNexusHealth: number, enem
     return false;
 };
 
+// ==========================================
+// [2026-09-13 莉莉子] 升级标记统一读写（分阵营）
+// ==========================================
+/**
+ * 记录英雄升级标记 —— 同时写「全局列表」与「分阵营列表」两套。
+ *
+ * ⚠️ 全局的 leveledChampions 仍有 8 处读取（变形系统 / 抉择解锁 / 手牌高亮 / 法术回库等），
+ *    必须继续维护；分阵营的 leveledChampionsBySide 只服务升级流程的敌我判定。
+ *    统一入口，杜绝"只写了一处、另一处漏更"造成两套数据打架。
+ *
+ * 注：整体赋值而非 push —— 保证对象/数组全新，不污染共享引用（React 浅拷贝语义）。
+ */
+export const markLeveledUp = (game: GameState, side: 'player' | 'enemy', key: string): void => {
+    game.leveledChampions = Array.from(new Set([...(game.leveledChampions || []), key]));
+
+    const bySide = game.leveledChampionsBySide || { player: [], enemy: [] };
+    game.leveledChampionsBySide = {
+        player: bySide.player || [],
+        enemy: bySide.enemy || [],
+        [side]: Array.from(new Set([...(bySide[side] || []), key])),
+    };
+};
+
+/** 撤销英雄升级标记（退级用，如安卡「剑痕时空」），两套同步清除 */
+export const unmarkLeveledUp = (game: GameState, side: 'player' | 'enemy', key: string): void => {
+    game.leveledChampions = (game.leveledChampions || []).filter(k => k !== key);
+
+    const bySide = game.leveledChampionsBySide || { player: [], enemy: [] };
+    game.leveledChampionsBySide = {
+        player: bySide.player || [],
+        enemy: bySide.enemy || [],
+        [side]: (bySide[side] || []).filter(k => k !== key),
+    };
+};
+
+/** 查询某方的某英雄是否已锁定升级（升级流程专用，替代全局 leveledChampions 判定） */
+export const isLeveledUpForSide = (game: GameState, side: 'player' | 'enemy', key: string): boolean =>
+    !!game.leveledChampionsBySide?.[side]?.includes(key);
+
 // [新增] 获取卡牌通用银价格
 export const getCardPrice = (cost: number): number => {
     if (cost >= 0 && cost <= 2) return 400;

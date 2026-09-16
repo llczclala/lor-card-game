@@ -99,7 +99,13 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
         if (phase === 'video') {
             // 视频开始 1 秒后显示跳过按钮
             const timer = setTimeout(() => setShowSkip(true), 1000);
-            return () => clearTimeout(timer);
+            // [2026-08-30 莉莉子 死锁兜底] 视频阶段超时 8s 强制进入 burst，
+            // 防止视频 onEnd 挂起（胜利/升级影片竞态、onComplete 被覆盖）导致 levelUpCard 永不清空 → 升级队列死锁。
+            const forceBurst = setTimeout(() => {
+                console.warn(`[ChampionLevelUp] ⏱️ ${card.key} 升级影片 8s 未结束，强制进入爆发展示`);
+                setPhase('burst');
+            }, 8000);
+            return () => { clearTimeout(timer); clearTimeout(forceBurst); };
         } else {
             setShowSkip(false);
         }

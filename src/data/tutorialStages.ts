@@ -194,8 +194,9 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
         category: 'keyword',
         enemyArchetypeId: 'fenny_pressure',
 
-        playerDeck: [],
-        enemyDeck: [],
+        // [2026-08-20 莉莉子 BUG修复] 牌库不能为空：回合推进抽卡时牌库空会触发"疲劳判负"→ 结算面板过早弹出
+        playerDeck: ['fenny', 'test_overwhelm', 'fenny', 'test_overwhelm', 'fenny'],
+        enemyDeck: ['test_frostbite', 'titan_gaimer', 'test_frostbite'],
         enemyVisual: {
             displayName: '训练守卫',
             cardKey: 'test_frostbite',
@@ -218,8 +219,9 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
         category: 'keyword',
         enemyArchetypeId: 'fenny_pressure',
 
-        playerDeck: [],
-        enemyDeck: [],
+        // [2026-08-20 莉莉子 BUG修复] 牌库不能为空：回合推进抽卡时牌库空会触发"疲劳判负"→ 结算面板过早弹出
+        playerDeck: ['fenny', 'test_overwhelm', 'fenny', 'test_overwhelm', 'fenny'],
+        enemyDeck: ['test_regeneration', 'test_frostbite', 'test_regeneration'],
         enemyVisual: {
             displayName: '再生守卫',
             cardKey: 'test_regeneration',
@@ -238,20 +240,21 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
     keyword_03_quickattack: {
         id: 'keyword_03_quickattack',
         name: '先发制人——快攻',
-        description: '学习【快攻】关键词：进攻时先出手，击杀格挡者则不会受到反击。',
+        description: '学习【先攻】关键词：进攻时先出手，击杀格挡者则不会受到反击。',
         category: 'keyword',
         enemyArchetypeId: 'fenny_pressure',
 
-        playerDeck: [],
-        enemyDeck: [],
+        // [2026-08-20 莉莉子 BUG修复] 牌库不能为空：回合推进抽卡时牌库空会触发"疲劳判负"→ 结算面板过早弹出
+        playerDeck: ['fenny', 'test_quickattack', 'fenny', 'test_overwhelm', 'fenny'],
+        enemyDeck: ['test_frostbite', 'titan_gaimer', 'test_frostbite'],
         enemyVisual: {
             displayName: '训练假人',
             cardKey: 'test_frostbite',
         },
         disableMulligan: true,
         objectives: [
-            '对比快攻单位与普通单位的进攻差异',
-            '利用快攻优势击破敌方水晶',
+            '对比先攻单位与普通单位的进攻差异',
+            '利用先攻优势击破敌方水晶',
         ],
     },
 };

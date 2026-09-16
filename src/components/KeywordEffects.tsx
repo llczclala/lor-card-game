@@ -118,6 +118,20 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
         }
     }, [data.animState]);
 
+    // ========== [2026-09-12 莉莉子] 剧毒 (Deadly) — 被毒杀瞬间的腐蚀崩解 ==========
+    // 语义：Deadly 是**负面**词条——带有它的单位"受到任何伤害即被解构"（判定见 logic/keywords.ts deadlyLethalInject）
+    // 分工：常驻毒雾靠 hasDeadly 纯状态渲染（无需状态机）；此处只捕获 animState:'dying' 播一次性崩解演出
+    const hasDeadly = data.keywords.includes('Deadly');
+    const [poisonDeathActive, setPoisonDeathActive] = useState(false);
+
+    useEffect(() => {
+        if (data.animState === 'dying' && hasDeadly) {
+            setPoisonDeathActive(true);
+            const timer = setTimeout(() => setPoisonDeathActive(false), 1400);
+            return () => clearTimeout(timer);
+        }
+    }, [data.animState, hasDeadly]);
+
     // [Frostbite] 入场爆发状态机：检测关键词首次出现或上战场时触发
     const [frostEntryActive, setFrostEntryActive] = useState(false);
     const prevHadFrostbite = useRef(false);
@@ -165,6 +179,16 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
         fearsomeTimerRef.current = setTimeout(() => setFearsomeActive(false), 1200);
     }, []);
 
+    // [2026-08-20 莉莉子] 隐秘 (Elusive) 阻挡拒绝闪光：攻击者卡面亮起橙色脉冲
+    const [elusiveRejectActive, setElusiveRejectActive] = useState(false);
+    const elusiveRejectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+    const triggerElusiveReject = useCallback(() => {
+        if (elusiveRejectTimerRef.current) clearTimeout(elusiveRejectTimerRef.current);
+        setElusiveRejectActive(true);
+        elusiveRejectTimerRef.current = setTimeout(() => setElusiveRejectActive(false), 900);
+    }, []);
+
     // 触发 1：从备战席进入战场时（isCombat 从 false → true）
     useEffect(() => {
         const nowInCombat = isCombat && !isBlocker;
@@ -174,18 +198,23 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
         wasFearsomeCombatRef.current = nowInCombat;
     }, [isCombat, isBlocker, data.keywords, triggerFearsome]);
 
-    // 触发 2：阻挡被凶恶拒绝时（FEARSOME_REJECT 事件）
+    // 触发 2：阻挡被凶恶/隐秘拒绝时（BLOCK_REJECTED 事件，按 reason 分发闪光）
     useEffect(() => {
-        const handler = (payload: { unitId: string }) => {
-            if (payload.unitId === data.id) triggerFearsome();
+        const handler = (payload: { attackerId?: string; reason?: string }) => {
+            if (!payload?.attackerId || payload.attackerId !== data.id) return;
+            if (payload.reason === 'fearsome') triggerFearsome();
+            else if (payload.reason === 'elusive') triggerElusiveReject();
         };
-        eventBus.on('FEARSOME_REJECT', handler);
-        return () => eventBus.off('FEARSOME_REJECT', handler);
-    }, [data.id, triggerFearsome]);
+        eventBus.on(GameEvents.BLOCK_REJECTED, handler);
+        return () => eventBus.off(GameEvents.BLOCK_REJECTED, handler);
+    }, [data.id, triggerFearsome, triggerElusiveReject]);
 
     // 清理定时器
     useEffect(() => {
-        return () => { if (fearsomeTimerRef.current) clearTimeout(fearsomeTimerRef.current); };
+        return () => {
+            if (fearsomeTimerRef.current) clearTimeout(fearsomeTimerRef.current);
+            if (elusiveRejectTimerRef.current) clearTimeout(elusiveRejectTimerRef.current);
+        };
     }, []);
 
     // 自动收集进攻型词条 (加入 Challenger，使其享受 0.9s 的入场狂欢与常驻轮播)
@@ -359,6 +388,24 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                 </div>
             )}
 
+            {/* [2026-08-20 莉莉子] Elusive 阻挡拒绝闪光：攻击者卡面亮起橙色强脉冲（阻挡被拒时触发） */}
+            <AnimatePresence>
+                {elusiveRejectActive && isOnBoard && data.keywords.includes('Elusive') && (
+                    <motion.div
+                        key="elusive-reject"
+                        className="absolute inset-0 z-[70] pointer-events-none overflow-hidden"
+                        style={{ borderRadius }}
+                        initial={{ opacity: 0.95 }}
+                        animate={{ opacity: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.8, ease: "easeOut" }}
+                    >
+                        <div className="absolute inset-0 bg-orange-300/70 shadow-[0_0_30px_rgba(249,115,22,0.9)]" />
+                        <div className="absolute inset-0 border-4 border-orange-300 box-border shadow-[0_0_24px_rgba(255,237,213,0.8)]" style={{ borderRadius }} />
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* 3a. Tough (坚韧) — 受击时黄绿高光 + 白色流光 + 图标爆发 */}
             <AnimatePresence>
                 {toughHitActive && isOnBoard && KEYWORD_DB['Tough'] && (
@@ -441,6 +488,75 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                             className="drop-shadow-[0_0_6px_rgba(101,163,13,0.8)]"
                         />
                     </motion.svg>
+                </div>
+            )}
+
+            {/* 3d. [2026-09-12 莉莉子] Deadly (剧毒) — 常驻毒雾侵染 */}
+            {/* 负面词条提示：让玩家一眼看出"这块单位一碰就碎"，必须尽快撤离交火线 */}
+            {isOnBoard && hasDeadly && (
+                <div className="absolute inset-0 z-[25] pointer-events-none overflow-visible" style={{ borderRadius }}>
+                    {/* 底层：毒液浸染的边界描边 */}
+                    <div className="absolute inset-0 border-[3px] border-teal-600/70 rounded-xl shadow-[inset_0_0_14px_rgba(13,148,136,0.55)]" />
+                    {/* 中层：两片错位毒雾上下涌动 */}
+                    <motion.div
+                        className="absolute inset-0 rounded-xl mix-blend-screen"
+                        style={{ background: 'radial-gradient(circle at 30% 80%, rgba(45,212,191,0.35) 0%, transparent 55%)' }}
+                        animate={{ opacity: [0.35, 0.7, 0.35], y: [2, -3, 2] }}
+                        transition={{ duration: 3.4, repeat: Infinity, ease: 'easeInOut' }}
+                    />
+                    <motion.div
+                        className="absolute inset-0 rounded-xl mix-blend-screen"
+                        style={{ background: 'radial-gradient(circle at 70% 25%, rgba(13,148,136,0.4) 0%, transparent 55%)' }}
+                        animate={{ opacity: [0.6, 0.3, 0.6], y: [-2, 3, -2] }}
+                        transition={{ duration: 4.2, repeat: Infinity, ease: 'easeInOut' }}
+                    />
+                    {/* 上层：毒雾图标微呼吸（不缩放太大，避免抢走卡面信息） */}
+                    {KEYWORD_DB['Deadly'] && (
+                        <motion.div
+                            className="absolute inset-0 flex items-center justify-center"
+                            animate={{ opacity: [0.35, 0.75, 0.35], scale: [0.92, 1, 0.92] }}
+                            transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
+                        >
+                            <img src={KEYWORD_DB['Deadly'].icon} className="w-14 h-14 object-contain"
+                                style={{ filter: 'drop-shadow(0 0 10px rgba(45,212,191,0.9)) drop-shadow(0 0 22px rgba(13,148,136,0.6))' }}
+                                alt="剧毒" />
+                        </motion.div>
+                    )}
+                </div>
+            )}
+
+            {/* 3e. Deadly (剧毒) — 被毒杀瞬间：腐蚀崩解（一次性） */}
+            {poisonDeathActive && KEYWORD_DB['Deadly'] && (
+                <div className="absolute inset-0 z-[80] pointer-events-none overflow-visible" style={{ borderRadius }}>
+                    {/* 青绿帷幕：结构被侵蚀后整块褪色 */}
+                    <motion.div
+                        className="absolute inset-0 bg-teal-500/70 mix-blend-screen rounded-xl"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: [0, 0.85, 0] }}
+                        transition={{ duration: 1.2, ease: 'easeOut' }}
+                    />
+                    {/* 图标崩解：收束 → 沸腾 → 放大消散 */}
+                    <motion.div
+                        className="absolute inset-0 flex items-center justify-center"
+                        initial={{ opacity: 0, scale: 0.6 }}
+                        animate={{ opacity: [0, 1, 1, 0], scale: [0.6, 1.15, 1.3, 2.6] }}
+                        transition={{ duration: 1.2, times: [0, 0.25, 0.6, 1], ease: 'easeOut' }}
+                    >
+                        <img src={KEYWORD_DB['Deadly'].icon} className="w-24 h-24 object-contain"
+                            style={{ filter: 'drop-shadow(0 0 18px rgba(45,212,191,1)) drop-shadow(0 0 40px rgba(13,148,136,0.85))' }}
+                            alt="剧毒崩解" />
+                    </motion.div>
+                    {/* 腐蚀毒滴飞溅（位置固定不随机，避免重渲染抖动） */}
+                    {[...Array(8)].map((_, i) => (
+                        <motion.div
+                            key={`poison-drop-${i}`}
+                            className="absolute w-1.5 h-1.5 rounded-full bg-teal-300"
+                            style={{ left: `${18 + i * 9}%`, top: `${30 + (i % 3) * 18}%`, boxShadow: '0 0 8px #2dd4bf' }}
+                            initial={{ scale: 0, opacity: 1 }}
+                            animate={{ scale: [0, 1.2, 0], opacity: [1, 1, 0], y: [0, 18 + i * 3] }}
+                            transition={{ duration: 0.9, delay: 0.15 + i * 0.05, ease: 'easeOut' }}
+                        />
+                    ))}
                 </div>
             )}
 

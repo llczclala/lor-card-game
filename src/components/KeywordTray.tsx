@@ -3,6 +3,7 @@ import { motion, type Variants } from 'framer-motion';
 import type { Keyword } from '../types';
 import { KEYWORD_DB } from '../data/keywords';
 import { subscribeScoutState, getScoutState } from './KeywordEffects'; // [侦察] 攻击宣言期状态
+import { bindKeywordGaze } from './KeywordPreview'; // [2026-09-10 莉莉子] 关键词悬停大卡（取代原生 title 小白框）
 
 interface KeywordTrayProps {
     keywords: Keyword[];
@@ -39,7 +40,7 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     let glowColor = '';
     // [新增] 加入 shield (护盾) 类型
     // [2026-08-16 莉莉子] 补充 channel_breath（充能呼吸）/ frost_breath·frost_entry（冻结两阶段）/ fearsome（凶恶双段爆闪）
-    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'tough_breath' | 'frost_thaw' | 'frost_breath' | 'frost_entry' | 'channel_breath' | 'fearsome' | 'scout_scan' | 'scout_invalid' | 'none' = 'none';
+    let animType: 'pulse' | 'flash' | 'stealth' | 'hunt' | 'shield' | 'titan_breath' | 'ability_breath' | 'aura_constant' | 'tough_breath' | 'frost_thaw' | 'frost_breath' | 'frost_entry' | 'channel_breath' | 'fearsome' | 'scout_scan' | 'scout_invalid' | 'poison_breath' | 'none' = 'none';
 
     // [新增] 最高优先级：瞬息阵亡谢幕拦截！
     if (animState === 'ephemeral_dying' && keyword === 'Ephemeral') {
@@ -116,6 +117,13 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
         isActive = true;
         glowColor = 'rgba(190, 143, 17, 0.85)'; // 金琥珀色
         animType = 'tough_breath';
+    }
+    // [剧毒] 场上常驻毒雾呼吸（2026-09-12 莉莉子）
+    //   语义反转后 Deadly 是负面词条，需要"不祥感"而非"力量感"——用青绿毒液色 + 迟缓潮汐持续告警
+    else if (keyword === 'Deadly' && isOnBoard) {
+        isActive = true;
+        glowColor = 'rgba(45, 212, 191, 0.85)'; // teal-400：青绿毒液色（与反伤的 lime 拉开区分）
+        animType = 'poison_breath';
     }
 
     // [侦察] 战斗区进攻：active=有效（翠绿旋转）/ invalid或null=无效（灰白停转）
@@ -297,6 +305,18 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
             ],
             transition: { duration: 2, repeat: Infinity, ease: "easeInOut" }
         },
+        // [2026-09-12 莉莉子 剧毒] 毒雾呼吸：迟缓的明暗潮汐 + 亮度压低，制造"被侵蚀"的病态感
+        //   与其它呼吸灯的关键区别——不做放大的力量感，而是越呼吸越黯淡的衰弱暗示
+        active_poison_breath: {
+            scale: [0.88, 1.0, 0.88],
+            opacity: [0.55, 1, 0.55],
+            filter: [
+                `brightness(0.65) drop-shadow(0px 0px 4px ${glowColor})`,
+                `brightness(1.25) drop-shadow(0px 0px 14px ${glowColor})`,
+                `brightness(0.65) drop-shadow(0px 0px 4px ${glowColor})`,
+            ],
+            transition: { duration: 3.2, repeat: Infinity, ease: "easeInOut" }
+        },
         // [冻结] 入场动画：从高透明度/大尺寸/高亮度 旋转缩小至正常（一次性）
         active_frost_entry: {
             scale: [2.5, 1],
@@ -377,7 +397,8 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     };
 
     return (
-        <div className={`relative flex items-center justify-center group cursor-help ${sizeClass}`} title={`${config.label}: ${config.description}`}>
+        // [2026-09-10 莉莉子] 摘掉原生 title（浏览器小白框）→ 改绑自定义关键词大卡（portal 浮层，见 KeywordPreview）
+        <div className={`relative flex items-center justify-center group cursor-help ${sizeClass}`} {...bindKeywordGaze(keyword)}>
 
             {/* 特效光环底底衬 (仅激活时渲染，避免性能浪费) */}
             {isActive && (

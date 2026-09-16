@@ -26,7 +26,7 @@ export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, r
 
     // [2026-08-14 武装] 战斗构建合并：局内装备（equippedCards）+ 局外武装（useArmamentConfig）一起挂到对应卡
     // 武装静态修饰（+1/+1 / 费用-2）由 attachEquipment 生效；秘法回响（回合开始恢复法力）由 armamentManaRestore 生效
-    const armForHero = getArmament(run.heroKey);
+    const armForHero = getArmament(run.heroKey, run.heroLevel ?? 1); // [2026-08-28 莉莉子 修复] 只带已解锁槽位武装（等级降低残留不带入）
     const rogueEquipments = {
         ...(run.equippedCards ?? {}),
         [run.heroKey]: [
@@ -47,12 +47,18 @@ export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, r
                 // [2026-08-07] 移除 passiveEffects（GameSession 无此 prop，被动效果未接入）
                 aiDifficulty="hard" // [2026-08-06] 肉鸽固定最高 AI 难度
                 aiPersonality={encounter.aiPersonality ?? 'balanced'} // [2026-08-06] 透传流派性格
+                enemyCardBackIndex={encounter.enemyCardBackIndex ?? 0} // [2026-08-17 莉莉子] 敌方卡背
                 initialPlayerNexus={run.hp} // [2026-08-11] 真衔接：战斗水晶初值 = 全局 HP
                 playerNexusMax={run.maxHp} // [2026-08-11] 真衔接：战斗水晶回血上限 = 全局 maxHp
+                initialEnemyNexus={encounter.enemyNexusHp} // [2026-08-28] 敌方水晶初始血量（难度基础值 + 生命强化折算，中后段+B10 / Boss+20）
                 rogueEnhancements={run.enhancements} // [2026-08-11] 玩家迷宫强化 id（战斗内 battleEffect 被动生效）
+                enemyEnhancements={encounter.enemyBuffs ?? []} // [2026-08-27] 敌方迷宫强化 id（流派配置，战斗内 battleEffect 生效）
+                enemyEquipments={encounter.enemyEquipments} // [2026-08-30 程拍板] 敌方单位卡随机装备（难度分级）
                 rogueEquipments={rogueEquipments} // [2026-08-12 商店经济] 局内装备 + [2026-08-14 武装] 局外武装合并挂载
                 onVictory={onVictory}
                 onDefeat={onDefeat}
+                isRogueMode // [2026-08-29 莉莉子] 肉鸽战斗胜利结算按钮显示「返回地图」
+                matchMode="rogue" // [2026-09-04 账号等级/战绩] 肉鸽逐节点战斗不计（整局由 App settleRun 结算一次）
             />
 
             {/* [2026-08-11] 移除战斗内顶部 HUD 覆盖层（程拍板：肉鸽 HUD 数据栏位在实战对局无帮助） */}

@@ -4,6 +4,7 @@
 // [2026-08-13 莉莉子] 由 RogueHeroSelect 内容区内联渲染（不弹窗）
 // ==========================================
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom'; // [2026-08-26 莉莉子] 拖拽跟手图标 Portal 到 body，逃出 ScaleWrapper 缩放容器保证 1:1 跟手
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Sword, Shield, Zap, Ghost, X, RefreshCw, ChevronsRight, ChevronsLeft, Minus, Lock, type LucideIcon } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
@@ -12,8 +13,9 @@ import type { CardData } from '../../types';
 import { Card } from '../Card'; // [2026-08-13] 复用完整手牌样式卡牌渲染
 import { CroppedAvatar } from '../CroppedAvatar'; // [2026-08-13] 圆环头像
 import { getConfiguredStarterDeck } from '../../data/roguelike/rogueStarterDecks';
-import { MAX_HERO_LEVEL, HERO_LEVEL_BONUS, getLevelColor, getLevelNumberColor, getHeroLevelBonus } from '../../data/roguelike/heroProgression';
-import type { HeroLevelBonus } from '../../data/roguelike/heroProgression';
+import { MAX_HERO_LEVEL, HERO_LEVEL_BONUS, getLevelColor, getLevelNumberColor, getHeroLevelBonus, combineArmamentRarity } from '../../data/roguelike/heroProgression'; // [2026-09-07] combineArmamentRarity：重修每槽品质档
+import { readArmStock } from '../../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
+import type { HeroLevelBonus, ArmamentRarity } from '../../data/roguelike/heroProgression'; // [2026-09-07] ArmamentRarity：每槽可装备品质上限
 import { getBuffById } from '../../data/roguelike/buffs';
 import { getEquipmentById, getArmamentDefs, EQUIPMENT_DEFS, attachEquipment, type EquipmentDef } from '../../data/equipment';
 import { getHeroArchetype, DIFFICULTY_LABELS, DIFFICULTY_COLORS } from '../../data/roguelike/heroArchetype'; // [2026-08-13] 流派档案
@@ -23,6 +25,7 @@ import { useArmamentConfig } from '../../hooks/useArmamentConfig'; // [2026-08-1
 import { useCardGaze } from '../../hooks/useCardGaze'; // [2026-08-13] 悬停卡牌大图检视
 import { FloatingCardPreview } from '../FloatingCardPreview'; // [2026-08-13] 悬停大图预览
 import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-08-13] 弹窗音效
+import { bindArmamentGaze } from './ArmamentPreview'; // [2026-08-26 莉莉子] 武装悬停大卡预览
 
 // [2026-08-13] 流派图标映射（lucide + 阵营主题色，对齐 heroTheme 单一来源）
 const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
@@ -53,11 +56,11 @@ export const LEVELS_GEOMETRY = {
 
 // [2026-08-13] 初始牌组界面几何（程可微调，px）
 export const DECK_GEOMETRY = {
-    topGap: 300,            // 整体距离内容区顶部 px
-    listWidth: 820,        // 左侧卡牌列表宽度 px
+    topGap: 75,            // 整体距离内容区顶部 px
+    listWidth: 800,        // 左侧卡牌列表宽度 px（[2026-08-26] 收窄，武装图标放每行卡牌后方独立区）
     gap: 150,               // 手牌样式与左侧列表间距 px
     handScale: 2.5,        // 右侧手牌样式缩放大小
-    handOffsetTop: -200,      // 右侧手牌样式垂直位置偏移 px
+    handOffsetTop: 100,      // 右侧手牌样式垂直位置偏移 px
     armamentGap: 24,       // [2026-08-14] 卡面与右侧武装槽组的间隔 px（程可微调）
 };
 
@@ -92,10 +95,27 @@ function rewardParts(b: Partial<HeroLevelBonus>): { label: string; value: string
     if (b.armamentSlots) return { label: '武装槽位', value: `获得${b.armamentSlots === 2 ? '二号' : '三号'}武装槽位` }; // [2026-08-14 武装]
     if (b.armamentRarity === 'rare') return { label: '武装品质', value: '可以装备稀有武装' }; // [2026-08-14 武装]
     if (b.armamentRarity === 'epic') return { label: '武装品质', value: '可以装备史诗武装' }; // [2026-08-14 武装]
+    if (b.armamentRarity === 'legendary') return { label: '武装品质', value: '可以装备传奇武装' }; // [2026-08-29 补] 30级金武装此前显示「——」（漏 legendary 分支）
+    if (b.armamentRarity === 'mythic') return { label: '武装品质', value: '可以装备神话武装' }; // [2026-08-29] 30级解锁红 mythic（武装批量扩充后）
     if (b.rarityBonus) {
-        if (b.rarityBonus.rare) return { label: '稀有度', value: `稀有卡概率 +${b.rarityBonus.rare}%` };
-        if (b.rarityBonus.epic) return { label: '稀有度', value: `史诗卡概率 +${b.rarityBonus.epic}%` };
-        if (b.rarityBonus.legendary) return { label: '稀有度', value: `传说卡概率 +${b.rarityBonus.legendary}%` };
+        if (b.rarityBonus.rare) return { label: '稀有度', value: `蓝品概率 +${b.rarityBonus.rare}%` };
+        if (b.rarityBonus.epic) return { label: '稀有度', value: `紫品概率 +${b.rarityBonus.epic}%` };
+        if (b.rarityBonus.legendary) return { label: '稀有度', value: `金品概率 +${b.rarityBonus.legendary}%` };
+    }
+    // [2026-08-29] 第六类「商店页签」落实：此前 rewardParts 未处理 shopTabBonus → 7/16 级显示「——」
+    if (b.shopTabBonus) return { label: '商店页签', value: `随机页签 +${b.shopTabBonus}` };
+    // [2026-08-29] 经验获取效率加成（6/17/23/29 级）
+    if (b.expRateBonus) return { label: '经验效率', value: `经验获取效率 +${b.expRateBonus}%` };
+    // [2026-08-29] 装备稀有度加成（10/19/26/29 级，战斗奖励紫金加权）
+    if (b.equipRarityBonus) return { label: '装备稀有度', value: `装备稀有度 +${b.equipRarityBonus}%` };
+    // [2026-08-29] 开局随机挑初始牌组卡挂装备（海基的推演手记〔原微缩回路〕 / 均衡增补 / 强攻模板）
+    if (b.grantedSpellEquips?.length) {
+        const names = b.grantedSpellEquips.map(id => getEquipmentById(id)?.name ?? id);
+        return { label: '装备', value: `随机法术卡持有「${names.join('、')}」` };
+    }
+    if (b.grantedUnitEquips?.length) {
+        const names = b.grantedUnitEquips.map(id => getEquipmentById(id)?.name ?? id);
+        return { label: '装备', value: `随机单位获得「${names.join('、')}」` };
     }
     return { label: '——', value: '' };
 }
@@ -167,12 +187,20 @@ export const OverviewContent: React.FC<{
     confirmDisabled?: boolean;
     themeColor?: string; // [2026-08-13] 主题色（确定按钮随所选天启者）
 }> = ({ heroKey, onConfirm, confirmDisabled, themeColor }) => {
-    const { getArmament } = useArmamentConfig(); // [2026-08-14] 总览武装槽显示实际配置
-    const armValues = getArmament(heroKey);
+    const { getArmament, getQualityTier } = useArmamentConfig(); // [2026-08-14] 总览武装槽显示实际配置 · [2026-09-07] 每槽品质档
     // [2026-08-15] 槽位解锁随天启者等级（对齐武装界面，未解锁槽显示锁图标）
     const heroProgression = useHeroProgression();
-    const heroBonus = getHeroLevelBonus(heroProgression.getHeroLevel(heroKey));
+    const level = heroProgression.getHeroLevel(heroKey);
+    const heroBonus = getHeroLevelBonus(level);
     const overviewUnlockSlots = heroBonus.armamentSlots;
+    // [2026-08-28 莉莉子 修复] 只取已解锁槽位武装（等级降低时未解锁槽残留武装不显示/不生效）
+    const armValues = getArmament(heroKey, level);
+    // [2026-09-07 重修申请] 每槽可装备品质上限（等级基础 ≤稀有 + 各槽重修额外档）
+    const overviewTiers = getQualityTier(heroKey);
+    const overviewCaps = useMemo<ArmamentRarity[]>(
+        () => [0, 1, 2].map(i => combineArmamentRarity(heroBonus.armamentRarity, overviewTiers[i] ?? 0)),
+        [heroBonus.armamentRarity, overviewTiers],
+    );
     const archetype = getHeroArchetype(heroKey);
     const lore = LORE_DB[heroKey];
     const faction = FACTION_ICONS[heroKey] ?? { icon: Shield, color: '#22c55e' };
@@ -249,7 +277,7 @@ export const OverviewContent: React.FC<{
                         )}
                     </div>
                     {/* 武装槽（卡面右侧一列，总高 = 卡面高度）；[2026-08-15] 传已解锁槽位显示锁图标 */}
-                    <ArmamentSlots totalHeight={HAND_CARD_HEIGHT * OVERVIEW_GEOMETRY.handScale} values={armValues} unlockSlots={overviewUnlockSlots} />
+                    <ArmamentSlots totalHeight={HAND_CARD_HEIGHT * OVERVIEW_GEOMETRY.handScale} values={armValues} unlockSlots={overviewUnlockSlots} caps={overviewCaps} />
                 </div>
             </div>
         </div>
@@ -263,10 +291,15 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
     const deck = useMemo(() => getConfiguredStarterDeck(userSystem?.decks, heroKey), [heroKey, userSystem?.decks]);
     const { gazeTarget, bindGazeEvents } = useCardGaze({ delay: 250 }); // [2026-08-13] 悬停大图检视
     const { getArmament } = useArmamentConfig(); // [2026-08-15] 英雄卡武装减费显示
+    const heroProgression = useHeroProgression(); // [2026-08-28 莉莉子] 武装按解锁槽位生效
 
     // 卡牌去重计数（保持出现顺序）
     const cardCounts = new Map<string, number>();
     deck.forEach(k => cardCounts.set(k, (cardCounts.get(k) || 0) + 1));
+
+    // [2026-08-26 莉莉子] 英雄卡的武装列表（列表项后方显示：1 个显示图标，多个显示黑色六边形 Xn）
+    // [2026-08-28 莉莉子 修复] 只取已解锁槽位武装（等级降低残留不显示）
+    const heroEquipIds = getArmament(heroKey, heroProgression.getHeroLevel(heroKey)).filter((v): v is string => !!v);
 
     return (
         <div className="flex h-full min-h-0" style={{ paddingTop: DECK_GEOMETRY.topGap, gap: DECK_GEOMETRY.gap }}>
@@ -282,27 +315,43 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
                         let displayCost = card.cost;
                         let isReduced = false;
                         if (key === heroKey) {
-                            for (const id of (getArmament(heroKey).filter((v): v is string => !!v))) fullCard = attachEquipment(fullCard, id);
+                            // [2026-08-28 莉莉子 修复] 只取已解锁槽位武装
+                            for (const id of (getArmament(heroKey, heroProgression.getHeroLevel(heroKey)).filter((v): v is string => !!v))) fullCard = attachEquipment(fullCard, id);
                             displayCost = fullCard.cost;
                             isReduced = !!((fullCard.customProgress || 0) & 2);
                         }
+                        const equips = key === heroKey ? heroEquipIds : []; // [2026-08-26] 该卡武装（当前仅英雄卡配置武装）
                         return (
-                            <div
-                                key={key}
-                                className="relative flex items-center h-14 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help"
-                                {...bindGazeEvents(fullCard)}
-                            >
-                                {/* 卡面背景（暗化） */}
-                                <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
-                                <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
-                                {/* 内容：费用圆 + 卡名 + 数量 */}
-                                <div className="absolute inset-0 flex items-center justify-between px-4">
-                                    <div className="flex gap-3 items-center min-w-0">
-                                        <span className={`w-7 h-7 rounded-full flex justify-center items-center text-sm font-bold border shrink-0 ${isReduced ? 'bg-green-900 border-green-500 text-green-300' : 'bg-blue-900 border-blue-500 text-blue-200'}`}>{displayCost}</span>
-                                        <span className="text-base font-bold truncate drop-shadow-md">{card.name}</span>
+                            <div key={key} className="flex items-center gap-2.5">
+                                {/* 卡牌横条（flex-1 占列表内剩余，武装图标在后方独立区，不叠放） */}
+                                <div
+                                    className="relative flex items-center h-14 flex-1 min-w-0 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help"
+                                    {...bindGazeEvents(fullCard)}
+                                >
+                                    {/* 卡面背景（暗化） */}
+                                    <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
+                                    <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
+                                    {/* 内容：费用圆 + 卡名 + 数量 */}
+                                    <div className="absolute inset-0 flex items-center justify-between px-4">
+                                        <div className="flex gap-3 items-center min-w-0">
+                                            <span className={`w-7 h-7 rounded-full flex justify-center items-center text-sm font-bold border shrink-0 ${isReduced ? 'bg-green-900 border-green-500 text-green-300' : 'bg-blue-900 border-blue-500 text-blue-200'}`}>{displayCost}</span>
+                                            <span className="text-base font-bold truncate drop-shadow-md">{card.name}</span>
+                                        </div>
+                                        <span className="text-yellow-400 font-black shrink-0">X{count}</span>
                                     </div>
-                                    <span className="text-yellow-400 font-black shrink-0">X{count}</span>
                                 </div>
+                                {/* [2026-08-26] 武装图标区（卡牌后方独立区 40px）：1 个显示对应武装图标；多个显示黑色六边形 Xn；悬停浮现武装大卡 */}
+                                {/* [2026-09-10 莉莉子 修复] 摘掉原生 title：它与 bindArmamentGaze 大卡重叠 → hover 双弹（浏览器小白框 + 我们的武装大卡） */}
+                                {equips.length === 1 && (
+                                    <div className="w-10 h-10 shrink-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.06)' }} {...bindArmamentGaze(equips[0])}>
+                                        <img src={getEquipmentById(equips[0])?.icon} alt="" className="w-full h-full object-cover" draggable={false} />
+                                    </div>
+                                )}
+                                {equips.length > 1 && (
+                                    <div className="w-10 h-10 shrink-0 flex items-center justify-center bg-black/85 text-white text-sm font-black" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, border: '1px solid rgba(255,255,255,0.25)' }} {...bindArmamentGaze(equips)}>
+                                        X{equips.length}
+                                    </div>
+                                )}
                             </div>
                         );
                     })}
@@ -432,7 +481,7 @@ const LevelRewardsModal: React.FC<{ isOpen: boolean; currentLevel: number; onClo
                     exit={{ scale: 0.92, opacity: 0, y: 20 }}
                     transition={{ type: "spring", stiffness: 260, damping: 24 }}
                     onClick={e => e.stopPropagation()}
-                    className="relative w-[720px] max-h-[80vh] bg-slate-900/95 border border-purple-500/30 rounded-2xl shadow-[0_0_60px_rgba(88,28,135,0.4)] flex flex-col overflow-hidden"
+                    className="relative w-[720px] max-h-[80%] bg-slate-900/95 border border-purple-500/30 rounded-2xl shadow-[0_0_60px_rgba(88,28,135,0.4)] flex flex-col overflow-hidden"
                 >
                     {/* 头部 */}
                     <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
@@ -493,28 +542,43 @@ const ARMAMENT_HEXAGON_CLIP = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 
 // 手牌样式卡牌高度（对齐 Card.tsx deck-builder 容器 w-[130px] h-[202px]；武装槽 3 槽+间隔总高 = 手牌高度 202×scale）
 const HAND_CARD_HEIGHT = 202;
 // 装备/武装稀有度颜色（对齐 Card.tsx EQUIPMENT_RARITY_COLOR）
+// [2026-08-27] 六档品质色：白/绿/蓝/紫/金/红（对齐 Card.tsx EQUIPMENT_RARITY_COLOR）
 const EQUIP_RARITY_COLOR: Record<string, string> = {
-    common: '#22c55e',
+    common: '#e5e7eb',
+    uncommon: '#22c55e',
     rare: '#3b82f6',
     epic: '#a855f7',
     legendary: '#facc15',
+    mythic: '#ef4444',
 };
-// 稀有度中文（品质描述用：「史诗武装」「普通装备」）
+// 稀有度中文（品质描述用：「史诗武装」「优秀装备」）
 const RARITY_LABEL: Record<string, string> = {
-    common: '普通', rare: '稀有', epic: '史诗', legendary: '传说',
+    common: '普通', uncommon: '优秀', rare: '稀有', epic: '史诗', legendary: '传说', mythic: '神话',
 };
 // 稀有度等级（武装品质解锁判断：未解锁品质不可装备）
-const RARITY_RANK: Record<string, number> = { common: 0, rare: 1, epic: 2, legendary: 3 };
+const RARITY_RANK: Record<string, number> = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 };
 // 武装/装备持有数量上限（每个最多 3 个；开发者持有所有武装和装备各 3）
 const ARMAMENT_MAX_STOCK = 3;
+// [2026-09-07 程拍板] 品质上限空槽 = 斜向渐变（左上品质色 → 右下渐透），通透不艳、无文字
+/** 描边层渐变：左上 cap 色 b3(70%) → 中段 40 → 右下透明 */
+const capSlotGradient = (hex: string): string => `linear-gradient(135deg, ${hex}b3 0%, ${hex}40 55%, ${hex}00 85%)`;
+/** 玻璃上斜向品晕（左上淡染，已装武装/空槽通用背景层） */
+const capSlotGlow = (hex: string): string => `linear-gradient(135deg, ${hex}4d 0%, ${hex}00 100%)`;
 
-/** 武装槽：六边形白色描边 + 黑色空底；equipId 有值时显示已配置武装图标（稀有度描边） */
-export const ArmamentSlot: React.FC<{ height?: number; equipId?: string | null; locked?: boolean }> = ({ height = 48, equipId, locked }) => {
+// [2026-08-26 莉莉子] 拖拽跟手图标偏移微调接口（dx 正=右，dy 正=下）：
+// 命中检测以鼠标位置为准（鼠标移到槽位即高亮可替换），此偏移仅影响图标显示观感，可在此微调
+const DRAG_ICON_OFFSET = { dx: 0, dy: 0 };
+
+/** 武装槽：六边形。equipId 有值时显示已配置武装图标（稀有度色）。
+ *  [2026-09-07 重修申请] capRarity 传该槽可装备品质上限 → 空槽呈品质色斜向渐变（左上→右下渐透），
+ *  直观看到这个槽现在能装到什么品质（重修通关升档后颜色随之变化）。 */
+export const ArmamentSlot: React.FC<{ height?: number; equipId?: string | null; locked?: boolean; capRarity?: ArmamentRarity }> = ({ height = 48, equipId, locked, capRarity }) => {
     const width = height * 0.88;
     const def = equipId ? getEquipmentById(equipId) : undefined;
-    const rColor = def ? EQUIP_RARITY_COLOR[def.rarity] : 'rgba(255,255,255,0.9)';
+    const capColor = capRarity ? EQUIP_RARITY_COLOR[capRarity] : undefined;
     return (
-        <div className="relative shrink-0" style={{ width, height }}>
+        // [2026-08-26 莉莉子] 已配置武装的槽可悬停浮现武装大卡（总览/手牌样式等共用本组件，一处绑定全生效）
+        <div className="relative shrink-0" style={{ width, height }} {...(equipId ? bindArmamentGaze(equipId) : {})}>
             {locked ? (
                 // [2026-08-15] 未解锁槽：灰色锁图标（对齐武装界面样式）
                 <>
@@ -523,17 +587,30 @@ export const ArmamentSlot: React.FC<{ height?: number; equipId?: string | null; 
                         <Lock size={height * 0.3} className="text-gray-500" />
                     </div>
                 </>
-            ) : (
+            ) : def ? (
                 <>
-                    {/* 外层：白色描边 / 稀有度描边（clip-path 底色做边框，对齐装备方块） */}
+                    {/* 已装武装：外层底色 = 武装品质色（对齐装备方块稀有度描边） */}
                     <div
                         className="absolute inset-0"
-                        style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: rColor, filter: `drop-shadow(0 0 6px ${def ? rColor + '55' : 'rgba(255,255,255,0.25)'})` }}
+                        style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: EQUIP_RARITY_COLOR[def.rarity], filter: `drop-shadow(0 0 6px ${EQUIP_RARITY_COLOR[def.rarity]}55)` }}
                     />
-                    {/* 内层：黑色空槽底 + 已配置武装图标 */}
+                    {/* 内层：黑色底 + 武装图标 */}
                     <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: 'rgba(2,6,23,0.95)' }}>
-                        {def && <img src={def.icon} alt={def.name} className="w-full h-full object-cover" draggable={false} />}
+                        <img src={def.icon} alt={def.name} className="w-full h-full object-cover" draggable={false} />
                     </div>
+                </>
+            ) : capRarity && capColor ? (
+                // [2026-09-07 程拍板] 空槽：品质色斜向渐变描边环（左上浓→右下透）+ 深玻璃内底 + 左上品晕，无文字
+                <>
+                    <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: capSlotGradient(capColor), filter: `drop-shadow(0 0 8px ${capColor}4d)` }} />
+                    <div className="absolute inset-[3px]" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: 'rgba(2,6,23,0.9)' }} />
+                    <div className="absolute inset-[3px]" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: capSlotGlow(capColor) }} />
+                </>
+            ) : (
+                // 旧空槽兜底（未传 capRarity 时保留白色描边 + 深色空底）
+                <>
+                    <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: 'rgba(255,255,255,0.35)', filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.25))' }} />
+                    <div className="absolute inset-[3px]" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: 'rgba(2,6,23,0.9)' }} />
                 </>
             )}
         </div>
@@ -541,12 +618,13 @@ export const ArmamentSlot: React.FC<{ height?: number; equipId?: string | null; 
 };
 
 /** 3 个武装槽竖排：总高（含间隔）= totalHeight，槽高自动均分；values 传入实际配置（显示武装图标）；
- *  [2026-08-15] unlockSlots 传已解锁槽位数，未解锁槽显示锁图标（对齐武装界面） */
-export const ArmamentSlots: React.FC<{ totalHeight: number; gap?: number; values?: (string | null)[]; unlockSlots?: number }> = ({ totalHeight, gap = 10, values, unlockSlots = 3 }) => {
+ *  [2026-08-15] unlockSlots 传已解锁槽位数，未解锁槽显示锁图标（对齐武装界面）
+ *  [2026-09-07] caps 传每槽可装备品质上限 → 空槽填对应品质色（重修升档后实时变化） */
+export const ArmamentSlots: React.FC<{ totalHeight: number; gap?: number; values?: (string | null)[]; unlockSlots?: number; caps?: ArmamentRarity[] }> = ({ totalHeight, gap = 10, values, unlockSlots = 3, caps }) => {
     const slotHeight = (totalHeight - gap * 2) / 3;
     return (
         <div className="flex flex-col" style={{ gap }}>
-            {[0, 1, 2].map(i => <ArmamentSlot key={i} height={slotHeight} equipId={values?.[i] ?? null} locked={i >= unlockSlots} />)}
+            {[0, 1, 2].map(i => <ArmamentSlot key={i} height={slotHeight} equipId={values?.[i] ?? null} locked={i >= unlockSlots} capRarity={i >= unlockSlots ? undefined : caps?.[i]} />)}
         </div>
     );
 };
@@ -554,16 +632,23 @@ export const ArmamentSlots: React.FC<{ totalHeight: number; gap?: number; values
 /** 手牌样式 + 右侧武装槽组合（3 槽总高 = 手牌高度，各界面共用：总览/初始牌组/武装）
  *  [2026-08-14] 自动读取该天启者武装配置：槽位显示实际配置武装图标 + 手牌数值反映武装效果 */
 export const HandWithArmament: React.FC<{ heroKey: string; scale?: number; noLabels?: boolean; gap?: number }> = ({ heroKey, scale = 1, noLabels, gap = 10 }) => {
-    const { getArmament } = useArmamentConfig();
-    const values = getArmament(heroKey);
+    const { getArmament, getQualityTier } = useArmamentConfig(); // [2026-09-07] 每槽品质档
     // [2026-08-15] 槽位解锁随天启者等级（对齐武装界面，未解锁槽显示锁图标）
     const heroProgression = useHeroProgression();
     const heroBonus = getHeroLevelBonus(heroProgression.getHeroLevel(heroKey));
     const unlockSlots = heroBonus.armamentSlots;
+    // [2026-08-28 莉莉子 修复] 只取已解锁槽位武装（手牌数值不反映等级降低后的残留武装）
+    const values = getArmament(heroKey, heroProgression.getHeroLevel(heroKey));
+    // [2026-09-07 重修申请] 每槽品质上限 → 空槽显示对应品质色
+    const handTiers = getQualityTier(heroKey);
+    const handCaps = useMemo<ArmamentRarity[]>(
+        () => [0, 1, 2].map(i => combineArmamentRarity(heroBonus.armamentRarity, handTiers[i] ?? 0)),
+        [heroBonus.armamentRarity, handTiers],
+    );
     return (
         <div className="flex items-center gap-6">
             <HeroHandContent heroKey={heroKey} scale={scale} noLabels={noLabels} equipIds={values.filter((v): v is string => !!v)} />
-            <ArmamentSlots totalHeight={HAND_CARD_HEIGHT * scale} gap={gap} values={values} unlockSlots={unlockSlots} />
+            <ArmamentSlots totalHeight={HAND_CARD_HEIGHT * scale} gap={gap} values={values} unlockSlots={unlockSlots} caps={handCaps} />
         </div>
     );
 };
@@ -577,18 +662,32 @@ const isPointInRect = (x: number, y: number, r: DOMRect) => x >= r.left && x <= 
  *  普通玩家：仅武装可选；开发者：全部装备+武装可选（持有所有装备和武装各 3）
  */
 export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ heroKey, userSystem }) => {
-    const { config, getArmament, setArmamentSlot } = useArmamentConfig();
+    const { config, getArmament, setArmamentSlot, getQualityTier } = useArmamentConfig(); // [2026-09-07] config：数量库存全局占用计算
     const isDev = userSystem?.userId === 'dev_full_admin'; // [2026-08-14] 开发者账号独有：全装备可装
     const [activeSlot, setActiveSlot] = useState<number | null>(null); // 正在更换的槽（null=收起抽屉）
     const [dragOverSlot, setDragOverSlot] = useState<number | null>(null); // [2026-08-14] 正在拖入的槽（白框反馈）
-    const slots = getArmament(heroKey);
-    // [2026-08-14 武装] 槽位数量与可装备品质随天启者等级解锁（所有账号含开发者均按等级，便于等级按钮测试）
+    // [2026-08-14 武装] 槽位数量随等级解锁；[2026-09-07] 可装备品质改为每槽独立上限（等级基础 ≤稀有 + 重修额外档）
     const heroProgression = useHeroProgression();
     const heroBonus = getHeroLevelBonus(heroProgression.getHeroLevel(heroKey));
     const unlockSlots = heroBonus.armamentSlots; // 已解锁槽位数（默认 1）
-    const unlockRarity = heroBonus.armamentRarity; // 可装备武装最高品质
+    const tiers = getQualityTier(heroKey);
+    const capRarities = useMemo<ArmamentRarity[]>(
+        () => [0, 1, 2].map(i => combineArmamentRarity(heroBonus.armamentRarity, tiers[i] ?? 0)),
+        [heroBonus.armamentRarity, tiers],
+    );
+    const slotCap = (i: number): ArmamentRarity => capRarities[Math.max(0, Math.min(2, i))];
+    const slots = getArmament(heroKey); // 全量 3 槽（槽位渲染用：未解锁槽画锁）
+    // [2026-08-28 莉莉子 修复] 生效武装只算已解锁槽（未解锁槽残留不占库存/不进手牌）
+    const activeSlots = slots.slice(0, unlockSlots);
     // refs：供 useEffect(空依赖) 的 onMove 读取最新解锁状态（等级变化实时生效）
     const unlockSlotsRef = useRef(unlockSlots); unlockSlotsRef.current = unlockSlots;
+    // [2026-08-28 莉莉子 修复] 等级降低 → 武装格重新封上：自动卸载封上槽里的武装（配置干净，重新升级后是空槽）
+    const slotsRef = useRef(slots); slotsRef.current = slots;
+    useEffect(() => {
+        slotsRef.current.forEach((id, i) => {
+            if (id && i >= unlockSlots) setArmamentSlot(heroKey, i, null);
+        });
+    }, [unlockSlots, heroKey]); // 只在解锁槽位数/英雄变化时清理一次
 
     // [2026-08-14] 自定义拖拽：拿起图标跟手 + 距离阈值（近=弹回 / 远=卸载或配置）
     const DRAG_THRESHOLD = 40; // px
@@ -612,10 +711,15 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                 if (hitIdx >= unlockSlots) { /* [2026-08-14] 未解锁槽：弹回不装备 */ }
                 else {
                     const hitDef = getEquipmentById(cur.id);
-                    const stock = (!hitDef?.isArmament && !isDev) ? 0 : Math.max(0, ARMAMENT_MAX_STOCK - (globalUsed[cur.id] || 0));
-                    if (stock > 0) {
+                    const isMove = cur.type === 'slot';
+                    // [2026-08-26 莉莉子] 槽→槽=移动（不占新数量）；库→槽=新装（需品质解锁且有库存）
+                    // [2026-09-07 重修申请] 品质上限按槽独立：移动也校验目标槽上限（高品质武装移到低上限槽弹回）
+                    const ok = isMove
+                        ? RARITY_RANK[hitDef!.rarity] <= RARITY_RANK[slotCap(hitIdx)]
+                        : (hitDef && isEquippable(hitDef, hitIdx));
+                    if (ok && hitDef) {
                         setArmamentSlot(heroKey, hitIdx, cur.id);
-                        if (cur.type === 'slot') setArmamentSlot(heroKey, cur.fromSlot, null); // 槽位拖到另一槽 = 移动
+                        if (isMove) setArmamentSlot(heroKey, cur.fromSlot, null); // 槽位拖到另一槽 = 移动
                     }
                 }
             } else if (cur.type === 'slot') {
@@ -645,29 +749,39 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
     // 武装界面手牌 scale 1.9 → 槽总高 = 手牌高度 202×1.9（对齐其他界面）
     const slotH = (HAND_CARD_HEIGHT * 1.9 - ARMAMENT_MAX_STOCK) / 3;
 
-    // 全局占用（跨英雄槽位配置计数，用于数量上限）
-    const globalUsed = useMemo(() => {
-        const used: Record<string, number> = {};
-        Object.values(config).forEach(slotsArr => slotsArr.forEach(id => { if (id) used[id] = (used[id] || 0) + 1; }));
-        return used;
-    }, [config]);
+    // 可选列表：开发者=全部装备+武装；普通玩家=库存>0 的武装（[2026-09-07] 数量库存）
+    const armStockMap = readArmStock(userSystem?.settings as any);
+    const options = useMemo(() => {
+        if (isDev) return EQUIPMENT_DEFS;
+        return getArmamentDefs().filter(def => (armStockMap[def.id] ?? 0) > 0);
+    }, [isDev, armStockMap]);
 
-    // 可选列表：开发者=全部装备+武装；普通玩家=仅武装
-    const options = useMemo(() => (isDev ? EQUIPMENT_DEFS : getArmamentDefs()), [isDev]);
-
-    // 某装备/武装可用数量：上限3 - 全局占用；普通玩家装备恒 0；[2026-08-14] 未解锁品质不可装备（所有账号按等级）
+    // [2026-09-07 数量库存] 可用数量 = 库存份数 − 全局已占用槽位份数（库存共享：同一天启者可三槽各放 1 个、也可跨英雄分装）
     const stockOf = (def: EquipmentDef) => {
         if (!def.isArmament && !isDev) return 0;
-        if (RARITY_RANK[def.rarity] > RARITY_RANK[unlockRarity]) return 0; // 品质未解锁
-        return Math.max(0, ARMAMENT_MAX_STOCK - (globalUsed[def.id] || 0));
+        // [2026-09-08 修复] 占用跨全英雄统计；消耗品/普通都尊重真实库存——
+        //  开发者普通武装库存为 0 时给 3 份便于白嫖测试；但消耗品一律看真实库存（福利领 6 就该显示 ×6，不被开发者上限盖掉）
+        let occupied = 0;
+        for (const arr of Object.values(config ?? {})) for (const id of arr ?? []) if (id === def.id) occupied++;
+        const have = armStockMap[def.id] ?? 0;
+        const base = isDev && !def.consumable && have === 0 ? 3 : have;
+        // [2026-09-08] 碳原子板=整局型单次效果：同一天启者限装 1 份（多槽各装一份会重复浪费）
+        if (def.id === 'arm_resonance_crystal' && (activeSlots ?? []).includes(def.id)) return 0;
+        return Math.max(0, base - occupied);
+    };
+    // [2026-08-26 莉莉子] 可装备判断：某武装能否装进第 slotIdx 个槽（[2026-09-07] 品质上限按槽独立 + 数量）
+    const isEquippable = (def: EquipmentDef, slotIdx: number) => {
+        if (slotIdx < 0 || slotIdx >= unlockSlots) return false;
+        if (RARITY_RANK[def.rarity] > RARITY_RANK[slotCap(slotIdx)]) return false; // 目标槽品质上限不足
+        return stockOf(def) > 0;
     };
 
     const handleChoose = (id: string) => {
         if (activeSlot === null) return;
         const def = getEquipmentById(id);
-        if (def && stockOf(def) <= 0) return; // 无库存不可配
+        if (def && !isEquippable(def, activeSlot)) return; // 目标槽品质上限不足或无库存不可配
         setArmamentSlot(heroKey, activeSlot, id);
-        setActiveSlot(null);
+        // [2026-08-26 莉莉子] 装备后不关闭武装库抽屉，方便继续选择其他武装
     };
 
     return (
@@ -677,14 +791,17 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                 className="flex-1 min-w-0 flex items-center justify-center gap-10 transition-[margin] duration-300"
                 style={{ marginRight: activeSlot !== null ? 420 : 0 }}
             >
-                <HeroHandContent heroKey={heroKey} scale={1.9} noLabels equipIds={slots.filter((v): v is string => !!v)} />
+                {/* [2026-08-28 莉莉子 修复] 手牌只反映已解锁槽位武装 */}
+                <HeroHandContent heroKey={heroKey} scale={1.9} noLabels equipIds={activeSlots.filter((v): v is string => !!v)} />
                 {/* 3 个武装槽（放大到与手牌同高对齐） */}
                 <div className="flex flex-col" style={{ gap: 8 }}>
                 {[0, 1, 2].map(i => {
                     const locked = i >= unlockSlots; // [2026-08-14] 未达等级未解锁（所有账号按等级）
                     const slotId = slots[i] ?? null;
                     const def = slotId ? getEquipmentById(slotId) : undefined;
-                    const rColor = def ? EQUIP_RARITY_COLOR[def.rarity] : 'rgba(255,255,255,0.45)';
+                    // [2026-09-07 重修申请] 空槽底色 = 该槽可装备品质上限色（等级基础 + 重修档）；已装 = 武装自身品质色
+                    const capColor = EQUIP_RARITY_COLOR[slotCap(i)] ?? '#22c55e';
+                    const rColor = def ? EQUIP_RARITY_COLOR[def.rarity] : capColor;
                     return (
                         <div key={i} className="flex items-center gap-3">
                             {/* 六边形槽：已解锁=显示配置/空槽可拖放；未解锁=灰色锁（拖上去弹回） */}
@@ -692,7 +809,9 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                 ref={el => { slotRefs.current[i] = el; }}
                                 className="relative shrink-0 transition-[filter]"
                                 style={{ width: slotH * 0.88, height: slotH }}
-                                title={locked ? '需要更高天启者等级解锁（在等级界面升级）' : '拖拽武装到此处配置'}
+                                /* [2026-09-10 莉莉子 修复] 只在「无自定义大卡」时留原生提示：锁定槽/空槽保留操作提示，
+                                   已装槽（def 有值）里层 img 挂了 bindArmamentGaze → 摘掉 title 防双弹 */
+                                title={locked ? '需要更高天启者等级解锁（在等级界面升级）' : def ? undefined : '拖拽武装到此处配置'}
                             >
                                 {locked ? (
                                     <>
@@ -703,17 +822,21 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                     </>
                                 ) : (
                                     <>
-                                        {/* 拖入时槽位边框变白，提示放到位 */}
-                                        <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: dragOverSlot === i ? '#ffffff' : rColor, filter: `drop-shadow(0 0 10px ${dragOverSlot === i ? 'rgba(255,255,255,0.85)' : (def ? rColor + '66' : 'rgba(255,255,255,0.2)')})` }} />
-                                        <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: '#020617' }}>
-                                            {def && (
+                                        {/* 拖入时槽位边框变白；空槽=品质上限色斜向渐变（重修升档实时变色）；已装=武装品质色 */}
+                                        <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: dragOverSlot === i ? '#ffffff' : (def ? rColor : capSlotGradient(capColor)), filter: `drop-shadow(0 0 10px ${dragOverSlot === i ? 'rgba(255,255,255,0.85)' : ((def ? rColor : capColor) + '4d')})` }} />
+                                        <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: def ? '#020617' : 'rgba(2,6,23,0.9)' }}>
+                                            {def ? (
                                                 <img
                                                     src={def.icon}
                                                     alt={def.name}
                                                     className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
                                                     onPointerDown={e => { e.stopPropagation(); e.preventDefault(); beginDrag('slot', slotId!, i, e.clientX, e.clientY); }}
-                                                    title="拿起拖出可卸载，装备自动回武器库"
+                                                    /* [2026-09-10 莉莉子 修复] 摘掉「拿起拖出可卸载」原生提示（与武装大卡双弹）；
+                                                       旁边的红色减号卸载按钮本就带同样文案的 title，信息不丢 */
+                                                    {...bindArmamentGaze(slotId!)}
                                                 />
+                                            ) : (
+                                                <div className="absolute inset-0" style={{ background: capSlotGlow(capColor) }} />
                                             )}
                                         </div>
                                     </>
@@ -762,43 +885,47 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                 <h3 className="font-black text-white tracking-widest">{isDev ? '武装库 · 全部装备/武装' : '武装库'}</h3>
                             </div>
                             {/* 列表（六边形图标 + X数量 + 名称描述 + 品质描述） */}
-                            <div className="flex-1 overflow-y-auto p-3 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                            <div className="flex-1 overflow-y-auto p-4 space-y-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                                 {options.map(def => {
                                     const stock = stockOf(def);
-                                    const disabled = stock <= 0;
+                                    // [2026-08-26 莉莉子] disabled=目标槽上限不足或无库存；数量仍按 stockOf 正常显示
+                                    // [2026-09-07 重修申请] 品质上限按槽独立：以「当前选中槽」判断（抽屉由选槽打开时 activeSlot 恒有值）
+                                    const disabled = !isEquippable(def, activeSlot ?? 0);
                                     return (
                                         <button
                                             key={def.id}
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleChoose(def.id); }}
                                             disabled={disabled}
-                                            className={`flex items-center gap-3 w-full px-2.5 py-2 rounded-lg border transition-colors text-left ${
+                                            className={`flex items-center gap-4 w-full px-4 py-5 rounded-xl border transition-colors text-left ${
                                                 disabled
                                                     ? 'bg-gray-800/50 border-white/5 opacity-50 cursor-not-allowed'
                                                     : 'bg-white/5 border-white/10 hover:bg-purple-600/30'
                                             }`}
-                                            title={`${def.description}\n（点击或拖拽配置${disabled ? '，数量已用完' : ''}）`}
+                                            /* [2026-09-10 莉莉子 修复] 摘掉原生 title：列表项名称/描述画面已直出、内层六边形又挂了武装大卡，
+                                               原 title 的「描述 + 点击或拖拽配置」纯属重复 → hover 只剩一层检视 */
                                         >
-                                            {/* 六边形图标 + 右下角数量（拖拽从六边形图标开始） */}
+                                            {/* 六边形图标 + 右下角数量（拖拽从六边形图标开始）；[2026-08-26] 悬停浮现武装大卡 */}
                                             <div
                                                 className="relative shrink-0 cursor-grab active:cursor-grabbing"
-                                                style={{ width: 52, height: 52 * 1.14 }}
+                                                style={{ width: 60, height: 60 * 1.14 }}
                                                 onPointerDown={disabled ? undefined : (e) => { e.stopPropagation(); e.preventDefault(); beginDrag('lib', def.id, -1, e.clientX, e.clientY); }}
+                                                {...bindArmamentGaze(def.id)}
                                             >
                                                 <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: disabled ? '#374151' : EQUIP_RARITY_COLOR[def.rarity] }} />
                                                 <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: '#020617' }}>
                                                     <img src={def.icon} alt="" className="w-full h-full object-cover opacity-80" draggable={false} />
                                                 </div>
-                                                <span className="absolute -bottom-1 -right-0.5 text-[10px] font-mono font-black" style={{ color: disabled ? '#6b7280' : '#facc15' }}>
+                                                <span className="absolute -bottom-1 -right-0.5 text-xs font-mono font-black" style={{ color: disabled ? '#6b7280' : '#facc15' }}>
                                                     X{stock}
                                                 </span>
                                             </div>
                                             {/* 名称 + 描述 */}
                                             <span className="flex-1 min-w-0">
-                                                <span className={`block text-sm font-bold truncate ${disabled ? 'text-gray-500' : 'text-white'}`}>{def.name}</span>
-                                                <span className="block text-[10px] text-gray-400 truncate">{def.description}</span>
+                                                <span className={`block text-lg font-bold truncate ${disabled ? 'text-gray-500' : 'text-white'}`}>{def.name}</span>
+                                                <span className="block text-sm text-gray-400 truncate">{def.description}</span>
                                             </span>
                                             {/* 品质描述：史诗武装 / 普通装备 */}
-                                            <span className="text-[10px] font-mono shrink-0" style={{ color: disabled ? '#6b7280' : EQUIP_RARITY_COLOR[def.rarity] }}>
+                                            <span className="text-xs font-mono shrink-0" style={{ color: disabled ? '#6b7280' : EQUIP_RARITY_COLOR[def.rarity] }}>
                                                 {RARITY_LABEL[def.rarity]}{def.isArmament ? '武装' : '装备'}
                                             </span>
                                         </button>
@@ -825,16 +952,17 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                 {activeSlot === null ? <ChevronsLeft size={18} /> : <ChevronsRight size={18} />}
             </button>
 
-            {/* 拖拽跟手图标：拿起的大尺寸武装图标（和槽位一样大，只有图标不带数量） */}
-            {drag && (
-                <div className="fixed z-[700] pointer-events-none select-none" style={{ left: drag.x, top: drag.y, transform: 'translate(-50%, -50%)' }}>
+            {/* 拖拽跟手图标：Portal 渲染到 document.body，逃出 ScaleWrapper 缩放容器保证 1:1 跟手（同卡牌 DragGhostCard）；DRAG_ICON_OFFSET 仅调观感 */}
+            {drag && createPortal(
+                <div className="fixed z-[700] pointer-events-none select-none" style={{ left: drag.x + DRAG_ICON_OFFSET.dx, top: drag.y + DRAG_ICON_OFFSET.dy, transform: 'translate(-50%, -50%)' }}>
                     <div className="relative" style={{ width: slotH * 0.88, height: slotH }}>
                         <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: EQUIP_RARITY_COLOR[getEquipmentById(drag.id)?.rarity ?? 'common'] ?? '#22c55e', filter: 'drop-shadow(0 0 14px rgba(255,255,255,0.6))' }} />
                         <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: '#020617' }}>
                             <img src={getEquipmentById(drag.id)?.icon} alt="" className="w-full h-full object-cover" />
                         </div>
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

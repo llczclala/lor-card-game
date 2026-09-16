@@ -9,11 +9,12 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Swords, Sparkles } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
-import { MAZE_ENHANCEMENTS } from '../../data/roguelike/enhancements';
+import { getBuffById } from '../../data/roguelike/buffs'; // [2026-09-01] 改用全库查找，兼容天启共鸣等「不进玩家池但玩家持有」的强化
 import { RARITY_META } from './RarityIcon';
 import { useCardGaze } from '../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../FloatingCardPreview';
 import { useArmamentConfig } from '../../hooks/useArmamentConfig'; // [2026-08-15] 悬停检视挂武装
+import { useHeroProgression } from '../../hooks/useHeroProgression'; // [2026-08-28 莉莉子] 武装按解锁槽位生效
 import { attachEquipment } from '../../data/equipment';
 import type { CardData } from '../../types';
 
@@ -25,13 +26,15 @@ interface RogueDrawerProps {
     deck: string[];         // 卡牌 keys
     enhancements: string[]; // 迷宫强化 ids
     heroKey?: string;       // [2026-08-15] 当前天启者 key（悬停检视英雄卡挂武装）
+    equippedCards?: Record<string, string[]>; // [2026-08-29] 本局装备映射（等级奖励随机挂到法术卡/单位的装备，检视一并渲染）
 }
 
-export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, enhancements, heroKey }) => {
+export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, enhancements, heroKey, equippedCards }) => {
     const [tab, setTab] = useState<DrawerTab>('cards');
     // [2026-08-10] 悬停大图检视（复用全局方案：useCardGaze + FloatingCardPreview）
     const { gazeTarget, bindGazeEvents, dismissGaze } = useCardGaze({ delay: 300 });
     const { getArmament } = useArmamentConfig(); // [2026-08-15] 武装配置（检视英雄卡挂武装）
+    const heroProgression = useHeroProgression(); // [2026-08-28 莉莉子] 武装按解锁槽位生效
 
     // 抽屉关闭时清理可能残留的悬停大图
     useEffect(() => {
@@ -42,9 +45,9 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
     const cardCounts = new Map<string, number>();
     deck.forEach(k => cardCounts.set(k, (cardCounts.get(k) || 0) + 1));
 
-    // 强化 id → 定义映射（过滤未知 id）
+    // 强化 id → 定义映射（过滤未知 id）[2026-09-01] 用全库 getBuffById，天启共鸣（不在玩家池）也能显示
     const enhanceList = enhancements
-        .map(id => MAZE_ENHANCEMENTS.find(e => e.id === id))
+        .map(id => getBuffById(id))
         .filter((e): e is NonNullable<typeof e> => !!e);
 
     const TAB_META: Record<DrawerTab, { label: string; Icon: typeof Swords }> = {
@@ -113,9 +116,13 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
                                                 if (!card) return null;
                                                 // [2026-08-10] CARD_DB 为静态定义（缺运行时字段），补全为完整 CardData 供悬停检视使用
                                                 let fullCard: CardData = { ...card, id: key, strikeCount: 0, animState: 'idle' as const, damageTaken: 0, buffs: { power: 0, health: 0 } };
+                                                // [2026-08-29 修复] 渲染该卡在本局 run 里记录的装备（等级奖励随机挂的减费装「海基的推演手记」/均衡增补/强攻模板等，开局已固定）
+                                                const runEquips = equippedCards?.[key];
+                                                if (runEquips?.length) for (const eid of runEquips) fullCard = attachEquipment(fullCard, eid);
                                                 // [2026-08-15] 英雄卡检视大图挂武装（减费/BUFF 生效，右侧显示武装图标）
                                                 if (heroKey && key === heroKey) {
-                                                    for (const id of (getArmament(heroKey).filter((v): v is string => !!v))) fullCard = attachEquipment(fullCard, id);
+                                                    // [2026-08-28 莉莉子 修复] 只取已解锁槽位武装
+                                                    for (const id of (getArmament(heroKey, heroProgression.getHeroLevel(heroKey)).filter((v): v is string => !!v))) fullCard = attachEquipment(fullCard, id);
                                                 }
                                                 return (
                                                     <div
@@ -127,7 +134,7 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
                                                         <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
                                                         <div className="absolute inset-0 flex items-center justify-between px-3">
                                                             <div className="flex gap-3 items-center">
-                                                                <span className="w-6 h-6 rounded-full bg-blue-900 flex justify-center items-center text-xs font-bold border border-blue-500 text-blue-200 shrink-0">{card.cost}</span>
+                                                                <span className="w-6 h-6 rounded-full bg-blue-900 flex justify-center items-center text-xs font-bold border border-blue-500 text-blue-200 shrink-0">{fullCard.cost}</span>
                                                                 <span className="text-sm font-bold truncate w-36 drop-shadow-md">{card.name}</span>
                                                             </div>
                                                             {/* [2026-08-10] 数量恒显 X1/X2... */}

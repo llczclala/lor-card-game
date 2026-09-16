@@ -1,46 +1,46 @@
 import type { Keyword } from '../types';
 
 // [修正] 批量导入 36 个关键词图标
-import icon0 from '../image/keyword/00.png';   // Overwhelm
-import icon1 from '../image/keyword/01.png';   // Overwhelm
-import icon2 from '../image/keyword/02.png';   // QuickAttack
-import icon3 from '../image/keyword/03.png';   // Regeneration
-import icon4 from '../image/keyword/04.png';   // Elusive
-import icon5 from '../image/keyword/05.png';   // Challenger
-import icon6 from '../image/keyword/06.png';   // Barrier
-import icon7 from '../image/keyword/07.png';   // CantBlock
-import icon8 from '../image/keyword/08.png';   // Lifesteal
-import icon9 from '../image/keyword/09.png';   // Last Breath
-import icon10 from '../image/keyword/10.png'; // Fearsome
-import icon11 from '../image/keyword/11.png'; // Frostbite
-import icon12 from '../image/keyword/12.png'; // Scout
-import icon13 from '../image/keyword/13.png'; // Ephemeral
-import icon14 from '../image/keyword/14.png'; // Stun
-import icon15 from '../image/keyword/15.png'; // Tough
-import icon16 from '../image/keyword/16.png'; // Double Attack
-import icon17 from '../image/keyword/17.png'; // Support
-import icon18 from '../image/keyword/18.png'; // Deadly
-import icon19 from '../image/keyword/19.png'; // SpellShield
-import icon20 from '../image/keyword/20.png'; // Silence
-import icon21 from '../image/keyword/21.png'; // Berserk
-import icon22 from '../image/keyword/22.png'; // Cleave
-import icon23 from '../image/keyword/23.png'; // Thorns
-import icon24 from '../image/keyword/24.png'; // Vanguard
-import icon25 from '../image/keyword/25.png'; // Ambush
-import icon26 from '../image/keyword/26.png'; // Plunder
-import icon27 from '../image/keyword/27.png'; // Exposed
-import icon28 from '../image/keyword/28.png'; // Shroud
-import icon29 from '../image/keyword/29.png'; // Immobile
-import icon30 from '../image/keyword/30.png'; // Reborn
-import icon31 from '../image/keyword/31.png'; // Execute
-import icon32 from '../image/keyword/32.png'; // Sniper
-import icon33 from '../image/keyword/33.png'; // Volatile
-import icon34 from '../image/keyword/34.png'; // Echo
-import icon35 from '../image/keyword/35.png'; // Impact
-import icon36 from '../image/keyword/36.png'; // Channel
-import icon37 from '../image/keyword/37.png'; // Titan
-import icon38 from '../image/keyword/38.png'; // CantAttack
-import icon39 from '../image/keyword/39.png'; // Aura
+import icon0 from '../image/keyword/00.webp';   // Overwhelm
+import icon1 from '../image/keyword/01.webp';   // Overwhelm
+import icon2 from '../image/keyword/02.webp';   // QuickAttack
+import icon3 from '../image/keyword/03.webp';   // Regeneration
+import icon4 from '../image/keyword/04.webp';   // Elusive
+import icon5 from '../image/keyword/05.webp';   // Challenger
+import icon6 from '../image/keyword/06.webp';   // Barrier
+import icon7 from '../image/keyword/07.webp';   // CantBlock
+import icon8 from '../image/keyword/08.webp';   // Lifesteal
+import icon9 from '../image/keyword/09.webp';   // Last Breath
+import icon10 from '../image/keyword/10.webp'; // Fearsome
+import icon11 from '../image/keyword/11.webp'; // Frostbite
+import icon12 from '../image/keyword/12.webp'; // Scout
+import icon13 from '../image/keyword/13.webp'; // Ephemeral
+import icon14 from '../image/keyword/14.webp'; // Stun
+import icon15 from '../image/keyword/15.webp'; // Tough
+import icon16 from '../image/keyword/16.webp'; // Double Attack
+import icon17 from '../image/keyword/17.webp'; // Support
+import icon18 from '../image/keyword/18.webp'; // Deadly
+import icon19 from '../image/keyword/19.webp'; // SpellShield
+import icon20 from '../image/keyword/20.webp'; // Silence
+import icon21 from '../image/keyword/21.webp'; // Berserk
+import icon22 from '../image/keyword/22.webp'; // Cleave
+import icon23 from '../image/keyword/23.webp'; // Thorns
+import icon24 from '../image/keyword/24.webp'; // Vanguard
+import icon25 from '../image/keyword/25.webp'; // Ambush
+import icon26 from '../image/keyword/26.webp'; // Plunder
+import icon27 from '../image/keyword/27.webp'; // Exposed
+import icon28 from '../image/keyword/28.webp'; // Shroud
+import icon29 from '../image/keyword/29.webp'; // Immobile
+import icon30 from '../image/keyword/30.webp'; // Reborn
+import icon31 from '../image/keyword/31.webp'; // Execute
+import icon32 from '../image/keyword/32.webp'; // Sniper
+import icon33 from '../image/keyword/33.webp'; // Volatile
+import icon34 from '../image/keyword/34.webp'; // Echo
+import icon35 from '../image/keyword/35.webp'; // Impact
+import icon36 from '../image/keyword/36.webp'; // Channel
+import icon37 from '../image/keyword/37.webp'; // Titan
+import icon38 from '../image/keyword/38.webp'; // CantAttack
+import icon39 from '../image/keyword/39.webp'; // Aura
 
 export interface KeywordConfig {
     label: string;
@@ -184,8 +184,8 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
     },
     'Deadly': {
         label: '剧毒',
-        description: '造成的任何伤害都会直接消灭目标。',
-        color: 'green',
+        description: '受到任何伤害都会被直接消灭。',
+        color: 'teal',
         icon: icon18
     },
     'Execute': {

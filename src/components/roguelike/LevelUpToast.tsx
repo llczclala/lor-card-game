@@ -27,9 +27,20 @@ const computeNewBonuses = (fromLevel: number, toLevel: number): string[] => {
     if (enh > 0) items.push(`迷宫强化 ×${enh}`);
     const equip = after.grantedEquipments.length - before.grantedEquipments.length;
     if (equip > 0) items.push(`装备 ×${equip}`);
-    if (after.rarityBonus.rare > before.rarityBonus.rare) items.push(`稀有度 Rare +${after.rarityBonus.rare - before.rarityBonus.rare}%`);
-    if (after.rarityBonus.epic > before.rarityBonus.epic) items.push(`稀有度 Epic +${after.rarityBonus.epic - before.rarityBonus.epic}%`);
-    if (after.rarityBonus.legendary > before.rarityBonus.legendary) items.push(`稀有度 Legendary +${after.rarityBonus.legendary - before.rarityBonus.legendary}%`);
+    // [2026-08-29] 新增奖励类别的升级提示
+    const spellEquip = after.grantedSpellEquips.length - before.grantedSpellEquips.length;
+    if (spellEquip > 0) items.push(`随机法术卡装备 ×${spellEquip}`);
+    const unitEquip = after.grantedUnitEquips.length - before.grantedUnitEquips.length;
+    if (unitEquip > 0) items.push(`随机单位装备 ×${unitEquip}`);
+    const shopTab = after.shopTabBonus - before.shopTabBonus;
+    if (shopTab > 0) items.push(`商店页签 +${shopTab}`);
+    const expRate = after.expRateBonus - before.expRateBonus;
+    if (expRate > 0) items.push(`经验效率 +${expRate}%`);
+    const equipRarity = after.equipRarityBonus - before.equipRarityBonus;
+    if (equipRarity > 0) items.push(`装备稀有度 +${equipRarity}%`);
+    if (after.rarityBonus.rare > before.rarityBonus.rare) items.push(`稀有度 蓝 +${after.rarityBonus.rare - before.rarityBonus.rare}%`);
+    if (after.rarityBonus.epic > before.rarityBonus.epic) items.push(`稀有度 紫 +${after.rarityBonus.epic - before.rarityBonus.epic}%`);
+    if (after.rarityBonus.legendary > before.rarityBonus.legendary) items.push(`稀有度 金 +${after.rarityBonus.legendary - before.rarityBonus.legendary}%`);
     return items;
 };
 

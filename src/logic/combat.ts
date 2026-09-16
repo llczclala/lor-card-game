@@ -1,6 +1,6 @@
 import type { CardData, GameState, Keyword } from '../types';
 import { checkCardLevelUp, getLeveledUpCard } from '../utils/gameRules';
-import { calculateCombatInteraction } from './keywords'; // [新增]
+import { calculateCombatInteraction, deadlyLethalInject } from './keywords'; // [新增] · [2026-09-12 莉莉子 剧毒]
 
 
 // [新增] 单次战斗结果接口
@@ -25,6 +25,25 @@ export interface CombatResult {
 
 // [核心解锁] 将生命值探针暴露给外部，用于多段随机伤害的动态存活校验
 export const getCurrentHP = (c: CardData) => c.health + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
+
+// =====================================
+// [2026-08-24 莉莉子 飞剑竞态根治] 共享飞剑判定工具
+// 飞剑是"额外攻击"，其生命周期内绝不该触发回合结束判定。
+// 供 passTurn 守卫 / resolveStack / playCard / 守卫 effect 复用，避免重复 key 扫描。
+// =====================================
+export const isFlyingSwordUnit = (u: any): boolean =>
+    !!u && (u.key === 'Acacia_Flying_Sword' || u.key === 'Acacia_Great_Sword');
+
+export const combatHasFlyingSword = (field: any[]): boolean =>
+    (field || []).some(f => isFlyingSwordUnit(f?.attacker));
+
+export const getFlyingSwordOwner = (field: any[]): 'player' | 'enemy' | undefined => {
+    const f = (field || []).find(x => isFlyingSwordUnit(x?.attacker));
+    return f?.owner as 'player' | 'enemy' | undefined;
+};
+
+export const getDefensiveSide = (owner?: 'player' | 'enemy'): 'player' | 'enemy' =>
+    owner === 'player' ? 'enemy' : 'player';
 
 // [新增] 计算单个槽位的战斗结果
 export const resolveSingleCombat = (
@@ -203,6 +222,172 @@ export const resolveSingleCombat = (
     };
 };
 
+// ==========================================
+// [2026-08-19 莉莉子] 连击双段结算
+// 连击(Double Attack)单位一次进攻执行两次打击，但动画/飘字/音效需要分两拍展示。
+// 本函数与 resolveSingleCombat 的伤害语义完全一致，仅将两击结果分开返回：
+//   - strike1 始终存在（先攻的第一击）
+//   - strike2 仅在攻击者第一击后仍存活时存在（普通攻击的第二击）
+// 非连击单位请继续使用 resolveSingleCombat（本函数仅供连击分支调用）。
+// ==========================================
+export interface StrikeStageInfo {
+    attackerDamage: number;      // 本击攻击者承受的伤害（反击/反伤）
+    blockerDamage: number;       // 本击阻挡者承受的伤害
+    nexusDamage?: { target: 'player' | 'enemy', amount: number };
+    blockerStruck: boolean;      // 本击是否有阻挡者承受（false=直接攻击/阻挡者已死，打水晶）
+    blockerDidStrike: boolean;   // 本击阻挡者是否挥出反击
+}
+
+export interface DoubleStrikeCombatResult extends SingleCombatResult {
+    strike1: StrikeStageInfo;
+    strike2: StrikeStageInfo | null; // 攻击者第一击后死亡则无第二击
+}
+
+export const resolveDoubleStrikeCombat = (
+    fight: { attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isGhostBlocked?: boolean },
+    game: GameState
+): DoubleStrikeCombatResult => {
+    const { attacker, blocker, owner, isGhostBlocked } = fight;
+
+    // [核心防爆锁] 与 resolveSingleCombat 一致：物理碰撞前核验生死
+    const isAttackerDead = attacker.animState === 'dying' || attacker.animState === 'ephemeral_dying' || attacker.isDead || getCurrentHP(attacker) <= 0;
+    if (isAttackerDead) {
+        return {
+            updatedFight: { ...fight },
+            attackerDamage: 0,
+            blockerDamage: 0,
+            nexusDamage: undefined,
+            killedUnits: [],
+            strike1: { attackerDamage: 0, blockerDamage: 0, blockerStruck: false, blockerDidStrike: false },
+            strike2: null
+        };
+    }
+
+    let newAttacker = { ...attacker, strikeCount: attacker.strikeCount + 1 };
+    let newBlocker = blocker ? { ...blocker, strikeCount: blocker.strikeCount + 1 } : null;
+
+    // [僵尸缴械] 与 resolveSingleCombat 一致
+    const isBlockerDead = blocker && (blocker.animState === 'dying' || blocker.animState === 'ephemeral_dying' || blocker.isDead || getCurrentHP(blocker) <= 0);
+    if (isBlockerDead && newBlocker) {
+        newBlocker.power = -9999;
+        if (newBlocker.buffs) newBlocker.buffs.power = 0;
+    }
+
+    // 单次打击执行（与 resolveSingleCombat 内 executeStrike 语义一致）
+    const executeStrike = (atk: CardData, blk: CardData | null, isQuickStrike: boolean, isGhosted: boolean) => {
+        const strikeAtk = isQuickStrike && !atk.keywords.includes('QuickAttack')
+            ? { ...atk, keywords: [...atk.keywords, 'QuickAttack' as Keyword] }
+            : atk;
+        const inter = calculateCombatInteraction(strikeAtk, blk);
+        if (inter.attackerBarrierPopped) atk.depletedKeywords = [...(atk.depletedKeywords || []), 'Barrier'];
+        if (blk && inter.blockerBarrierPopped) blk.depletedKeywords = [...(blk.depletedKeywords || []), 'Barrier'];
+        if (blk) blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage;
+        atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage;
+        let nexus = inter.nexusDamage;
+        if (isGhosted && !atk.keywords.includes('Overwhelm')) {
+            nexus = 0;
+            console.log(`[Combat] 攻击被空气墙完全吸收！`);
+        }
+        return { nexusDmg: nexus, qaEphemeral: inter.quickAttackEphemeralDeath, atkDmg: inter.attackerDamage, blkDmg: inter.blockerDamage };
+    };
+
+    // ===== 第一击（连击第一击必带先攻）=====
+    const s1 = executeStrike(newAttacker, newBlocker, true, isGhostBlocked ?? false);
+    const strike1: StrikeStageInfo = {
+        attackerDamage: s1.atkDmg,
+        blockerDamage: s1.blkDmg,
+        blockerStruck: !!newBlocker,
+        blockerDidStrike: false, // 第一击先攻，阻挡者不反击
+    };
+    if (s1.nexusDmg > 0) {
+        strike1.nexusDamage = { target: owner === 'player' ? 'enemy' : 'player', amount: s1.nexusDmg };
+    }
+    let qaEphemeralDeath = s1.qaEphemeral;
+
+    // ===== 第二击（仅当攻击者第一击后仍存活）=====
+    let strike2: StrikeStageInfo | null = null;
+    if (getCurrentHP(newAttacker) > 0) {
+        const blkAfterFirst = newBlocker && getCurrentHP(newBlocker) > 0 ? newBlocker : null;
+        const s2 = executeStrike(newAttacker, blkAfterFirst, false, false);
+        newAttacker.strikeCount = (newAttacker.strikeCount || 0) + 1;
+        if (blkAfterFirst) newBlocker!.strikeCount = (newBlocker!.strikeCount || 0) + 1;
+        strike2 = {
+            attackerDamage: s2.atkDmg,
+            blockerDamage: s2.blkDmg,
+            blockerStruck: !!blkAfterFirst,
+            blockerDidStrike: !!blkAfterFirst, // 第二击普通攻击：阻挡者活着必反击
+        };
+        if (s2.nexusDmg > 0) {
+            strike2.nexusDamage = { target: owner === 'player' ? 'enemy' : 'player', amount: s2.nexusDmg };
+        }
+    }
+
+    // ===== 汇总伤害（对外接口与非连击一致）=====
+    const totalNexus = (strike1.nexusDamage?.amount || 0) + (strike2?.nexusDamage?.amount || 0);
+    let nexusDmgInfo: { target: 'player' | 'enemy', amount: number } | undefined;
+    if (totalNexus > 0) {
+        nexusDmgInfo = { target: owner === 'player' ? 'enemy' : 'player', amount: totalNexus };
+    }
+    const totalAttackerDmg = strike1.attackerDamage + (strike2?.attackerDamage || 0);
+    const totalBlockerDmg = strike1.blockerDamage + (strike2?.blockerDamage || 0);
+
+    // ===== 升级判定（攻击者，仅检查一次，与 resolveSingleCombat 一致）=====
+    let levelUpUpdate = undefined;
+    if (checkCardLevelUp(newAttacker, game.playerNexus, game.enemyNexus) && getCurrentHP(newAttacker) > 0) {
+        const leveled = getLeveledUpCard(newAttacker);
+        newAttacker = {
+            ...leveled,
+            damageTaken: newAttacker.damageTaken,
+            buffs: newAttacker.buffs,
+            roundBuffs: newAttacker.roundBuffs,
+            strikeCount: newAttacker.strikeCount,
+            animState: newAttacker.animState
+        };
+        levelUpUpdate = newAttacker;
+    }
+
+    // ===== 死亡判定 =====
+    const killedUnits: CardData[] = [];
+    const attackerDiesFromEphemeral = newAttacker.keywords.includes('Ephemeral');
+    if (attackerDiesFromEphemeral) {
+        newAttacker.animState = 'ephemeral_dying';
+        killedUnits.push(newAttacker);
+    } else if (getCurrentHP(newAttacker) <= 0) {
+        newAttacker.animState = 'dying';
+        killedUnits.push(newAttacker);
+    } else {
+        newAttacker.animState = 'hit';
+    }
+
+    if (newBlocker) {
+        // 阻挡者反击判定：连击第二击是普通攻击，只要阻挡者活着就必定反击（同 resolveSingleCombat）
+        const blockerDidStrike = strike2
+            ? getCurrentHP(newBlocker) > 0
+            : !(newAttacker.keywords.includes('QuickAttack') && (getCurrentHP(newBlocker) <= 0 || qaEphemeralDeath));
+        const blockerDiesFromEphemeral = blockerDidStrike && newBlocker.keywords.includes('Ephemeral');
+        if (blockerDiesFromEphemeral) {
+            newBlocker.animState = 'ephemeral_dying';
+            killedUnits.push(newBlocker);
+        } else if (getCurrentHP(newBlocker) <= 0) {
+            newBlocker.animState = 'dying';
+            killedUnits.push(newBlocker);
+        } else {
+            newBlocker.animState = 'hit';
+        }
+    }
+
+    return {
+        updatedFight: { ...fight, attacker: newAttacker, blocker: newBlocker },
+        attackerDamage: totalAttackerDmg,   // 两击合计，供外层 unit_damage 等合并逻辑使用
+        blockerDamage: totalBlockerDmg,
+        nexusDamage: nexusDmgInfo,
+        levelUpUpdate,
+        killedUnits,
+        strike1,
+        strike2,
+    };
+};
+
 
 export const calculateCombatOutcome = (
     combatField: any[],
@@ -253,8 +438,11 @@ export const calculateCombatOutcome = (
 
         // 2. 应用单位伤害 & 状态更新
         // [致命 Bug 修复] 绝不减 c.health，只累加 damageTaken
+        // [2026-09-12 莉莉子 剧毒] 擦伤即解构：攻击者若带剧毒，承受反击伤害即被消灭
+        //   （result.attackerDamage 已是屏障/坚韧结算后的最终值，含反伤追加，天然覆盖三条伤害来源）
         if (result.attackerDamage > 0) {
-            newAttacker.damageTaken = (newAttacker.damageTaken || 0) + result.attackerDamage;
+            newAttacker.damageTaken = (newAttacker.damageTaken || 0) + result.attackerDamage
+                + deadlyLethalInject(newAttacker, result.attackerDamage);
         }
         // 屏障破碎，从关键词列表中移除
         if (result.attackerBarrierPopped) {
@@ -262,8 +450,10 @@ export const calculateCombatOutcome = (
         }
 
         if (newBlocker) {
+            // [2026-09-12 莉莉子 剧毒] 同理：阻挡者若带剧毒，被打击到即被消灭
             if (result.blockerDamage > 0) {
-                newBlocker.damageTaken = (newBlocker.damageTaken || 0) + result.blockerDamage;
+                newBlocker.damageTaken = (newBlocker.damageTaken || 0) + result.blockerDamage
+                    + deadlyLethalInject(newBlocker, result.blockerDamage);
             }
             // 屏障破碎，从关键词列表中移除
             if (result.blockerBarrierPopped) {

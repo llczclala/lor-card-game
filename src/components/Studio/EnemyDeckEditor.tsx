@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Search, Plus, Trash2, Save, Download, X, BookOpen,
+    Search, Plus, Trash2, Save, Download, X,
     Box, Zap, AlertTriangle, LayoutGrid, User, Sparkles
 } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
@@ -68,10 +68,11 @@ const getDeckCovers = (arch: EnemyArchetype): { url: string; skinId: number; isB
     return covers;
 };
 
+// [2026-08-27] Diorama 缩小（概览 Tab 内嵌预览，不再占 256px 大头）
 const DIORAMA_SIZE = {
-    containerWidth: 'w-64', containerHeight: 'h-64',
-    cardWidth: 'w-24', cardHeight: 'h-36',
-    boardWidth: 'w-[220px]', boardHeight: 'h-[120px]',
+    containerWidth: 'w-40', containerHeight: 'h-44',
+    cardWidth: 'w-14', cardHeight: 'h-20',
+    boardWidth: 'w-[130px]', boardHeight: 'h-[72px]',
 };
 
 const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
@@ -82,15 +83,15 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
     return (
         <div className={`relative ${DIORAMA_SIZE.containerWidth} ${DIORAMA_SIZE.containerHeight} transition-all duration-500 scale-100 opacity-100 z-40 filter drop-shadow-[0_15px_35px_rgba(0,0,0,0.7)]`}>
             {/* 底层大棋盘背景 (压暗处理) */}
-            <div className={`${DIORAMA_SIZE.boardWidth} ${DIORAMA_SIZE.boardHeight} absolute top-8 left-1/2 -translate-x-1/2 rounded-xl overflow-hidden border border-slate-700/80 shadow-2xl z-0`}>
+            <div className={`${DIORAMA_SIZE.boardWidth} ${DIORAMA_SIZE.boardHeight} absolute top-5 left-1/2 -translate-x-1/2 rounded-xl overflow-hidden border border-slate-700/80 shadow-2xl z-0`}>
                 <img src={boardImg} className="w-full h-full object-cover opacity-50 grayscale-[40%]" alt="棋盘" />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent"></div>
             </div>
 
             {/* 左侧扇形核心三卡 */}
-            <div className="absolute top-10 left-6 z-20 pointer-events-none">
+            <div className="absolute top-7 left-3 z-20 pointer-events-none">
                 {covers.map((cover, i) => {
-                    const rotations = [-16, 0, 16], translatesX = [0, 24, 48], translatesY = [12, 0, 12], zIndexes = [25, 23, 21];
+                    const rotations = [-12, 0, 12], translatesX = [0, 18, 36], translatesY = [10, 0, 10], zIndexes = [25, 23, 21];
                     const isBack = cover.isBack;
                     const renderUrl = isBack ? cardBackImg : cover.url;
                     const skinId = cover.skinId;
@@ -112,9 +113,9 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
             </div>
 
             {/* 右下角写实卡背堆叠 */}
-            <div className={`absolute bottom-6 right-2 ${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} z-30 pointer-events-none`} style={{ transform: 'rotate(10deg) translate(20px, 12px)' }}>
+            <div className={`absolute bottom-3 right-1 ${DIORAMA_SIZE.cardWidth} ${DIORAMA_SIZE.cardHeight} z-30 pointer-events-none`} style={{ transform: 'rotate(10deg) translate(14px, 8px)' }}>
                 {[2, 1, 0].map(i => (
-                    <div key={i} className="absolute inset-0 bg-slate-950 rounded-xl border border-slate-900 shadow-md" style={{ transform: `translate(-${i * 3}px, -${i * 3}px)`, zIndex: i === 0 ? 10 : 5 - i }}></div>
+                    <div key={i} className="absolute inset-0 bg-slate-950 rounded-xl border border-slate-900 shadow-md" style={{ transform: `translate(-${i * 2}px, -${i * 2}px)`, zIndex: i === 0 ? 10 : 5 - i }}></div>
                 ))}
                 <div className="absolute inset-0 rounded-xl border-2 border-red-900/50 shadow-2xl overflow-hidden z-10">
                     <img src={cardBackImg} className="w-full h-full object-cover" alt="卡背" />
@@ -123,9 +124,9 @@ const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
             </div>
 
             {/* 铭牌 */}
-            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-slate-950/95 border border-slate-800/80 px-6 py-2 rounded-full z-40 flex flex-col items-center shadow-2xl backdrop-blur-md whitespace-nowrap min-w-[140px]">
-                <span className="text-white font-black truncate w-full text-center text-sm tracking-wide text-red-400">{archetype.name}</span>
-                <span className="text-[10px] font-mono font-bold tracking-widest text-gray-500">🎯 {archetype.coreCards.length} | 🃏 {archetype.preferredPool.length}</span>
+            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-slate-950/95 border border-slate-800/80 px-3 py-1 rounded-full z-40 flex flex-col items-center shadow-2xl backdrop-blur-md whitespace-nowrap min-w-[110px]">
+                <span className="text-white font-black truncate w-full text-center text-xs tracking-wide text-red-400">{archetype.name}</span>
+                <span className="text-[9px] font-mono font-bold tracking-widest text-gray-500">🎯 {archetype.coreCards.length} | 🃏 {archetype.preferredPool.length}</span>
             </div>
         </div>
     );
@@ -143,6 +144,8 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
     // [核心重构 2] UI 排版流：拆分 目标池 和 查看 Tab，消灭弹窗
     const [targetPool, setTargetPool] = useState<'coreCards' | 'preferredPool'>('coreCards');
     const [activeListTab, setActiveListTab] = useState<'coreCards' | 'preferredPool'>('coreCards');
+    // [2026-08-27 重构] 右栏 Tab 化：概览（基础设置）/ 迷宫强化 / 牌组（核心/倾向列表）
+    const [rightTab, setRightTab] = useState<'overview' | 'rogueBuffs' | 'deck'>('overview');
     const [searchTerm, setSearchTerm] = useState('');
     const [category, setCategory] = useState<CategoryFilter>('ALL');
 
@@ -165,6 +168,15 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
 
     const selected = selectedId ? archetypes[selectedId] : null;
     const championOptions = useMemo(() => Object.values(CARD_DB).filter(c => c.isChampion), []);
+    // [2026-08-29] 流派卡池（头像/加载卡面选择器用）：coreCards + preferredPool 去重
+    const poolCards = useMemo(() => {
+        if (!selected) return [] as CardData[];
+        const keys = [
+            ...(Array.isArray(selected.coreCards) ? selected.coreCards.map(c => typeof c === 'string' ? c : c.key) : []),
+            ...(selected.preferredPool ?? []),
+        ];
+        return Array.from(new Set(keys)).map(k => CARD_DB[k]).filter((c): c is CardData => !!c);
+    }, [selected]);
 
     // --- 增删改查 ---
     const updateArchetype = useCallback((updates: Partial<EnemyArchetype>) => {
@@ -299,7 +311,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
             // [核心新增] 智能判定 exactDeck 锁：核心池>=40张时自动上锁
             const isExact = arch.coreCards.length >= 40;
 
-            lines.push(`    '${id}': {`, `        id: '${id}',`, `        name: '${arch.name}',`, `        champion: '${arch.champion}',`, `        description: '${arch.description}',`, `        coreCards: [${coreCardsExport}],`, `        exactDeck: ${isExact},`, `        preferredPool: [${arch.preferredPool.map(c => `'${c}'`).join(', ')}],`, `        apocalypseTags: [${arch.apocalypseTags.map(t => `'${t}'`).join(', ')}],`, `        rogueBuffs: [${(arch.rogueBuffs ?? []).map(id => `'${id}'`).join(', ')}],`, `        aiPersonality: '${arch.aiPersonality}',`, `    },`);
+            lines.push(`    '${id}': {`, `        id: '${id}',`, `        name: '${arch.name}',`, `        champion: '${arch.champion}',`, `        description: '${arch.description}',`, `        coreCards: [${coreCardsExport}],`, `        exactDeck: ${isExact},`, `        preferredPool: [${arch.preferredPool.map(c => `'${c}'`).join(', ')}],`, `        apocalypseTags: [${arch.apocalypseTags.map(t => `'${t}'`).join(', ')}],`, `        rogueBuffs: [${(arch.rogueBuffs ?? []).map(id => `'${id}'`).join(', ')}],`, `        aiPersonality: '${arch.aiPersonality}',`, `        cardBackIndex: ${arch.cardBackIndex ?? 0}, // [2026-08-17 莉莉子] 敌方卡背`, `        avatarKey: ${arch.avatarKey ? `'${arch.avatarKey}'` : 'undefined'}, // [2026-08-29] 地图头像`, `        loadingCardKey: ${arch.loadingCardKey ? `'${arch.loadingCardKey}'` : 'undefined'}, // [2026-08-29] 加载卡面`, `    },`);
         }
         lines.push('};');
         navigator.clipboard.writeText(lines.join('\n')).then(() => {
@@ -479,9 +491,29 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
                 )}
             </div>
 
-            {/* ==================== 3. 右栏：深度设置与卡牌管理 ==================== */}
+            {/* ==================== 3. 右栏：Tab 化设置（概览 / 迷宫强化 / 牌组） ==================== */}
             {selected && (
                 <div className="w-[400px] bg-slate-900 border-l border-white/10 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.5)] shrink-0">
+
+                    {/* [2026-08-27 重构] 右栏 Tab 页签条：一次只看一类功能 */}
+                    <div className="flex bg-black/50 border-b border-white/10 shrink-0">
+                        <button onClick={() => setRightTab('overview')}
+                            className={`flex-1 py-2.5 text-xs font-black tracking-widest transition-all border-b-2 ${rightTab === 'overview' ? 'text-yellow-400 border-yellow-400 bg-yellow-900/10' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}>
+                            概览
+                        </button>
+                        <button onClick={() => setRightTab('rogueBuffs')}
+                            className={`flex-1 py-2.5 text-xs font-black tracking-widest transition-all border-b-2 ${rightTab === 'rogueBuffs' ? 'text-violet-400 border-violet-400 bg-violet-900/10' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}>
+                            迷宫强化
+                        </button>
+                        <button onClick={() => setRightTab('deck')}
+                            className={`flex-1 py-2.5 text-xs font-black tracking-widest transition-all border-b-2 ${rightTab === 'deck' ? 'text-blue-400 border-blue-400 bg-blue-900/10' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}>
+                            牌组
+                        </button>
+                    </div>
+
+                    {/* ── 概览 Tab：基础设置 + 高定属性 ── */}
+                    {rightTab === 'overview' && (
+                    <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
 
                     {/* 头部信息与保存 */}
                     <div className="p-5 border-b border-gray-700 bg-black/40 flex flex-col gap-4">
@@ -540,44 +572,90 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
                                 </div>
                             </div>
 
-                            {/* [2026-08-11] 可携带迷宫强化（仅迷宫模式） */}
+                            {/* [2026-08-17 莉莉子] 敌方卡背（敌我卡背分离，未选=默认卡背 0） */}
                             <div>
-                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1">
-                                    <Sparkles size={12}/> 迷宫强化
-                                    <span className="text-[8px] text-gray-500">(ENEMY ELIGIBLE · 仅迷宫模式)</span>
+                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><Box size={12}/> 敌方卡背</div>
+                                <div className="flex flex-wrap gap-1.5 bg-black/40 p-1.5 rounded-lg border border-white/5">
+                                    {PERSONALIZATION_ASSETS.cardBacks.map((img, idx) => (
+                                        <img key={idx} src={img} alt={`卡背${idx}`}
+                                            onClick={() => updateArchetype({ cardBackIndex: idx })}
+                                            className={`w-9 h-[54px] object-cover rounded cursor-pointer border transition-all ${(selected.cardBackIndex ?? 0) === idx ? 'border-yellow-400 scale-105 shadow-[0_0_10px_rgba(250,204,21,0.6)]' : 'border-white/10 opacity-50 hover:opacity-100 hover:border-gray-400'}`} />
+                                    ))}
                                 </div>
-                                {ENEMY_ELIGIBLE_BUFFS.length === 0 ? (
-                                    <p className="text-xs text-gray-600 italic">暂无敌方迷宫强化，请在 data/roguelike/buffs.ts 配置 enemyEligible</p>
-                                ) : (
-                                    <div className="grid grid-cols-2 gap-1.5">
-                                        {ENEMY_ELIGIBLE_BUFFS.map((buff: MazeBuff) => {
-                                            const active = (selected.rogueBuffs ?? []).includes(buff.id);
-                                            return (
-                                                <button key={buff.id} onClick={() => toggleRogueBuff(buff.id)} title={buff.description}
-                                                    className={`flex items-center gap-2 px-2 py-2 rounded-lg border text-left transition-all
-                                                        ${active ? 'border-violet-400 bg-violet-500/20 text-white shadow-[0_0_12px_rgba(168,85,247,0.4)]'
-                                                                 : 'border-white/10 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white'}`}>
-                                                    <RarityIcon rarity={buff.rarity} size={10} />
-                                                    <span className="flex-1 text-xs font-bold truncate">{buff.name}</span>
-                                                    {active && <span className="text-[9px] text-violet-300 font-black">ON</span>}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                )}
                             </div>
 
-                            {/* 关联考核 — 已废弃，教程模式直接在关卡数据中指定牌组 */}
-                            <div className="opacity-30 pointer-events-none">
-                                <div className="text-[10px] text-gray-600 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><BookOpen size={12}/> 关联考核 <span className="text-[8px] text-gray-700">(已弃用)</span></div>
-                                <div className="w-full bg-black/30 text-xs px-3 py-2.5 rounded-lg border border-white/5 text-gray-600">
-                                    教程牌组已迁移至 tutorialStages.ts 直接定义
+                            {/* [2026-08-29 程拍板] 敌方头像（地图节点固定显示，未选=流派池随机） */}
+                            <div>
+                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><User size={12}/> 敌方头像（地图）</div>
+                                <div className="flex gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pb-1">
+                                    <div onClick={() => updateArchetype({ avatarKey: undefined })}
+                                         className={`shrink-0 w-11 h-11 rounded-full border-2 flex items-center justify-center text-[9px] font-bold transition-all cursor-pointer ${!selected.avatarKey ? 'border-yellow-400 text-yellow-300 bg-slate-800' : 'border-white/10 text-gray-500 opacity-60 hover:opacity-100'}`}>
+                                        随机
+                                    </div>
+                                    {poolCards.map(c => (
+                                        <div key={c.key} onClick={() => updateArchetype({ avatarKey: c.key })}
+                                             className={`shrink-0 w-11 h-11 rounded-full border-2 transition-all cursor-pointer ${selected.avatarKey === c.key ? 'border-yellow-400 scale-110 shadow-[0_0_15px_rgba(250,204,21,0.5)] z-10' : 'border-transparent opacity-50 hover:opacity-100 hover:border-gray-500'}`}>
+                                            <CroppedAvatar cardKey={c.key} className="w-full h-full rounded-full" />
+                                        </div>
+                                    ))}
                                 </div>
+                                {poolCards.length === 0 && <p className="text-[10px] text-gray-500 mt-1">牌组无卡可选（先往核心/倾向池加卡）</p>}
                             </div>
+
+                            {/* [2026-08-29 程拍板] 加载界面卡面（战斗加载固定显示，未选=敌人英雄/核心卡） */}
+                            <div>
+                                <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1"><User size={12}/> 加载界面卡面</div>
+                                <div className="flex gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pb-1">
+                                    <div onClick={() => updateArchetype({ loadingCardKey: undefined })}
+                                         className={`shrink-0 w-11 h-[60px] rounded-lg border-2 flex items-center justify-center text-[9px] font-bold transition-all cursor-pointer ${!selected.loadingCardKey ? 'border-yellow-400 text-yellow-300 bg-slate-800' : 'border-white/10 text-gray-500 opacity-60 hover:opacity-100'}`}>
+                                        随机
+                                    </div>
+                                    {poolCards.map(c => (
+                                        <div key={c.key} onClick={() => updateArchetype({ loadingCardKey: c.key })}
+                                             className={`shrink-0 w-11 h-[60px] rounded-lg border-2 overflow-hidden transition-all cursor-pointer ${selected.loadingCardKey === c.key ? 'border-yellow-400 scale-105 shadow-[0_0_15px_rgba(250,204,21,0.5)] z-10' : 'border-transparent opacity-50 hover:opacity-100 hover:border-gray-500'}`}>
+                                            {c.imageUrl && <img src={c.imageUrl} className="w-full h-full object-cover" alt={c.name} />}
+                                        </div>
+                                    ))}
+                                </div>
+                                {poolCards.length === 0 && <p className="text-[10px] text-gray-500 mt-1">牌组无卡可选（先往核心/倾向池加卡）</p>}
+                            </div>
+
                         </div>
                     </div>
+                    </div>
+                    )}
 
-                    {/* 卡牌列表区 (完全对齐 DeckBuilder 边缘虚化规范) */}
+                    {/* ── 迷宫强化 Tab：敌方可携带强化配置（独立页签，不再藏底）── */}
+                    {rightTab === 'rogueBuffs' && (
+                    <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] p-5">
+                        <div className="text-[10px] text-yellow-500 font-bold mb-2 tracking-widest uppercase flex items-center gap-1">
+                            <Sparkles size={12}/> 迷宫强化
+                            <span className="text-[8px] text-gray-500">(ENEMY ELIGIBLE · 仅迷宫模式)</span>
+                        </div>
+                        {ENEMY_ELIGIBLE_BUFFS.length === 0 ? (
+                            <p className="text-xs text-gray-600 italic">暂无敌方迷宫强化，请在 data/roguelike/buffs.ts 配置 enemyEligible</p>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-1.5">
+                                {ENEMY_ELIGIBLE_BUFFS.map((buff: MazeBuff) => {
+                                    const active = (selected.rogueBuffs ?? []).includes(buff.id);
+                                    return (
+                                        <button key={buff.id} onClick={() => toggleRogueBuff(buff.id)} title={buff.description}
+                                            className={`flex items-center gap-2 px-2 py-2 rounded-lg border text-left transition-all
+                                                ${active ? 'border-violet-400 bg-violet-500/20 text-white shadow-[0_0_12px_rgba(168,85,247,0.4)]'
+                                                         : 'border-white/10 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white'}`}>
+                                            <RarityIcon rarity={buff.rarity} size={10} />
+                                            <span className="flex-1 text-xs font-bold truncate">{buff.name}</span>
+                                            {active && <span className="text-[9px] text-violet-300 font-black">ON</span>}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                    )}
+
+                    {/* ── 牌组 Tab：核心 / 倾向列表 ── */}
+                    {rightTab === 'deck' && (
                     <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 relative">
                         {/* Tab 切换控制与提示说明 */}
                         <div className="flex flex-col bg-black border-b border-gray-800 shrink-0">
@@ -651,6 +729,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
                             <div className="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
                         </div>
                     </div>
+                    )}
                 </div>
             )}
 

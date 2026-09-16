@@ -4,7 +4,7 @@ import type { CardData, GameState } from '../types';
 /**
  * 计算回合开始时的状态变更
  */
-export const calculateRoundStart = (currentGame: GameState) => {
+export const calculateRoundStart = (currentGame: GameState): Partial<GameState> => {
     const prev = currentGame;
 
     // 如果是第0回合(初始化)，直接跳到第1回合

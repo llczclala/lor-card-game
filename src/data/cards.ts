@@ -172,9 +172,9 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   // --- 英雄：卜卜 灵鉴(pupu_specular_soul) ---
   pupu_specular_soul: {
-    key: 'pupu_specular_soul', gachaPool: GachaPoolEnum.Lotus, name: '卜卜 灵鉴', cost: 2, power: 5, health: 3, maxHealth: 3,isChampion: true, level: 1, region: 'Pupu', race: ['summoner'],
+    key: 'pupu_specular_soul', gachaPool: GachaPoolEnum.Lotus, name: '卜卜 灵鉴', cost: 2, power: 4, health: 3, maxHealth: 3,isChampion: true, level: 1, region: 'Pupu', race: ['summoner'],
     description: '进攻时：召唤一个进攻状态的 “镜爻”。\n参战：变化为“卜卜的卜卦”。', type: 'unit', keywords: ['QuickAttack', 'Ability'],
-    ability: { id: 'pupu_lv1_mirror_summon', label: '灵鉴之冲', description: '进攻时：召唤一个进攻状态的\"镜爻\"。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
+    ability: { id: 'pupu_lv1_mirror_summon', label: '灵鉴之冲', description: '进攻时：召唤一个进攻状态的“镜爻”。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge', isLevelAbility: true },
     imageUrl: HERO_IMAGES.pupu_specular_soul.base,
     level2ImageUrl: HERO_IMAGES.pupu_specular_soul.level2,
     associatedSpellKey: 'pupu_specular_soul_spell',
@@ -267,7 +267,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // [新增] 猫汐尔 莲驱 (Mauxir - Lotus Drive)
   // ==========================================
   mauxir_lotus_drive: {
-    key: 'mauxir_lotus_drive', gachaPool: GachaPoolEnum.Lotus, name: '猫汐尔 莲驱', cost: 4, power: 1, health: 4, maxHealth: 4,
+    key: 'mauxir_lotus_drive', gachaPool: GachaPoolEnum.Lotus, name: '猫汐尔 莲驱', cost: 4, power: 2, health: 7, maxHealth: 7,
     isChampion: true, level: 1, region: 'Mauxir', race: ['summoner'],
     description: '【库效】回合开始时，若友方备战席和手牌中没有“臆莲基座”，则召唤一个。回合结束：对友方随机一个“臆莲基座”造成1点伤害，之后赋予其+0 +1。\n参战：变化为“猫汐尔的演算”。',
     type: 'unit', keywords: ['Tough','Aura'],
@@ -509,7 +509,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     race: ['summoner'],
     type: 'unit',
     keywords: [],
-    ability: { id: 'elice_robot_engine', label: '无人机调度程序', description: '入场：召唤一个\"环境净化无人机\"。回合开始：若上回合友方打击过敌方水晶，则召唤一个\"环境净化无人机\"。', trigger: 'on_play', maxCharges: -1, postTriggerState: 'recharge' },
+    ability: { id: 'elice_robot_engine', label: '无人机调度程序', description: '入场：召唤一个“环境净化无人机”。回合开始：若上回合友方打击过敌方水晶，则召唤一个“环境净化无人机”。', trigger: 'on_play', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.elice,
     description: '入场：召唤一个“环境净化无人机”。回合开始：若上回合友方打击过敌方水晶，则召唤一个“环境净化无人机”。',
     effects: ['effect_elice_robot_engine']
@@ -611,7 +611,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 库兰娅丝 ---
   'Illustration_Squad_Kuranas': {
-    key: 'Illustration_Squad_Kuranas', gachaPool: GachaPoolEnum.Permanent, name: '"图征"\n库兰娅丝', cost: 1, power: 1, health: 1, maxHealth: 1,
+    key: 'Illustration_Squad_Kuranas', gachaPool: GachaPoolEnum.Permanent, name: '”图征”\n库兰娅丝', cost: 1, power: 1, health: 1, maxHealth: 1,
     isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
     description: '入场：召唤一个“清泉医疗鳄”。“清泉医疗鳄”提供的加成视为其造成的伤害，可以计入“猫汐尔 莲驱”的升级进度。',
     imageUrl: UNIT_IMAGES.kuranas,
@@ -630,7 +630,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 斯瓦莉 ---
   'Illustration_Squad_Swali': {
-    key: 'Illustration_Squad_Swali', gachaPool: GachaPoolEnum.Permanent, name: '"图征"\n斯瓦莉', cost: 3, power: 1, health: 3, maxHealth: 4,
+    key: 'Illustration_Squad_Swali', gachaPool: GachaPoolEnum.Permanent, name: '”图征”\n斯瓦莉', cost: 3, power: 1, health: 3, maxHealth: 4,
     isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
     description: '入场：召唤一个“珍馐绵羊”。每目睹使用一个“梦莲无人机”，增加“猫汐尔 莲驱” 3 点升级进度。',
     imageUrl: UNIT_IMAGES.swali,
@@ -649,7 +649,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
   // --- 图征小队 索莉妮 ---
   'Illustration_Squad_Soline': {
-    key: 'Illustration_Squad_Soline', gachaPool: GachaPoolEnum.Permanent, name: '"图征"\n索莉妮', cost: 5, power: 2, health: 4, maxHealth: 4,
+    key: 'Illustration_Squad_Soline', gachaPool: GachaPoolEnum.Permanent, name: '”图征”\n索莉妮', cost: 5, power: 2, health: 4, maxHealth: 4,
     isChampion: false, level: 0, region: 'Mauxir', type: 'unit', keywords: ['Aura'], race: ['summoner'],
     description: '入场：召唤一个“搜救阿努比斯”。“搜救阿努比斯”造成的伤害会额外翻倍后再计入“猫汐尔 莲驱”的升级进度。',
     imageUrl: UNIT_IMAGES.soline,
@@ -673,12 +673,54 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     },
     isCollectible: false,
   },
-  // --- "圣树"小队 (Sacred Tree Squad) — 安卡希雅专属后勤 ---
+
+  // ==========================================
+  // [2026-08-18 莉莉子] 猫汐尔阵营法术（止水凝形 / 忆影拓印 / 藕断丝长）
+  // 卡面已由程绘制（44/45/46.jpg），2026-08-23 替换
+  // ==========================================
+
+  // 1. 止水凝形 —— 本回合强制将面板设置为 1/6（敌我皆可，可攻可守）
+  mauxir_zhishui_ningxing: {
+    key: 'mauxir_zhishui_ningxing', gachaPool: GachaPoolEnum.Permanent,
+    name: '止水凝形', cost: 3, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '快速：本回合内，将任意一个单位的面板强制设置为 1/6。',
+    type: 'spell-fast', keywords: [],
+    imageUrl: SPELL_IMAGES.mauxir_zhishui_ningxing,
+    effects: ['effect_mauxir_zhishui_ningxing'],
+    ai: { pattern: 'SET_STATS', priority: 2, config: { targetType: 'enemy' } },
+  },
+
+  // 2. 忆影拓印 —— 白板复制任意单位到手（瞬逝）
+  mauxir_yiying_tuoyin: {
+    key: 'mauxir_yiying_tuoyin', gachaPool: GachaPoolEnum.Permanent,
+    name: '忆影拓印', cost: 4, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '快速：选择任意一个单位，在手牌中生成一张瞬逝的白板复制牌（基础面板，不含增益）。',
+    type: 'spell-fast', keywords: [],
+    imageUrl: SPELL_IMAGES.mauxir_yiying_tuoyin,
+    effects: ['effect_mauxir_yiying_tuoyin'],
+    ai: { pattern: 'CLONE_TO_HAND', priority: 1, config: {} },
+  },
+
+  // 3. 藕断丝长 —— 召唤衍生物 +1/+1 并附加亡语：阵亡时抽 3 张
+  mauxir_ouduan_si_chang: {
+    key: 'mauxir_ouduan_si_chang', gachaPool: GachaPoolEnum.Permanent,
+    name: '藕断丝长', cost: 5, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Mauxir',
+    description: '慢速：选择一个召唤衍生物，使其获得 +1/+1 和 [亡语]：本单位阵亡时，抽取 3 张卡牌。',
+    type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.mauxir_ouduan_si_chang,
+    effects: ['effect_mauxir_ouduan_si_chang'],
+    ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALLY_UNIT', raceFilter: ['summon'], power: 1, health: 1 } },
+  },
+
+  // --- ”圣树”小队 (Sacred Tree Squad) — 安卡希雅专属后勤 ---
 
 
   'Sacred_Tree_Squad_Lumi': {
     key: 'Sacred_Tree_Squad_Lumi', gachaPool: GachaPoolEnum.Permanent,
-    name: '"圣树"\n露米',
+    name: '”圣树”\n露米',
     region: 'Acacia',
     cost: 1,
     power: 0,
@@ -695,7 +737,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   'Sacred_Tree_Squad_Margaret': {
     key: 'Sacred_Tree_Squad_Margaret', gachaPool: GachaPoolEnum.Permanent,
-    name: '"圣树"\n玛格丽特',
+    name: '”圣树”\n玛格丽特',
     region: 'Acacia',
     cost: 3,
     power: 1,
@@ -712,7 +754,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   'Sacred_Tree_Squad_Alvina': {
     key: 'Sacred_Tree_Squad_Alvina', gachaPool: GachaPoolEnum.Permanent,
-    name: '"圣树"\n阿尔维娜',
+    name: '”圣树”\n阿尔维娜',
     region: 'Acacia',
     cost: 5,
     power: 3,
@@ -749,7 +791,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   temp_spell_20: {
     key: 'temp_spell_20', name: '剑鸣回响', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
-    description: '快速：回响，飞剑2。', type: 'spell-slow', keywords: ['Echo'],
+    description: '快速：回响，飞剑2。', type: 'spell-fast', keywords: ['Echo'],
     effects: ['effect_temp_spell_20_flying'],
     imageUrl: SPELL_IMAGES.temp_spell_20,
   },
@@ -927,21 +969,21 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   temp_spell_13: {
     key: 'temp_spell_13', name: '深思熟虑', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
-    description: '极速：抉择："正面突破" 或 "迂回防守"。', type: 'spell-burst', keywords: [],
+    description: '极速：抉择：“正面突破” 或 “迂回防守”。', type: 'spell-burst', keywords: [],
     choices: ['temp_spell_14', 'temp_spell_15'],
     effects: ['effect_temp_spell_13'],
     imageUrl: SPELL_IMAGES.temp_spell_13,
   },
   temp_spell_14: {
     key: 'temp_spell_14', name: '正面突破', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
-    description: '极速：本回合给予一个单位+3/+0。（"深思熟虑"的衍生法术）', type: 'spell-burst', keywords: [],
+    description: '极速：本回合给予一个单位+3/+0。', type: 'spell-burst', keywords: [],
     effects: ['effect_temp_spell_14'],
     imageUrl: SPELL_IMAGES.temp_spell_14,
     isCollectible: false
   },
   temp_spell_15: {
     key: 'temp_spell_15', name: '迂回防守', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
-    description: '极速：本回合给予一个单位+0/+3。（"深思熟虑"的衍生法术）', type: 'spell-burst', keywords: [],
+    description: '极速：本回合给予一个单位+0/+3。', type: 'spell-burst', keywords: [],
     effects: ['effect_temp_spell_15'],
     imageUrl: SPELL_IMAGES.temp_spell_15,
     isCollectible: false
@@ -1112,7 +1154,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: UNIT_IMAGES.oisin, effects: ['effect_poet_oisin_generate']
   },
   Poet_Squad_Caitlin: {
-    key: 'Poet_Squad_Caitlin', gachaPool: GachaPoolEnum.Permanent, name: '”诗人"\n凯特琳', region: 'Logistics',
+    key: 'Poet_Squad_Caitlin', gachaPool: GachaPoolEnum.Permanent, name: '”诗人”\n凯特琳', region: 'Logistics',
     cost: 5, power: 3, health: 3, maxHealth: 3,
     isChampion: false, level: 0, type: 'unit', keywords: ['Aura'],
     description: '在场时，我方所有极速和快速法术魔耗值减1。',
@@ -1179,7 +1221,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // ==========================================
 
   SacredChants_Squad_Loka: {
-    key: 'SacredChants_Squad_Loka', gachaPool: GachaPoolEnum.Permanent, name: '"梵音"\n洛迦', region: 'Logistics',
+    key: 'SacredChants_Squad_Loka', gachaPool: GachaPoolEnum.Permanent, name: '”梵音”\n洛迦', region: 'Logistics',
     cost: 3, power: 3, health: 2, maxHealth: 2,
     isChampion: false, level: 0, type: 'unit', keywords: ['Ephemeral','Last Breath'],
     description: '亡语：召唤一个“幻莲音蛇”。',
@@ -1196,7 +1238,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
 
   SacredChants_Squad_European_Angelica: {
-    key: 'SacredChants_Squad_European_Angelica', gachaPool: GachaPoolEnum.Permanent, name: '"梵音"\n欧白芷', region: 'Logistics',
+    key: 'SacredChants_Squad_European_Angelica', gachaPool: GachaPoolEnum.Permanent, name: '”梵音”\n欧白芷', region: 'Logistics',
     cost: 5, power: 5, health: 2, maxHealth: 2,
     isChampion: false, level: 0, type: 'unit', keywords: ['Ephemeral','Last Breath'],
     description: '亡语：在手牌中生成一张“迷离之音”。',
@@ -1700,19 +1742,19 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 御守小队 (Amulet Squad) 3星 ---
 
   Amulet_Squad_Scorching: {
-    key: 'Amulet_Squad_Scorching', gachaPool: GachaPoolEnum.Permanent, name: '"御守"\n灼', region: 'Logistics',
+    key: 'Amulet_Squad_Scorching', gachaPool: GachaPoolEnum.Permanent, name: '”御守”\n灼', region: 'Logistics',
     cost: 2, power: 1, health: 4, maxHealth: 4,
     isChampion: false, level: 0, type: 'unit', keywords: ['Thorns'], description: '',
     imageUrl: UNIT_IMAGES.scorching, effects: []
   },
   Amulet_Squad_Cattail: {
-    key: 'Amulet_Squad_Cattail', gachaPool: GachaPoolEnum.Permanent, name: '"御守"\n香蒲', region: 'Logistics',
+    key: 'Amulet_Squad_Cattail', gachaPool: GachaPoolEnum.Permanent, name: '”御守”\n香蒲', region: 'Logistics',
     cost: 4, power: 2, health: 6, maxHealth: 6,
     isChampion: false, level: 0, type: 'unit', keywords: ['Thorns'], description: '',
     imageUrl: UNIT_IMAGES.cattail, effects: []
   },
   Amulet_Squad_Peaches: {
-    key: 'Amulet_Squad_Peaches', gachaPool: GachaPoolEnum.Permanent, name: '"御守"\n桃子', region: 'Logistics',
+    key: 'Amulet_Squad_Peaches', gachaPool: GachaPoolEnum.Permanent, name: '”御守”\n桃子', region: 'Logistics',
     cost: 6, power: 6, health: 6, maxHealth: 6,
     isChampion: false, level: 0, type: 'unit', keywords: ['Thorns', 'Regeneration'], description: '',
     imageUrl: UNIT_IMAGES.peaches, effects: []
@@ -1722,19 +1764,19 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 梵灵小队 (FanLing Squad) 3星 ---
 
   FanLing_Squad_Lucia: {
-    key: 'FanLing_Squad_Lucia', gachaPool: GachaPoolEnum.Permanent, name: '"梵灵"\n露茜娅', region: 'Logistics',
+    key: 'FanLing_Squad_Lucia', gachaPool: GachaPoolEnum.Permanent, name: '”梵灵”\n露茜娅', region: 'Logistics',
     cost: 1, power: 1, health: 2, maxHealth: 2,
     isChampion: false, level: 0, type: 'unit', keywords: ['Fearsome'], description: '',
     imageUrl: UNIT_IMAGES.lucia, effects: []
   },
   FanLing_Squad_Nafu: {
-    key: 'FanLing_Squad_Nafu', gachaPool: GachaPoolEnum.Permanent, name: '"梵灵"\n纳芙', region: 'Logistics',
+    key: 'FanLing_Squad_Nafu', gachaPool: GachaPoolEnum.Permanent, name: '”梵灵”\n纳芙', region: 'Logistics',
     cost: 3, power: 3, health: 4, maxHealth: 4,
     isChampion: false, level: 0, type: 'unit', keywords: ['Fearsome'], description: '',
     imageUrl: UNIT_IMAGES.nafu, effects: []
   },
   FanLing_Squad_Wasi: {
-    key: 'FanLing_Squad_Wasi', gachaPool: GachaPoolEnum.Permanent, name: '"梵灵"\n瓦茜', region: 'Logistics',
+    key: 'FanLing_Squad_Wasi', gachaPool: GachaPoolEnum.Permanent, name: '”梵灵”\n瓦茜', region: 'Logistics',
     cost: 5, power: 5, health: 5, maxHealth: 5,
     isChampion: false, level: 0, type: 'unit', keywords: ['Fearsome', 'Challenger'], description: '',
     imageUrl: UNIT_IMAGES.wasi, effects: []
@@ -2057,8 +2099,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   // --- 18. Deadly (剧毒) ---
   test_deadly: {
-    key: 'test_deadly', name: '测试：剧毒', cost: 1, power: 1, health: 1, maxHealth: 1, isChampion: false, level: 0, region: 'TEST',
-    description: '一击必杀。', type: 'unit', keywords: ['Deadly'],
+    key: 'test_deadly', name: '测试：剧毒', cost: 1, power: 1, health: 6, maxHealth: 6, isChampion: false, level: 0, region: 'TEST',
+    description: '受到任何伤害即被消灭。', type: 'unit', keywords: ['Deadly'],
     imageUrl: TEST_IMAGES.deadly,
     isCollectible: false
   },

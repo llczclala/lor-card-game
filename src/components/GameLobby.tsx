@@ -7,7 +7,11 @@ import {
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUserSystem } from '../hooks/useUserSystem';
-import { HERO_IMAGES, CURRENCY_ICONS, LOADING_SCREEN_IMAGES, UNIT_IMAGES, SPELL_IMAGES } from '../data/imageData';
+import { HERO_IMAGES, CURRENCY_ICONS, LOADING_SCREEN_IMAGES, UNIT_IMAGES, SPELL_IMAGES, PERSONALIZATION_ASSETS } from '../data/imageData';
+import { getAccountExpToNext } from '../data/accountProgression'; // [2026-09-04 账号等级] 档案面板真实经验条
+import { CARD_DB } from '../data/cards'; // [2026-09-04 档案面板] 收藏计数 / 代表英雄名
+import { getArmamentDefs } from '../data/equipment'; // [2026-09-04 档案面板] 武装收藏计数
+import { readArmStock } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
 import { getHallCharacterEntries, getCharacterScenes, type HallCharacterKey } from '../data/movieData';
 import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench, Camera, Megaphone } from 'lucide-react'; // [修改] 新增 Camera / [2026-08-09] 新增 Megaphone
 
@@ -85,6 +89,36 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 }) => {
     const [showUI, setShowUI] = useState(true);
     const { profile, collection } = userSystem;
+    // [2026-09-04 账号档案面板] 由真实数据派生（去 mock：等级经验条 / 战绩 / 收藏进度）
+    const userSettings = userSystem.settings;
+    const br = userSystem.battleRecord;
+    const totalMatches = br?.totalMatches ?? 0;
+    const wins = br?.wins ?? 0;
+    const losses = br?.losses ?? 0;
+    const winRate = totalMatches > 0 ? ((wins / totalMatches) * 100).toFixed(1) : '0.0';
+    const accLevel = profile?.level ?? 1;
+    const accExp = profile?.exp ?? 0;
+    const accExpToNext = getAccountExpToNext(accLevel);
+    const accPct = accExpToNext > 0 ? Math.min(100, Math.round((accExp / accExpToNext) * 100)) : 100;
+    const serveDays = profile?.createdAt ? Math.max(1, Math.floor((Date.now() - profile.createdAt) / 86400000)) : 1;
+    const ownedCardRecord = (collection as any)?.ownedCards as Record<string, number> | undefined;
+    const ownedCardsCount = ownedCardRecord ? Object.values(ownedCardRecord).filter(n => n > 0).length : 0;
+    const collectibleTotal = Object.values(CARD_DB).filter((c: any) => c.isCollectible !== false).length;
+    const armStockMap = readArmStock(userSettings); // [2026-09-07 数量库存]
+    const armCount = Object.keys(armStockMap).filter(k => (armStockMap[k] ?? 0) > 0).length;
+    const armTotal = getArmamentDefs().length;
+    const cardBackTotal = PERSONALIZATION_ASSETS.cardBacks?.length ?? 17;
+    const deskTotal = PERSONALIZATION_ASSETS.desks?.length ?? 10;
+    const cardBackOwned = userSettings?.unlockedCardBacks?.length ?? 0;
+    const deskOwned = userSettings?.unlockedDesks?.length ?? 0;
+    // 代表英雄：heroes 中出场最多的卡 key（平手取先出现者）
+    const heroEntries = (br?.heroes ?? {}) as Record<string, number>;
+    let topHeroKey = '';
+    let topHeroCount = 0;
+    Object.entries(heroEntries).forEach(([k, v]) => {
+        if (v > topHeroCount) { topHeroCount = v; topHeroKey = k; }
+    });
+    const topHeroName = topHeroKey ? ((CARD_DB as any)[topHeroKey]?.name ?? topHeroKey) : '——';
     // 1. 本地资源状态 (用于实现大厅资源的实时扣除和增加显示)
     const [localRes, setLocalRes] = useState({
         silverCoin: collection?.resources?.silverCoin || 0,
@@ -469,7 +503,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     <div className="flex flex-col">
                         <span className="text-2xl font-black text-white tracking-widest drop-shadow-md">{profile?.displayName || 'ADJUTANT'}</span>
                         <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-300 text-[10px] font-bold rounded-sm border border-yellow-500/30">LV.{profile?.level || 1}</span>
+                            <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-300 text-[10px] font-bold rounded-sm border border-yellow-500/30">账号 Lv.{profile?.level || 1}</span>
                             <span className="text-xs text-white font-mono">UID: {userSystem.userId.slice(0, 8)}</span>
                         </div>
                     </div>
@@ -920,27 +954,56 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                         <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); navigator.clipboard.writeText(userSystem.userId); }} className="hover:text-white"><Copy size={14} /></button> {/* [新增] 音效 */}
                                     </div>
                                     <div className="flex items-center gap-3 mt-2">
-                                        <span className="px-3 py-1 bg-yellow-500/20 text-yellow-300 font-bold rounded-sm border border-yellow-500/30">LEVEL {profile?.level || 1}</span>
+                                        <span className="px-3 py-1 bg-yellow-500/20 text-yellow-300 font-bold rounded-sm border border-yellow-500/30">账号 LV.{accLevel}</span>
                                         <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden border border-white/5">
-                                            <div className="h-full bg-yellow-500 w-[45%]" /> {/* Mock 进度 */}
+                                            <div className="h-full bg-yellow-500" style={{ width: `${accPct}%` }} />
                                         </div>
+                                    </div>
+                                    <div className="text-xs font-mono text-gray-500">
+                                        EXP {accExp} / {accExpToNext > 0 ? accExpToNext : 'MAX'} · 服役 {serveDays} 天
                                     </div>
                                 </div>
                             </div>
 
-                            {/* 战绩统计 (Mock 数据展示) */}
-                            <div className="grid grid-cols-3 gap-4 border-t border-white/10 pt-8">
+                            {/* 真实战绩（持久记录，非 mock） */}
+                            <div className="grid grid-cols-3 gap-4 border-t border-white/10 pt-6">
                                 <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center">
                                     <span className="text-gray-400 text-xs font-mono mb-1">TOTAL MATCHES</span>
-                                    <span className="text-2xl font-black text-white">142</span>
+                                    <span className="text-2xl font-black text-white">{totalMatches}</span>
+                                </div>
+                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center">
+                                    <span className="text-gray-400 text-xs font-mono mb-1">WINS / LOSS</span>
+                                    <span className="text-2xl font-black text-green-400">{wins}<span className="text-white/40 text-base font-mono"> / {losses}</span></span>
                                 </div>
                                 <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center">
                                     <span className="text-gray-400 text-xs font-mono mb-1">WIN RATE</span>
-                                    <span className="text-2xl font-black text-green-400">68.5%</span>
+                                    <span className="text-2xl font-black text-green-400">{winRate}%</span>
                                 </div>
-                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center">
-                                    <span className="text-gray-400 text-xs font-mono mb-1">FAV. TACTIC</span>
-                                    <span className="text-lg font-black text-blue-400 mt-1">LYFE BLITZ</span>
+                            </div>
+                            <div className="text-center text-xs font-mono text-gray-500">
+                                代表英雄：<span className="text-blue-400 font-bold tracking-widest">{topHeroName}</span>
+                            </div>
+
+                            {/* 收藏 / 养成进度（真实数据） */}
+                            <div className="grid grid-cols-3 gap-4 border-t border-white/10 pt-6">
+                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center gap-1">
+                                    <span className="text-gray-400 text-[10px] font-mono mb-1 tracking-widest">卡牌收藏</span>
+                                    <span className="text-xl font-black text-white">{ownedCardsCount}<span className="text-white/40 text-xs"> / {collectibleTotal}</span></span>
+                                    <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
+                                        <div className="h-full bg-blue-500" style={{ width: `${collectibleTotal ? Math.min(100, (ownedCardsCount / collectibleTotal) * 100) : 0}%` }} />
+                                    </div>
+                                </div>
+                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center gap-1">
+                                    <span className="text-gray-400 text-[10px] font-mono mb-1 tracking-widest">武装收藏</span>
+                                    <span className="text-xl font-black text-white">{armCount}<span className="text-white/40 text-xs"> / {armTotal}</span></span>
+                                    <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
+                                        <div className="h-full bg-purple-500" style={{ width: `${armTotal ? Math.min(100, (armCount / armTotal) * 100) : 0}%` }} />
+                                    </div>
+                                </div>
+                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center gap-1">
+                                    <span className="text-gray-400 text-[10px] font-mono mb-1 tracking-widest">卡背 / 棋盘</span>
+                                    <span className="text-xl font-black text-white">{cardBackOwned}<span className="text-white/40 text-xs"> / {cardBackTotal}</span></span>
+                                    <span className="text-[10px] font-mono text-gray-500">棋盘 {deskOwned}/{deskTotal}</span>
                                 </div>
                             </div>
 

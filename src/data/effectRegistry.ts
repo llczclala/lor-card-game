@@ -31,6 +31,8 @@ export type EffectClass =
     | 'BURNOUT_SUMMON'      // [2026-08-05 莉莉子] 燃尽召唤类：消耗全部法力、按燃尽值随机召唤泰坦（法术12）
     | 'NEGATE'              // [2026-08-05 莉莉子] 无效化类：从法术堆叠移除目标法术（法术8/6/7）
     | 'RESURRECT'           // [2026-08-06 莉莉子] 复活类：从墓地复活最强N个单位并附幻象（法术2）
+    | 'SET_STATS'           // [2026-08-18 莉莉子] 面板强制设定类：本回合将单位面板设置为指定数值（止水凝形）
+    | 'CLONE_TO_HAND'       // [2026-08-18 莉莉子] 复制到手类：复制任意单位的基础白板到手牌并附瞬逝（忆影拓印）
 
 export type EffectTiming =
     | 'BURST' | 'FAST' | 'SLOW'
@@ -77,6 +79,8 @@ export interface TargetRequirement {
 // [修改] 扁平化参数结构，移除 buffs 嵌套，与 Processor 对齐
 export interface EffectParams {
     value?: number;          // 伤害数值
+    targetPower?: number;    // [2026-08-18 莉莉子] 面板强制设定的攻击力（止水凝形）
+    targetHealth?: number;   // [2026-08-18 莉莉子] 面板强制设定的血量（止水凝形）
     power?: number;          // Buff 攻击
     health?: number;         // Buff 血量
     keywords?: string[];     // Buff 词条
@@ -241,7 +245,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_pupu_level2_attack': {
         id: 'effect_pupu_level2_attack',
         name: '镜爻·复刻',
-        description: '攻击宣告时，召唤一个完全复制自身当前身材与增益的【镜爻·卜卜】参与进攻，且该分身具有【瞬息】。',
+        description: '攻击宣告时，召唤一个完全复制自身当前身材与增益的【镜爻·卜卜】参与进攻，且该分身具有【幻象】。',
         class: 'CLONE_AND_SUMMON',   // [核心] 调用刚注册的完美复印机分类
         timing: 'ON_ATTACK_DECLARE', // 依然挂载在攻击宣告钩子上
         speed: 'BURST',
@@ -1100,7 +1104,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         targetRequirements: [
             { type: 'ANY_UNIT', count: 1, label: '选择一个受伤单位' }
         ],
-        params: { value: 1, power: 1, health: 0 },
+        params: { value: 1, power: 1, health: 0, targetCondition: 'injured' }, // [2026-08-29 修复] 漏埋 injured 暗号（须放 params，useSpellSystem 从 params.targetCondition 读）→ 没受伤也能选目标
         animationDuration: 800,
     },
     // ==========================================
@@ -1743,7 +1747,9 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'SLOW',
         speed: 'BURST',
         targetRequirements: [],
-        params: { summonCount: 1, power: 3, health: 3 }
+        // [2026-08-24 莉莉子 数据修复] 补 Overwhelm，使实现符合描述「+3/+3和碾压」
+        // effectProcessor FLYING_SWORD case 会经 fsParams.keywords 合并进衍生物关键词
+        params: { summonCount: 1, power: 3, health: 3, keywords: ['Overwhelm'] }
     },
     'effect_acacia_sword_rain_alt': {
         id: 'effect_acacia_sword_rain_alt',
@@ -2055,6 +2061,65 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         speed: 'FAST',
         targetRequirements: [],
         params: { summonCount: 2 }
+    },
+
+    // ==========================================
+    // [2026-08-18 莉莉子] 猫汐尔阵营法术效果
+    // 止水凝形 / 忆影拓印 / 藕断丝长
+    // ==========================================
+
+    // --- 1. 止水凝形：本回合强制设定面板 1/6 ---
+    'effect_mauxir_zhishui_ningxing': {
+        id: 'effect_mauxir_zhishui_ningxing',
+        name: '止水凝形',
+        description: '本回合内，将任意一个单位的面板强制设置为 1/6。',
+        class: 'SET_STATS',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ANY_UNIT', count: 1, label: '选择任意一个单位' }
+        ],
+        params: { targetPower: 1, targetHealth: 6 }
+    },
+
+    // --- 2. 忆影拓印：白板复制到手（瞬逝） ---
+    'effect_mauxir_yiying_tuoyin': {
+        id: 'effect_mauxir_yiying_tuoyin',
+        name: '忆影拓印',
+        description: '选择任意一个单位，在手牌生成一张瞬逝的白板复制牌（基础面板，不含增益）。',
+        class: 'CLONE_TO_HAND',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ANY_UNIT', count: 1, label: '选择任意一个单位' }
+        ],
+        params: { isVolatile: true }
+    },
+
+    // --- 3. 藕断丝长：召唤衍生物 +1/+1 并附加亡语抽3 ---
+    'effect_mauxir_ouduan_si_chang': {
+        id: 'effect_mauxir_ouduan_si_chang',
+        name: '藕断丝长',
+        description: '选择一个召唤衍生物，使其获得 +1/+1 和 [亡语]：本单位阵亡时，抽取 3 张卡牌。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个召唤衍生物', raceFilter: ['summon'] }
+        ],
+        params: { power: 1, health: 1, duration: 'PERMANENT', buffTag: 'drone_power', raceFilter: ['summon'] }
+    },
+
+    // --- 3b. 藕断丝长的亡语：阵亡时抽取 3 张 ---
+    'effect_mauxir_ouduan_si_chang_death': {
+        id: 'effect_mauxir_ouduan_si_chang_death',
+        name: '藕断丝连',
+        description: '【亡语】：本单位阵亡时，抽取 3 张卡牌。',
+        class: 'DRAW',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 3 }
     },
 };
 

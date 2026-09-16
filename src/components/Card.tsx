@@ -18,6 +18,7 @@ import { KeywordTray } from './KeywordTray';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于兜底替换{value}
 import { getEquipmentDefs } from '../data/equipment'; // [2026-08-12 装备系统] 手牌右侧装备方块
+import { bindArmamentGaze } from './roguelike/ArmamentPreview'; // [2026-08-26 莉莉子] 手牌卡武装/装备 pips 悬停浮现大卡
 import { getHeroVideo } from '../data/heroVideos'; // [2026-08-16 动态卡面] 天启者动态卡面视频
 
 // [核心新增] 模块级卡牌位置记忆库 (突破 React 销毁重绘的失忆限制)
@@ -161,6 +162,26 @@ const HeroCardVideo: React.FC<{ src: string; className?: string; style?: React.C
     return <video ref={videoRef} src={src} className={className} style={style} playsInline preload="auto" muted loop />;
 };
 
+// [2026-08-23 莉莉子] 动态卡背视频（对齐 HeroCardVideo：显式 play() + 无限循环 + muted）
+export const CardBackVideo: React.FC<{ src: string; className?: string; style?: React.CSSProperties }> = ({ src, className, style }) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+
+    useEffect(() => {
+        const el = videoRef.current;
+        if (!el) return;
+        el.loop = true;
+        el.muted = true;
+        if (el.src !== src && el.src !== window.location.origin + src) {
+            el.src = src;
+            el.load();
+        }
+        const p = el.play();
+        if (p !== undefined) p.catch(() => {});
+    }, [src]);
+
+    return <video ref={videoRef} src={src} className={className} style={style} playsInline preload="auto" muted loop />;
+};
+
 interface CardProps {
   data: CardData;
   location: 'hand' | 'bench' | 'combat' | 'enemy_bench' | 'spell_stack' | 'preview' | 'deck-builder' | 'gacha' | 'collection' | 'resolving' | 'deck-panel';
@@ -181,6 +202,7 @@ interface CardProps {
   isFacingQuickAttack?: boolean;
   isFaceUp?: boolean;
   cardBackUrl?: string;
+  cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL（有则用 video 替代静态卡背）
   className?: string;
   isNew?: boolean;
   delay?: number;
@@ -265,9 +287,17 @@ const useCardCrop = (cardKey: string, location: string, level: number = 1, skinI
 };
 
 // 数值跳动钩子
-const useNumberTicker = (targetValue: number, duration: number = 1000) => {
+const useNumberTicker = (targetValue: number, duration: number = 1000, resetKey?: unknown) => {
     const [displayValue, setDisplayValue] = useState(targetValue);
     const [isTicking, setIsTicking] = useState(false);
+    const prevResetKeyRef = useRef(resetKey);
+    // [2026-09-08 莉莉子] 身份切换（resetKey 变化）→ 渲染期直接对齐到 targetValue，跳过逐格滚动。
+    // 用途：卡面/数字一体换卡——换入另一张卡时数字不残留上一张卡的值，也不从旧值滚过去。
+    if (prevResetKeyRef.current !== resetKey) {
+        prevResetKeyRef.current = resetKey;
+        setDisplayValue(targetValue);
+        setIsTicking(false);
+    }
     useEffect(() => {
         if (displayValue === targetValue) {
             if (isTicking) setIsTicking(false);
@@ -305,21 +335,25 @@ const renderDescription = (
 
 // [2026-08-12 装备系统] 手牌右侧装备方块：扁六边形裁剪 + 稀有度边框色（参照 RarityIcon 色值）
 const EQUIPMENT_HEXAGON_CLIP = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
+// [2026-08-27] 六档品质色：白/绿/蓝/紫/金/红（对齐 RarityIcon 色值）
 const EQUIPMENT_RARITY_COLOR: Record<string, string> = {
-    common: '#22c55e',
+    common: '#e5e7eb',
+    uncommon: '#22c55e',
     rare: '#3b82f6',
     epic: '#a855f7',
     legendary: '#facc15',
+    mythic: '#ef4444',
 };
 
 export const Card: React.FC<CardProps> = ({
-    data, location, skinId = 0, // [新增] 解构 skinId 并默认赋予 0 默认皮肤
+    data: realData, location, skinId = 0, // [新增] 解构 skinId 并默认赋予 0 默认皮肤
     heroDynamic: heroDynamicProp, // [2026-08-16] 动态卡面显式覆盖（悬停大图等 portal 场景，Context 无法穿透）
     onClick, isBlocker, isSelected, highlightTarget, onViewArt, isEnemyCombatant, attackType = 'clash',
     isSpeaking, isPlayable,
     onChallengerClick, isChallengerActive, isChallengedTarget, canBeChallenged, isFacingQuickAttack,
     isFaceUp = true,
     cardBackUrl,
+    cardBackVideoUrl,
     className = '',
     isNew = false,
     isTargetable = false,
@@ -342,11 +376,48 @@ export const Card: React.FC<CardProps> = ({
     // [切除] 删掉这行重复的 skinId = 0，因为参数最上面已经解构过一遍了
 }) => {
     // 顶级防御
-    if (!data) {
+    if (!realData) {
         console.warn(`[Card Component] Prevented crash: 'data' is undefined at location: ${location}`);
         return null;
     }
-        // [丁型] 如果卡牌自身带有脉冲值（自脉冲），优先用它显示 +N 飘字
+
+    // ==========================================
+    // [2026-08-20 莉莉子] 手牌变形 · 伪 3D 翻面（参考抽卡动画 scaleX [1,0,1] 手法）
+    // 检测：手牌里同一张卡（id 不变）key 变化 = 变形（英雄↔法术↔支援技 / 安卡剑舞↔重锋等）
+    // 流程：shrink（渲染旧卡面收成线）→ expand（渲染新卡面展开）→ none（归位）
+    // 仅手牌 + 正面展示的卡触发（敌方手牌卡背变形玩家不可见，不播动画）
+    // ==========================================
+    const prevKeyRef = useRef(realData.key);
+    const prevDataRef = useRef<CardData | null>(realData);
+    const [transformData, setTransformData] = useState<CardData | null>(null);
+    const [transformPhase, setTransformPhase] = useState<'none' | 'shrink' | 'expand'>('none');
+    const isTransformZone = location === 'hand' && isFaceUp;
+
+    // 变形检测：id 保留 + key 变化 → 缓存旧卡面并启动收缩
+    useEffect(() => {
+        if (isTransformZone && transformPhase === 'none'
+            && prevKeyRef.current !== realData.key
+            && prevDataRef.current
+            && prevDataRef.current.id === realData.id) {
+            setTransformData(prevDataRef.current);
+            setTransformPhase('shrink');
+        }
+        prevKeyRef.current = realData.key;
+        prevDataRef.current = realData;
+    }, [realData, isTransformZone, transformPhase]);
+
+    // 阶段推进：shrink → expand → none（时长与下方 scaleX 动画对齐）
+    useEffect(() => {
+        if (transformPhase === 'shrink' || transformPhase === 'expand') {
+            const t = setTimeout(() => setTransformPhase(transformPhase === 'shrink' ? 'expand' : 'none'), 220);
+            return () => clearTimeout(t);
+        }
+    }, [transformPhase]);
+
+    // shrink 阶段渲染旧卡面（数据切换到缓存）；expand / none 渲染当前新卡面
+    const data = transformPhase === 'shrink' && transformData ? transformData : realData;
+
+    // [丁型] 如果卡牌自身带有脉冲值（自脉冲），优先用它显示 +N 飘字
     const displayTitanCount = (data as any).pulseValue ?? titanCount;
 
     // [核心修复] 计算当前使用的卡面图片（皮肤绝对优先，且完美支持判断 2 级觉醒皮肤）
@@ -617,6 +688,50 @@ export const Card: React.FC<CardProps> = ({
     // 使用 Ref 记录上一帧的数值
     const prevHealthRef = useRef(currentFinalHealth);
     const prevPowerRef = useRef(currentFinalPower);
+
+    // [2026-09-15 莉莉子 BUG修复] 受击事件"预支基准"标记：见下方 unit_damage 监听 ② 与血量变化检测的兜底分支。
+    // 法术结算走 spells.ts 的同步 emit，会抢在 React 渲染前把 prevHealthRef 扣平，导致 diff 恒为 0；
+    // 此标记用于告知血量检测 effect「这次差值是被事件预支掉的，数字目标仍需推进」。
+    const eventPrepaidHealthRef = useRef(false);
+
+    // [2026-09-08 莉莉子] 卡面与数字一体换卡：React 复用实例换入另一张卡（战场槽位缩容重排 / 攻击者↔阻挡者切换）
+    // 时，卡面随 data 即时换新，数字却走 targetHealth/Power 状态 + ticker 滚动，之前靠 effect 滞后同步导致
+    // "先显示上一张卡的数字、再滚动到新值"。这里改为渲染期同步重置：① 数字目标立即 = 新卡面板值（与卡面同帧）
+    // ② 下方 ticker 收到 data.id 重置信号直接对齐，不逐格滚动。变形动画 id 不变（仅 key 变），不受影响。
+    const [numCardIdState, setNumCardIdState] = useState(data.id);
+    const cardJustSwapped = numCardIdState !== data.id && transformPhase === 'none';
+    if (cardJustSwapped) {
+        setNumCardIdState(data.id);
+        setTargetHealth(currentFinalHealth);
+        setTargetPower(clampedPower);
+    }
+
+    // [2026-08-31 莉莉子 修复] 受击飘字分步（纯视觉层，不动逻辑结算）：
+    // 订阅已有的 unit_damage 事件——受击时先飘红色伤害字 + 受击震荡，并同步修正 prevHealthRef（重建"受击后B态"基准），
+    // 让渲染时 diff 只反映后续增益（如以守为攻 after_attacked +1/+1）→ 实现"先红字伤害、再绿字增益"的分步表现
+    useEffect(() => {
+        const onUnitDamage = (payload: { id: string; amount: number }) => {
+            if (payload.id !== data.id || !payload.amount) return;
+            // ① 受击震荡 + 飘红色伤害字（负数 → 红字）
+            setLocalShake(true);
+            const newId = hitIdRef.current++;
+            setHitQueue(prev => [...prev, { id: newId, amount: -payload.amount }]);
+            setTimeout(() => {
+                setHitQueue(prev => prev.filter(h => h.id !== newId));
+                setLocalShake(false);
+            }, 1000);
+            // ② 修正血量基准：prevRef -= 伤害量 → 渲染时 diff 只剩后续增益增量（B→C）
+            prevHealthRef.current = prevHealthRef.current - payload.amount;
+            // [2026-09-15 莉莉子 BUG修复] ③ 给本帧打上"基准已被受击事件预支"标记。
+            // ② 把基准扣平后，下方血量检测 effect 的 diff 恒为 0，原本唯一负责推进 targetHealth 的
+            // diff<0 分支永远进不去 → 卡面数字冻结（悬停大图直读 data.damageTaken，故显示正常）。
+            // 这里不直接改数字（事件 amount 可能与实际 damageTaken 增量不符，如剧毒解构），
+            // 而是交由 effect 用真实面板值对齐。物理攻击路径的 emit 在 await 之后，不受影响。
+            eventPrepaidHealthRef.current = true;
+        };
+        eventBus.on('unit_damage', onUnitDamage);
+        return () => { eventBus.off('unit_damage', onUnitDamage); };
+    }, [data.id]);
     // [2026-08-10 修复] 身份闸门：各数值检测 effect 独立记录"上次检查的卡牌 id"。
     // 当 React 复用 Card 组件实例、却把另一张卡的 data 塞进来时（典型如战场槽位缩容重排：
     // 撤回单位 → 后一槽位卡牌前移补位，key 用索引导致实例被复用只换 data），上一帧数值 ref
@@ -629,6 +744,12 @@ export const Card: React.FC<CardProps> = ({
     useEffect(() => {
         // [身份闸门] 实例被复用换入另一张卡 → 重置基准并跳过，不误播受伤/回血动画
         if (prevHealthCardIdRef.current !== data.id) {
+            prevHealthCardIdRef.current = data.id;
+            prevHealthRef.current = currentFinalHealth;
+            return;
+        }
+        // [2026-08-20 变形] 手牌变形动画期间：旧卡→新卡数值跳变是变形表现，同步基准不播飘字
+        if (transformPhase !== 'none') {
             prevHealthCardIdRef.current = data.id;
             prevHealthRef.current = currentFinalHealth;
             return;
@@ -660,13 +781,27 @@ export const Card: React.FC<CardProps> = ({
                 }, 1000);
             }
             prevHealthRef.current = currentFinalHealth;
+        } else if (eventPrepaidHealthRef.current && targetHealth !== currentFinalHealth) {
+            // [2026-09-15 莉莉子 BUG修复] 兜底：diff 为 0 且数字目标与真实面板值脱节。
+            // 成因见上方 unit_damage 监听 ③——法术的同步 emit 抢先扣平了 prevHealthRef，
+            // 使 diff 恒为 0、diff<0 分支永不执行，targetHealth 无人推进。
+            // 这里按真实面板值对齐（不依赖事件 amount，免疫减伤/剧毒等数值差）；
+            // 红字飘字与受击震荡已由事件侧独立播放，此处不重复触发。
+            setTargetHealth(currentFinalHealth);
         }
-    }, [currentFinalHealth, data.animState, data.id]);
+        eventPrepaidHealthRef.current = false;
+    }, [currentFinalHealth, data.animState, data.id, transformPhase]);
 
     // [分离] 2. 检测攻击力变化
     useEffect(() => {
         // [身份闸门] 同上：换卡时重置基准并跳过，不误播扣攻/增益动画
         if (prevPowerCardIdRef.current !== data.id) {
+            prevPowerCardIdRef.current = data.id;
+            prevPowerRef.current = currentFinalPower;
+            return;
+        }
+        // [2026-08-20 变形] 同 health：变形动画期间数值跳变不播扣攻/增益飘字
+        if (transformPhase !== 'none') {
             prevPowerCardIdRef.current = data.id;
             prevPowerRef.current = currentFinalPower;
             return;
@@ -694,7 +829,7 @@ export const Card: React.FC<CardProps> = ({
             }
             prevPowerRef.current = currentFinalPower;
         }
-    }, [currentFinalPower, data.id]);
+    }, [currentFinalPower, data.id, transformPhase]);
 
     // =====================================
     // [新增分离] 3. 检测词条变化 (专为纯词条 BUFF 提供高光)
@@ -748,11 +883,12 @@ export const Card: React.FC<CardProps> = ({
     const safePower = ephemeralEmpty ? 0 : targetPower;
 
     const [displayHealth, isHealthTicking] = useNumberTicker(
-        safeHealth,
-        isRegenerating ? 500 : 400
+        cardJustSwapped ? currentFinalHealth : safeHealth,
+        isRegenerating ? 500 : 400,
+        data.id // [2026-09-08 莉莉子] 换卡首帧直接以新卡面板值对齐，不滚动
     );
     // [重构] 将攻击力的跳动时间从 1000ms 大幅缩短至 400ms，配合飘字演出爆发感
-    const [displayPower] = useNumberTicker(safePower, 400);
+    const [displayPower] = useNumberTicker(cardJustSwapped ? clampedPower : safePower, 400, data.id);
 
     // [召唤入场] 覆盖显示：召唤动画期间用生长数值代替真实值
     // [V2·三段时序] 阶段A/阶段B 期间数值显示生长值（未生成时显示 0），演出结束回真实值
@@ -904,12 +1040,19 @@ export const Card: React.FC<CardProps> = ({
 
 
     let animClass = '';
+    // [2026-08-19 莉莉子 挥空] 无法进攻（空气墙 / 目标已不在场 / 攻击力为 0）：原地左右晃动，不撞向目标
+    if (data.animState === 'swing_miss') {
+        animClass = 'animate-swing-miss z-50';
+    }
     // [核心修复] 同时监听 attacking 和 delayed_attacking 状态
-    if (data.animState === 'attacking' || data.animState === 'delayed_attacking') {
+    else if (data.animState === 'attacking' || data.animState === 'delayed_attacking') {
         const hasQuickAttack = !isBlocker && data.keywords && data.keywords.includes('QuickAttack');
+        // [2026-08-19 莉莉子 连击第二撞] strikeStamp>0 → 第二撞：改用同名 second 动画类，
+        // className 变化触发 CSS 动画重播（零重挂载实现二次撞击）；第二击是普通攻击，不走先攻快速冲刺
+        const isSecondStrike = (data.strikeStamp || 0) > 0;
 
         if (isEnemyCombatant) {
-            if (hasQuickAttack) {
+            if (!isSecondStrike && hasQuickAttack) {
                 animClass = attackType === 'direct'
                     ? 'animate-quick-dash-down-long z-50'
                     : 'animate-quick-dash-down z-50';
@@ -917,10 +1060,12 @@ export const Card: React.FC<CardProps> = ({
             } else if (data.animState === 'delayed_attacking' || isFacingQuickAttack) {
                 animClass = 'animate-delayed-bump-down z-50';
             } else {
-                animClass = attackType === 'direct' ? 'animate-bump-down-long z-50' : 'animate-bump-down z-50';
+                animClass = attackType === 'direct'
+                    ? (isSecondStrike ? 'animate-bump-down-long-second z-50' : 'animate-bump-down-long z-50')
+                    : (isSecondStrike ? 'animate-bump-down-second z-50' : 'animate-bump-down z-50');
             }
         } else {
-            if (hasQuickAttack) {
+            if (!isSecondStrike && hasQuickAttack) {
                 animClass = attackType === 'direct'
                     ? 'animate-quick-dash-up-long z-50'
                     : 'animate-quick-dash-up z-50';
@@ -928,7 +1073,9 @@ export const Card: React.FC<CardProps> = ({
             } else if (data.animState === 'delayed_attacking' || isFacingQuickAttack) {
                 animClass = 'animate-delayed-bump-up z-50';
             } else {
-                animClass = attackType === 'direct' ? 'animate-bump-up-long z-50' : 'animate-bump-up z-50';
+                animClass = attackType === 'direct'
+                    ? (isSecondStrike ? 'animate-bump-up-long-second z-50' : 'animate-bump-up-long z-50')
+                    : (isSecondStrike ? 'animate-bump-up-second z-50' : 'animate-bump-up z-50');
             }
         }
     }
@@ -1622,12 +1769,16 @@ export const Card: React.FC<CardProps> = ({
     // --- 内部渲染函数：背面 (保持不变) ---
     const renderBackFace = () => (
         <div className="w-full h-full absolute inset-0 rounded-xl overflow-hidden border-2 border-[#1a1a1a] bg-slate-800 z-10">
-            <img
-                src={cardBackUrl || "https://placehold.co/300x450/1e293b/ffffff?text=BACK"}
-                className="w-full h-full object-cover relative z-10"
-                alt="卡背"
-                draggable={false}
-            />
+            {cardBackVideoUrl ? (
+                <CardBackVideo src={cardBackVideoUrl} className="w-full h-full object-cover relative z-10" />
+            ) : (
+                <img
+                    src={cardBackUrl || "https://placehold.co/300x450/1e293b/ffffff?text=BACK"}
+                    className="w-full h-full object-cover relative z-10"
+                    alt="卡背"
+                    draggable={false}
+                />
+            )}
             <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none z-20"></div>
         </div>
     );
@@ -1660,16 +1811,22 @@ export const Card: React.FC<CardProps> = ({
     // [2026-08-12 装备系统] 手牌右侧外·右下角装备方块（多个从下往上依次堆叠，贴卡牌右轮廓）
     // [2026-08-15] 支持 preview（悬停检视大图）也显示装备/武装图标，供肉鸽检视场景
     const renderEquipmentPips = () => {
+        if (!isFaceUp) return null; // [2026-09-06 莉莉子 修复] 卡背态绝不渲染装备图标：敌方手牌/敌方抽卡动画 isFaceUp=false，若按 location 渲染会让玩家透过卡背看到敌方装备信息（信息泄露）
         if ((location !== 'hand' && location !== 'preview') || !data.equipment?.length) return null;
         const defs = getEquipmentDefs(data.equipment);
         if (defs.length === 0) return null;
-
+        // [2026-08-28 莉莉子 修复] pips 尺寸随卡体缩放（hand=0.45 / preview=1）：原固定 84×96 不缩放，
+        // 战斗手牌卡体仅 130px 宽 → 图标占卡宽约 65% 显得巨大；局外大图 preview 卡体 288px → 正常 29%。
+        // 按 scale 折算后，两处武装图标相对卡牌的大小一致（约 29% 卡宽）。
+        const pipScale = scale;
+        const W = 84 * pipScale, H = 96 * pipScale, GAP = 100 * pipScale;
+        const MR = 15 * pipScale, MB = 8 * pipScale;
         return (
-            <div className="absolute pointer-events-none z-[95]" style={{ right: -21, bottom: 8 }}>
+            <div className="absolute pointer-events-none z-[95]" style={{ right: MR, bottom: MB }}>
                 {defs.map((def, i) => {
                     const color = EQUIPMENT_RARITY_COLOR[def.rarity] || '#9ca3af';
                     return (
-                        <div key={def.id} className="absolute" style={{ bottom: i * 54, left: 0, width: 42, height: 48 }}>
+                        <div key={def.id} className="absolute pointer-events-auto cursor-help" style={{ bottom: i * GAP, left: 0, width: W, height: H }} {...bindArmamentGaze(def.id)}>
                             {/* 外层：稀有度边框六边形（clip-path 裁剪不掉外发光，用底色做边框） */}
                             <div
                                 className="absolute inset-0"
@@ -1729,6 +1886,15 @@ export const Card: React.FC<CardProps> = ({
     if (shouldAnimateDraw) {
         dynamicAnimate = { ...dynamicAnimate, scaleX: [1, 1, 0, 1, 1] };
         dynamicTransition = { times: [0, 0.4, 0.5, 0.6, 1], duration: 1.8, ease: "easeInOut" };
+    }
+
+    // [2026-08-20 莉莉子 手牌变形] 伪 3D 翻面：shrink 旧卡面收成线 → expand 新卡面展开（参考抽卡 scaleX 手法）
+    if (transformPhase === 'shrink') {
+        dynamicAnimate = { ...dynamicAnimate, scaleX: [1, 0] };
+        dynamicTransition = { duration: 0.22, ease: 'easeIn', times: [0, 1] };
+    } else if (transformPhase === 'expand') {
+        dynamicAnimate = { ...dynamicAnimate, scaleX: [0, 1] };
+        dynamicTransition = { duration: 0.22, ease: 'easeOut', times: [0, 1] };
     }
 
     // --- [核心修改] Framer Motion 根容器 ---

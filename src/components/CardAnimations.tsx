@@ -17,6 +17,7 @@ interface PlayerHandProps {
     playerBench: CardData[]; // [新增] 需要传入备战席供条件扫描
     combatField: any[];      // [新增] 需要传入交战区供条件扫描
     cardBackUrl: string;
+    cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL
     skinOverrides?: Record<string, number>; // [核心新增] 接收皮肤配置字典
     isCastingForHand?: boolean; // [新增] 施法选择手牌模式雷达
     handTargetFilter?: { cardTypeFilter?: string; maxCost?: number } | null; // [2026-08-08 莉莉子] HAND_CARD 目标过滤条件
@@ -35,7 +36,7 @@ const AnimatedHandCard = ({
     translateY, translateX, baseScale, baseRotate, cardZIndex,
     vh,
     onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
-    game, playerBench, combatField, cardBackUrl, onViewArt, skinOverrides,
+    game, playerBench, combatField, cardBackUrl, cardBackVideoUrl, onViewArt, skinOverrides,
     animType, onAnimComplete, isCastingForHand, handTargetFilter, // [2026-08-08 莉莉子] 手牌动画支持 + HAND_CARD 高亮
 }: any) => {
     // [2026-07-07 交互修复] 局部动画状态：与 isNew 解耦
@@ -139,7 +140,7 @@ const AnimatedHandCard = ({
                             return undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
-                        cardBackUrl={cardBackUrl} isDragging={isDragging}
+                        cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isDragging={isDragging}
                     />
                 </VolatileBurn>
             ) : animType === 'dissolve' ? (
@@ -154,7 +155,7 @@ const AnimatedHandCard = ({
                             return undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
-                        cardBackUrl={cardBackUrl} isDragging={isDragging}
+                        cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isDragging={isDragging}
                     />
                 </EphemeralDissolve>
             ) : animType === 'shatter' ? (
@@ -169,7 +170,7 @@ const AnimatedHandCard = ({
                             return undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
-                        cardBackUrl={cardBackUrl} isDragging={isDragging}
+                        cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isDragging={isDragging}
                     />
                 </CardShatter>
             ) : (
@@ -223,7 +224,7 @@ const AnimatedHandCard = ({
                         return false;
                     })()}
                     isConditionActive={checkCardConditionActive(c, playerBench, combatField, game) || checkCardReadyToLevelUp(c, game) || checkShaloGlimpseEnlightened(c, game.playerMaxMana)}
-                    cardBackUrl={cardBackUrl} isDragging={isDragging}
+                    cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isDragging={isDragging}
                 />
             )}
         </motion.div>
@@ -232,7 +233,7 @@ const AnimatedHandCard = ({
 
 // 修改后的新的代码片段
 export const PlayerHand: React.FC<PlayerHandProps> = ({
-    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, skinOverrides, isCastingForHand, handTargetFilter, onAnimComplete // [核心解构]
+    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, cardBackVideoUrl, skinOverrides, isCastingForHand, handTargetFilter, onAnimComplete // [核心解构]
 }) => {
     const validHand = hand.filter(c => c && c.key && c.type);
 
@@ -397,6 +398,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             playerBench={playerBench} // [核心修复] 把备战席传给物理核组件
                             combatField={combatField} // [核心修复] 把交战区传给物理核组件
                             cardBackUrl={cardBackUrl}
+                            cardBackVideoUrl={cardBackVideoUrl}
                             onViewArt={onViewArt}
                             skinOverrides={skinOverrides}
                             animType={animMap[c.id] || null}
@@ -435,10 +437,11 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
 interface EnemyHandProps {
     hand: CardData[];
     cardBackUrl: string;
+    cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL
     onAnimComplete?: (cardId: string) => void; // [2026-07-22 莉莉子] 手牌离场动画完成回调
 }
 
-export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, onAnimComplete }) => {
+export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, cardBackVideoUrl, onAnimComplete }) => {
     // ── 渲染时同步检测 isNew（和 PlayerHand 一致）──
     // ⚠️ 保持 isNewFlagsRef 持久化！参考 PlayerHand 的 isNewMapRef 红线注释。
     const prevHandRef = useRef<string[]>([]);
@@ -510,7 +513,9 @@ export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, onAnimC
                     const cardAnimType = animMap[c.id] || null;
                     return (
                         <div
-                            key={c.id}
+                            key={c.id || `enemy-hand-${index}`}
+
+
                             className="absolute top-0 left-1/2 -ml-[65px] w-[130px] h-[202px] origin-center transition-transform duration-500"
                             style={{
                                 transform: `translateX(${(index - (total - 1) / 2) * 40}px) rotate(${180 - 0.5 * angle}deg) translateY(calc(50% + ${archY}px))`,
@@ -530,18 +535,18 @@ export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, onAnimC
                             >
                                 {cardAnimType === 'volatile_burn' ? (
                                     <VolatileBurn card={c} isPlaying onComplete={() => handleAnimComplete(c.id)}>
-                                        <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} />
+                                        <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} />
                                     </VolatileBurn>
                                 ) : cardAnimType === 'dissolve' ? (
                                     <EphemeralDissolve card={c} isPlaying onComplete={() => handleAnimComplete(c.id)}>
-                                        <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} />
+                                        <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} />
                                     </EphemeralDissolve>
                                 ) : cardAnimType === 'shatter' ? (
                                     <CardShatter card={c} isPlaying onComplete={() => handleAnimComplete(c.id)}>
-                                        <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} />
+                                        <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} />
                                     </CardShatter>
                                 ) : (
-                                    <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} />
+                                    <Card data={c} location="hand" isFaceUp={false} cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} />
                                 )}
                             </motion.div>
                             {/* [瞬逝] 敌方卡背白橙火焰（与我方一致，离场动画中不叠加；置于外层避免被 overflow-hidden 裁剪） */}
@@ -560,6 +565,7 @@ export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, onAnimC
 interface OpeningMulliganProps {
     hand: CardData[];
     cardBackUrl: string;
+    cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL
     skinOverrides?: Record<string, number>;
     // [修改] 状态由父组件(Hook)控制
     selectedIndices: Set<number>;
@@ -575,6 +581,7 @@ interface OpeningMulliganProps {
 export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
     hand,
     cardBackUrl,
+    cardBackVideoUrl,
     skinOverrides,
     selectedIndices,
     isConfirmed,
@@ -589,6 +596,10 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
     const [cardFaces, setCardFaces] = useState<boolean[]>([false, false, false, false, false]);
 
     const prevHandRef = React.useRef(hand);
+    // [2026-09-04 莉莉子 加固] selectReachedRef：入场→select 只推进一次；
+    // 与旧的"仅在 displayHand 为空时调度"不同——若入场期 hand 引用变化导致旧 RAF 被 cleanup 取消、
+    // 又因 displayHand 已非空不再调度，会永远卡在 enter（换牌永不结束）。依赖 hand 每次重新调度即可兜底。
+    const selectReachedRef = React.useRef(false);
     const DURATION = 0.8;
     const FLIP_DELAY = 400;
 
@@ -642,49 +653,60 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
 
     // --- 5. 动画序列 (Effect Hooks) ---
 
-    // Init: 入场
+    // Init: 入场（[2026-09-04 加固] 见 selectReachedRef 注释：hand 每次变化都重新调度，
+    // 只要还没到 select 就必然推进，杜绝入场期被 hand 引用变化卡死）
     useEffect(() => {
-        if (hand.length > 0 && displayHand.length === 0) {
+        if (hand.length === 0) return;
+        if (selectReachedRef.current) return; // 已进入 select：后续 hand 变化交给 discard→draw 流程
+        if (displayHand.length === 0) {
             setDisplayHand(hand);
             prevHandRef.current = hand;
             flipCards([0, 1, 2, 3, 4], true, FLIP_DELAY);
-            // [2026-07-08 修复] RAF 替代 setTimeout，切屏时暂停
-            return rafEffect(1200, () => {
-                setAnimPhase('select');
-                // [2026-07-07 换牌锁定] 卡片展示完毕，通知父组件解锁"确定"按钮
-                onCardsDisplayed?.();
-            });
         }
+        // [2026-07-08 修复] RAF 替代 setTimeout，切屏时暂停
+        return rafEffect(1200, () => {
+            if (selectReachedRef.current) return;
+            selectReachedRef.current = true;
+            setAnimPhase('select');
+            // [2026-07-07 换牌锁定] 卡片展示完毕，通知父组件解锁"确定"按钮
+            onCardsDisplayed?.();
+        });
     }, [hand]);
 
     // Confirm -> Discard
+    // [2026-09-04 莉莉子 加固] 兼容"确认发生在入场(enter)阶段"（倒计时超时即如此）：
+    // 先在 enter 时切到 select，下一帧统一走收尾，避免确认被丢导致换牌永不结束。
     useEffect(() => {
-    // 当父组件通知 isConfirmed 为 true 时，且当前处于选择阶段
-    if (isConfirmed && animPhase === 'select') {
-        const runDiscard = async () => {
-            if (selectedIndices.size > 0) {
-                setAnimPhase('discard');
-                // 翻背面
-                const indices = Array.from(selectedIndices);
-                setTimeout(() => {
-                    setCardFaces(prev => {
-                        const next = [...prev];
-                        indices.forEach(i => next[i] = false);
-                        return next;
-                    });
-                }, FLIP_DELAY);
+        if (isConfirmed && animPhase === 'enter') {
+            setAnimPhase('select');
+            return;
+        }
+        // 当父组件通知 isConfirmed 为 true 时，且当前处于选择阶段
+        if (isConfirmed && animPhase === 'select') {
+            const runDiscard = async () => {
+                if (selectedIndices.size > 0) {
+                    setAnimPhase('discard');
+                    // 翻背面
+                    const indices = Array.from(selectedIndices);
+                    setTimeout(() => {
+                        setCardFaces(prev => {
+                            const next = [...prev];
+                            indices.forEach(i => next[i] = false);
+                            return next;
+                        });
+                    }, FLIP_DELAY);
 
-                // [2026-07-08 修复] RAF 替代 setTimeout，切屏时暂停
-                await rafDelay(DURATION * 1000);
-                // [关键] 动画播完了，通知父组件去换数据
-                onAnimationStep('ready_to_replace');
-            } else {
-                setAnimPhase('exit');
-            }
-        };
-        runDiscard();
-    }
-}, [isConfirmed, animPhase, selectedIndices]);
+                    // [2026-07-08 修复] RAF 替代 setTimeout，切屏时暂停
+                    await rafDelay(DURATION * 1000);
+                    // [关键] 动画播完了，通知父组件去换数据
+                    onAnimationStep('ready_to_replace');
+                } else {
+                    setAnimPhase('exit');
+                }
+            };
+            runDiscard();
+        }
+    }, [isConfirmed, animPhase, selectedIndices]);
 
     // Data Update -> Draw：仅切状态，不挂定时器
     useEffect(() => {
@@ -695,6 +717,16 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
             prevHandRef.current = hand;
         }
     }, [hand, animPhase]);
+
+    // [2026-09-04 莉莉子 加固] discard 兜底：若父组件 replace 迟迟不回新 hand（异常/被开局事件打断），
+    // 3s 后强退到 exit → 走 finished → finishMulligan，保证换牌收尾链绝不永久丢失。
+    useEffect(() => {
+        if (animPhase !== 'discard') return;
+        const t = setTimeout(() => {
+            setAnimPhase('exit');
+        }, 3000);
+        return () => clearTimeout(t);
+    }, [animPhase, hand]);
 
     // Draw -> Exit：独立定时器，不受前一个 effect 的 cleanup 误杀
     useEffect(() => {
@@ -781,7 +813,7 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
                                     )}
                                     <div className="relative z-10">
                                         {/* [核心修复] 将 onViewArt 传给底层的 Card，让它知道该如何拦截右键！ */}
-                                        <Card data={c} location="preview" cardBackUrl={cardBackUrl} isFaceUp={isFaceUp} onViewArt={onViewArt} skinId={skinOverrides?.[c.key] || 0} /> {/* [核心修复] 换牌界面的卡牌穿上皮肤！ */}
+                                        <Card data={c} location="preview" cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isFaceUp={isFaceUp} onViewArt={onViewArt} skinId={skinOverrides?.[c.key] || 0} /> {/* [核心修复] 换牌界面的卡牌穿上皮肤！ */}
                                     </div>
                                     <AnimatePresence>
                                         {animPhase === 'select' && (
@@ -1218,8 +1250,11 @@ interface DrawAnimState {
 }
 
 /** 单个抽卡动画条目 — 三态机 */
-const DrawAnimItem = ({ anim, cardBackUrl, skinOverrides }: { anim: DrawAnimState; cardBackUrl?: string; skinOverrides?: Record<string, number> }) => {
+const DrawAnimItem = ({ anim, cardBackUrl, enemyCardBackUrl, cardBackVideoUrl, enemyCardBackVideoUrl, skinOverrides }: { anim: DrawAnimState; cardBackUrl?: string; enemyCardBackUrl?: string; cardBackVideoUrl?: string; enemyCardBackVideoUrl?: string; skinOverrides?: Record<string, number> }) => {
     const isPlayer = anim.owner === 'player';
+    // [2026-08-17 莉莉子] 按敌我选择卡背（我方/敌方抽牌动画分开显示）
+    const backUrl = isPlayer ? cardBackUrl : enemyCardBackUrl;
+    const backVideoUrl = isPlayer ? cardBackVideoUrl : enemyCardBackVideoUrl;
     const deckX = '-35vw';
     const deckY = isPlayer ? '35vh' : '-35vh';
 
@@ -1228,12 +1263,24 @@ const DrawAnimItem = ({ anim, cardBackUrl, skinOverrides }: { anim: DrawAnimStat
     const [phase, setPhase] = useState<DrawItemPhase>(startPhase);
 
     // [翻面] 我方抽卡：400ms 时从卡背→卡面（只在 fly 阶段启动，避免 shatter 时被中断）
-    const [showFace, setShowFace] = useState(!!anim.skipDeckAnim);
+    // [2026-09-06 莉莉子 修复] skipDeckAnim 初始翻面仅限我方——敌方"生成/回响"类动画若初始 showFace=true，
+    // 会把敌方卡面（含装备 pips）直接展示给玩家 → 信息泄露。敌方永远卡背展示。
+    const [showFace, setShowFace] = useState(!!anim.skipDeckAnim && isPlayer);
     useEffect(() => {
         if (!isPlayer || phase !== 'fly') return;
         const t = setTimeout(() => setShowFace(true), 400);
         return () => clearTimeout(t);
     }, [isPlayer, phase]);
+
+    // [2026-09-01 莉莉子] 抽到已 BUFF 的卡：翻面展示时播 BUFF 特效（金色高光 + 绿色飘字）
+    // 场景：卡在手牌/牌库阶段就已被永久加成（装备/迷宫强化），抽上来大图展示时补"获得 BUFF"的表现
+    const [buffFx, setBuffFx] = useState<{ power: number; health: number } | null>(null);
+    useEffect(() => {
+        if (!showFace || !isPlayer || buffFx) return; // 非我方（敌方看卡背）/ 未翻面 / 已触发过 → 跳过
+        const bp = anim.card.buffs?.power || 0;
+        const bh = anim.card.buffs?.health || 0;
+        if (bp > 0 || bh > 0) setBuffFx({ power: bp, health: bh });
+    }, [showFace, isPlayer, anim.card, buffFx]);
 
     // [2026-07-09 生成] 跳过牌库动画时：先通知逻辑层到中央（加牌），再展示后飞入手中
     useEffect(() => {
@@ -1412,10 +1459,46 @@ const DrawAnimItem = ({ anim, cardBackUrl, skinOverrides }: { anim: DrawAnimStat
                         data={anim.card}
                         location="preview"
                         isFaceUp={showFace}
-                        cardBackUrl={showFace ? undefined : cardBackUrl}
+                        cardBackUrl={showFace ? undefined : backUrl}
+                        cardBackVideoUrl={showFace ? undefined : backVideoUrl}
                         skinId={skinOverrides?.[anim.card.key] || 0}
                     />
                 </div>
+
+                {/* [2026-09-01 莉莉子] 抽到已 BUFF 的卡：金色高光遮罩（对齐战斗内 buff 金光）+ 攻击/生命槽位飘字
+                    preview 场景数值槽在卡面底部两侧（镜像布局），故攻击贴左下、生命贴右下，左右爆裂对齐战斗内 buff 飘字 */}
+                {buffFx && (
+                    <>
+                        <motion.div
+                            className="absolute inset-0 z-[60] bg-yellow-400 mix-blend-overlay pointer-events-none rounded-2xl"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ duration: 0.8, ease: 'easeInOut' }}
+                        />
+                        {buffFx.power > 0 && (
+                            <motion.div
+                                className="absolute left-4 bottom-2 font-black text-5xl text-green-400 z-[100] whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
+                                style={{ WebkitTextStroke: '1px rgba(0,0,0,0.7)' }}
+                                initial={{ x: 0, y: 0, scale: 1, opacity: 1 }}
+                                animate={{ x: -40, y: -50, scale: [1, 1.5, 2], opacity: [1, 1, 0] }}
+                                transition={{ duration: 1.5, ease: 'easeOut', times: [0, 0.5, 1] }}
+                            >
+                                +{buffFx.power}
+                            </motion.div>
+                        )}
+                        {buffFx.health > 0 && (
+                            <motion.div
+                                className="absolute right-4 bottom-2 font-black text-5xl text-green-400 z-[100] whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
+                                style={{ WebkitTextStroke: '1px rgba(0,0,0,0.7)' }}
+                                initial={{ x: 0, y: 0, scale: 1, opacity: 1 }}
+                                animate={{ x: 40, y: -50, scale: [1, 1.5, 2], opacity: [1, 1, 0] }}
+                                transition={{ duration: 1.5, ease: 'easeOut', times: [0, 0.5, 1] }}
+                            >
+                                +{buffFx.health}
+                            </motion.div>
+                        )}
+                    </>
+                )}
 
                 {/* 爆牌碎裂效果 */}
                 {phase === 'shatter' && (
@@ -1461,7 +1544,7 @@ const DrawAnimItem = ({ anim, cardBackUrl, skinOverrides }: { anim: DrawAnimStat
 };
 
 /** 抽卡动画覆盖层 — 监听 DRAW_START 事件创建条目 */
-export const DrawAnimOverlay: React.FC<{ cardBackUrl?: string; skinOverrides?: Record<string, number> }> = ({ cardBackUrl, skinOverrides }) => {
+export const DrawAnimOverlay: React.FC<{ playerCardBackUrl?: string; enemyCardBackUrl?: string; playerCardBackVideoUrl?: string; enemyCardBackVideoUrl?: string; skinOverrides?: Record<string, number> }> = ({ playerCardBackUrl, enemyCardBackUrl, playerCardBackVideoUrl, enemyCardBackVideoUrl, skinOverrides }) => {
     const [anims, setAnims] = useState<DrawAnimState[]>([]);
 
     useEffect(() => {
@@ -1488,7 +1571,158 @@ export const DrawAnimOverlay: React.FC<{ cardBackUrl?: string; skinOverrides?: R
     return (
         <AnimatePresence>
             {anims.map(anim => (
-                <DrawAnimItem key={anim.animId} anim={anim} cardBackUrl={cardBackUrl} skinOverrides={skinOverrides} />
+                <DrawAnimItem key={anim.animId} anim={anim} cardBackUrl={playerCardBackUrl} enemyCardBackUrl={enemyCardBackUrl} cardBackVideoUrl={playerCardBackVideoUrl} enemyCardBackVideoUrl={enemyCardBackVideoUrl} skinOverrides={skinOverrides} />
+            ))}
+        </AnimatePresence>
+    );
+};
+
+// ──────────────────────────────────────────────
+// 🎬 牌库生成动画 (Deck Insert Theater) — 抽卡动画的倒放
+// [2026-09-13 莉莉子] 场景：天启者法术使用后回库、真实快照复制洗入牌库等"生成到牌库"类效果。
+// 演出：中央亮相 500ms → 翻回卡背 → 飞向牌库 → 缩到牌库尺寸淡出。
+//   · 我方：卡面亮相后翻背飞走（信息完整，看清是哪张牌进了牌库）
+//   · 敌方：全程卡背（沿用 2026-09-06 信息泄露修复口径，绝不把敌方卡面亮给玩家）
+//   · 坐标 deckX/deckY 与 DrawAnimItem 逐字对齐，保证不同分辨率的适配行为完全一致
+// 单向事件：逻辑层牌已洗入牌库，本动画纯表现，无需握手回调（不阻塞对局节奏）。
+// ──────────────────────────────────────────────
+type DeckInsertPhase = 'show' | 'fly_back' | 'done';
+
+interface DeckInsertAnimState {
+    animId: string;
+    card: CardData;
+    owner: 'player' | 'enemy';
+    delay?: number; // 多张连发时错开起飞（真实快照 x3 用），避免三张同时扎堆飞走
+}
+
+const DECK_INSERT_SHOW_MS = 500;  // 中央亮相停留：够看清是哪张牌，又不拖节奏
+const DECK_INSERT_FLY_S = 0.65;   // 飞回牌库时长（秒）
+const DECK_INSERT_FLIP_AT = 0.6;  // scaleX 归零点在飞行时间轴上的比例 → 此刻切换正反面
+
+const DeckInsertAnimItem = ({ anim, cardBackUrl, enemyCardBackUrl, cardBackVideoUrl, enemyCardBackVideoUrl, skinOverrides, onDone }: { anim: DeckInsertAnimState; cardBackUrl?: string; enemyCardBackUrl?: string; cardBackVideoUrl?: string; enemyCardBackVideoUrl?: string; skinOverrides?: Record<string, number>; onDone: (animId: string) => void }) => {
+    const isPlayer = anim.owner === 'player';
+    const backUrl = isPlayer ? cardBackUrl : enemyCardBackUrl;
+    const backVideoUrl = isPlayer ? cardBackVideoUrl : enemyCardBackVideoUrl;
+
+    // 与 DrawAnimItem 同一套牌库坐标：我方牌库在下方(+35vh)，敌方在上方(-35vh)
+    const deckX = '-35vw';
+    const deckY = isPlayer ? '35vh' : '-35vh';
+
+    const [phase, setPhase] = useState<DeckInsertPhase>('show');
+    // 敌方永远卡背；我方先亮卡面，翻面瞬间切回卡背
+    const [showFace, setShowFace] = useState(isPlayer);
+
+    // 亮相停留结束 → 起飞（delay 让多张连发形成连珠效果）
+    useEffect(() => {
+        if (phase !== 'show') return;
+        const t = setTimeout(() => setPhase('fly_back'), DECK_INSERT_SHOW_MS + (anim.delay || 0));
+        return () => clearTimeout(t);
+    }, [phase, anim.delay]);
+
+    // 我方翻面：scaleX 归零的瞬间切回卡背，避免卡面在翻转过程中露馅
+    useEffect(() => {
+        if (!isPlayer || phase !== 'fly_back') return;
+        const t = setTimeout(() => setShowFace(false), DECK_INSERT_FLY_S * DECK_INSERT_FLIP_AT * 1000);
+        return () => clearTimeout(t);
+    }, [isPlayer, phase]);
+
+    // 播完 → 通知 overlay 清理（留 200ms buffer 让 DOM 收尾）
+    useEffect(() => {
+        if (phase !== 'done') return;
+        const t = setTimeout(() => onDone(anim.animId), 200);
+        return () => clearTimeout(t);
+    }, [phase, anim.animId, onDone]);
+
+    const animTarget = useMemo(() => {
+        switch (phase) {
+            case 'show':
+                return { x: 0, y: 0, scale: 1.4, opacity: 1, rotate: 0, scaleX: isPlayer ? 1 : undefined };
+            case 'fly_back':
+                // scaleX [1,1,0,1]：前段保持卡面，中段翻到侧面归零，后段卡背转出（与 fly 阶段互为倒放）
+                return {
+                    x: [0, deckX],
+                    y: [0, deckY],
+                    scale: [1.4, 0.28],
+                    opacity: [1, 1, 0],
+                    rotate: [0, isPlayer ? -15 : 15],
+                    scaleX: isPlayer ? [1, 1, 0, 1] : undefined,
+                };
+            default:
+                return { opacity: 0 };
+        }
+    }, [phase, isPlayer, deckX, deckY]);
+
+    const animTransition = useMemo(() => {
+        switch (phase) {
+            case 'show':
+                // spring 弹入手感（design-guide：线性过渡让 UI 显得廉价）
+                return { type: 'spring', stiffness: 280, damping: 24 } as any;
+            case 'fly_back':
+                return {
+                    duration: DECK_INSERT_FLY_S,
+                    ease: ANIM_EASING,
+                    scaleX: isPlayer ? { duration: DECK_INSERT_FLY_S, times: [0, 0.4, DECK_INSERT_FLIP_AT, 1] } : undefined,
+                } as any; // framer-motion Transition 类型过严（scaleX 内嵌 keyframe 配置），断言绕过
+            default:
+                return { duration: 0 } as any;
+        }
+    }, [phase, isPlayer]);
+
+    const handleAnimComplete = useCallback(() => {
+        if (phase === 'fly_back') setPhase('done');
+    }, [phase]);
+
+    if (phase === 'done') return null;
+
+    return (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[999]">
+            <motion.div
+                initial={{ x: 0, y: 0, scale: 0.8, opacity: 0, rotate: 0, scaleX: isPlayer ? 1 : undefined }}
+                animate={animTarget}
+                transition={animTransition}
+                onAnimationComplete={handleAnimComplete}
+                className="absolute"
+            >
+                {/* 敌方卡牌旋转180°（与 DrawAnimItem 同一约定） */}
+                <div style={{ transform: !isPlayer ? 'rotate(180deg)' : 'none' }}>
+                    <Card
+                        data={anim.card}
+                        location="preview"
+                        isFaceUp={showFace}
+                        cardBackUrl={showFace ? undefined : backUrl}
+                        cardBackVideoUrl={showFace ? undefined : backVideoUrl}
+                        skinId={skinOverrides?.[anim.card.key] || 0}
+                    />
+                </div>
+            </motion.div>
+        </div>
+    );
+};
+
+/** 牌库生成动画覆盖层 — 监听 CARD_TO_DECK 事件创建条目 */
+export const DeckInsertOverlay: React.FC<{ playerCardBackUrl?: string; enemyCardBackUrl?: string; playerCardBackVideoUrl?: string; enemyCardBackVideoUrl?: string; skinOverrides?: Record<string, number> }> = ({ playerCardBackUrl, enemyCardBackUrl, playerCardBackVideoUrl, enemyCardBackVideoUrl, skinOverrides }) => {
+    const [anims, setAnims] = useState<DeckInsertAnimState[]>([]);
+
+    useEffect(() => {
+        const onInsert = (payload: { animId: string; card: CardData; owner: 'player' | 'enemy'; delay?: number }) => {
+            setAnims(prev => [...prev, { animId: payload.animId, card: payload.card, owner: payload.owner, delay: payload.delay }]);
+        };
+
+        eventBus.on(GameEvents.CARD_TO_DECK, onInsert);
+
+        return () => {
+            eventBus.off(GameEvents.CARD_TO_DECK, onInsert);
+        };
+    }, []);
+
+    const handleDone = useCallback((animId: string) => {
+        setAnims(prev => prev.filter(a => a.animId !== animId));
+    }, []);
+
+    return (
+        <AnimatePresence>
+            {anims.map(anim => (
+                <DeckInsertAnimItem key={anim.animId} anim={anim} cardBackUrl={playerCardBackUrl} enemyCardBackUrl={enemyCardBackUrl} cardBackVideoUrl={playerCardBackVideoUrl} enemyCardBackVideoUrl={enemyCardBackVideoUrl} skinOverrides={skinOverrides} onDone={handleDone} />
             ))}
         </AnimatePresence>
     );
@@ -1546,6 +1780,7 @@ interface CalibratePanelProps {
     onViewArt?: (card: CardData) => void;
     isHidden?: boolean;       // [2026-07-18] AI校准：玩家看不到卡面，仅显示卡背
     cardBackUrl?: string;     // [2026-07-18] 卡背图片URL（isHidden 时使用）
+    cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL（isHidden 时使用）
 }
 
 export const CalibratePanel: React.FC<CalibratePanelProps> = ({
@@ -1553,7 +1788,8 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
     onConfirm,
     onViewArt,
     isHidden = false,
-    cardBackUrl
+    cardBackUrl,
+    cardBackVideoUrl
 }) => {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [animPhase, setAnimPhase] = useState<'enter' | 'select' | 'exit'>('enter');
@@ -1657,7 +1893,7 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
                                         />
                                     )}
                                     <div className="relative z-10 scale-110 origin-bottom">
-                                        <Card data={card} location="preview" isFaceUp={!isHidden} cardBackUrl={isHidden ? cardBackUrl : undefined} onViewArt={onViewArt} />
+                                        <Card data={card} location="preview" isFaceUp={!isHidden} cardBackUrl={isHidden ? cardBackUrl : undefined} cardBackVideoUrl={isHidden ? cardBackVideoUrl : undefined} onViewArt={onViewArt} />
                                     </div>
 
                                     {/* 选择/取消按钮 */}

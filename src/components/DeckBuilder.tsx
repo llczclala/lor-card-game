@@ -4,6 +4,7 @@ import { Search, Zap, List as ListIcon, Play, Trash2, Wand2, Box, Save, Plus, Sh
 import { CARD_DB } from '../data/cards';
 import { KEYWORD_DB } from '../data/keywords';
 import { PERSONALIZATION_ASSETS, SKIN_IMAGES, getSkinImage } from '../data/imageData'; // [皮肤检视] 引入 SKIN_IMAGES
+import { isSkinOwned } from '../data/skinData'; // [皮肤门禁] 统一拥有判定（原画 0 恒拥有）
 import { DeskMedia } from './DeskMedia'; // [2026-08-13] 动态牌桌媒体组件（兜底静态图 + 日志）
 import { Card } from './Card';
 import type { CardData } from '../types';
@@ -271,8 +272,10 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const [selectorType, setSelectorType] = useState<'cardBack' | 'desk' | null>(null);
     const [hubHoverItem, setHubHoverItem] = useState<'cardBack' | 'desk' | null>(null); // 负责还原右侧面板的高级悬停预览图
 
+    // [2026-08-29] 肉鸽内部卡组（rogue_starter_*）不显示在普通牌组列表（仅开发者个性化用）
+    const visibleDecks = useMemo(() => userSystem.decks.filter((d: any) => !(d.id || '').startsWith('rogue_starter_')), [userSystem.decks]);
     // 组合全体卡组 (包含新建入口)
-    const allCarouselDecks = useMemo(() => [{ id: 'NEW_DECK', isNew: true }, ...userSystem.decks], [userSystem.decks]);
+    const allCarouselDecks = useMemo(() => [{ id: 'NEW_DECK', isNew: true }, ...visibleDecks], [visibleDecks]);
 
     // 劫持滚轮事件实现无限循环
     const handleWheelScroll = (e: React.WheelEvent) => {
@@ -748,9 +751,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         if (!deck) return;
         // 如果已经是当前皮肤，不做任何事
         if ((deck.skinOverrides?.[cardKey] ?? 0) === skinId) return;
-        // 不允许选择未拥有的皮肤
-        const ownedSkins = userSystem.collection?.ownedSkins?.[cardKey] || [];
-        if (skinId !== 0 && !ownedSkins.includes(skinId)) return;
+        // 不允许选择未拥有的皮肤（原画 0 恒拥有，由统一门禁放行）
+        if (!isSkinOwned(userSystem.collection?.ownedSkins, cardKey, skinId)) return;
         userSystem.saveDeck({
             ...deck,
             skinOverrides: {
@@ -771,8 +773,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
             const skinIds = Object.keys(skinRecord).map(Number).sort((a, b) => a - b);
             if (skinIds.length <= 1) continue; // 只有默认皮肤时跳过
 
-            // 筛选该卡牌已拥有的皮肤（skin 0 默认拥有）
-            const owned = skinIds.filter(id => id === 0 || (ownedSkinsData[cardKey] || []).includes(id));
+            // 筛选该卡牌已拥有的皮肤（skin 0 默认拥有，由统一门禁放行）
+            const owned = skinIds.filter(id => isSkinOwned(ownedSkinsData, cardKey, id));
             if (owned.length <= 1) continue; // 只有默认皮肤时跳过
 
             // 随机选择一个已拥有的皮肤
@@ -839,7 +841,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     {viewStyle === 'GRID' ? (
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-12 gap-y-28 content-start w-full max-w-[95%] mx-auto">
                             <div className="w-full flex justify-center mt-12" onClick={handleCreateAndEdit}><DeckDiorama deck={{ isNew: true }} isGridView={true} /></div>
-                            {userSystem.decks.map((deck: any) => (
+                            {visibleDecks.map((deck: any) => (
                                 <div key={deck.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setHubDeckId(deck.id); }} className="w-full flex justify-center mt-12 relative group/del"> {/* [新增] 音效 */}
                                     <DeckDiorama deck={deck} covers={getDeckCovers(deck.cards, deck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isGridView={true} />
                                     <button onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id); }} className="absolute -top-6 -right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20"><Trash2 size={16} className="text-white" /></button>
@@ -1084,6 +1086,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             }}
                             onClose={() => setSelectorType(null)}
                             deskDynamic={(userSystem.settings as any)?.deskDynamic} // [2026-08-13] 动态牌桌
+                            cardBackDynamic={(userSystem.settings as any)?.cardBackDynamic} // [2026-08-23] 动态卡背
                         />
                     </div>
                 )}
@@ -1391,12 +1394,12 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     if (!skinRecord) return null;
                                     const skinIds = Object.keys(skinRecord).map(Number).sort((a, b) => a - b);
                                     if (skinIds.length <= 1) return null;
-                                    const ownedSkins = userSystem.collection?.ownedSkins?.[card.key] || [];
+                                    const ownedSkins = userSystem.collection?.ownedSkins;
                                     const currentSkin = userSystem.activeDeck?.skinOverrides?.[card.key] ?? 0;
                                     return (
                                         <div className="flex gap-1 mt-1.5 justify-center flex-nowrap overflow-x-auto [&::-webkit-scrollbar]:hidden">
                                             {skinIds.map(id => {
-                                                const isOwned = id === 0 || ownedSkins.includes(id);
+                                                const isOwned = isSkinOwned(ownedSkins, card.key, id);
                                                 const isSelected = currentSkin === id;
                                                 const isHovered = hoveredSkins[card.key] === id;
                                                 return (
@@ -1755,6 +1758,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             onSkinChange: (cardKey, newSkinId) => {
                                 const deck = userSystem.activeDeck;
                                 if (!deck) return;
+                                // [皮肤门禁] 防御性校验：按钮 disabled 之外再兜一道，避免绕过 UI 写入未拥有的皮肤
+                                if (!isSkinOwned(userSystem.collection?.ownedSkins, cardKey, newSkinId)) return;
                                 const updatedDeck = {
                                     ...deck,
                                     skinOverrides: {

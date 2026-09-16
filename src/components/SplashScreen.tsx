@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SENTRY_IMAGE_HASH, SENTRY_IMAGE_PATH } from '../data/sentryHash';
-import titleLogo from '../image/icon/titile.png'; // [哨兵] 游戏标题图片
+import titleLogo from '../image/icon/titile.webp'; // [哨兵] 游戏标题图片
 
 /** 使用 Web Crypto API 计算 SHA-256 */
 async function computeSHA256(url: string): Promise<string> {

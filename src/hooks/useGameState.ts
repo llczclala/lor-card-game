@@ -6,14 +6,19 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { CardData, GameState, GameRecordCategory, SpellStackItem, RecordEntity } from '../types';
 import { createCard, CARD_DB } from '../data/cards';
 import {  calculateNewMana, getLeveledUpCard, getEffectiveSpellCost, upgradeAcaciaHand } from '../utils/gameRules';
-import { resolveSingleCombat } from '../logic/combat'; // [新增] 引入真实血量探针
+import { resolveSingleCombat, resolveDoubleStrikeCombat, type DoubleStrikeCombatResult } from '../logic/combat'; // [新增] 引入真实血量探针
+import { combatHasFlyingSword, getFlyingSwordOwner, getDefensiveSide } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具
 import { canAfford } from '../logic/core';
+import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { applyChannelOnSummon, applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
-import { checkCardLevelUp, accumulateMauxirDamage, isSummonerOrSummon } from '../utils/gameRules';
+import { applyChannelOnSummon, applyEchoOnPlay, getPower } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
+import { checkCardLevelUp, accumulateMauxirDamage, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide } from '../utils/gameRules';
 import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
+import { bumpAnimProgress, animGuard, ANIM_STALL_MS } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
+import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
 import { useRoundLifecycle } from './useRoundLifecycle'; // [核心新增] 引入剥离的回合生命周期引擎
-import { getRogueDefs, flashRogueBuff } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发
+import { getRogueDefs, flashRogueBuff, applyPermanentBuff, applyStatBalance, getEquipTriggers, isStrikeTargetAlive } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发（分发已收编 rogueTrigger）· [2026-09-15] isStrikeTargetAlive 打击成长的存活判据
+import { runRogueTrigger, commitSlicePatch, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
 import { executeEquipmentOnPlay } from '../logic/equipment'; // [2026-08-12] 装备系统：打出时效果执行
 import { attachEquipment } from '../data/equipment'; // [2026-08-12 天启者养成] 开局装备挂载
 
@@ -63,7 +68,7 @@ export interface TutorialInitState {
 }
 
 // 1. 接收 initialDeck 参数，默认为空数组
-export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false, disableMulligan: boolean = false, tutorialInit?: TutorialInitState, firstAttacker: 'player' | 'enemy' = 'player', initialPlayerNexus?: number, playerNexusMax?: number, rogueEnhancements: string[] = [], rogueEquipments: Record<string, string[]> = {}) => {
+export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false, disableMulligan: boolean = false, tutorialInit?: TutorialInitState, firstAttacker: 'player' | 'enemy' = 'player', initialPlayerNexus?: number, playerNexusMax?: number, rogueEnhancements: string[] = [], rogueEquipments: Record<string, string[]> = {}, enemyEnhancements: string[] = [], initialEnemyNexus?: number, enemyEquipments: Record<string, string[]> = {}) => {
     // --- 1. 状态定义 ---
     const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
 
@@ -72,8 +77,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         enemyMana: 0, enemyMaxMana: 0, enemySpellMana: 0,
         playerNexus: initialPlayerNexus ?? 20, // [2026-08-11] 肉鸽真衔接：初值=run.hp
         playerNexusMax: playerNexusMax ?? 20, // [2026-08-11] 玩家水晶回血上限（肉鸽=run.maxHp）
+        playerNexusBarrier: 0, // [2026-08-27] 玩家水晶屏障（固若金汤累积，受击先挡）
         rogueEnhancements: rogueEnhancements || [], // [2026-08-11] 玩家迷宫强化 id（战斗内 battleEffect 分发）
-        enemyNexus: 20,
+        enemyEnhancements: enemyEnhancements || [], // [2026-08-27] 敌方迷宫强化 id（战斗内 battleEffect 分发）
+        enemyNexus: initialEnemyNexus ?? 20, // [2026-08-28] 敌方水晶初始血量（肉鸽=难度基础+生命强化，缺省 20）
+        enemyNexusMax: initialEnemyNexus ?? 20, // [2026-08-30 莉莉子] 敌方水晶回血上限（=敌方水晶初值，防回血压血）
+        enemyNexusBarrier: 0, // [2026-08-27] 敌方水晶屏障（固若金汤累积，受击先挡）
         round: 0,
         attackToken: { player: null, enemy: null },
         phase: 'mulligan',
@@ -92,6 +101,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         screenShake: false,
         nexusDamage: undefined,
         leveledChampions: [],
+        leveledChampionsBySide: { player: [], enemy: [] }, // [2026-09-13] 分阵营升级标记
         pendingLevelUps: [], // [新增] 初始化待升级队列
         stats: {
             nexusDamage: 0,
@@ -130,6 +140,18 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const [playerBench, setPlayerBench] = useState<CardData[]>([]);
     const [enemyBench, setEnemyBench] = useState<CardData[]>([]);
 
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-09-13 莉莉子] 沙盒守卫开关（L2-A）
+    //
+    // 沙盒默认跳过若干"真机守卫"（如交战区不变量守卫），因为自由造场不该被守卫干预。
+    // 但这会造成测试盲区 —— **守卫本身引发的 BUG 在沙盒里永远复现不了**，
+    // 于是出现"沙盒里测通了、玩家真机还犯"。
+    //
+    // 故加显式开关：默认 false（保留原有的自由造场体验）；
+    // 沙盒界面可一键打开「守卫照跑」，让沙盒行为贴近真机。
+    // ══════════════════════════════════════════════════════════════════
+    const [sandboxGuardEnabled, setSandboxGuardEnabled] = useState(false);
+
     // 新增：记录胜利时存活的英雄 Key，用于播放对应的胜利 CG
     const [winningHeroKeys, setWinningHeroKeys] = useState<string[]>([]);
 
@@ -151,9 +173,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     useEffect(() => {
         const prev = prevAttackTokenRef.current;
         const curr = game.attackToken;
+
+        // 如果仍在换牌或开局首帧，跳过检测，防止与生命周期扫描叠加
+        if (game.phase === 'mulligan' || game.round <= 0) {
+            prevAttackTokenRef.current = { player: curr.player, enemy: curr.enemy };
+            return;
+        }
+
         ['player', 'enemy'].forEach(side => {
             const sideKey = side as 'player' | 'enemy';
-            // 检测到新 rally 且非 RALLY 效果路径（避免与 effectProcessor 的 RALLY case 重复）
+            // 增加 phase 门禁，避免回合初（startRound 刚切 main 时）与 useRoundLifecycle 块 B 扫描重复
             if (curr[sideKey] === 'rally' && prev[sideKey] !== 'rally' && prev[sideKey] !== null) {
                 const tokenResult = processOnGetAttackToken(sideKey, {
                     game, playerBench, enemyBench, playerHand, enemyHand,
@@ -168,7 +197,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
         });
         prevAttackTokenRef.current = { player: curr.player, enemy: curr.enemy };
-    }, [game.attackToken.player, game.attackToken.enemy]);
+    }, [game.attackToken.player, game.attackToken.enemy, game.phase, game.round]);
     useEffect(() => {
         stateRef.current = { game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck: enemyDeckState };
     }, [game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeckState]);
@@ -323,8 +352,22 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         const validPlayerDeck = deck.filter(key => CARD_DB[key]);
         const validEnemyDeck = enemyDeck.filter(key => CARD_DB[key]);
 
-        const pDeck = validPlayerDeck.map(createFullCard);
-        const eDeck = validEnemyDeck.map(createFullCard);
+        const pDeck = validPlayerDeck.map(key => {
+            // [2026-08-25 莉莉子] 初始对局构建应用装备/武装（此前只在 resetGame 应用、而 GameSession 不调 resetGame → 首次进对局装备/武装全部失效；标准/教程 rogueEquipments 为空零影响）
+            let card = createFullCard(key);
+            const equips = rogueEquipments?.[key];
+            if (equips?.length) {
+                for (const eid of equips) card = attachEquipment(card, eid);
+            }
+            return card;
+        });
+        const eDeck = validEnemyDeck.map(key => {
+            // [2026-08-30 程拍板] 敌人随机装备：构建敌方卡时 attachEquipment（难度分级，数值/关键词生效）
+            let card = createFullCard(key);
+            const equips = enemyEquipments?.[key];
+            if (equips?.length) for (const eid of equips) card = attachEquipment(card, eid);
+            return card;
+        });
 
         const extractDeckInfo = (deckCards: CardData[]) => {
             const heroes = deckCards.filter(c => c.isChampion);
@@ -468,6 +511,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
     }, [deck, enemyDeck, disableMulligan, tutorialInit]);
 
+    // [2026-08-31 莉莉子 修复] game_start 强化防御层：记录本局已召唤过的 summonKey（幽灵行动等），触发仅一次，防未来重复调用导致每回合复活
+    const gameStartSummonedRef = useRef<Set<string>>(new Set());
+
     // [安卡希雅] 换牌结束/第一回合开始后，扫描手牌+牌库生成 gameStartGenerate 卡牌
     const triggerGameStartGenerate = useCallback(() => {
         const extra: CardData[] = [];
@@ -490,27 +536,60 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             setPlayerHand(prev => [...prev, ...extra]);
         }
 
-        // [2026-08-11 莉莉子] 迷宫强化 game_start：开局召唤单位（幽灵行动→安提娜）
-        getRogueDefs(stateRef.current.game.rogueEnhancements, 'game_start').forEach(def => {
-            const summonKey = def.battleEffect?.params?.summonKey as string | undefined;
-            if (summonKey) {
-                setPlayerBench(prev => {
-                    if (prev.some(c => c.key === summonKey) || prev.length >= 6) return prev;
-                    return [...prev, { ...createFullCard(summonKey), animState: 'summoning' as const }];
-                });
-            }
-            flashRogueBuff(def);
-        });
+        // [2026-08-11 莉莉子] 迷宫强化 game_start（玩家：幽灵行动→安提娜 / 天启共鸣；敌方：精锐动员）
+        // [2026-09-09 莉莉子 重构] 收编进统一串行触发引擎（串行 + priority + 按侧去重）
+        {
+            // 按侧"本局召唤一次"去重（玩家侧防死后每回合复活；敌方仅一次天然触发故不记录）
+            const tryMarkSummonOnce: (side: Side, summonKey: string) => boolean = (side, summonKey) => {
+                if (side === 'player') {
+                    if (gameStartSummonedRef.current.has(summonKey)) return false;
+                    gameStartSummonedRef.current.add(summonKey);
+                }
+                return true;
+            };
+            // [2026-09-09 修复·快速开局回归] seed 可能滞后并发抽卡（instantDrawCards 排队后同 tick 触发 game_start），
+            // 手牌/牌库走补丁式提交（commitSlicePatch）保并发抽卡；bench/field 无并发排队仍全量。
+            const playerHandSeed = [...stateRef.current.playerHand, ...extra]; // 带上 extra（上方已 setPlayerHand 排队），CHAMPION 追加不错位
+            const enemyHandSeed = [...stateRef.current.enemyHand];
+            const playerDeckSeed = [...stateRef.current.playerDeck];
+            const enemyDeckSeed = [...stateRef.current.enemyDeck];
+            const ctx: RogueTriggerCtx = {
+                game: { ...stateRef.current.game },
+                playerBench: [...stateRef.current.playerBench],
+                enemyBench: [...stateRef.current.enemyBench],
+                combatField: [...stateRef.current.combatField],
+                playerHand: playerHandSeed.slice(),
+                enemyHand: enemyHandSeed.slice(),
+                playerDeck: playerDeckSeed.slice(),
+                enemyDeck: enemyDeckSeed.slice(),
+                owner: 'player',
+                trigger: 'game_start',
+                createFullCard,
+                info: { tryMarkSummonOnce },
+                dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+            };
+            ctx.owner = 'player';
+            runRogueTrigger(ctx, stateRef.current.game.rogueEnhancements, 'game_start');
+            ctx.owner = 'enemy';
+            runRogueTrigger(ctx, stateRef.current.game.enemyEnhancements, 'game_start');
+            if (ctx.dirty.bench.has('player')) setPlayerBench(ctx.playerBench);
+            if (ctx.dirty.bench.has('enemy')) setEnemyBench(ctx.enemyBench);
+            if (ctx.dirty.field) setCombatField(ctx.combatField);
+            if (ctx.dirty.hand.has('player')) commitSlicePatch(playerHandSeed, ctx.playerHand, fn => setPlayerHand(fn));
+            if (ctx.dirty.hand.has('enemy')) commitSlicePatch(enemyHandSeed, ctx.enemyHand, fn => setEnemyHand(fn));
+            if (ctx.dirty.deck.has('player')) commitSlicePatch(playerDeckSeed, ctx.playerDeck, fn => setPlayerDeck(fn));
+            if (ctx.dirty.deck.has('enemy')) commitSlicePatch(enemyDeckSeed, ctx.enemyDeck, fn => setEnemyDeckState(fn));
+        }
     }, []);
 
     // [飞剑] 检测交战区出现飞剑衍生物→自动进入格挡阶段
-    const flyingSwordPhaseGuardRef = useRef(false);
+    // [2026-08-24 莉莉子 飞剑竞态根治] 去掉一次性 ref 门：每次 phase='main' + 交战区有飞剑即归一为 block_declare，
+    // 让守卫成为随时可复位的纯安全网（M4/M5 已同步切格挡，此处兜底未知路径）。
     useEffect(() => {
         const hasSwords = combatField.some(f =>
             f.attacker?.key === 'Acacia_Flying_Sword' || f.attacker?.key === 'Acacia_Great_Sword'
         );
-        if (hasSwords && game.phase === 'main' && !flyingSwordPhaseGuardRef.current) {
-            flyingSwordPhaseGuardRef.current = true;
+        if (hasSwords && game.phase === 'main') {
             // [2026-08-06 莉莉子 敌我修复] 按飞剑归属决定防守方，而非无条件翻转 turnOwner：
             //   - 敌方飞剑（owner='enemy'）→ 玩家格挡 → turnOwner='player'
             //   - 我方飞剑（owner='player'）→ 敌方格挡 → turnOwner='enemy'
@@ -527,9 +606,6 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 lastActionTimestamp: Date.now(),
             }));
             setMessage(swordOwner === 'player' ? '我方飞剑来袭，请敌方格挡' : '敌方飞剑来袭，请分配格挡！');
-        }
-        if (!hasSwords) {
-            flyingSwordPhaseGuardRef.current = false;
         }
     }, [game.phase, combatField.length]);
 
@@ -666,9 +742,41 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 setBench(newBench);
 
                 // 2. 广播死亡事件 (触发语音、统计等)
+                // [2026-08-27] 亡灵军团(all=false)：只复活本次死亡清算的首个阵亡（红·不死军团 all=true 全部复活）
+                // [2026-09-09 莉莉子 重构] unit_die 强化收编进统一串行触发引擎（英魂传承/献祭仪式/亡灵军团）。
+                // ctx 的死亡侧 bench 用 newBench（已带 dying 标记），RESURRECT 原地"移除死者+追加复活体"、保留其余 dying 态；
+                // 本批共享同一 ctx → 非全复活强化只救首个；processDeaths 在独立 useEffect（状态已落定）内运行，stateRef 播种安全。
+                const dieSide = bench === playerBench ? 'player' : 'enemy';
+                const dieEnh = dieSide === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements;
+                const unitCtx: RogueTriggerCtx = {
+                    game: { ...stateRef.current.game },
+                    playerBench: dieSide === 'player' ? [...newBench] : [...stateRef.current.playerBench],
+                    enemyBench: dieSide === 'enemy' ? [...newBench] : [...stateRef.current.enemyBench],
+                    combatField: [...stateRef.current.combatField],
+                    playerHand: [...stateRef.current.playerHand],
+                    enemyHand: [...stateRef.current.enemyHand],
+                    playerDeck: [...stateRef.current.playerDeck],
+                    enemyDeck: [...stateRef.current.enemyDeck],
+                    owner: dieSide,
+                    trigger: 'unit_die',
+                    createFullCard,
+                    info: { resurrectedSide: undefined },
+                    dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+                };
                 deadUnitsToBroadcast.forEach(u => {
                     console.log(`[DeathCheck] ${u.name} died in bench. Initiating shatter VFX.`);
                     eventBus.emit(GameEvents.UNIT_DIE, u);
+
+                    // 迷宫强化 unit_die：同一份工作快照上串行触发（死亡侧强化；非全复活强化仅救本批首个）
+                    unitCtx.info.deadUnit = u;
+                    runRogueTrigger(unitCtx, dieEnh, 'unit_die');
+                    if (unitCtx.dirty.bench.has('player')) setPlayerBench(unitCtx.playerBench);
+                    if (unitCtx.dirty.bench.has('enemy')) setEnemyBench(unitCtx.enemyBench);
+                    if (unitCtx.dirty.field) setCombatField(unitCtx.combatField);
+                    if (unitCtx.dirty.hand.has('player')) setPlayerHand(unitCtx.playerHand);
+                    if (unitCtx.dirty.hand.has('enemy')) setEnemyHand(unitCtx.enemyHand);
+                    if (unitCtx.dirty.deck.has('player')) setPlayerDeck(unitCtx.playerDeck);
+                    if (unitCtx.dirty.deck.has('enemy')) setEnemyDeckState(unitCtx.enemyDeck);
 
                     // [重构] 剥离硬编码！把亡语触发权移交给微队列的中央处理器！
                     // 把这具尸体当作包裹，扔进微队列缓冲区
@@ -726,11 +834,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     // ==========================================
     useEffect(() => {
         const handleNexusStrike = (payload: { target: 'player' | 'enemy', amount: number }) => {
-            // 卜卜只在乎敌方水晶是否挨打
-            if (payload.target === 'enemy') {
-                // 写一张条子，塞进微队列缓冲区
-                pendingActionsRef.current.push({ type: 'NEXUS_STRIKED', payload });
-            }
+            // [2026-08-27] 双方水晶受击都入微队列（卜卜目睹/玩家强化只在敌方被打触发；敌方强化在我方被打触发）
+            pendingActionsRef.current.push({ type: 'NEXUS_STRIKED', payload });
         };
 
         // [核心新增] 监听全域受伤事件，将其吸入微队列统一清算！
@@ -807,14 +912,28 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
         let hasLeveledUp = false;
         const leveledHeroes: CardData[] = [];
+        // [2026-09-13 莉莉子] 与 leveledHeroes 一一对应：记录每个待升级英雄归属哪一方
+        const leveledSides: Array<'player' | 'enemy'> = [];
 
         // 全场雷达扫描：检查场上是否有达到升级条件的 1 级英雄
-        const scanAndLevelUp = (bench: CardData[]) => {
+        // ══════════════════════════════════════════════════════════════════
+        // [2026-09-13 莉莉子] 修复「升级影片无限循环」：升级标记判定必须区分敌我。
+        //
+        // 旧实现查全局 leveledChampions（只记 key、不记这名字属于谁），于是敌我双方场上
+        // 有同名天启者时：我方里芙达标升级 → 写下全局标记 'lyfe' → 敌方 Lv1 里芙在后续每次
+        // 扫描中都被 alreadyMarked 误判为"该升级" → 反复入队播影片；可它自己并不达标，
+        // 升级时被正确跳过 → 永远停在 Lv1 → 下次扫描又被误判 → 影片无限循环。
+        // （这也解释了为什么上次修复将"连带升级"改对之后，反而更容易触发：那个连带升级
+        //   恰好是循环的刹车片——敌方被升到 Lv2 后就不再被扫到了。）
+        //
+        // 现改为查询「该方」的标记，敌我彻底分开。
+        // ══════════════════════════════════════════════════════════════════
+        const scanAndLevelUp = (bench: CardData[], side: 'player' | 'enemy') => {
             bench.forEach(card => {
                 if (card.isChampion && card.level === 1) {
-                    // [2026-07-31 安卡希雅] 场下升级：朔望之期已标记全局升级（leveledChampions）→ 打出安卡直接 Lv2
+                    // [2026-07-31 安卡希雅] 场下升级：朔望之期已标记升级 → 打出安卡直接 Lv2
                     // 对齐猫汐尔"场下达成条件、打出后升级"；已升级实例(level 2)会被 level===1 挡在外，不会重复升级
-                    const alreadyMarked = game.leveledChampions.includes(card.key);
+                    const alreadyMarked = isLeveledUpForSide(game, side, card.key);
                     const statusMet = checkCardLevelUp(card, game.playerNexus, game.enemyNexus);
                     if (alreadyMarked || statusMet) {
                         hasLeveledUp = true;
@@ -822,18 +941,17 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         // 严防死守：死人禁止诈尸升级
                         if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
                             leveledHeroes.push(leveled);
+                            leveledSides.push(side);
                         }
                     }
                 }
             });
         };
 
-        scanAndLevelUp(playerBench);
-        scanAndLevelUp(enemyBench);
+        scanAndLevelUp(playerBench, 'player');
+        scanAndLevelUp(enemyBench, 'enemy');
 
         if (hasLeveledUp && leveledHeroes.length > 0) {
-            const newKeys = leveledHeroes.map(h => h.key);
-
             // [2026-07-31 安卡希雅] 升级后手牌法术替换：剑舞→重锋、扩散/集束→月镰剑势（战斗升级等通用路径）
             if (leveledHeroes.some(h => h.key === 'acacia_chrono_echo')) {
                 setPlayerHand(prev => upgradeAcaciaHand(prev));
@@ -846,12 +964,18 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 // [2026-08-02 莉莉子] 队列去重：同一英雄 key 已在队中时不再重复入队，
                 // 杜绝"持续满足条件"型英雄（如芬妮）在漏网场景下影片无限循环
                 const queuedKeys = new Set((prev.pendingLevelUps || []).map(p => p.key));
-                const freshHeroes = leveledHeroes.filter(h => !queuedKeys.has(h.key));
-                return {
-                    ...prev,
-                    leveledChampions: [...new Set([...prev.leveledChampions, ...newKeys])],
-                    pendingLevelUps: [...(prev.pendingLevelUps || []), ...freshHeroes]
-                };
+                const freshIndexes: number[] = [];
+                leveledHeroes.forEach((h, i) => {
+                    if (!queuedKeys.has(h.key)) freshIndexes.push(i);
+                });
+                // [2026-09-13 莉莉子] 无新增则原样返回：既避免无谓重渲染，也不给扫描引擎"自我唤醒"的机会
+                if (freshIndexes.length === 0) return prev;
+
+                const nextGame = { ...prev };
+                // [2026-09-13 莉莉子] 标记按方写入（markLeveledUp 内部同时维护全局 + 分阵营两套）
+                freshIndexes.forEach(i => markLeveledUp(nextGame, leveledSides[i], leveledHeroes[i].key));
+                nextGame.pendingLevelUps = [...(prev.pendingLevelUps || []), ...freshIndexes.map(i => leveledHeroes[i])];
+                return nextGame;
             });
 
             // [修复] 2. 物理洗牌移至 levelUpCard-triggered useEffect，
@@ -867,39 +991,91 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         if (!card || !card.isChampion) return;
         const heroKey = card.key;
 
-        // [修复] 排重检查：同时检查双方备战席 + 交战区（含挡格位）
-        // [2026-08-02 莉莉子] 修复漏网：敌方备战席/挡格位的 Lv1 英雄此前不升级，
-        // 配合芬妮"持续满足条件"的升级判定导致影片无限循环
-        const needsUpgrade =
-            playerBench.some(c => c.key === heroKey && c.level === 1) ||
-            enemyBench.some(c => c.key === heroKey && c.level === 1) ||
-            combatField.some(f =>
-                (f.attacker.key === heroKey && f.attacker.level === 1) ||
-                (f.blocker && f.blocker.key === heroKey && f.blocker.level === 1)
-            );
-        if (!needsUpgrade) return;
+        // ==========================================
+        // [2026-09-13 莉莉子] 判定这一票属于哪一方 —— 用实例 id 反查
+        // 队列项只存卡数据、不带归属；而升级必须严格按方执行，绝不连带到对面。
+        // 查不到（已不在任何列表）则直接不动手 —— 宁可漏升，不可误伤另一方。
+        // ==========================================
+        const cardId = card.id;
+        const onPlayerSide =
+            playerBench.some(c => c.id === cardId) ||
+            playerHand.some(c => c.id === cardId) ||
+            playerDeck.some(c => c.id === cardId) ||
+            combatField.some(f => (f.owner === 'player' && f.attacker.id === cardId) ||
+                                   (f.owner === 'enemy' && f.blocker?.id === cardId));
+        const onEnemySide =
+            enemyBench.some(c => c.id === cardId) ||
+            enemyHand.some(c => c.id === cardId) ||
+            enemyDeckState.some(c => c.id === cardId) ||
+            combatField.some(f => (f.owner === 'enemy' && f.attacker.id === cardId) ||
+                                   (f.owner === 'player' && f.blocker?.id === cardId));
+        const side: 'player' | 'enemy' | null = onPlayerSide ? 'player' : (onEnemySide ? 'enemy' : null);
+        if (!side) return;
 
-        const upgradeFn = (list: CardData[]) => list.map(c =>
-            c.key === heroKey && c.level === 1 ? { ...getLeveledUpCard(c), id: c.id } : c
-        );
+        // 该方是否还有该英雄的 Lv1 实例（没有则无需动作）
+        const pool = side === 'player'
+            ? [...playerBench, ...playerHand, ...playerDeck]
+            : [...enemyBench, ...enemyHand, ...enemyDeckState];
+        const combatHas = combatField.some(f => {
+            const attackerSide: 'player' | 'enemy' = f.owner === 'player' ? 'player' : 'enemy';
+            const blockerSide: 'player' | 'enemy' = f.owner === 'player' ? 'enemy' : 'player';
+            return (f.attacker.key === heroKey && f.attacker.level === 1 && attackerSide === side) ||
+                   (!!f.blocker && f.blocker.key === heroKey && f.blocker.level === 1 && blockerSide === side);
+        });
+        if (!pool.some(c => c.key === heroKey && c.level === 1) && !combatHas) return;
 
-        setPlayerBench(prev => upgradeFn(prev));
-        setEnemyBench(prev => upgradeFn(prev));
-        setPlayerHand(prev => upgradeFn(prev));
-        setEnemyHand(prev => upgradeFn(prev));
-        setPlayerDeck(prev => upgradeFn(prev));
-        setEnemyDeckState(prev => upgradeFn(prev));
-        // [修复] 同步更新交战区中的英雄数据（攻击方 + 挡格方都要升级）
-        setCombatField(prev => prev.map(f => {
-            let next = f;
-            if (f.attacker.key === heroKey && f.attacker.level === 1) {
-                next = { ...next, attacker: { ...getLeveledUpCard(f.attacker), id: f.attacker.id } };
-            }
-            if (f.blocker && f.blocker.key === heroKey && f.blocker.level === 1) {
-                next = { ...next, blocker: { ...getLeveledUpCard(f.blocker), id: f.blocker.id } };
-            }
-            return next;
-        }));
+        // ══════════════════════════════════════════════════════════════════
+        // [2026-09-13 莉莉子] 升级 = 不可逆的状态跃迁：达标即锁存，执行时不再二次核验。
+        //
+        // 旧实现在这里用 checkCardLevelUp 重新核一遍资格，于是出现"叫了号却领不到奖"：
+        //   入队时达标 → 执行时不达标 → 卡停在 Lv1 → 下轮扫描又被标记叫号 → 影片无限循环。
+        // 现改为照「该方已锁定升级」的名单无条件执行 —— 升了就升了，之后无论发生什么都
+        // 不再打断、更不退回（对齐程的设计：第一次达标即生效）。
+        //
+        // 同时：无任何改动时返回原引用，掐断"升级 → 引用变化 → 重扫 → 再入队"的燃料。
+        // ══════════════════════════════════════════════════════════════════
+        const upgradeFn = (list: CardData[]) => {
+            let changed = false;
+            const next = list.map(c => {
+                if (c.key === heroKey && c.level === 1) {
+                    changed = true;
+                    return { ...getLeveledUpCard(c), id: c.id };
+                }
+                return c;
+            });
+            return changed ? next : list;
+        };
+
+        if (side === 'player') {
+            setPlayerBench(upgradeFn);
+            setPlayerHand(upgradeFn);
+            setPlayerDeck(upgradeFn);
+        } else {
+            setEnemyBench(upgradeFn);
+            setEnemyHand(upgradeFn);
+            setEnemyDeckState(upgradeFn);
+        }
+
+        // 交战区按每条记录的 owner 精确分方 ——
+        // owner='player' 记录里 attacker 属我方、blocker 属敌方；owner='enemy' 反之。
+        setCombatField(prev => {
+            let changed = false;
+            const next = prev.map(f => {
+                const attackerSide: 'player' | 'enemy' = f.owner === 'player' ? 'player' : 'enemy';
+                const blockerSide: 'player' | 'enemy' = f.owner === 'player' ? 'enemy' : 'player';
+                let nf = f;
+                if (f.attacker.key === heroKey && f.attacker.level === 1 && attackerSide === side) {
+                    nf = { ...nf, attacker: { ...getLeveledUpCard(f.attacker), id: f.attacker.id } };
+                    changed = true;
+                }
+                if (f.blocker && f.blocker.key === heroKey && f.blocker.level === 1 && blockerSide === side) {
+                    nf = { ...nf, blocker: { ...getLeveledUpCard(f.blocker), id: f.blocker.id } };
+                    changed = true;
+                }
+                return nf;
+            });
+            return changed ? next : prev;
+        });
     }, [game.levelUpCard]);
 
 
@@ -962,9 +1138,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 const timer = setTimeout(() => {
                     setIsAutoAdvancing(false);
                     // [核心修复] 区分格挡阶段和响应阶段的动作！
-                    if (stateRef.current.game.phase === 'block_declare') {
+                    // [2026-08-24 莉莉子 飞剑竞态根治] 只对真实阶段做合法动作，
+                    // 意外回到 main（如飞剑归位后）一律不动，防止补一脚 passTurn 导致回合误结束
+                    const phaseNow = stateRef.current.game.phase;
+                    if (phaseNow === 'block_declare') {
                         confirmBlock(); // 格挡阶段无事可做应视为“防线确认完毕”
-                    } else {
+                    } else if (phaseNow === 'react_to_block') {
                         passTurn(); // 只有在战术响应阶段才叫“让过”
                     }
                 }, 800);
@@ -1004,10 +1183,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 eventBus.emit(GameEvents.DRAW_CENTER_SHATTER, { animId: payload.animId });
             } else {
                 // [交叉过渡] 立即写入手牌 + overlay 移除，AnimatedHandCard isNew 接替
+                // [2026-09-04 莉莉子 修复] 与 onDrawComplete 一致按 id 去重：
+                // 同一张生成/抽到的卡若被重复调度（双剑等使事件双触），onAtCenter 曾无脑 append → 手牌出现同 id 两张 → React key 撞车。
                 if (owner === 'player') {
-                    setPlayerHand(prev => [...prev, card]);
+                    setPlayerHand(prev => prev.some(c => c.id === card.id) ? prev : [...prev, card]);
                 } else {
-                    setEnemyHand(prev => [...prev, card]);
+                    setEnemyHand(prev => prev.some(c => c.id === card.id) ? prev : [...prev, card]);
                 }
                 eventBus.emit(GameEvents.DRAW_FLY_TO_HAND, { animId: payload.animId });
             }
@@ -1083,7 +1264,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
 
             // 2. 生成唯一动画 ID，创建 Promise
-            const animId = `draw_${owner}_${cardToDraw.id}_${Date.now()}`;
+            const animId = nextAnimId('draw', owner, cardToDraw.id);
             const drawPromise = new Promise<void>(resolve => {
                 pendingDrawsRef.current.set(animId, { resolve });
             });
@@ -1134,7 +1315,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
             return card;
         }));
-        const eDeck = shuffleDeck(enemyDeck.filter(key => CARD_DB[key]).map(createFullCard));
+        const eDeck = shuffleDeck(enemyDeck.filter(key => CARD_DB[key]).map(key => {
+            // [2026-08-30 程拍板] 敌人随机装备（resetGame 路径同样挂载）
+            let card = createFullCard(key);
+            const equips = enemyEquipments?.[key];
+            if (equips?.length) for (const eid of equips) card = attachEquipment(card, eid);
+            return card;
+        }));
 
         // 洗牌并抽初始手牌 (各4张)
         const pHand = pDeck.splice(0, 4);
@@ -1160,7 +1347,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             turnOwner: 'player',
             playerNexus: initialPlayerNexus ?? 20, // [2026-08-11] 同步注入初值（整局重开路径）
             playerNexusMax: playerNexusMax ?? 20, // [2026-08-11] 同步回血上限
-            enemyNexus: 20,
+            enemyNexus: initialEnemyNexus ?? 20, // [2026-08-28] 同步敌方水晶初始血量（重开路径）
+            enemyNexusMax: initialEnemyNexus ?? 20, // [2026-08-30 莉莉子] 同步敌方回血上限（重开路径）
             // [修复] 删除非法的 playerMaxManaCap 和 enemyMaxManaCap
             spellStack: [],
             activeCard: null,
@@ -1174,6 +1362,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // ==========================================
             // [新增] 补全 TypeScript 在第二道安检时查出的缺失必填项！
             leveledChampions: [],              // 重置英雄升级记录
+            leveledChampionsBySide: { player: [], enemy: [] }, // [2026-09-13] 重置分阵营升级标记
             pendingLevelUps: [],               // [新增] 重置待升级队列
             lastActionTimestamp: Date.now(),   // 重置最后操作时间
             selectedBlockerId: null,           // 清空选中的格挡者
@@ -1360,6 +1549,31 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
         });
 
+        // ==========================================
+        // [2026-09-05 莉莉子] STAT_BALANCE（生命壁垒/攻守易形）在进攻宣告确认时触发（程拍板：带调整后数值去战斗）
+        // 玩家攻击者在 commitAttack（点进攻确认）那一刻即成长（攻血互等只增不减），不再等 animating 打击结算后才触发。
+        // 故 useGameState 的 after_attack（animating）分支须跳过 STAT_BALANCE，防二次触发（见 2247 段）。
+        // ==========================================
+        let statBalanceApplied = false;
+        const statBalanceDefs = getRogueDefs(stateRef.current.game.rogueEnhancements, 'after_attack')
+            .filter(d => d.battleEffect?.effectClass === 'STAT_BALANCE');
+        if (statBalanceDefs.length > 0) {
+            tempCombatField = tempCombatField.map(fight => {
+                if (fight.owner !== 'player' || !fight.attacker) return fight;
+                let attacker = fight.attacker;
+                statBalanceDefs.forEach(def => {
+                    const be = def.battleEffect!;
+                    const buffed = applyStatBalance(attacker, (be.params?.mode as string) ?? 'health_to_power');
+                    if (buffed !== attacker) {
+                        attacker = buffed;
+                        statBalanceApplied = true;
+                    }
+                });
+                return attacker === fight.attacker ? fight : { ...fight, attacker };
+            });
+            if (statBalanceApplied) statBalanceDefs.forEach(def => flashRogueBuff(def));
+        }
+
         // [修复] 根据进攻方决定格挡方：player 进攻 → enemy 格挡，enemy 进攻 → player 格挡
         const firstOwner = currentCombatField[0]?.owner || 'player';
         const blockTurnOwner = firstOwner === 'player' ? 'enemy' : 'player';
@@ -1376,10 +1590,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 统一结算并下发给 React 渲染层
         // 如果有法术待结算（如银臂乱打），推入堆栈后直接进入格挡阶段
         // 堆栈中的法术会在格挡确认后、战斗结算前通过 passTurn → resolveStack 自然结算
-        if (hasEffectTriggered || pendingSpells.length > 0) {
+        if (hasEffectTriggered || statBalanceApplied || pendingSpells.length > 0) {
             setPlayerBench(hasEffectTriggered ? tempPlayerBench : stateRef.current.playerBench);
             setEnemyBench(hasEffectTriggered ? tempEnemyBench : stateRef.current.enemyBench);
-            setCombatField(hasEffectTriggered ? (tempCombatField as any) : stateRef.current.combatField);
+            setCombatField((hasEffectTriggered || statBalanceApplied) ? (tempCombatField as any) : stateRef.current.combatField);
         }
         setGame(prev => ({
             ...(hasEffectTriggered ? tempGame : prev),
@@ -1523,17 +1737,81 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 按顺序结算所有条子
         actions.forEach(action => {
             if (action.type === 'NEXUS_STRIKED') {
-                nextPlayerBench = nextPlayerBench.map(updateCardProgress);
-                nextCombatField = nextCombatField.map(fight => {
-                    const newFight = { ...fight };
-                    if (newFight.owner === 'player' && newFight.attacker) {
-                        newFight.attacker = updateCardProgress(newFight.attacker) as CardData;
-                    }
-                    if (newFight.owner === 'enemy' && newFight.blocker) {
-                        newFight.blocker = updateCardProgress(newFight.blocker) as CardData;
-                    }
-                    return newFight;
-                });
+                const struckSide = action.payload.target; // 'player' | 'enemy'（被击方）
+                // 目睹/卜卜：水晶被打时，进攻方一侧在场的 Lv1 卜卜 +1 目睹（=本方向敌方水晶进攻命中）。
+                // [2026-09-09 莉莉子 修复] 补对称敌方路径——此前只在敌方水晶被打(struckSide='enemy')时
+                // 给玩家侧卜卜 +1，敌方卜卜在本局永远攒不到目睹次数，只能靠交战区连带升级（已在
+                // levelUpCard effect 修复堵住），导致卜卜镜像流派里敌方卜卜升级行为错乱。
+                if (struckSide === 'enemy') {
+                    nextPlayerBench = nextPlayerBench.map(updateCardProgress);
+                    nextCombatField = nextCombatField.map(fight => {
+                        const newFight = { ...fight };
+                        if (newFight.owner === 'player' && newFight.attacker) {
+                            newFight.attacker = updateCardProgress(newFight.attacker) as CardData;
+                        }
+                        if (newFight.owner === 'enemy' && newFight.blocker) {
+                            newFight.blocker = updateCardProgress(newFight.blocker) as CardData;
+                        }
+                        return newFight;
+                    });
+                }
+                if (struckSide === 'player') {
+                    nextEnemyBench = nextEnemyBench.map(updateCardProgress);
+                    nextCombatField = nextCombatField.map(fight => {
+                        const newFight = { ...fight };
+                        if (newFight.owner === 'enemy' && newFight.attacker) {
+                            newFight.attacker = updateCardProgress(newFight.attacker) as CardData;
+                        }
+                        if (newFight.owner === 'player' && newFight.blocker) {
+                            newFight.blocker = updateCardProgress(newFight.blocker) as CardData;
+                        }
+                        return newFight;
+                    });
+                }
+
+                // ==========================================
+                // [2026-08-19 莉莉子] 迷宫强化 on_nexus_strike：水晶受伤害
+                // 玩家强化在「敌方水晶被打」触发（牌库灌注/水晶共鸣）；
+                // [2026-08-27] 敌方强化在「我方水晶被打」触发（连击之势）
+                // [2026-09-09 莉莉子 重构] 收编统一串行触发引擎：直接引用 nextXxx 工作数组（该 action 尾部统一提交）
+                // ==========================================
+                if (struckSide === 'enemy' && stateRef.current.game.rogueEnhancements) {
+                    const nCtx: RogueTriggerCtx = {
+                        game: { ...stateRef.current.game },
+                        playerBench: nextPlayerBench,
+                        enemyBench: nextEnemyBench,
+                        combatField: nextCombatField,
+                        playerHand: [...stateRef.current.playerHand],
+                        enemyHand: [...stateRef.current.enemyHand],
+                        playerDeck: nextPlayerDeck ?? [],
+                        enemyDeck: [...stateRef.current.enemyDeck],
+                        owner: 'player',
+                        trigger: 'on_nexus_strike',
+                        createFullCard,
+                        info: {},
+                        dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+                    };
+                    runRogueTrigger(nCtx, stateRef.current.game.rogueEnhancements, 'on_nexus_strike');
+                }
+                // [2026-08-27] 敌方迷宫强化：我方水晶被打 → 随机敌方单位 +1/+1（连击之势）
+                if (struckSide === 'player' && stateRef.current.game.enemyEnhancements) {
+                    const nCtx: RogueTriggerCtx = {
+                        game: { ...stateRef.current.game },
+                        playerBench: nextPlayerBench,
+                        enemyBench: nextEnemyBench,
+                        combatField: nextCombatField,
+                        playerHand: [...stateRef.current.playerHand],
+                        enemyHand: [...stateRef.current.enemyHand],
+                        playerDeck: [...stateRef.current.playerDeck],
+                        enemyDeck: [...stateRef.current.enemyDeck],
+                        owner: 'enemy',
+                        trigger: 'on_nexus_strike',
+                        createFullCard,
+                        info: {},
+                        dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+                    };
+                    runRogueTrigger(nCtx, stateRef.current.game.enemyEnhancements, 'on_nexus_strike');
+                }
             }
             // =====================================
             // [新增] 结算单位受伤被动 (如：臆莲基座产无人机)
@@ -1738,7 +2016,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                             res.events.forEach(evt => {
                                 if (evt.type === 'sfx_draw') {
                                     const drawnCard = evt.payload as CardData;
-                                    const animId = `necromancer-draw-${drawnCard.id}-${Date.now()}`;
+                                    const animId = nextAnimId('necromancer-draw', drawnCard.id);
                                     setTimeout(() => {
                                         eventBus.emit(GameEvents.DRAW_START, {
                                             animId, card: drawnCard, owner,
@@ -1755,7 +2033,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                                     // 【关键】同时也从 nextPlayerHand 移除，否则循环外 setPlayerHand(nextPlayerHand) 会把它加回来
                                     if (owner === 'player') nextPlayerHand = nextPlayerHand.filter(c => c.id !== genCard.id);
                                     else nextEnemyHand = nextEnemyHand.filter(c => c.id !== genCard.id);
-                                    const animId = `necro-gen-${genCard.id}-${Date.now()}`;
+                                    const animId = nextAnimId('necro-gen', genCard.id);
                                     const delay = necroAnimIdx * 1200;
                                     necroAnimIdx++;
                                     setTimeout(() => {
@@ -1812,13 +2090,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
         // 统一处理结算后的升级派单
         if (hasLeveledUp && leveledHeroes.length > 0) {
-            nextGame.pendingLevelUps = [...(nextGame.pendingLevelUps || []), ...leveledHeroes];
-            leveledHeroes.forEach(hero => {
-                if (!nextGame.leveledChampions.includes(hero.key)) {
-                    nextGame.leveledChampions.push(hero.key);
-                }
+            // [2026-09-09 莉莉子 修复] 按 key 去重再入队：同一英雄 key 已在队列则不再重复派单
+            // （对齐光环引擎 940-941 的去重策略），杜绝多只同 key 卜卜 / 同一触发被多次结算时
+            // 升级影片被反复播放的观感。
+            const queuedKeys = new Set((nextGame.pendingLevelUps || []).map(p => p.key));
+            const freshHeroes = leveledHeroes.filter(h => !queuedKeys.has(h.key));
+            nextGame.pendingLevelUps = [...(nextGame.pendingLevelUps || []), ...freshHeroes];
+            freshHeroes.forEach(hero => {
+                // [2026-09-09 莉莉子] 升级日志按真实归属标记敌我（补敌方目睹路径后，敌方卜卜升级不再误记为我方成就）
+                const isPlayerHero = nextPlayerBench.some(c => c.id === hero.id) ||
+                    nextCombatField.some(f => (f.owner === 'player' && f.attacker?.id === hero.id) || (f.owner === 'enemy' && f.blocker?.id === hero.id));
+                // [2026-09-13 莉莉子] 标记改用统一入口按方写入（全局 + 分阵营两套同步维护），
+                // 与升级流程的按方判定保持一致，杜绝敌我同名英雄互相污染升级状态。
+                markLeveledUp(nextGame, isPlayerHero ? 'player' : 'enemy', hero.key);
                 // [新增] 微队列升级也要记录日志，供成就任务系统使用
-                gameLogger.logEvent({ type: 'level_up', turn: nextGame.round, isPlayerSide: true, cardKey: hero.key });
+                gameLogger.logEvent({ type: 'level_up', turn: nextGame.round, isPlayerSide: isPlayerHero, cardKey: hero.key });
             });
         }
 
@@ -1833,7 +2119,23 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         return true; // 返回 true 告知调用者“我处理过数据了”
     };
 
-    const resolveCombatAnimation = async () => {
+    // ==========================================
+    // [2026-09-03 莉莉子 死锁逃生] 交战区应急归位
+    // animating 异步链异常中断时调用：交战区存活幸存者放回备战席 + 清空交战区，
+    // 并把仍停在 animating 的 phase 兜底回 main。刻意不重算进攻标识消耗
+    // （避免误吞 scout 转 rally / 双扣剑），只保"单位不蒸发 + 流程可继续"。
+    // ==========================================
+    const emergencyUnstickCombat = () => {
+        const ref = stateRef.current;
+        recoverCombatSurvivors(ref.combatField, ref.playerBench, ref.enemyBench, {
+            setPlayerBench, setEnemyBench, setCombatField, setGame,
+        });
+        setGame(prev => prev.phase === 'animating'
+            ? { ...prev, phase: 'main' as const, consecutivePasses: 0, lastActionTimestamp: Date.now() }
+            : prev);
+    };
+
+    const runResolveCombatAnimation = async () => {
         // [SBA] 战斗开始前，先清尸
         judgeLifeAndDeath();
         setGame(prev => ({ ...prev, phase: 'animating' }));
@@ -1857,12 +2159,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             // [防诈尸补丁] 判断是否在法术阶段已被击杀
             const isAttackerDead = attacker.animState === 'dying' || attacker.animState === 'ephemeral_dying';
+            // [2026-08-19 莉莉子 挥空动画] 无法进攻的三种情况 → 原地左右晃动而非撞向目标：
+            // ① 空气墙阻挡（含阻挡者被法术撤回） ② 阻挡者被击杀已不在场 ③ 攻击力为 0（冻结 / 无法攻击 / 本身为 0）
+            const swingMiss = !isAttackerDead && (
+                (currentFight as any).isGhostBlocked === true
+                || (currentFight.blocker && (currentFight.blocker.isDead || currentFight.blocker.animState === 'dying' || currentFight.blocker.animState === 'ephemeral_dying'))
+                || getPower(attacker) <= 0
+            );
+            // [2026-08-19 莉莉子 连击双段] 连击单位且未死亡且非挥空 → 走双段打击流程（两段撞击动画 + 每击伤害分别飘字）
+            const isDoubleStrikeFight = !isAttackerDead && !swingMiss && attacker.keywords.includes('Double Attack');
 
             setCombatField(prev => {
                 const n = [...prev];
 
-                // 严禁死者做动作！
-                const atkState = isAttackerDead ? attacker.animState : 'attacking';
+                // 严禁死者做动作！挥空时原地左右晃动，不撞向目标
+                const atkState = isAttackerDead ? attacker.animState : (swingMiss ? 'swing_miss' : 'attacking');
                 let blkState = n[i].blocker?.animState;
                 if (n[i].blocker && blkState !== 'dying' && blkState !== 'ephemeral_dying') {
                     blkState = hasQuickAttack ? 'delayed_attacking' : 'attacking';
@@ -1877,9 +2188,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             });
 
             // 音效与节奏控制
-            let impactDelay = isAttackerDead ? 0 : 250; // 死人不需要等出刀前摇
+            let impactDelay = isAttackerDead ? 0 : (swingMiss ? 200 : 250); // 死人不出刀前摇；挥空只等晃动节奏
 
-            if (!isAttackerDead) {
+            if (!isAttackerDead && !swingMiss) {
                 if (!blocker) {
                     setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NEXUS), 250);
                 } else {
@@ -1897,7 +2208,58 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // 等待直到撞击发生
             await wait(impactDelay + (isAttackerDead ? 0 : 150));
             const gameSnapshot = stateRef.current.game;
-            const result = resolveSingleCombat(currentFight, gameSnapshot);
+            const result = isDoubleStrikeFight
+                ? resolveDoubleStrikeCombat(currentFight, gameSnapshot)
+                : resolveSingleCombat(currentFight, gameSnapshot);
+
+            // ==========================================
+            // [2026-08-19 莉莉子 连击双段] 单路战斗内每击伤害飘字（含 Mauxir 累积）
+            // ==========================================
+            const emitStrikeDamage = (atkDmg: number, blkDmg: number) => {
+                if (atkDmg > 0 && result.updatedFight.attacker) {
+                    eventBus.emit('unit_damage', { id: result.updatedFight.attacker.id, amount: atkDmg });
+                    // [修改] 埋点 C-2：防守者造成伤害 (进攻者挨打，说明是防守者造成的物理伤害)
+                    if (currentFight.blocker && isSummonerOrSummon(currentFight.blocker)) {
+                        const dmg = currentFight.blocker.key === 'Soline_Anubis' ? atkDmg * 2 : atkDmg;
+                        accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, dmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
+                    }
+                }
+                if (blkDmg > 0 && result.updatedFight.blocker) {
+                    eventBus.emit('unit_damage', { id: result.updatedFight.blocker.id, amount: blkDmg });
+                    // [修改] 埋点 C-1：进攻者造成伤害 (防守者挨打，说明是进攻者造成的物理伤害)
+                    if (isSummonerOrSummon(currentFight.attacker)) {
+                        const dmg = currentFight.attacker.key === 'Soline_Anubis' ? blkDmg * 2 : blkDmg;
+                        accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, dmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
+                    }
+                }
+            };
+
+            if (isDoubleStrikeFight) {
+                // [类型窄化] 断言为双段结算结果（运行时仅连击分支会走到）
+                const dsResult = result as DoubleStrikeCombatResult;
+                // ① 第一击伤害飘字（第一撞动画已在上面播放）
+                emitStrikeDamage(dsResult.strike1.attackerDamage, dsResult.strike1.blockerDamage);
+
+                // ② 第二撞动画：攻击者再撞一次，阻挡者若存活则反击
+                if (dsResult.strike2) {
+                    setCombatField(prev => {
+                        const n = [...prev];
+                        const f2 = n[i];
+                        const a2 = { ...f2.attacker, animState: 'attacking' as const, strikeStamp: (f2.attacker.strikeStamp || 0) + 1 };
+                        let b2: any = f2.blocker ? { ...f2.blocker } : null;
+                        if (b2 && !b2.isDead && b2.animState !== 'dying' && b2.animState !== 'ephemeral_dying') {
+                            b2 = { ...b2, animState: 'attacking' as const };
+                        }
+                        n[i] = { ...f2, attacker: a2, blocker: b2 };
+                        return n;
+                    });
+                    // 第二击音效（普通攻击撞击）
+                    setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NORMAL), 0);
+                    await wait(400);
+                    // ③ 第二击伤害飘字
+                    emitStrikeDamage(dsResult.strike2.attackerDamage, dsResult.strike2.blockerDamage);
+                }
+            }
 
             // [2026-07-21 对局记录] 单路战斗结算
             {
@@ -1933,27 +2295,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
 
             // [核心新增] 物理战斗受伤事件抛出 (完美桥接微队列，彻底免去污染 combat.ts)
-            if (result.attackerDamage > 0 && result.updatedFight.attacker) {
-                eventBus.emit('unit_damage', { id: result.updatedFight.attacker.id, amount: result.attackerDamage });
-
-                // ==========================================
-                // [修改] 埋点 C-2：防守者造成伤害 (进攻者挨打，说明是防守者造成的物理伤害)
-                // ==========================================
-                if (currentFight.blocker && isSummonerOrSummon(currentFight.blocker)) {
-                    const dmg = currentFight.blocker.key === 'Soline_Anubis' ? result.attackerDamage * 2 : result.attackerDamage;
-                    accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, dmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
-                }
-            }
-            if (result.blockerDamage > 0 && result.updatedFight.blocker) {
-                eventBus.emit('unit_damage', { id: result.updatedFight.blocker.id, amount: result.blockerDamage });
-
-                // ==========================================
-                // [修改] 埋点 C-1：进攻者造成伤害 (防守者挨打，说明是进攻者造成的物理伤害)
-                // ==========================================
-                if (isSummonerOrSummon(currentFight.attacker)) {
-                    const dmg = currentFight.attacker.key === 'Soline_Anubis' ? result.blockerDamage * 2 : result.blockerDamage;
-                    accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, dmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
-                }
+            // [2026-08-19 莉莉子] 连击场景每击伤害已在双段分支分别飘字，此处仅非连击合并伤害飘一次
+            if (!isDoubleStrikeFight) {
+                emitStrikeDamage(result.attackerDamage, result.blockerDamage);
             }
 
             // 1. 广播死亡事件 & [新增] 击杀事件
@@ -2012,13 +2356,101 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 n[i] = result.updatedFight;
                 return n;
             });
+
+            // ==========================================
+            // [2026-08-19 莉莉子] 迷宫强化 after_attack / after_attacked：打击后成长
+            // 目标 = 触发单位自身（打击者 / 被打击者），永久加成
+            // ==========================================
+            // 我方单位打击后（以战养战 BUFF_SELF）；生命壁垒/攻守易形(STAT_BALANCE)已提前到进攻宣告确认时触发
+            // [2026-09-05 莉莉子] 见 commitAttack：STAT_BALANCE 攻击宣言即生效（程拍板），此处跳过防二次触发/闪烁
+            // [2026-09-09 莉莉子 重构] 收编统一串行触发引擎：BUFF_SELF handler 直接改写 result.updatedFight 对应侧，
+            // 末尾按需单次 setCombatField 提交（替换 index i），删掉原先每 def 一次散装 set。
+            {
+                const strikeCtx: RogueTriggerCtx = {
+                    game: { ...stateRef.current.game },
+                    playerBench: [...stateRef.current.playerBench],
+                    enemyBench: [...stateRef.current.enemyBench],
+                    combatField: [],
+                    playerHand: [],
+                    enemyHand: [],
+                    playerDeck: [],
+                    enemyDeck: [],
+                    owner: 'player',
+                    trigger: 'after_attack',
+                    createFullCard,
+                    info: { fight: result.updatedFight },
+                    dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+                };
+                const preAtk = result.updatedFight.attacker;
+                const preBlk = result.updatedFight.blocker;
+                // 我方攻击者打击后（以战养战）
+                if (currentFight.owner === 'player') {
+                    strikeCtx.owner = 'player';
+                    strikeCtx.trigger = 'after_attack';
+                    runRogueTrigger(strikeCtx, stateRef.current.game.rogueEnhancements, 'after_attack', c => c === 'BUFF_SELF');
+                }
+                // 敌方攻击者打击后（狂怒印记）
+                if (currentFight.owner === 'enemy') {
+                    strikeCtx.owner = 'enemy';
+                    strikeCtx.trigger = 'after_attack';
+                    runRogueTrigger(strikeCtx, stateRef.current.game.enemyEnhancements, 'after_attack', c => c === 'BUFF_SELF');
+                }
+                // 我方阻挡者被打击后（以守为攻）：敌方进攻打到我方 blocker
+                if (currentFight.owner === 'enemy' && currentFight.blocker) {
+                    strikeCtx.owner = 'player';
+                    strikeCtx.trigger = 'after_attacked';
+                    runRogueTrigger(strikeCtx, stateRef.current.game.rogueEnhancements, 'after_attacked', c => c === 'BUFF_SELF');
+                }
+                // 敌方阻挡者被打击后（铁壁反击）
+                if (currentFight.owner === 'player' && currentFight.blocker) {
+                    strikeCtx.owner = 'enemy';
+                    strikeCtx.trigger = 'after_attacked';
+                    runRogueTrigger(strikeCtx, stateRef.current.game.enemyEnhancements, 'after_attacked', c => c === 'BUFF_SELF');
+                }
+                // BUFF_SELF 改写了 updatedFight 对应侧 → 单次提交 index i 处
+                if (result.updatedFight.attacker !== preAtk || result.updatedFight.blocker !== preBlk) {
+                    setCombatField(prev => {
+                        const n = [...prev];
+                        n[i] = result.updatedFight;
+                        return n;
+                    });
+                }
+            }
+
+            // ==========================================
+            // [2026-08-20 莉莉子] 成长装备 after_attack / after_attacked：打击后/被打击后永久成长
+            // 目标 = 触发单位自身（磨砺之锋：我方攻击者打击后；愈战愈勇：我方阻挡者被打击后）
+            // 须在场存活才成长（与程确认的"装备卡必须在场"语义一致）
+            // ==========================================
+            if (currentFight.owner === 'player' && result.updatedFight.attacker) {
+                const atkId = currentFight.attacker.id;
+                // [2026-09-15 莉莉子 BUG修复] 与迷宫强化同口径：存活判据叠加真实血量，防"被这一击打死仍吃到成长"的变相复活
+                const atkAlive = isStrikeTargetAlive(result.updatedFight.attacker);
+                getEquipTriggers(result.updatedFight.attacker, 'after_attack').forEach(t => {
+                    if (!atkAlive || !result.updatedFight.attacker || t.target !== 'self') return;
+                    const buffed = applyPermanentBuff(result.updatedFight.attacker, t.power, t.health);
+                    setCombatField(prev => prev.map(f => f.attacker?.id === atkId ? { ...f, attacker: buffed } : f));
+                });
+            }
+            if (currentFight.owner === 'enemy' && currentFight.blocker && result.updatedFight.blocker) {
+                const blkId = currentFight.blocker.id;
+                const blkAlive = isStrikeTargetAlive(result.updatedFight.blocker); // [2026-09-15 莉莉子 BUG修复] 同口径叠加真实血量
+                getEquipTriggers(result.updatedFight.blocker, 'after_attacked').forEach(t => {
+                    if (!blkAlive || !result.updatedFight.blocker || t.target !== 'self') return;
+                    const buffed = applyPermanentBuff(result.updatedFight.blocker, t.power, t.health);
+                    setCombatField(prev => prev.map(f => f.blocker?.id === blkId ? { ...f, blocker: buffed } : f));
+                });
+            }
             console.log(`[CombatDebug] 第${i+1}/${totalFights}路战斗结束: A=${result.updatedFight.attacker?.key}(HP=${(result.updatedFight.attacker?.health||0)+(result.updatedFight.attacker?.buffs?.health||0)-(result.updatedFight.attacker?.damageTaken||0)} state=${result.updatedFight.attacker?.animState})` +
                 ` B=${result.updatedFight.blocker?.key||'无'}(HP=${result.updatedFight.blocker?((result.updatedFight.blocker?.health||0)+(result.updatedFight.blocker?.buffs?.health||0)-(result.updatedFight.blocker?.damageTaken||0)):'—'} state=${result.updatedFight.blocker?.animState||'—'})` +
                 ` nexusDmg=${result.nexusDamage?.amount||0} killed=${result.killedUnits.map(u=>u.key).join(',')}`);
 
             // [关键修正] 战果已经排入 React 队列，现在安全发起广播！
             if (result.nexusDamage) {
-                eventBus.emit(GameEvents.NEXUS_STRIKED, result.nexusDamage);
+                // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：飘字 amount 同步实际伤害（下方 setGame 扣血已减 1；仅改飘字，内部目睹/强化只看 target）
+                const combatNexusTough = result.nexusDamage.target === 'player' ? !!stateRef.current.game?.playerNexusTough : !!stateRef.current.game?.enemyNexusTough;
+                const combatFinalAmount = combatNexusTough ? Math.max(0, result.nexusDamage.amount - 1) : result.nexusDamage.amount;
+                eventBus.emit(GameEvents.NEXUS_STRIKED, { target: result.nexusDamage.target, amount: combatFinalAmount });
 
                 // ==========================================
                 // [修改] 埋点 C-3：肉搏战水晶伤害统计 (必定是进攻者打水晶)
@@ -2028,6 +2460,43 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 if (nexusSource && isSummonerOrSummon(nexusSource)) {
                     const nexusDmg = nexusSource.key === 'Soline_Anubis' ? result.nexusDamage.amount * 2 : result.nexusDamage.amount;
                     accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, nexusDmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
+                }
+            }
+
+            // ==========================================
+            // [2026-09-15 莉莉子] 【吸血】Lifesteal —— 逻辑层实装
+            // 语义：造成伤害的单位，为其所属方水晶回血（治疗量 = 本场战斗中它造成的总伤害）
+            //   · 攻击者造成 = 对阻挡者的伤害 + 空门直击/碾压溢出打出的水晶伤害
+            //   · 阻挡者造成 = 其反击伤害（被先攻秒杀未挥出反击时天然为 0）
+            // 覆盖范围：敌我通用；单段与连击双段共用（DoubleStrikeCombatResult extends SingleCombatResult，
+            //          两者的伤害字段均已是两击合计值，故一处即可覆盖）。
+            // 仅逻辑层：复用既有 NEXUS_HEALED 事件与 playerNexusMax/enemyNexusMax 上限，无新增视觉代码。
+            // 注：治疗量取原始伤害（不吃固若金汤水晶坚韧的 -1 减免），与「吸血=按其打出的伤害回复」语义一致。
+            // ==========================================
+            {
+                const atkSide = currentFight.owner;
+                const defSide: 'player' | 'enemy' = atkSide === 'player' ? 'enemy' : 'player';
+                const atkDealt = (result.blockerDamage || 0)
+                    + (result.nexusDamage && result.nexusDamage.target === defSide ? result.nexusDamage.amount : 0);
+                const defDealt = result.attackerDamage || 0;
+
+                const healNexus = (side: 'player' | 'enemy', amount: number) => {
+                    if (amount <= 0) return;
+                    setGame(prev => {
+                        const max = side === 'player' ? (prev.playerNexusMax ?? 20) : (prev.enemyNexusMax ?? 20);
+                        const cur = side === 'player' ? prev.playerNexus : prev.enemyNexus;
+                        const next = Math.min(max, cur + amount);
+                        if (next <= cur) return prev; // 已满或溢出 → 不写入
+                        return side === 'player' ? { ...prev, playerNexus: next } : { ...prev, enemyNexus: next };
+                    });
+                    eventBus.emit(GameEvents.NEXUS_HEALED, { target: side, amount });
+                };
+
+                if (atkDealt > 0 && result.updatedFight.attacker?.keywords?.includes('Lifesteal')) {
+                    healNexus(atkSide, atkDealt);
+                }
+                if (defDealt > 0 && result.updatedFight.blocker?.keywords?.includes('Lifesteal')) {
+                    healNexus(defSide, defDealt);
                 }
             }
 
@@ -2268,29 +2737,49 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // 更新水晶血量 & [新增] 更新统计数据
             if (result.nexusDamage || statsDelta.uKilled > 0 || statsDelta.hKilled > 0 || statsDelta.hLevel > 0) {
                 const { target, amount } = result.nexusDamage || { target: 'none', amount: 0 };
-                setGame(prev => ({
-                    ...prev,
-                    playerNexus: target === 'player' ? prev.playerNexus - amount : prev.playerNexus,
-                    enemyNexus: target === 'enemy' ? prev.enemyNexus - amount : prev.enemyNexus,
-                    nexusDamage: result.nexusDamage,
-                    // [新增] 合并统计数据
-                    stats: {
-                        ...prev.stats,
-                        nexusDamage: prev.stats.nexusDamage + statsDelta.nexus,
-                        unitsKilled: prev.stats.unitsKilled + statsDelta.uKilled,
-                        heroesKilled: prev.stats.heroesKilled + statsDelta.hKilled,
-                        heroLevelUps: prev.stats.heroLevelUps + statsDelta.hLevel
-                    }
-                }));
+                setGame(prev => {
+                    // [2026-08-30 程拍板] 固若金汤坚韧：水晶受击伤害永久 -1（先于屏障应用）
+                    const isNexusTough = target === 'player' ? !!prev.playerNexusTough : target === 'enemy' ? !!prev.enemyNexusTough : false;
+                    const toughReduced = isNexusTough ? Math.max(0, amount - 1) : amount;
+                    // [2026-08-27] 固若金汤屏障先挡伤害（屏障值=可挡伤害总量，累积）
+                    const barrier = target === 'player' ? (prev.playerNexusBarrier || 0) : target === 'enemy' ? (prev.enemyNexusBarrier || 0) : 0;
+                    const blocked = Math.min(barrier, toughReduced);
+                    return {
+                        ...prev,
+                        playerNexus: target === 'player' ? prev.playerNexus - (toughReduced - blocked) : prev.playerNexus,
+                        enemyNexus: target === 'enemy' ? prev.enemyNexus - (toughReduced - blocked) : prev.enemyNexus,
+                        playerNexusBarrier: target === 'player' ? barrier - blocked : prev.playerNexusBarrier,
+                        enemyNexusBarrier: target === 'enemy' ? barrier - blocked : prev.enemyNexusBarrier,
+                        nexusDamage: result.nexusDamage,
+                        // [新增] 合并统计数据
+                        stats: {
+                            ...prev.stats,
+                            nexusDamage: prev.stats.nexusDamage + statsDelta.nexus,
+                            unitsKilled: prev.stats.unitsKilled + statsDelta.uKilled,
+                            heroesKilled: prev.stats.heroesKilled + statsDelta.hKilled,
+                            heroLevelUps: prev.stats.heroLevelUps + statsDelta.hLevel
+                        }
+                    };
+                });
             } else if (result.nexusDamage)
             {
                 const { target, amount } = result.nexusDamage;
-                setGame(prev => ({
-                    ...prev,
-                    playerNexus: target === 'player' ? prev.playerNexus - amount : prev.playerNexus,
-                    enemyNexus: target === 'enemy' ? prev.enemyNexus - amount : prev.enemyNexus,
-                    nexusDamage: result.nexusDamage
-                }));
+                setGame(prev => {
+                    // [2026-08-30 程拍板] 固若金汤坚韧：水晶受击伤害永久 -1（先于屏障应用）
+                    const isNexusTough = target === 'player' ? !!prev.playerNexusTough : target === 'enemy' ? !!prev.enemyNexusTough : false;
+                    const toughReduced = isNexusTough ? Math.max(0, amount - 1) : amount;
+                    // [2026-08-27] 固若金汤屏障先挡伤害（屏障值=可挡伤害总量，累积）
+                    const barrier = target === 'player' ? (prev.playerNexusBarrier || 0) : target === 'enemy' ? (prev.enemyNexusBarrier || 0) : 0;
+                    const blocked = Math.min(barrier, toughReduced);
+                    return {
+                        ...prev,
+                        playerNexus: target === 'player' ? prev.playerNexus - (toughReduced - blocked) : prev.playerNexus,
+                        enemyNexus: target === 'enemy' ? prev.enemyNexus - (toughReduced - blocked) : prev.enemyNexus,
+                        playerNexusBarrier: target === 'player' ? barrier - blocked : prev.playerNexusBarrier,
+                        enemyNexusBarrier: target === 'enemy' ? barrier - blocked : prev.enemyNexusBarrier,
+                        nexusDamage: result.nexusDamage
+                    };
+                });
             }
 
             // 更新升级展示
@@ -2298,22 +2787,36 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 const leveledCard = result.levelUpUpdate;
                 const heroKey = leveledCard.key;
 
-                // 1. 记录全场已升级英雄名单
-                setGame(prev => ({
-                    ...prev,
-                    leveledChampions: prev.leveledChampions.includes(heroKey)
-                        ? prev.leveledChampions
-                        : [...prev.leveledChampions, heroKey]
-                }));
+                // [2026-09-13 莉莉子] 判定这次升级属于哪一方（用实例 id 反查），
+                // 标记按方写入 —— 升级流程已改为按方判定，此处必须与之一致。
+                const lvId = leveledCard.id;
+                const lvOnPlayer =
+                    stateRef.current.playerBench.some(c => c.id === lvId) ||
+                    stateRef.current.playerHand.some(c => c.id === lvId) ||
+                    stateRef.current.playerDeck.some(c => c.id === lvId) ||
+                    stateRef.current.combatField.some(f => (f.owner === 'player' && f.attacker.id === lvId) ||
+                                                           (f.owner === 'enemy' && f.blocker?.id === lvId));
+                const lvSide: 'player' | 'enemy' = lvOnPlayer ? 'player' : 'enemy';
+
+                // 1. 记录全场已升级英雄名单（markLeveledUp 同时维护全局 + 分阵营两套）
+                setGame(prev => {
+                    if (prev.leveledChampions.includes(heroKey) && isLeveledUpForSide(prev, lvSide, heroKey)) return prev;
+                    const next = { ...prev };
+                    markLeveledUp(next, lvSide, heroKey);
+                    return next;
+                });
 
                 // 2. [核心拔除] 彻底删除所有的硬编码 await 延时循环，改为派发“排队券”！
                 queueLevelUp(leveledCard);
 
-                // 3. 升级卡组和手牌中的同名卡
+                // [2026-09-09 莉莉子 修复] 战斗结算内的同名卡升级同样对齐 checkCardLevelUp，
+                // 不再无条件连带手牌/牌库/备战席里未达条件(如 progress=0)的同 key Lv1 卜卜
+                // （09-01 只修了 levelUpCard effect 的 upgradeFn，这里残留另一处旧连带逻辑）
                 const upgradeList = (list: CardData[]) => {
                     return list.map(c => {
-                        // 如果是该英雄且还没升级 (Level 1)
-                        if (c.key === heroKey && c.level === 1) {
+                        // 如果是该英雄、还没升级且满足升级条件
+                        if (c.key === heroKey && c.level === 1
+                            && checkCardLevelUp(c, stateRef.current.game.playerNexus, stateRef.current.game.enemyNexus)) {
                             return { ...getLeveledUpCard(c), id: c.id }; // 保持 ID，升级数据
                         }
                         return c;
@@ -2364,11 +2867,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 任何机制导致的升级，都会体现为 pendingLevelUps 队列中有号或 levelUpCard 正在播放。
         // 主程序在此必须死锁挂起，绝对不准摧毁交战区 DOM，给足 UI 部门抓取物理卡牌演出的时间！
         // ==========================================
+        // [2026-08-30 莉莉子 死锁护栏] 刹车片加超时上限，杜绝升级影片挂起导致的无限死锁
+        const levelUpQueueLen = (stateRef.current.game.pendingLevelUps || []).length;
+        const levelUpWaitLimit = Math.max(20000, levelUpQueueLen * 12000); // 单英雄20s，每多一个英雄+12s
+        let levelUpWaitMs = 0;
         while (
             stateRef.current.game.levelUpCard !== null ||
             (stateRef.current.game.pendingLevelUps && stateRef.current.game.pendingLevelUps.length > 0)
         ) {
+            if (levelUpWaitMs >= levelUpWaitLimit) {
+                console.warn(`[resolveCombatAnimation] ⏱️ 升级等待超时(${levelUpWaitLimit}ms)，强制清空升级队列放行，防止死锁`);
+                setGame(prev => ({ ...prev, levelUpCard: null, pendingLevelUps: [] }));
+                break;
+            }
             await wait(200);
+            levelUpWaitMs += 200;
         }
 
         // ✨ [2026-07-16] 等待 BUFF 特效动画播放完毕再归位
@@ -2413,7 +2926,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             // [关键修复] 严防死守：普通死亡和瞬息死亡都绝对不能进入幸存者名单！
             if (f.attacker.animState !== 'dying' && f.attacker.animState !== 'ephemeral_dying') {
-                let unit = { ...f.attacker, animState: 'idle' as const };
+                let unit: CardData = { ...f.attacker, animState: 'idle' as const }; // [2026-08-27] 标注类型防窄推断
                 unit = processCantAttack(unit as any, true); // [修复] 恢复 CantAttack
                 if (f.owner === 'player') survivorsP.push(unit as any);
                 else survivorsE.push(unit as any);
@@ -2423,7 +2936,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             if (f.blocker) {
                 if (f.blocker.animState !== 'dying' && f.blocker.animState !== 'ephemeral_dying') {
-                    let unit = { ...f.blocker, animState: 'idle' as const };
+                    let unit: CardData = { ...f.blocker, animState: 'idle' as const }; // [2026-08-27] 标注类型防窄推断
                     unit = processCantAttack(unit as any, true); // [修复] 恢复 CantAttack
                     if (f.owner === 'player') survivorsE.push(unit as any);
                     else survivorsP.push(unit as any);
@@ -2459,7 +2972,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         const params = def.params as any;
                         const power = params.power || 0;
                         const health = params.health || 0;
-                        const keywords: string[] = params.keywords || [];
+                        const keywords = params.keywords || []; // [2026-08-27] 去掉 string[] 标注，避免合并后类型与 Keyword[] 冲突
 
                         // [2026-07-16] 首次进攻限制：银臂的战后buff仅首次进攻触发
                         if (params.firstAttackOnly && unit.customProgress !== 1) {
@@ -2505,12 +3018,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const attackerOwner = currentFights.length > 0 ? currentFights[0].owner : null;
 
             const nextAttackToken = { ...prev.attackToken };
+            // [2026-08-19 莉莉子 BUG修复] 飞剑额外攻击标记：不消耗进攻权 → 回合不翻转
+            let flyingSwordAttack = false;
             if (attackerOwner) {
                 // [2026-07-27 飞剑] 飞剑是额外攻击，不消耗进攻标识
                 const allFlyingSwords = currentFights.every(f =>
                     f.attacker?.key === 'Acacia_Flying_Sword' || f.attacker?.key === 'Acacia_Great_Sword'
                 );
                 if (allFlyingSwords) {
+                    flyingSwordAttack = true; // [修复] 飞剑是额外攻击：保留进攻权 → 攻击方继续行动
                     // 飞剑攻击：保留进攻标识不变
                     console.log(`[飞剑] 飞剑攻击结束，保留进攻标识 ${nextAttackToken[attackerOwner]}`);
                 } else {
@@ -2534,7 +3050,18 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 // [关键] 只要这里将 phase 切回 'main'
                 // 外面挂载的智能裁判就会瞬间苏醒并介入吹哨！
                 phase: 'main',
-                turnOwner: prev.attackToken.player ? 'enemy' : 'player',
+                // [2026-09-03 莉莉子 双剑兼容修复] 归位行动权仲裁不再用"消耗前玩家是否持剑"猜"谁刚进攻完"。
+                // 旧单剑假设在敌我双持 rally 剑、且逆序进攻（敌方先攻、玩家 normal 剑未耗）时，
+                // 会把行动权误判给"剑刚耗空的敌方"，导致敌方连动、玩家持剑被悬空。
+                // 新规则：仍持剑方优先行动（scout normal→rally 连攻 / 战斗 rally 回授 / 飞剑不耗剑延续），
+                // 否则常规让渡给进攻方对手（含双方均无剑情形）。
+                turnOwner: (() => {
+                    if (!attackerOwner) return prev.attackToken.player ? 'enemy' : 'player'; // 空场兜底沿用旧式
+                    const otherSide = attackerOwner === 'player' ? 'enemy' : 'player';
+                    if (flyingSwordAttack) return attackerOwner === 'player' ? 'player' : 'enemy'; // 飞剑不耗剑→攻击方继续
+                    if (nextAttackToken[attackerOwner]) return attackerOwner === 'player' ? 'player' : 'enemy'; // 攻击方仍持剑→连攻
+                    return otherSide; // 对方仍持剑→对方；双方无剑→常规让渡进攻方对手
+                })(),
                 attackToken: nextAttackToken,
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now()
@@ -2551,6 +3078,30 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         setPlayerBench(prev => [...prev, ...buffedSurvivorsP]);
         setEnemyBench(prev => [...prev, ...buffedSurvivorsE]);
         setCombatField([]);
+    };
+
+    // ==========================================
+    // [2026-09-03 莉莉子 死锁逃生] resolveCombatAnimation 外层守卫
+    // 内部 run 一旦中途异常（for 循环内大量 processEffect/resolveSingleCombat 等同步调用，
+    // 原本无任何异常保护），phase 会永久停在 animating、交战区单位永不归位 → 对局死锁。
+    // 外层包 try/catch/finally：异常时执行应急归位 + phase 兜底回 main。
+    // 正常路径 run 尾部已把 phase 写回 main 并 setCombatField([])，finally 读到非 animating 即空转。
+    // ==========================================
+    const resolveCombatAnimation = async () => {
+        bumpAnimProgress();
+        setGame(prev => ({ ...prev, phase: 'animating' as const }));
+        try {
+            await runResolveCombatAnimation();
+        } catch (err) {
+            console.error('[resolveCombatAnimation] 💥 异常，执行应急归位', err);
+            emergencyUnstickCombat();
+        } finally {
+            bumpAnimProgress();
+            if (stateRef.current.game.phase === 'animating') {
+                console.warn('[resolveCombatAnimation] ⚠️ 尾部仍 animating，应急归位兜底');
+                emergencyUnstickCombat();
+            }
+        }
     };
 
 
@@ -2784,7 +3335,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             // 门：直送交战区
             setCombatField(prev => [...prev, {
-                attacker: pulsedCard,
+                attacker: pulsedCard as CardData,
                 blocker: null,
                 owner: 'player',
             }]);
@@ -2794,7 +3345,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 ...prev,
                 phase: 'attack_declare' as const,
                 turnOwner: 'player' as const,
-                activeCard: undefined,
+                activeCard: null,
                 attackToken: { ...prev.attackToken, player: 'normal' as const },
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now(),
@@ -2848,7 +3399,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             // 直送交战区（带预选挑战目标）
             setCombatField(prev => [...prev, {
-                attacker: pulsedCard,
+                attacker: pulsedCard as CardData,
                 blocker: chosenBlocker,
                 owner: 'enemy',
             }]);
@@ -2857,7 +3408,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 ...prev,
                 phase: 'block_declare' as const,
                 turnOwner: 'player' as const,
-                activeCard: undefined,
+                activeCard: null,
                 attackToken: { ...prev.attackToken, enemy: 'normal' as const },
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now(),
@@ -2945,37 +3496,41 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 if (owner === 'player') tempPlayerBench.push(cardWithAbility);
                 else tempEnemyBench.push(cardWithAbility);
 
-                // [2026-08-11 莉莉子] 迷宫强化 on_summon：召唤单位时被动生效
-                if (owner === 'player') {
-                    getRogueDefs(tempGame.rogueEnhancements, 'on_summon').forEach(def => {
-                        const be = def.battleEffect!;
-                        if (be.effectClass === 'BUFF') {
-                            // 机不可失：本回合给刚上场单位 +1/+1
-                            const u = tempPlayerBench[tempPlayerBench.length - 1];
-                            if (u) {
-                                tempPlayerBench[tempPlayerBench.length - 1] = {
-                                    ...u,
-                                    roundBuffs: {
-                                        power: (u.roundBuffs?.power || 0) + ((be.params?.power as number) ?? 1),
-                                        health: (u.roundBuffs?.health || 0) + ((be.params?.health as number) ?? 1),
-                                    },
-                                };
-                            }
-                        } else if (be.effectClass === 'CLONE_AND_SUMMON') {
-                            // 暗影双生：每回合首次打出单位 → 召唤临时复制（Ephemeral）
-                            if (!tempGame.rogueFirstSummonDone && tempPlayerBench.length < 6) {
-                                tempPlayerBench.push({
-                                    ...cardWithAbility,
-                                    id: Math.random().toString(36).substr(2, 9),
-                                    keywords: [...(cardWithAbility.keywords || []), 'Ephemeral'],
-                                    animState: 'summoning' as const,
-                                });
-                                tempGame = { ...tempGame, rogueFirstSummonDone: true };
-                                eventBus.emit(GameEvents.SFX_SUMMON);
-                            }
-                        }
-                        flashRogueBuff(def);
-                    });
+                // [2026-08-11 莉莉子] 迷宫强化 打出单位三时机（on_summon 机不可失/暗影双生、on_play_unit 军势鼓舞/传承武备/锋锐补给/万夫莫敌、on_first_play_unit 先锋之锐）
+                // [2026-08-19 莉莉子] 预存"本回合是否首个打出单位"（先锋之锐用，避免被暗影双生改写标记后失效）
+                const isFirstUnitPlayedThisRound = !tempGame.rogueFirstSummonDone;
+                // [2026-09-09 莉莉子 重构] 收编进统一串行触发引擎：同一份工作快照（tempXxx）上按 owner 串行跑三个 trigger。
+                // bench/field 直接引用 temp 数组（尾部统一 setX 提交）；hand/deck 为副本，脏即单独 setX；
+                // 暗影双生改写 rogueFirstSummonDone → 收尾把 playCtx.game 同步回 tempGame。
+                {
+                    const enhList = owner === 'player' ? tempGame.rogueEnhancements : tempGame.enemyEnhancements;
+                    const playCtx: RogueTriggerCtx = {
+                        game: tempGame,
+                        playerBench: tempPlayerBench,
+                        enemyBench: tempEnemyBench,
+                        combatField: tempCombatField,
+                        playerHand: [...stateRef.current.playerHand],
+                        enemyHand: [...stateRef.current.enemyHand],
+                        playerDeck: [...stateRef.current.playerDeck],
+                        enemyDeck: [...stateRef.current.enemyDeck],
+                        owner,
+                        trigger: 'on_summon',
+                        createFullCard,
+                        info: { playedCard: cardWithAbility, isFirstUnitPlayedThisRound },
+                        dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+                    };
+                    runRogueTrigger(playCtx, enhList, 'on_summon');
+                    runRogueTrigger(playCtx, enhList, 'on_play_unit');
+                    if (isFirstUnitPlayedThisRound) runRogueTrigger(playCtx, enhList, 'on_first_play_unit');
+                    // 同步回局部变量（CLONE/RANDOM 等已原地改写 temp 数组元素）
+                    tempPlayerBench = playCtx.playerBench;
+                    tempEnemyBench = playCtx.enemyBench;
+                    tempCombatField = playCtx.combatField;
+                    tempGame = playCtx.game;
+                    if (playCtx.dirty.hand.has('player')) setPlayerHand(playCtx.playerHand);
+                    if (playCtx.dirty.hand.has('enemy')) setEnemyHand(playCtx.enemyHand);
+                    if (playCtx.dirty.deck.has('player')) setPlayerDeck(playCtx.playerDeck);
+                    if (playCtx.dirty.deck.has('enemy')) setEnemyDeckState(playCtx.enemyDeck);
                 }
 
                 // 2. 扫描并触发入场特效 (ON_PLAY)
@@ -3027,7 +3582,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                             res.events.forEach(evt => {
                                 if (evt.type === 'sfx_draw') {
                                     const drawnCard = evt.payload as CardData;
-                                    const animId = `onplay-draw-${drawnCard.id}-${Date.now()}`;
+                                    const animId = nextAnimId('onplay-draw', drawnCard.id);
                                     setTimeout(() => {
                                         eventBus.emit(GameEvents.DRAW_START, {
                                             animId, card: drawnCard, owner,
@@ -3039,7 +3594,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                                 if (evt.type === 'sfx_generate') {
                                     const genCard = evt.payload as CardData;
                                     setPlayerHand(prev => prev.filter(c => c.id !== genCard.id));
-                                    const animId = `onplay-gen-${genCard.id}-${Date.now()}`;
+                                    const animId = nextAnimId('onplay-gen', genCard.id);
                                     const delay = onplayAnimIdx * 1200;
                                     onplayAnimIdx++;
                                     setTimeout(() => {
@@ -3154,7 +3709,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         }
                         // 播放生成动画：中央展示 → 飞入手牌
                         echoResult.echoedCards.forEach(echoCard => {
-                            const animId = `echo-${echoCard.id}-${Date.now()}`;
+                            const animId = nextAnimId('echo', echoCard.id);
                             eventBus.emit(GameEvents.DRAW_START, {
                                 animId, card: echoCard, owner,
                                 skipHandAdd: true,
@@ -3172,10 +3727,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 setPlayerBench(tempPlayerBench);
                 setEnemyBench(tempEnemyBench);
                 setCombatField(tempCombatField); // [重要修复] 将交战区快照一并提交给底层！
+                // [2026-08-24 莉莉子 飞剑竞态根治] ON_PLAY 战吼召唤飞剑（圣树露米）→ 同步进入格挡阶段，
+                // 不依赖异步守卫 effect 切换。无飞剑时保持原 turnOwner 逻辑。
+                const onPlaySwordOwner = getFlyingSwordOwner(tempCombatField);
+                const onPlayTurnOwner = onPlaySwordOwner
+                    ? getDefensiveSide(onPlaySwordOwner)
+                    : (owner === 'player' ? 'enemy' : 'player');
                 setGame({
                     ...tempGame,
-                    phase: 'main',
-                    turnOwner: owner === 'player' ? 'enemy' : 'player',
+                    phase: onPlaySwordOwner ? ('block_declare' as const) : 'main',
+                    turnOwner: onPlayTurnOwner,
                     consecutivePasses: 0,
                     lastActionTimestamp: Date.now()
                 });
@@ -3190,6 +3751,32 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const passTurn = () => {
         const g = stateRef.current.game; // [2026-07-16 修复] 用 stateRef 避免闭包陷阱
         console.log(`[passTurn] 被调用 — spellStack=${g.spellStack.length} consecutivePasses=${g.consecutivePasses} phase=${g.phase} turnOwner=${g.turnOwner}`);
+        // [2026-08-24 莉莉子 飞剑竞态根治] 交战区仍有飞剑时，passTurn 绝不推进回合/翻转优先权/结束回合。
+        // 飞剑是"额外攻击"，其生命周期（召唤→格挡→打击→归位）内回合结束检测不得介入。
+        const swordField = stateRef.current.combatField;
+        const hasFlyingSword = combatHasFlyingSword(swordField);
+        if (hasFlyingSword) {
+            if (g.phase === 'block_declare') {
+                // 格挡阶段：防守方应走 confirmBlock，passTurn 在此无效
+                console.log(`[passTurn][飞剑守卫] 交战区有飞剑且已在格挡阶段，passTurn 无效`);
+                return;
+            }
+            if (g.phase === 'main' || g.phase === 'animating') {
+                // 飞剑刚入场、尚未进入格挡（守卫 effect 未及时介入）：强行拉回格挡阶段
+                const swordOwner = getFlyingSwordOwner(swordField);
+                setGame(prev => ({
+                    ...prev,
+                    phase: 'block_declare' as const,
+                    turnOwner: getDefensiveSide(swordOwner),
+                    consecutivePasses: 0,
+                    lastActionTimestamp: Date.now(),
+                }));
+                setMessage(swordOwner === 'player' ? '我方飞剑来袭，请敌方格挡' : '敌方飞剑来袭，请分配格挡！');
+                console.log(`[passTurn][飞剑守卫] 交战区有飞剑且 phase=${g.phase} → 强制进入格挡阶段`);
+                return;
+            }
+            // phase === 'react_to_block'：格挡已确认、飞剑汇入战斗，放行走正常分支B → resolveCombatAnimation
+        }
         if (g.spellStack.length > 0 && g.consecutivePasses === 0) {
              console.log(`[passTurn] 📚 分支A：堆叠非空，resolveStack`);
              setGame(prev => ({ ...prev, consecutivePasses: 1 }));
@@ -3214,9 +3801,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             } else if (g.phase === 'block_declare') {
                 // [安全兜底] 即使发生了异常导致格挡阶段连续让过，强行确认防线以推动流程，绝不吞噬战斗
                 confirmBlock();
-            } else {
+            } else if (g.phase === 'main') {
                 // [核心修复] 如果在常规主阶段双方连续让过，不直接进入下回合，而是先执行回合结束清算序列（幻象清理等）
+                // [2026-08-24 莉莉子 飞剑竞态根治] 收紧为 phase 白名单：只有 main 才允许结束回合
                 executeRoundEndSequence();
+            } else {
+                // [2026-08-24 莉莉子 飞剑竞态根治] animating/attack_declare 等残留阶段不得触发回合结束
+                console.warn(`[passTurn] ⚠️ 跳过残留阶段 ${g.phase} 的回合结束判定`);
             }
         }
         else {
@@ -3321,8 +3912,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
             // [新增] Elusive (隐秘) 判定
             // 规则：如果攻击者有隐秘，阻挡者必须也有隐秘
+            // [2026-08-20 莉莉子] 不再静默拒绝：发 BLOCK_REJECTED 让表现层演出"冲上去→被吓退"+播报
+            // [2026-08-26 莉莉子 BUG修复] 拒绝分支必须同步清除 selectedBlockerId——此前残留导致单挑施法选目标时点战斗区卡仍触发格挡
             if (attacker.keywords.includes('Elusive') && !blocker.keywords.includes('Elusive')) {
-                setMessage("只有【隐秘】单位能阻挡【隐秘】单位！");
+                setMessage("必须用【隐秘】单位阻挡【隐秘】单位！");
+                eventBus.emit(GameEvents.BLOCK_REJECTED, { blocker, fightIndex, reason: 'elusive', attackerId: attacker.id });
+                setGame(prev => ({ ...prev, selectedBlockerId: null }));
                 return;
             }
 
@@ -3330,8 +3925,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             if (attacker.keywords.includes('Fearsome')) {
                 const blockerPower = (blocker.power || 0) + (blocker.buffs?.power || 0) + (blocker.roundBuffs?.power || 0);
                 if (blockerPower < 3) {
-                    setMessage("攻击力不足 3 的单位无法阻挡【凶恶】单位！");
-                    eventBus.emit('FEARSOME_REJECT', { unitId: attacker.id });
+                    setMessage("必须用攻击力大于3的单位阻挡【凶恶】单位！");
+                    eventBus.emit(GameEvents.BLOCK_REJECTED, { blocker, fightIndex, reason: 'fearsome', attackerId: attacker.id });
+                    setGame(prev => ({ ...prev, selectedBlockerId: null }));
                     return;
                 }
             }
@@ -3492,7 +4088,10 @@ setPlayerBench(prev => [...prev, blockerCard]);
 
     useEffect(() => {
         // [修改] 沙盒模式下，阻止自动调用 startRound (因为我们在上面的 hook 里已经手动设好第一回合状态了)
+        // [2026-09-05 莉莉子 修复] initializedRef 此前从未置 true，守卫形同虚设 → StrictMode(dev) 双挂载 effect 双跑
+        // 导致 startRound 在换牌期重复执行、round 被推过 1 → 换牌结束时 announcer 开局抽卡 drawCards(4) 的 round===1 条件不满足 → 卡死。
         if (!initializedRef.current && !isSandbox) {
+            initializedRef.current = true; // 先置位，StrictMode 双跑第二次 effect 直接跳过
             startRound(true); // [2026-08-15] 开局（换牌前）跳过 round_start 强化，第一回合暗箭等由换牌后 triggerFirstRoundRogueEnhance 触发
 
             // ★ 如果指定了第一回合先手方，覆盖默认的 attackToken
@@ -3934,6 +4533,87 @@ setPlayerBench(prev => [...prev, blockerCard]);
         }
     }, []);
 
+    // ==========================================
+    // [2026-09-11 莉莉子 死锁逃生·第三道] 交战区不变量守卫
+    // 设计铁律：main（静默阶段）时交战区必须为空——单位只在一脚打击的生命周期内进交战区。
+    // 但既有三道保险各有盲区，合起来漏掉了"phase 非 animating 却残留单位"这一格：
+    //   · try/catch/finally 逃生 → 只管 animating 异步链抛异常的场合
+    //   · animating 看门狗（下方）→ 只在 phase==='animating' 时工作，main 直接 return
+    //   · 回合末归位安全网 → 要等这一回合真的结束才跑得到；而 passTurn 的白名单又规定
+    //     "只有 main 才允许结束回合"（见 passTurn 残留阶段 warn 分支）→ 两边互相等，
+    //     单位就杵在交战区里，玩家看到"非进攻/格挡回合中单位卡死在战场上"。
+    // 本守卫专盯"phase=main 但交战区有人"这种自相矛盾态，稳定超时后把幸存者领回备战席。
+    //
+    // 三重防误伤：
+    //   1) 只认 main —— attack_declare/block_declare/react_to_block 合法持人（玩家正在点选/格挡），
+    //      一律不碰；这几个阶段即便异常也由玩家"取消进攻/确认进攻"和自动推进引擎兜住，不是死锁。
+    //   2) 排除飞剑 —— 飞剑有专属守卫 effect 负责拉回 block_declare（见文件上方飞剑守卫），
+    //      两处若同时动手会抢节奏，故此处让位。
+    //   3) 稳定窗口 —— 先挂起再复核：正常路径 setGame(phase:'main') 与 setCombatField([])
+    //      是同一批次提交的，绝不会被这个窗口误判；只有"矛盾态真的持续"才动手。
+    // 应急归位本身幂等（已在备战席的按 id 跳过），与其它三道保险可共存、无重复入席风险。
+    // ==========================================
+    const COMBAT_ORPHAN_STABLE_MS = 1200;
+    useEffect(() => {
+        // [2026-09-13 莉莉子 L2-A] 沙盒默认不干预；打开「守卫照跑」后照常执行，用于贴近真机复现
+        if (isSandbox && !sandboxGuardEnabled) return;
+        if (game.gameResult) return;                    // 对局已结束
+        if (game.phase !== 'main') return;              // 战斗/结算阶段合法持人
+        if (combatField.length === 0) return;
+        if (combatHasFlyingSword(combatField)) return;  // 飞剑让位给专属守卫
+        const timer = setTimeout(() => {
+            const ref = stateRef.current;
+            // 复核实时状态：期间若已回到战斗阶段 / 交战区已清空 / 飞剑现身 / 对局结束，都视作正常，放行
+            if (ref.game.gameResult || ref.game.phase !== 'main') return;
+            if (ref.combatField.length === 0) return;
+            if (combatHasFlyingSword(ref.combatField)) return;
+            console.warn('[CombatOrphanGuard] ⚠️ main 阶段交战区仍有单位滞留，执行应急归位', {
+                round: ref.game.round, turnOwner: ref.game.turnOwner, consecutivePasses: ref.game.consecutivePasses,
+                combatFieldLen: ref.combatField.length,
+                units: ref.combatField.map((f: any) => `${f?.owner === 'player' ? 'P' : 'E'}:${f?.attacker?.key}${f?.blocker ? ' vs ' + f.blocker.key : ''}`),
+            });
+            recoverCombatSurvivors(ref.combatField, ref.playerBench, ref.enemyBench, {
+                setPlayerBench, setEnemyBench, setCombatField, setGame,
+            });
+        }, COMBAT_ORPHAN_STABLE_MS);
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [game.phase, game.gameResult, combatField.length, isSandbox, sandboxGuardEnabled]);
+
+    // ==========================================
+    // [2026-09-03 莉莉子 死锁逃生] animating 停滞看门狗
+    // phase 停在 animating 且超过 ANIM_STALL_MS 无心跳推进（正常长演出由 bumpAnimProgress 打点、
+    // 升级影片/队列走下方豁免）→ 强制恢复 main + 交战区应急归位，防对局永久死锁。
+    // 与各 try/finally 逃生互补：两处恢复都带 phase==='animating' 门 + 幂等，
+    // 先触发者把 phase 置 main 后，另一侧读到非 animating 即空转。
+    // ==========================================
+    useEffect(() => {
+        if (game.gameResult) return;
+        if (game.levelUpCard || (game.pendingLevelUps && game.pendingLevelUps.length > 0)) return; // 豁免升级影片/多英雄排队
+        if (game.phase !== 'animating') return;
+        const iv = setInterval(() => {
+            if (Date.now() - animGuard.lastBump < ANIM_STALL_MS) return; // 仍在推进
+            const g = stateRef.current.game;
+            if (g.gameResult || g.phase !== 'animating') return;
+            if (g.levelUpCard || (g.pendingLevelUps && g.pendingLevelUps.length > 0)) return;
+            console.warn('[AnimWatchdog] ⚠️ animating 停滞超时，强制恢复 main', {
+                phase: g.phase, round: g.round, turnOwner: g.turnOwner,
+                spellStack: g.spellStack.map((s: any) => s.card?.key),
+                combatFieldLen: stateRef.current.combatField.length,
+                attackToken: g.attackToken,
+            });
+            recoverCombatSurvivors(stateRef.current.combatField, stateRef.current.playerBench, stateRef.current.enemyBench, {
+                setPlayerBench, setEnemyBench, setCombatField, setGame,
+            });
+            setGame(prev => prev.phase === 'animating'
+                ? { ...prev, phase: 'main' as const, spellStack: [], spellCasting: null, activeCard: null,
+                    consecutivePasses: 0, lastActionTimestamp: Date.now() }
+                : prev);
+        }, 5000);
+        return () => clearInterval(iv);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [game.phase, game.gameResult, game.levelUpCard, game.pendingLevelUps]);
+
     return {
         onHandAnimComplete,
         isAutoAdvancing, // [新增] 暴露出托管状态，供前台按钮实现"微反馈"补偿
@@ -3946,7 +4626,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
         winningHeroKeys,
         message, setMessage,
         playerDeck,
+        setPlayerDeck,     // [2026-09-13 P0] 沙盒造场：向玩家牌库投放卡牌
         enemyDeckState, // ✅ 敌方牌库的正确变量名
+        setEnemyDeckState, // [2026-09-13 P0] 沙盒造场：向敌方牌库投放卡牌
         playerInitialDeckInfo,
         enemyInitialDeckInfo,
 
@@ -3991,6 +4673,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
             confirmReplacePlay, // [2026-07-20 替换打出] 确认替换
             queueLevelUp,    // [新增] 暴露给战斗推演或事件监听，用于让英雄拿号排队
             popLevelUp,       // [新增] 暴露给 UI 层，用于在视频播放完毕后请英雄离场
+            // [2026-09-13 莉莉子 L2-A] 沙盒守卫开关：打开后沙盒里的真机守卫照常执行
+            setSandboxGuard: setSandboxGuardEnabled,
+            sandboxGuardEnabled,
         }
     };
 };

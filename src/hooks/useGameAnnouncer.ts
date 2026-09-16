@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { GameState } from '../types';
 import type { AnnouncementData } from '../components/GameAnnouncement';
 
@@ -56,8 +56,13 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase, disableMull
         // 如果双方都没有进攻标识，不显示
         if (!game.attackToken.player && !game.attackToken.enemy) return;
 
-        // 优先显示玩家的进攻权
-        const isMyTurn = !!game.attackToken.player;
+        // [2026-09-03 莉莉子 双剑兼容] 单剑报持剑方；双剑（双方同时持剑）报 turnOwner 方（谁将行动），
+        // 避免敌我双持 rally 剑时恒报"你的进攻回合"误导。
+        const owners: ('player' | 'enemy')[] = [];
+        if (game.attackToken.player) owners.push('player');
+        if (game.attackToken.enemy) owners.push('enemy');
+        const speaker = owners.length === 1 ? owners[0] : game.turnOwner;
+        const isMyTurn = speaker === 'player';
         const text = isMyTurn ? "你的进攻回合" : "对手进攻回合";
         const sub = isMyTurn ? "YOUR ATTACK" : "ENEMY ATTACK";
 
@@ -201,6 +206,19 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase, disableMull
 
 
 
-    return announcement;
+    // [2026-08-20 莉莉子] 公开播报接口：供外部（格挡拒绝等）主动触发中央大字播报。
+    // 用 ref 桥接 setMsg，保证 announce 引用稳定，避免监听组件反复重订阅。
+    const setMsgRef = useRef(setMsg);
+    setMsgRef.current = setMsg;
+    const announce = useCallback((
+        text: string,
+        sub?: string,
+        type: AnnouncementData['type'] = 'phase_hint',
+        duration: number = 2000,
+    ) => {
+        setMsgRef.current(text, sub ?? '', type, duration);
+    }, []);
+
+    return { announcement, announce };
 
 };

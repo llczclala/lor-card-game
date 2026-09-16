@@ -1,22 +1,22 @@
 // 引入 BGM 文件
-import titleBgm from '../music/bgm/title_bgm.mp3';
-import defaultBgm from '../music/bgm/defult_bgm.mp3'; // 注意文件名拼写 defult
-import battle1 from '../music/bgm/battle_bgm_1.mp3';
-import battle2 from '../music/bgm/battle_bgm_2.mp3';
-import battle3 from '../music/bgm/battle_bgm_3.mp3';
-import victoryBgm from '../music/bgm/win_bgm.mp3';
-import defeatBgm from '../music/bgm/defeat_bgm.mp3';
-import gachaBgm from '../music/bgm/gacha_bgm.mp3';
-import deckBuilderBgm from '../music/bgm/DeckBuilder_bgm.mp3';
+import titleBgm from '../music/bgm/title_bgm.ogg';
+import defaultBgm from '../music/bgm/defult_bgm.ogg'; // 注意文件名拼写 defult
+import battle1 from '../music/bgm/battle_bgm_1.ogg';
+import battle2 from '../music/bgm/battle_bgm_2.ogg';
+import battle3 from '../music/bgm/battle_bgm_3.ogg';
+import victoryBgm from '../music/bgm/win_bgm.ogg';
+import defeatBgm from '../music/bgm/defeat_bgm.ogg';
+import gachaBgm from '../music/bgm/gacha_bgm.ogg';
+import deckBuilderBgm from '../music/bgm/DeckBuilder_bgm.ogg';
 
 // [新增] 导入大厅专属背景音乐
-import hall_bgm_1 from '../music/bgm/hall_bgm/永恒之约.mp3';
-import hall_bgm_2 from '../music/bgm/hall_bgm/轻触慢挑.mp3';
-import hall_bgm_3 from '../music/bgm/hall_bgm/并蒂良缘.mp3';
-import hall_bgm_4 from '../music/bgm/hall_bgm/秘林徜徉.mp3';
-import hall_bgm_5 from '../music/bgm/hall_bgm/爱语恋歌.mp3';
-import hall_bgm_6 from '../music/bgm/hall_bgm/水色情愫.mp3';
-import hall_bgm_7 from '../music/bgm/hall_bgm/与你交织的命运线.mp3';
+import hall_bgm_1 from '../music/bgm/hall_bgm/永恒之约.ogg';
+import hall_bgm_2 from '../music/bgm/hall_bgm/轻触慢挑.ogg';
+import hall_bgm_3 from '../music/bgm/hall_bgm/并蒂良缘.ogg';
+import hall_bgm_4 from '../music/bgm/hall_bgm/秘林徜徉.ogg';
+import hall_bgm_5 from '../music/bgm/hall_bgm/爱语恋歌.ogg';
+import hall_bgm_6 from '../music/bgm/hall_bgm/水色情愫.ogg';
+import hall_bgm_7 from '../music/bgm/hall_bgm/与你交织的命运线.ogg';
 
 // 导出音频资源映射表
 export const AUDIO_ASSETS = {

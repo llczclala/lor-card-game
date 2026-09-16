@@ -32,6 +32,18 @@ export interface EnemyArchetype {
     // AI 性格倾向 (未来可用于微调 AI 权重)
     aiPersonality: 'aggressive' | 'control' | 'balanced';
 
+    // [2026-08-17 莉莉子] 敌方卡背索引（开发者工具「敌方卡组编辑器」可配置）
+    // 未配置(undefined) → 对局中敌方使用默认卡背(0)；配置后敌我卡背分离
+    cardBackIndex?: number;
+
+    // [2026-08-29 程拍板] 地图敌人头像（固定卡 key，编辑器「敌方头像」可配）
+    // 未配置(undefined) → 从流派池随机抽代表卡当头像；配置后肉鸽地图/节点预览固定显示该卡
+    avatarKey?: string;
+
+    // [2026-08-29 程拍板] 战斗加载界面卡面（固定卡 key，编辑器「加载界面卡面」可配）
+    // 未配置(undefined) → 用敌人英雄/核心卡；配置后战斗加载界面固定显示该卡面（修碎图）
+    loadingCardKey?: string;
+
     // [已废弃] 教程模式已不再通过 archetype 关联关卡，改用 tutorialStages.ts 直接指定牌组
     // tutorialStageId?: string;  // 2026-06-30: 移除
 }
@@ -46,20 +58,26 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: ['effect_overwhelm_aura'],
-        rogueBuffs: ['ebuff_vanguard', 'ebuff_berserk', 'ebuff_phaseshield'], // [2026-08-11 测试数据] 敌方迷宫强化库（common/rare/epic）
+        rogueBuffs: [],
         aiPersonality: 'aggressive',
+        cardBackIndex: 4, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'fenny', // [2026-08-29] 地图头像
+        loadingCardKey: 'fenny', // [2026-08-29] 加载卡面
     },
     'lyfe_blitz': {
         id: 'lyfe_blitz',
         name: '速战速决',
         champion: 'lyfe',
-        description: '以里芙为核心，利用低费单位铺场和快速攻击特性，在前期建立优势。',
+        description: '以里芙为核心，利用低费单位铺场和先攻特性，在前期建立优势。',
         coreCards: [{ key: 'lyfe', count: 6 }, { key: 'prayer', count: 3 }, { key: 'focus', count: 3 }, { key: 'single_combat', count: 3 }, { key: 'lyfe_support', count: 3 }, { key: 'Ulster_Squad_Maeve', count: 2 }, { key: 'Ulster_Squad_Koni', count: 3 }, { key: 'Ulster_Squad_Flamme', count: 2 }, { key: 'Messenger_Squad_WALL_E', count: 2 }, { key: 'Messenger_Squad_Ah_Hua', count: 2 }, { key: 'Messenger_Squad_Gena', count: 1 }, { key: 'Bridget_Squad_Chinchilla', count: 2 }, { key: 'Green_Spirit_Squad_Grace', count: 2 }, { key: 'The_Forger_Squad_Leisia', count: 2 }, { key: 'The_Forger_Squad_Tatiana', count: 2 }, { key: 'The_Forger_Squad_White_Hunt', count: 2 }],
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: ['effect_quick_attack_aura'],
-        rogueBuffs: ['ebuff_armor', 'ebuff_regen', 'ebuff_wrath'], // [2026-08-11 测试数据] 敌方迷宫强化库（common/rare/epic）
+        rogueBuffs: [],
         aiPersonality: 'control',
+        cardBackIndex: 5, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'lyfe', // [2026-08-29] 地图头像
+        loadingCardKey: 'lyfe', // [2026-08-29] 加载卡面
     },
     'new_archetype_1780988111375': {
         id: 'new_archetype_1780988111375',
@@ -70,8 +88,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
-        rogueBuffs: ['ebuff_vanguard', 'ebuff_berserk', 'ebuff_phaseshield', 'ebuff_wrath', 'ebuff_immortal'], // [2026-08-11 测试数据] 敌方迷宫强化库（全档至 legendary）
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 6, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'pupu_specular_soul', // [2026-08-29] 地图头像
+        loadingCardKey: 'pupu_specular_soul', // [2026-08-29] 加载卡面
     },
     'new_archetype_1781936210296': {
         id: 'new_archetype_1781936210296',
@@ -82,18 +103,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'aggressive',
-    },
-    'new_archetype_1786176839001': {
-        id: 'new_archetype_1786176839001',
-        name: '鬼影森森',
-        champion: '',
-        description: '流派描述...',
-        coreCards: [{ key: 'ghostly_shadows', count: 40 }],
-        exactDeck: true,
-        preferredPool: [],
-        apocalypseTags: [],
-        aiPersonality: 'aggressive',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'destruction', // [2026-08-29] 地图头像
+        loadingCardKey: 'destruction', // [2026-08-29] 加载卡面
     },
     'new_archetype_1781936294028': {
         id: 'new_archetype_1781936294028',
@@ -104,7 +118,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'ghostly_shadows', // [2026-08-29] 地图头像
+        loadingCardKey: 'titan_mutant', // [2026-08-29] 加载卡面
     },
     'new_archetype_1782607204289': {
         id: 'new_archetype_1782607204289',
@@ -115,7 +133,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Ulster_Squad_Koni', // [2026-08-29] 地图头像
+        loadingCardKey: 'Ulster_Squad_Koni', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818399441': {
         id: 'new_archetype_1783818399441',
@@ -126,7 +148,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Ghost_Squad_Antina', // [2026-08-29] 地图头像
+        loadingCardKey: 'Ghost_Squad_Antina', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818482191': {
         id: 'new_archetype_1783818482191',
@@ -137,7 +163,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Green_Spirit_Squad_Glanz', // [2026-08-29] 地图头像
+        loadingCardKey: 'Green_Spirit_Squad_Glanz', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818542422': {
         id: 'new_archetype_1783818542422',
@@ -148,7 +178,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 16, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'mauxir_lotus_drive', // [2026-08-29] 地图头像
+        loadingCardKey: 'mauxir_lotus_drive', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818651127': {
         id: 'new_archetype_1783818651127',
@@ -159,7 +193,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Typhoon_Squad_613', // [2026-08-29] 地图头像
+        loadingCardKey: 'Typhoon_Squad_613', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818709395': {
         id: 'new_archetype_1783818709395',
@@ -170,7 +208,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Spirit_Squad_Bonnie', // [2026-08-29] 地图头像
+        loadingCardKey: 'Spirit_Squad_Bonnie', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818769594': {
         id: 'new_archetype_1783818769594',
@@ -181,7 +223,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Poet_Squad_Kelo', // [2026-08-29] 地图头像
+        loadingCardKey: 'Poet_Squad_Kelo', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818853328': {
         id: 'new_archetype_1783818853328',
@@ -192,7 +238,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'test_overwhelm', // [2026-08-29] 地图头像
+        loadingCardKey: 'test_overwhelm', // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818922689': {
         id: 'new_archetype_1783818922689',
@@ -203,7 +253,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: undefined, // [2026-08-29] 地图头像
+        loadingCardKey: undefined, // [2026-08-29] 加载卡面
     },
     'new_archetype_1783818973258': {
         id: 'new_archetype_1783818973258',
@@ -214,7 +268,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Kuranas_Crocodile', // [2026-08-29] 地图头像
+        loadingCardKey: 'Kuranas_Crocodile', // [2026-08-29] 加载卡面
     },
     'new_archetype_1784422245237': {
         id: 'new_archetype_1784422245237',
@@ -225,7 +283,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Danu_Squad_SilverArm', // [2026-08-29] 地图头像
+        loadingCardKey: 'Danu_Squad_SilverArm', // [2026-08-29] 加载卡面
     },
     'new_archetype_1784422289163': {
         id: 'new_archetype_1784422289163',
@@ -236,7 +298,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'SacredChants_Squad_Shalo', // [2026-08-29] 地图头像
+        loadingCardKey: 'SacredChants_Squad_Shalo', // [2026-08-29] 加载卡面
     },
     'new_archetype_1784422352488': {
         id: 'new_archetype_1784422352488',
@@ -247,7 +313,11 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Argo_Squad_Arrowhead', // [2026-08-29] 地图头像
+        loadingCardKey: 'Argo_Squad_Arrowhead', // [2026-08-29] 加载卡面
     },
     'new_archetype_1784422416633': {
         id: 'new_archetype_1784422416633',
@@ -258,6 +328,25 @@ export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {
         exactDeck: true,
         preferredPool: [],
         apocalypseTags: [],
+        rogueBuffs: [],
         aiPersonality: 'balanced',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'Crows_Eyest_Squad_Hiki', // [2026-08-29] 地图头像
+        loadingCardKey: 'Crows_Eyest_Squad_Hiki', // [2026-08-29] 加载卡面
+    },
+    'new_archetype_1786176839001': {
+        id: 'new_archetype_1786176839001',
+        name: '鬼影森森',
+        champion: '',
+        description: '流派描述...',
+        coreCards: [{ key: 'ghostly_shadows', count: 40 }],
+        exactDeck: true,
+        preferredPool: [],
+        apocalypseTags: [],
+        rogueBuffs: [],
+        aiPersonality: 'aggressive',
+        cardBackIndex: 0, // [2026-08-17 莉莉子] 敌方卡背
+        avatarKey: 'ghostly_shadows', // [2026-08-29] 地图头像
+        loadingCardKey: 'ghostly_shadows', // [2026-08-29] 加载卡面
     },
 };

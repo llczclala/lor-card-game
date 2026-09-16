@@ -14,36 +14,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Target, Calendar, Zap, Award, Gift, CheckCircle, Sparkles, Clock } from 'lucide-react';
 import { MISSIONS, type MissionCategory } from '../data/missionData';
 import type { MissionUpdateResult, MissionProgress } from '../hooks/useMissionSystem';
-import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS, HERO_IMAGES } from '../data/imageData'; // [新增] 引入外观图库
+import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS } from '../data/imageData'; // [新增] 引入外观图库（HERO_IMAGES 已随卡图辅助函数移入共享弹窗）
 import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局 API
-import { CARD_DB } from '../data/cards'; // [新增] 用于卡牌奖励名称查询
+import { getEquipmentById } from '../data/equipment'; // [2026-09-08] 武装奖励展示/弹窗
 import { eventBus, GameEvents } from '../utils/eventBus';
-
-// ============================================================================
-// 奖励弹窗数据结构
-// ============================================================================
-interface RewardPopupData {
-    title: string;
-    type: 'dataGold' | 'skin' | 'cardBack' | 'card';
-    amount?: number;
-    imageSrc?: string;
-    itemName?: string;
-    cards?: Array<{ imageSrc: string; name: string; count: number }>;
-}
-
-// ============================================================================
-// 工具函数：获取卡牌奖励的图片地址（英雄立绘 / 皮肤 / 单位图）
-// ============================================================================
-function getCardRewardImage(cardKey: string): string {
-    // 1. 先试皮肤系统（单位/法术）
-    const skin = getSkinImage(cardKey);
-    if (skin) return skin;
-    // 2. 再试英雄立绘
-    const hero = HERO_IMAGES[cardKey];
-    if (hero?.base) return hero.base;
-    // 3. 都没有 → 空
-    return '';
-}
+// [2026-09-09 莉莉子] 金光领取弹窗抽为共享组件（主大厅/肉鸽复用），数据构造器与卡图辅助一并移入
+import { RewardClaimPopup, buildRewardPopupData, getCardRewardImage, type RewardPopupData } from './RewardClaimPopup';
 
 // ============================================================================
 // 子组件 1：大厅军需面板 (MissionPanel)
@@ -93,10 +69,18 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
 
     if (!isOpen) return null;
 
+    // [2026-09-08 BUG修复] 每个标签页是否有可领奖励 → 点亮对应 tab 黄点（与大厅黄点同语义：只统计面板可见的普通非 rogue 任务）
+    const claimableByTab: Partial<Record<MissionCategory, boolean>> = {};
+    for (const miss of MISSIONS) {
+        if (miss.rogue) continue;
+        if (missionSystem.progress?.[miss.id]?.status === 'completed') claimableByTab[miss.category] = true;
+    }
+
     // 筛选当前标签页的任务，按 sort 排序
     // [fix] 由 missionSystem 决定哪些任务存在（showCondition 已在初始化时处理）
     const displayMissions = MISSIONS
         .filter(m => {
+            if (m.rogue) return false; // [2026-08-29] 肉鸽专属任务由 RogueMissionPanel 展示，普通军功面板过滤
             if (m.category !== activeTab) return false;
             return !!missionSystem.progress[m.id]; // 不在 progress 中的任务不显示
         })
@@ -119,28 +103,8 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                 console.warn("[MissionUI] UserSystem 缺失 grantMissionReward 接口！");
             }
 
-            // 3. 组装金光弹窗数据
-            const popup: RewardPopupData = { title: mission.title, type: reward.type };
-            if (reward.type === 'dataGold' && reward.amount) {
-                popup.amount = reward.amount;
-            } else if (reward.type === 'card' && reward.cardKeys) {
-                popup.cards = reward.cardKeys.map((cardKey: string) => {
-                    const imageSrc = getCardRewardImage(cardKey);
-                    const cardDef = CARD_DB[cardKey];
-                    return { imageSrc, name: cardDef?.name || cardKey, count: 1 };
-                });
-            } else if (reward.cosmeticId) {
-                const config = getMissionItems().find(item => item.missionId === reward.cosmeticId);
-                if (config) {
-                    popup.itemName = config.name;
-                    if (config.type === 'skin' && config.cardKey && config.skinId !== undefined) {
-                        popup.imageSrc = getSkinImage(config.cardKey, config.skinId);
-                    } else if (config.type === 'cardBack' && config.index !== undefined) {
-                        popup.imageSrc = PERSONALIZATION_ASSETS.cardBacks[config.index];
-                    }
-                }
-            }
-            setRewardPopup(popup);
+            // 3. 组装金光弹窗数据（共享构造器，主大厅/肉鸽一致）
+            setRewardPopup(buildRewardPopupData(mission.title, reward));
         }
     };
 
@@ -178,10 +142,10 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                     </div>
 
                     <div className="flex flex-col gap-3">
-                        <TabButton id="daily" active={activeTab} icon={<Calendar size={18} />} label="每日委派" onClick={() => { setActiveTab('daily'); eventBus.emit(GameEvents.UI_CLICK); }} />
-                        <TabButton id="weekly" active={activeTab} icon={<Zap size={18} />} label="每周清剿" onClick={() => { setActiveTab('weekly'); eventBus.emit(GameEvents.UI_CLICK); }} />
-                        <TabButton id="achievement" active={activeTab} icon={<Award size={18} />} label="生涯成就" onClick={() => { setActiveTab('achievement'); }} />
-								<TabButton id="version" active={activeTab} icon={<Sparkles size={18} />} label="版本活动" onClick={() => { setActiveTab('version'); eventBus.emit(GameEvents.UI_CLICK); }} />
+                        <TabButton id="daily" active={activeTab} icon={<Calendar size={18} />} label="每日委派" showDot={claimableByTab.daily === true} onClick={() => { setActiveTab('daily'); eventBus.emit(GameEvents.UI_CLICK); }} />
+                        <TabButton id="weekly" active={activeTab} icon={<Zap size={18} />} label="每周清剿" showDot={claimableByTab.weekly === true} onClick={() => { setActiveTab('weekly'); eventBus.emit(GameEvents.UI_CLICK); }} />
+                        <TabButton id="achievement" active={activeTab} icon={<Award size={18} />} label="生涯成就" showDot={claimableByTab.achievement === true} onClick={() => { setActiveTab('achievement'); }} />
+								<TabButton id="version" active={activeTab} icon={<Sparkles size={18} />} label="版本活动" showDot={claimableByTab.version === true} onClick={() => { setActiveTab('version'); eventBus.emit(GameEvents.UI_CLICK); }} />
                     </div>
                 </div>
 
@@ -276,6 +240,41 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                     );
                                                 }
 
+                                                // [2026-09-08] 武装奖励：图标 + 名称 + ×数量 + 悬停大图
+                                                if (mission.reward.type === 'armament' && mission.reward.armamentId) {
+                                                    const armDef = getEquipmentById(mission.reward.armamentId);
+                                                    const armIcon = armDef?.icon ?? '';
+                                                    const armName = armDef?.name ?? mission.reward.armamentId;
+                                                    const armAmount = mission.reward.amount ?? 1;
+                                                    return (
+                                                        <div
+                                                            className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-purple-500/30 min-w-[120px] cursor-pointer"
+                                                            onMouseEnter={(e) => {
+                                                                if (armIcon) {
+                                                                    const rect = e.currentTarget.getBoundingClientRect();
+                                                                    setHoverPreview({ src: armIcon, x: rect.right + 12, y: rect.top - 30 });
+                                                                }
+                                                            }}
+                                                            onMouseMove={(e) => {
+                                                                setHoverPreview(prev => prev ? { ...prev, x: e.clientX + 18, y: e.clientY - 10 } : null);
+                                                            }}
+                                                            onMouseLeave={() => setHoverPreview(null)}
+                                                        >
+                                                            {armIcon ? (
+                                                                <div className="w-8 h-8 rounded border border-purple-500/50 overflow-hidden shadow-sm shrink-0 bg-slate-900">
+                                                                    <img src={armIcon} className="w-full h-full object-cover" alt={armName} />
+                                                                </div>
+                                                            ) : (
+                                                                <Gift size={18} className="text-purple-400 shrink-0" />
+                                                            )}
+                                                            <div className="flex flex-col items-start overflow-hidden">
+                                                                <span className="text-[8px] font-bold text-purple-400/80 tracking-widest uppercase">ARMAMENT {armAmount > 1 && `×${armAmount}`}</span>
+                                                                <span className="font-bold text-xs text-purple-300 max-w-[90px] truncate" title={armName}>{armName}</span>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
                                                 // [核心重构] 动态向调度局拉取绝密外观的名称与高清缩略图！
                                                 let cosmeticPreview = null;
                                                 let cosmeticName = '未定资产';
@@ -358,100 +357,8 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
             </motion.div>
         </div>
 
-        {/* 金光领取弹窗 */}
-        <AnimatePresence>
-            {rewardPopup && (
-                <motion.div
-                    className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    onClick={() => setRewardPopup(null)}
-                >
-                    {/* 金光光晕 */}
-                    <div className="absolute w-[500px] h-[500px] rounded-full bg-gradient-radial from-yellow-500/25 via-yellow-500/10 to-transparent pointer-events-none" />
-
-                    <motion.div
-                        className="relative flex flex-col items-center"
-                        initial={{ scale: 0.5, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 0.5, opacity: 0 }}
-                        transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                        onClick={e => e.stopPropagation()}
-                    >
-                        {/* 标题 */}
-                        <motion.div
-                            initial={{ y: -20, opacity: 0 }}
-                            animate={{ y: 0, opacity: 1 }}
-                            transition={{ delay: 0.15 }}
-                            className="text-center mb-6"
-                        >
-                            <span className="text-3xl font-black text-yellow-400 tracking-widest drop-shadow-[0_0_15px_rgba(234,179,8,0.5)]">
-                                奖励领取成功
-                            </span>
-                        </motion.div>
-
-                        {/* 奖励展示 */}
-                        <motion.div
-                            initial={{ scale: 0.8, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            transition={{ delay: 0.25 }}
-                            className="bg-slate-900/90 border border-yellow-500/30 rounded-2xl p-8 shadow-2xl"
-                        >
-                            {rewardPopup.type === 'dataGold' ? (
-                                <div className="flex flex-col items-center gap-4 px-8">
-                                    <img src={CURRENCY_ICONS.dataGold} className="w-20 h-20" alt="dataGold" />
-                                    <span className="text-5xl font-black text-purple-300">+{rewardPopup.amount}</span>
-                                    <span className="text-sm text-gray-400 font-mono tracking-widest">数据金</span>
-                                </div>
-                            ) : rewardPopup.type === 'card' && rewardPopup.cards ? (
-                                <div className="flex flex-col items-center gap-4 px-4">
-                                    <span className="text-3xl font-black text-green-400 tracking-widest drop-shadow-[0_0_15px_rgba(34,197,94,0.5)]">
-                                        ✦ 卡牌解锁 ✦
-                                    </span>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        {rewardPopup.cards.map((card, i) => (
-                                            <div key={i} className="relative w-36 h-48 rounded-xl overflow-hidden border-2 border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.2)] bg-slate-900 group">
-                                                <img src={card.imageSrc} className="w-full h-full object-cover" alt={card.name} />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                                                <div className="absolute bottom-0 left-0 right-0 p-1.5 bg-gradient-to-t from-black/80 to-transparent">
-                                                    <span className="text-[10px] font-bold text-green-300 truncate block">{card.name}</span>
-                                                </div>
-                                                <div className="absolute top-1 right-1 bg-green-600/90 text-white text-[10px] font-black px-1.5 py-0.5 rounded-md shadow-lg">
-                                                    x{card.count}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <span className="text-xs text-gray-400 font-mono tracking-widest">已加入收藏</span>
-                                </div>
-                            ) : rewardPopup.imageSrc ? (
-                                <div className="flex flex-col items-center gap-4">
-                                    <div className="w-64 h-80 rounded-xl overflow-hidden border-2 border-yellow-500/50 shadow-[0_0_30px_rgba(234,179,8,0.3)]">
-                                        <img src={rewardPopup.imageSrc} className="w-full h-full object-cover" />
-                                    </div>
-                                    <span className="text-lg font-bold text-yellow-400">{rewardPopup.itemName || '未知奖励'}</span>
-                                    <span className="text-xs text-gray-400 font-mono tracking-widest uppercase">
-                                        {rewardPopup.type === 'skin' ? '🎨 皮肤已解锁' : '🃏 卡背已解锁'}
-                                    </span>
-                                </div>
-                            ) : null}
-                        </motion.div>
-
-                        {/* 确认按钮 */}
-                        <motion.button
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.4 }}
-                            onClick={() => setRewardPopup(null)}
-                            className="mt-8 px-10 py-3 bg-yellow-500 hover:bg-yellow-400 text-black font-black rounded-full tracking-widest shadow-[0_0_20px_rgba(234,179,8,0.4)] transition-all active:scale-95"
-                        >
-                            确 认
-                        </motion.button>
-                    </motion.div>
-                </motion.div>
-            )}
-        </AnimatePresence>
+        {/* 金光领取弹窗（共享组件：主大厅/肉鸽委派复用，视觉与原内联一致） */}
+        {rewardPopup && <RewardClaimPopup data={rewardPopup} onClose={() => setRewardPopup(null)} />}
 
         {/* 悬停预览大图 */}
         {hoverPreview && createPortal(
@@ -475,16 +382,22 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
     );
 };
 
-// 侧边栏按钮微件
-const TabButton = ({ id, active, icon, label, onClick }: any) => {
+// 侧边栏按钮微件（[2026-09-08] showDot：该分类有可领奖励 → 右侧脉冲黄点）
+const TabButton = ({ id, active, icon, label, onClick, showDot = false }: any) => {
     const isActive = active === id;
     return (
         <button
             onClick={onClick}
-            className={`w-full py-3 px-4 flex items-center gap-3 transition-all duration-300 rounded-lg ${isActive ? 'bg-blue-600 text-white shadow-lg' : 'text-blue-500/60 hover:bg-blue-900/30 hover:text-blue-300'}`}
+            className={`relative w-full py-3 px-4 flex items-center gap-3 transition-all duration-300 rounded-lg ${isActive ? 'bg-blue-600 text-white shadow-lg' : 'text-blue-500/60 hover:bg-blue-900/30 hover:text-blue-300'}`}
         >
             {icon}
             <span className="font-bold tracking-widest text-sm">{label}</span>
+            {showDot && (
+                <span className="relative ml-auto flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]" />
+                </span>
+            )}
         </button>
     );
 };

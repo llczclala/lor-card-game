@@ -66,12 +66,30 @@ export default defineConfig(({ command }) => {
       }),
 
       // [保留] 代码混淆插件
+      // ══════════════════════════════════════════════════════════════════
+      // [2026-09-13 莉莉子] 构建稳定性修复 — 治"打包产物随机翻车导致黑屏"
+      //
+      // 现象：v1.0.15 早上的补丁包装上后黑屏（SplashScreen 校验失败 → 纯黑无提示），
+      //       而完整安装包正常、网页端正常；同源码两次 build，一份能跑一份不能。
+      //
+      // 根因：obfuscator 5.1.0 的 controlFlowFlattening / deadCodeInjection 有已知 bug，
+      //       会偶发把正常代码改坏。改坏后**语法仍然合法** → 打包不报错、tsc 不报错、
+      //       文件能加载，只在运行时崩 —— 所以极难定位。同源码两次 build 结果不同，
+      //       正是它的随机触发特征（官方语义 bug 修复版本：
+      //       v5.2.0 issue #1372 短路求值 / v5.4.3 #1298 可选链 / v5.4.5 #1423 展开参数）。
+      //
+      // 处理：① 停用上述两个选项 —— issue #1298 中社区确认的绕过办法
+      //       ② 加 seed —— 构建可复现（同源码 + 同配置 + 同 seed = 产物字节一致）。
+      //          今后再遇到玄学问题，可直接对比两次产物定位，不必再靠推测。
+      //
+      // 保留：标识符混淆 / 字符串数组 / RC4 编码 / 字符串轮转 —— 防破解核心能力不变。
+      // ══════════════════════════════════════════════════════════════════
       isBuild && obfuscator({
         global: true,
         options: {
+          seed: 'snowbreak-rivals', // [2026-09-13] 固定随机种子：让每次构建产物完全一致
           compact: true,
-          controlFlowFlattening: true,
-          controlFlowFlatteningThreshold: 0.75,
+          // controlFlowFlattening / deadCodeInjection ——【已停用】见上方说明，勿再开启
           identifierNamesGenerator: 'hexadecimal',
           renameGlobals: false,
           stringArray: true,
@@ -80,10 +98,8 @@ export default defineConfig(({ command }) => {
           rotateStringArray: true,
           debugProtection: true,
           debugProtectionInterval: 2000,
-          disableConsoleOutput: true, // [调试] 临时关闭，排查黑屏问题
+          disableConsoleOutput: true,
           selfDefending: true,
-          deadCodeInjection: true,
-          deadCodeInjectionThreshold: 0.4,
         },
       }),
     ].filter(Boolean),

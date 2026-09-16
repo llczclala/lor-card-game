@@ -2,46 +2,46 @@ import { useEffect,useRef,useCallback } from 'react';
 import { eventBus, GameEvents } from '../utils/eventBus';
 
 // 直接引入音效文件
-import clickSound from '../music/music/click.mp3';
-import recallSound from '../music/music/recall.mp3';
-import strikeSound from '../music/music/strike.mp3';
-import startBattleSound from '../music/music/battle_start.mp3';
-import nexusStrikeSound from '../music/music/nexus_strike.mp3';
-import quickStrikeSound from '../music/music/quick_strike.mp3';
-import quickCounterSound from '../music/music/quick_counter.mp3';
-import gachaRareSound from '../music/music/出金.mp3';
-import gachaCommonSound from '../music/music/普通出货.mp3';
-import gachaSingleSound from '../music/music/单抽.mp3';
-import gachaTenSound from '../music/music/十连抽.mp3';
-import gachaConvertSound from '../music/music/转化通用银.mp3';
+import clickSound from '../music/music/click.ogg';
+import recallSound from '../music/music/recall.ogg';
+import strikeSound from '../music/music/strike.ogg';
+import startBattleSound from '../music/music/battle_start.ogg';
+import nexusStrikeSound from '../music/music/nexus_strike.ogg';
+import quickStrikeSound from '../music/music/quick_strike.ogg';
+import quickCounterSound from '../music/music/quick_counter.ogg';
+import gachaRareSound from '../music/music/出金.ogg';
+import gachaCommonSound from '../music/music/普通出货.ogg';
+import gachaSingleSound from '../music/music/单抽.ogg';
+import gachaTenSound from '../music/music/十连抽.ogg';
+import gachaConvertSound from '../music/music/转化通用银.ogg';
 
 // ================= [新增] 全新动作与反馈音效 =================
-import dropBench1Sound from '../music/music/进入备战席1.mp3';
-import dropBench2Sound from '../music/music/进入备战席2.mp3';
-import recallBlockSound from '../music/music/撤回格挡或进攻.mp3';
-import enemyPlayUnitSound from '../music/music/敌方打出单位.mp3';
-import playerPlayUnitSound from '../music/music/我方打出单位.mp3';
-import blockSound from '../music/music/格挡或进攻.mp3';
-import cardHoverSound from '../music/music/卡牌悬停.mp3';
-import shuffleSound from '../music/music/洗牌.mp3';
-import selectUnitSound from '../music/music/选择单位.mp3';
-import summonSound from '../music/music/召唤.mp3';
-import defeatSound from '../music/music/被击败.mp3';
-import pupuUltSound from '../music/music/卜卜 灵鉴/卜卜大招.mp3';
-import pupuSkillSound from '../music/music/卜卜 灵鉴/卜卜小技能.mp3';
-import pupuSkillUpSound from '../music/music/卜卜 灵鉴/卜卜小技能强化.mp3';
-import mauxirSummonSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_summon.mp3';
-import mauxirRushAttackSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_attack.mp3';
-import mauxirRushHitSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_be_attack.mp3';
+import dropBench1Sound from '../music/music/进入备战席1.ogg';
+import dropBench2Sound from '../music/music/进入备战席2.ogg';
+import recallBlockSound from '../music/music/撤回格挡或进攻.ogg';
+import enemyPlayUnitSound from '../music/music/敌方打出单位.ogg';
+import playerPlayUnitSound from '../music/music/我方打出单位.ogg';
+import blockSound from '../music/music/格挡或进攻.ogg';
+import cardHoverSound from '../music/music/卡牌悬停.ogg';
+import shuffleSound from '../music/music/洗牌.ogg';
+import selectUnitSound from '../music/music/选择单位.ogg';
+import summonSound from '../music/music/召唤.ogg';
+import defeatSound from '../music/music/被击败.ogg';
+import pupuUltSound from '../music/music/卜卜 灵鉴/卜卜大招.ogg';
+import pupuSkillSound from '../music/music/卜卜 灵鉴/卜卜小技能.ogg';
+import pupuSkillUpSound from '../music/music/卜卜 灵鉴/卜卜小技能强化.ogg';
+import mauxirSummonSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_summon.ogg';
+import mauxirRushAttackSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_attack.ogg';
+import mauxirRushHitSound from '../music/music/猫汐尔莲驱/mauxir_lotus_rush_be_attack.ogg';
 
 // ================= [2026-07-31 安卡希雅·时之重奏] 专属音效 =================
-import acaciaRushFocusSound from '../music/music/安卡希雅时之重奏/圆缺有律_切换到集束模型.mp3';
-import acaciaRushSpreadSound from '../music/music/安卡希雅时之重奏/圆缺有律_切换到扩散模型.mp3';
-import acaciaSwordSound from '../music/music/安卡希雅时之重奏/飞剑.mp3';
-import acaciaUltimateSound from '../music/music/安卡希雅时之重奏/朔望之期.mp3';
-import acaciaGreatSwordSound from '../music/music/安卡希雅时之重奏/大飞剑.mp3';
-import acaciaCrossTemporalSound from '../music/music/安卡希雅时之重奏/越时斩.mp3';
-import acaciaSwordTimelineSound from '../music/music/安卡希雅时之重奏/剑痕时空.mp3';
+import acaciaRushFocusSound from '../music/music/安卡希雅时之重奏/圆缺有律_切换到集束模型.ogg';
+import acaciaRushSpreadSound from '../music/music/安卡希雅时之重奏/圆缺有律_切换到扩散模型.ogg';
+import acaciaSwordSound from '../music/music/安卡希雅时之重奏/飞剑.ogg';
+import acaciaUltimateSound from '../music/music/安卡希雅时之重奏/朔望之期.ogg';
+import acaciaGreatSwordSound from '../music/music/安卡希雅时之重奏/大飞剑.ogg';
+import acaciaCrossTemporalSound from '../music/music/安卡希雅时之重奏/越时斩.ogg';
+import acaciaSwordTimelineSound from '../music/music/安卡希雅时之重奏/剑痕时空.ogg';
 // ==========================================================
 export const useSfx = () => {
     // [新增] 全局音效音量 Ref (默认 0.6)

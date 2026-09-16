@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import type { AbilityConfig, AbilityRuntimeState } from '../types';
-import abilityIconImg from '../image/keyword/00.png';
+import abilityIconImg from '../image/keyword/00.webp';
 
 interface AbilityIconProps {
     ability: AbilityConfig;

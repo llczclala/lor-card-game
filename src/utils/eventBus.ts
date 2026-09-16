@@ -22,6 +22,9 @@ export const GameEvents = {
     SFX_BLOCK: 'SFX_BLOCK',                       // 挺进交战区格挡
     SFX_SELECT_BLOCKER_UNIT: 'SFX_SELECT_BLOCKER_UNIT', // 选中格挡单位（引导步推进用）
     SFX_CONFIRM_BLOCK: 'SFX_CONFIRM_BLOCK',       // 确认格挡方案（子任务完成用）
+    // [2026-08-20 莉莉子] 格挡被拒事件（隐秘/凶恶）：触发吓退动画 + 中央播报 + 关键词闪光
+    // Payload: { blocker: CardData, fightIndex: number, reason: 'elusive' | 'fearsome', attackerId: string }
+    BLOCK_REJECTED: 'block_rejected',
     SFX_CARD_HOVER: 'SFX_CARD_HOVER',             // 卡牌悬停
     SFX_SHUFFLE: 'SFX_SHUFFLE',                   // 洗牌
     SFX_SELECT_UNIT: 'SFX_SELECT_UNIT',           // 选定目标
@@ -104,6 +107,18 @@ export const GameEvents = {
     // [教程] 天启者升级动画彻底播完（用于替代固定等待时间）
     TUTORIAL_LEVEL_UP_COMPLETE: 'tutorial_level_up_complete',
 
+    // [2026-08-26 莉莉子] 法术目标全部选完、进入结算（教程判定"玩家已完成施法操作"用）
+    TUTORIAL_SPELL_TARGETS_SELECTED: 'tutorial_spell_targets_selected',
+
+    // [2026-08-26 莉莉子] 武装悬停大卡预览：跨组件广播（各武装图标 onMouseEnter/Leave 触发）
+    ARMAMENT_GAZE_SHOW: 'armament_gaze_show',
+    ARMAMENT_GAZE_HIDE: 'armament_gaze_hide',
+
+    // [2026-09-10 莉莉子] 关键词悬停大卡预览：跨组件广播（KeywordTray 各关键词图标 onMouseEnter/Leave 触发）
+    //   取代原先的原生 title（浏览器小白框）——卡体内有 overflow-hidden + 缩放坐标系，必须 portal 出去渲染
+    KEYWORD_GAZE_SHOW: 'keyword_gaze_show',
+    KEYWORD_GAZE_HIDE: 'keyword_gaze_hide',
+
     // [教程] 强制悬停卡牌预览 / 清除
     TUTORIAL_FORCE_CARD_PREVIEW: 'tutorial_force_card_preview',
     TUTORIAL_CLEAR_CARD_PREVIEW: 'tutorial_clear_card_preview',
@@ -138,6 +153,11 @@ export const GameEvents = {
     DRAW_COMPLETE: 'draw_complete',
     // [2026-08-06 莉莉子] 抽卡爆牌销毁（爆牌不走死亡流程，不计墓地/阵亡）
     DRAW_BURN: 'draw_burn',
+
+    // [2026-09-13 莉莉子] 牌库生成动画：卡牌从画面中央翻背飞回牌库（抽卡动画的倒放）
+    // 单向事件（逻辑层 → 动画层），无需握手回调——牌已洗入牌库，动画纯表现
+    // Payload: { animId: string, card: CardData, owner: 'player' | 'enemy' }
+    CARD_TO_DECK: 'card_to_deck',
 
     // [2026-08-11 莉莉子] 迷宫强化战斗内触发 → 水晶处卡面淡入淡出闪烁
     // Payload: { icon: string, name: string }

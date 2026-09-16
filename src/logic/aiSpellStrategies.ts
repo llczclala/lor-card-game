@@ -943,6 +943,68 @@ function evaluateCHOICE(
 }
 
 // ==========================================
+// Pattern: SET_STATS — 面板强制设定（止水凝形 → 本回合 1/6）
+// 目标：攻击力最高的敌方单位（最能被削弱的威胁）
+// ==========================================
+
+function evaluateSET_STATS(
+  _spell: CardData,
+  _state: GameState,
+  enemyBench: CardData[],
+  _playerBench: CardData[],
+): AIEvaluation {
+  const aliveEnemies = filterAlive(enemyBench);
+  if (aliveEnemies.length === 0) {
+    return { shouldPlay: false, score: 0, debug: '无敌方单位可压制' };
+  }
+  // 攻击力最高者优先；若都≤1攻，则无压制价值
+  const best = [...aliveEnemies].sort((a, b) => (getPow(b) - getPow(a)) || (b.cost - a.cost))[0];
+  const bestPower = getPow(best);
+  if (bestPower <= 1) {
+    return { shouldPlay: false, score: 0, debug: '敌方单位攻击力均≤1，无压制价值' };
+  }
+  const score = 12 + Math.min(bestPower, 8);
+  return {
+    shouldPlay: true,
+    targets: [{ type: 'enemy', id: best.id }],
+    score,
+    debug: `压制 ${best.name}（攻击力${bestPower}→1）`,
+  };
+}
+
+// ==========================================
+// Pattern: CLONE_TO_HAND — 白板复制到手（忆影拓印）
+// 目标：敌方最强单位（复制反打）；无敌人则复制己方最强单位
+// ==========================================
+
+function evaluateCLONE_TO_HAND(
+  _spell: CardData,
+  _state: GameState,
+  enemyBench: CardData[],
+  playerBench: CardData[],
+): AIEvaluation {
+  const aliveEnemies = filterAlive(enemyBench);
+  const aliveAllies = filterAlive(playerBench);
+  if (aliveEnemies.length === 0 && aliveAllies.length === 0) {
+    return { shouldPlay: false, score: 0, debug: '场上无单位可复制' };
+  }
+  // 优先复制敌方最强单位；否则复制己方最强
+  const pool = aliveEnemies.length > 0 ? aliveEnemies : aliveAllies;
+  const isEnemy = aliveEnemies.length > 0;
+  const best = [...pool].sort((a, b) => {
+    const aScore = (a.isChampion ? 10 : 0) + getPow(a) + getHp(a);
+    const bScore = (b.isChampion ? 10 : 0) + getPow(b) + getHp(b);
+    return bScore - aScore;
+  })[0];
+  return {
+    shouldPlay: true,
+    targets: [{ type: isEnemy ? 'enemy' : 'ally', id: best.id }],
+    score: 8 + (best.isChampion ? 5 : 0),
+    debug: `复制 ${best.name}（${isEnemy ? '敌方' : '己方'}）`,
+  };
+}
+
+// ==========================================
 // Pattern → Handler 映射表
 // ==========================================
 
@@ -968,6 +1030,8 @@ const HANDLERS: Record<string, (
   RECALL_AND_REPLACE: evaluateRECALL_AND_REPLACE,
   CALIBRATE: evaluateCALIBRATE,
   CHOICE: evaluateCHOICE,
+  SET_STATS: evaluateSET_STATS,
+  CLONE_TO_HAND: evaluateCLONE_TO_HAND,
 };
 
 // ==========================================

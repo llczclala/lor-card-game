@@ -13,6 +13,7 @@ import { EnhancementCard } from './EnhancementCard';
 import { CARD_DB } from '../../../data/cards';
 import { getEquipmentById } from '../../../data/equipment';
 import { generateCardOffers, type ShopCardItem } from '../../../data/roguelike/shop';
+import { RARITY_META } from '../RarityIcon'; // [2026-09-06 莉莉子] 随机宝箱揭示强化品质色
 import { MAZE_ENHANCEMENTS, pickRandomEnhancementByRarity } from '../../../data/roguelike/enhancements';
 import {
     pickTreasureType, pickRandomTreasure, GOLD_TREASURE_AMOUNT,
@@ -23,7 +24,8 @@ import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
 import { eventBus, GameEvents } from '../../../utils/eventBus';
 
 const HEX = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
-const RARITY_COLOR: Record<string, string> = { common: '#22c55e', rare: '#3b82f6', epic: '#a855f7', legendary: '#facc15' };
+// [2026-08-27] 六档品质色：白/绿/蓝/紫/金/红
+const RARITY_COLOR: Record<string, string> = { common: '#e5e7eb', uncommon: '#22c55e', rare: '#3b82f6', epic: '#a855f7', legendary: '#facc15', mythic: '#ef4444' };
 
 interface TreasureModalProps {
     run: RoguelikeRunState;
@@ -58,11 +60,11 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
 }) => {
     const [treasureType] = useState<TreasureType>(() => pickTreasureType());
     const [cardOffers] = useState<ShopCardItem[]>(() => generateCardOffers(CARD_TREASURE_COUNT));
-    // 惊喜强化：2 普通 + 1 稀有 + 1 史诗（牺牲用）
+    // 惊喜强化：2 优秀(绿) + 1 稀有 + 1 史诗（牺牲用）[2026-08-27] 原 common→uncommon（白品池空）
     const [surpriseEnh] = useState(() => ({
-        normals: [pickRandomEnhancementByRarity('common'), pickRandomEnhancementByRarity('common')].filter(Boolean),
-        rare: pickRandomEnhancementByRarity('rare'),
-        epic: pickRandomEnhancementByRarity('epic'),
+        normals: [pickRandomEnhancementByRarity('uncommon', run.passUnlockedEnhancements), pickRandomEnhancementByRarity('uncommon', run.passUnlockedEnhancements)].filter(Boolean), // [2026-08-29 通行证]
+        rare: pickRandomEnhancementByRarity('rare', run.passUnlockedEnhancements),
+        epic: pickRandomEnhancementByRarity('epic', run.passUnlockedEnhancements),
     }));
     const [sacrificeMode, setSacrificeMode] = useState(false); // 惊喜宝箱：是否已点"牺牲换史诗"
     const [revealed, setRevealed] = useState<RandomTreasureResult | null>(null); // 随机宝箱：揭示结果
@@ -74,14 +76,47 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
         : treasureType === 'card' ? <Gift className="text-cyan-400" />
         : treasureType === 'surprise' ? <Sparkles className="text-violet-400" /> : <Gem className="text-yellow-400" />;
 
+    // [2026-09-06 莉莉子] 揭示结果：卡/强化用完整卡面或图标，不再只显文字
     const renderRandomReward = (r: RandomTreasureResult) => {
         switch (r.kind) {
-            case 'gold': return <><Coins size={18} className="text-amber-300" /> 金币 +{r.amount}</>;
-            case 'card': return <><Gift size={18} className="text-cyan-300" /> 卡牌「{CARD_DB[r.cardKey]?.name ?? r.cardKey}」{r.equipId ? '（带装备）' : ''}</>;
-            case 'enhancement': return <><Sparkles size={18} className="text-violet-300" /> 迷宫强化「{MAZE_ENHANCEMENTS.find(e => e.id === r.enhancementId)?.name ?? r.enhancementId}」</>;
-            case 'maxHp': return <><Heart size={18} className="text-red-300" /> 生命上限 +{r.amount}</>;
-            case 'revive': return <><RotateCcw size={18} className="text-green-300" /> 复活次数 +{r.amount}</>;
-            case 'refresh': return <><RefreshCw size={18} className="text-cyan-300" /> 刷新次数 +{r.amount}</>;
+            case 'gold': return <div className="flex flex-col items-center gap-2"><div className="text-6xl">💰</div><div className="flex items-center gap-2 text-lg font-black text-amber-300"><Coins size={18} />金币 +{r.amount}</div></div>;
+            case 'card': {
+                const cardDef = CARD_DB[r.cardKey];
+                const eqDef = r.equipId ? getEquipmentById(r.equipId) : undefined;
+                return (
+                    <div className="flex flex-col items-center gap-2">
+                        {/* 完整卡面（带装备则叠 EquipHex） */}
+                        <div className="relative">
+                            <Card data={displayCard(r.cardKey)} location="deck-builder" isFaceUp />
+                            {eqDef && <div className="absolute -top-2 -right-2 z-10"><EquipHex equipId={r.equipId!} size={34} /></div>}
+                        </div>
+                        <div className="text-lg font-black text-cyan-300">
+                            获得卡牌「{cardDef?.name ?? r.cardKey}」{eqDef ? `（带装备·${eqDef.name}）` : ''}
+                        </div>
+                    </div>
+                );
+            }
+            case 'enhancement': {
+                const enh = MAZE_ENHANCEMENTS.find(e => e.id === r.enhancementId);
+                const meta = enh ? RARITY_META[enh.rarity] : undefined;
+                return (
+                    <div className="flex flex-col items-center gap-2">
+                        {/* 强化圆形图标（对齐战斗内强化栏观感） */}
+                        {enh && meta && (
+                            <div className="w-20 h-20 rounded-full overflow-hidden border-4 bg-black shadow-lg"
+                                style={{ borderColor: meta.color, boxShadow: `0 0 18px ${meta.color}66` }}>
+                                <img src={enh.icon} alt={enh.name} className="w-full h-full object-cover" />
+                            </div>
+                        )}
+                        <div className="text-lg font-black text-violet-300">
+                            迷宫强化「{enh?.name ?? r.enhancementId}」
+                        </div>
+                    </div>
+                );
+            }
+            case 'maxHp': return <div className="flex flex-col items-center gap-2"><div className="text-6xl">❤️</div><div className="flex items-center gap-2 text-lg font-black text-red-300"><Heart size={18} />生命上限 +{r.amount}</div></div>;
+            case 'revive': return <div className="flex flex-col items-center gap-2"><div className="text-6xl">♻️</div><div className="flex items-center gap-2 text-lg font-black text-green-300"><RotateCcw size={18} />复活次数 +{r.amount}</div></div>;
+            case 'refresh': return <div className="flex flex-col items-center gap-2"><div className="text-6xl">🔄</div><div className="flex items-center gap-2 text-lg font-black text-cyan-300"><RefreshCw size={18} />刷新次数 +{r.amount}</div></div>;
         }
     };
 
@@ -215,7 +250,7 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                         {revealed ? (
                             <>
                                 <div className="text-6xl">🎁</div>
-                                <div className="flex items-center gap-2 px-5 py-3 rounded-xl bg-white/5 border border-white/15 text-lg font-black text-white">
+                                <div className="rounded-xl bg-white/5 border border-white/15 px-6 py-4">
                                     {renderRandomReward(revealed)}
                                 </div>
                                 <button
@@ -229,7 +264,7 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                                 <p className="text-gray-300">神秘的宝箱……里面会有什么呢？</p>
                                 <button
                                     className={ACTION_BTN}
-                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setRevealed(pickRandomTreasure()); }}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setRevealed(pickRandomTreasure(run.passUnlockedEnhancements)); }} // [2026-08-29 通行证]
                                 >开启宝箱</button>
                             </>
                         )}

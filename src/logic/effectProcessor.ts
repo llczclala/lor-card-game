@@ -1,9 +1,11 @@
 import type { CardData, GameState, Keyword, Race } from '../types'; // [修改] 新增 Keyword 的引入
 import { EFFECT_DB } from '../data/effectRegistry';
 import { createCard, CARD_DB } from '../data/cards';
-import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand } from '../utils/gameRules'; // [新增] 引入牌库BUFF
+import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand, markLeveledUp, unmarkLeveledUp } from '../utils/gameRules'; // [新增] 引入牌库BUFF
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { applyFrostbite, getPower, executeTitanPulse } from './keywords'; // [新增] 引入绝对零度处理器 & 真实攻击力函数 & 泰坦脉冲
+import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
+import { applyFrostbite, getPower, getHealth, executeTitanPulse, deadlyLethalInject } from './keywords'; // [新增] 引入绝对零度处理器 & 真实攻击力/血量函数 & 泰坦脉冲 & [2026-09-12 莉莉子 剧毒] 擦伤即解构判定
+import { applyStrikeEnhancement, isStrikeTargetAlive } from './rogueBattle'; // [2026-08-30 莉莉子] after_attack/after_attacked 强化（单挑互打也算打击）· [2026-09-15] isStrikeTargetAlive 存活判据
 
 // ==========================================
 // [2026-08-15 莉莉子] 泰坦降临·预算均衡拆分（程重定义设计）
@@ -216,7 +218,7 @@ export const processEffect = (
 
     // [新增] 智能目标填充 (Implicit Target Handling)
     // 如果没有传入目标，但法术配置了自动目标 (如 NEXUS/SELF)，则自动构建目标对象
-    const finalTargets = [...targets];
+    let finalTargets = [...targets]; // [2026-08-27] const→let：SummonFromHand 分支会整体替换目标
     if (finalTargets.length === 0 && effect.targetRequirements.length > 0) {
         effect.targetRequirements.forEach(req => {
             // 自动填充敌方水晶
@@ -293,6 +295,12 @@ export const processEffect = (
         return (hasTatiana || inCombat) ? 1 : 0;
     };
 
+    // [2026-08-27] 法术狂潮：持有方法术伤害翻倍（红·常驻全局，直接查强化 id 不走 trigger）
+    const getSpellDamageMultiplier = (owner: 'player' | 'enemy'): number => {
+        const enh = owner === 'player' ? nextGame.rogueEnhancements : nextGame.enemyEnhancements;
+        return enh?.includes('arcane_overload') ? 2 : 1;
+    };
+
     // --- 根据效能类型 (Class) 分发逻辑 ---
 
     switch (effect.class) {
@@ -314,7 +322,7 @@ export const processEffect = (
                         if (result.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
                         if (actualDmg > 0) {
                             events.push({ type: 'unit_damage', payload: { id: result.id, amount: actualDmg } });
-                            result.damageTaken = (result.damageTaken || 0) + actualDmg;
+                            result.damageTaken = (result.damageTaken || 0) + actualDmg + deadlyLethalInject(result, actualDmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                             result.animState = 'hit';
                         }
                     }
@@ -340,6 +348,17 @@ export const processEffect = (
                 const sacrificeTarget = finalTargets[0];
                 const damageTarget = finalTargets[1];
                 if (!sacrificeTarget || !damageTarget) break;
+
+                // [2026-08-29 修复] 献祭目标已死 → 仪式失效（无祭品可献，不造成伤害）。
+                // finalTargets 是入栈快照，须从最新战场按 id 找实时实例校验存活（防"单挑先击杀祭品、仪式仍生效"）。
+                const liveSacrifice = [...nextPlayerBench, ...nextEnemyBench, ...(nextCombatField ? nextCombatField.flatMap(f => [f.attacker, f.blocker]) : [])]
+                    .find(c => c && c.id === sacrificeTarget.id);
+                if (liveSacrifice) {
+                    const sacHp = (liveSacrifice.health || 0) + (liveSacrifice.buffs?.health || 0) + (liveSacrifice.roundBuffs?.health || 0) - (liveSacrifice.damageTaken || 0);
+                    if (liveSacrifice.isDead || liveSacrifice.animState === 'dying' || liveSacrifice.animState === 'ephemeral_dying' || sacHp <= 0) break;
+                } else {
+                    break; // 战场已无该祭品（被移除/回收）→ 同样失效
+                }
 
                 // ① 献祭友方（高额伤害确保击杀）
                 const applySacrifice = (c: CardData) => ({
@@ -377,7 +396,7 @@ export const processEffect = (
                     }
                     if (dmg > 0) {
                         events.push({ type: 'unit_damage', payload: { id: nextCard.id, amount: dmg } });
-                        nextCard.damageTaken = (nextCard.damageTaken || 0) + dmg;
+                        nextCard.damageTaken = (nextCard.damageTaken || 0) + dmg + deadlyLethalInject(nextCard, dmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                         nextCard.animState = 'hit' as const;
                     }
                     return nextCard;
@@ -402,6 +421,7 @@ export const processEffect = (
                 let dmg = effect.params.value;
                 const spellBonus = getSpellDamageBonus(context.owner);
                 if (spellBonus > 0) dmg += spellBonus;
+                dmg *= getSpellDamageMultiplier(context.owner); // [2026-08-27] 法术狂潮：持有方法术伤害翻倍
 
                 // 击中敌方备战席
                 const dealDamage = (c: CardData): CardData => {
@@ -415,7 +435,7 @@ export const processEffect = (
                         if (result.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
                         if (actualDmg > 0) {
                             events.push({ type: 'unit_damage', payload: { id: result.id, amount: actualDmg } });
-                            result.damageTaken = (result.damageTaken || 0) + actualDmg;
+                            result.damageTaken = (result.damageTaken || 0) + actualDmg + deadlyLethalInject(result, actualDmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                             result.animState = 'hit';
                         }
                     }
@@ -499,7 +519,7 @@ export const processEffect = (
                     if (c.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
                     if (actualDmg > 0) {
                         events.push({ type: 'unit_damage', payload: { id: c.id, amount: actualDmg } });
-                        c.damageTaken = (c.damageTaken || 0) + actualDmg;
+                        c.damageTaken = (c.damageTaken || 0) + actualDmg + deadlyLethalInject(c, actualDmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                         c.animState = 'hit';
                     }
                     return c;
@@ -544,6 +564,7 @@ export const processEffect = (
                 let dmg = effect.params.value;
                 const spellBonus = getSpellDamageBonus(context.owner);
                 if (spellBonus > 0) dmg += spellBonus;
+                dmg *= getSpellDamageMultiplier(context.owner); // [2026-08-27] 法术狂潮：持有方法术伤害翻倍
 
                 const dealDamage = (c: CardData): CardData => {
                     if (c.keywords.includes('Barrier') && dmg > 0) {
@@ -556,7 +577,7 @@ export const processEffect = (
                     if (c.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
                     if (actualDmg > 0) {
                         events.push({ type: 'unit_damage', payload: { id: c.id, amount: actualDmg } });
-                        c.damageTaken = (c.damageTaken || 0) + actualDmg;
+                        c.damageTaken = (c.damageTaken || 0) + actualDmg + deadlyLethalInject(c, actualDmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                         c.animState = 'hit';
                     }
                     return c;
@@ -598,7 +619,7 @@ export const processEffect = (
                     if (c.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
                     if (actualDmg > 0) {
                         events.push({ type: 'unit_damage', payload: { id: c.id, amount: actualDmg } });
-                        c.damageTaken = (c.damageTaken || 0) + actualDmg;
+                        c.damageTaken = (c.damageTaken || 0) + actualDmg + deadlyLethalInject(c, actualDmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                         c.animState = 'hit';
                     }
                     return c;
@@ -651,7 +672,7 @@ export const processEffect = (
                         if (c.keywords.includes('Tough') && actualDmg > 0) actualDmg = Math.max(0, actualDmg - 1);
                         if (actualDmg > 0) {
                             events.push({ type: 'unit_damage', payload: { id: c.id, amount: actualDmg } });
-                            c.damageTaken = (c.damageTaken || 0) + actualDmg;
+                            c.damageTaken = (c.damageTaken || 0) + actualDmg + deadlyLethalInject(c, actualDmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                             c.animState = 'hit';
                         }
                         return c;
@@ -690,7 +711,8 @@ export const processEffect = (
                 //   a. 移除全局升级标记 → 之后抽到/打出安卡以 Lv1 入场（与朔望之期无条件记录的标记对称）
                 //   b. 场上 Lv2 安卡实例（备战席 + 交战区）→ Lv1
                 //   c. 手牌 + 牌库法术反向交换（重锋→剑舞、月镰剑势→扩散），Lv2 安卡副本 → Lv1
-                nextGame.leveledChampions = (nextGame.leveledChampions || []).filter(k => k !== 'acacia_chrono_echo');
+                // [2026-09-13 莉莉子] 改用统一入口按方撤销（全局 + 分阵营两套同步清除）
+                unmarkLeveledUp(nextGame, context.owner, 'acacia_chrono_echo');
 
                 const allyBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
                 const demoteAcacia = (current: CardData): CardData => ({
@@ -745,7 +767,10 @@ export const processEffect = (
                     : (nextGame.enemyGreatSwordsTotal || 0);
                 if (greatSwordCount > 0) {
                     const nexusTarget = context.owner === 'player' ? 'enemy_nexus' : 'player_nexus';
-                    const totalDmg = greatSwordCount * (effect.params.value || 1);
+                    const rawTotalDmg = greatSwordCount * (effect.params.value || 1);
+                    // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：大飞剑水晶伤害同样减免 1（事件 amount 同步为实际伤害，飘字一致）
+                    const totalDmg = (context.owner === 'player' ? nextGame.enemyNexusTough : nextGame.playerNexusTough)
+                        ? Math.max(0, rawTotalDmg - 1) : rawTotalDmg;
                     events.push({ type: 'nexus_damage', payload: { target: nexusTarget, amount: totalDmg } });
                     if (context.owner === 'player') {
                         nextGame.enemyNexus = Math.max(0, (nextGame.enemyNexus || 20) - totalDmg);
@@ -781,6 +806,7 @@ export const processEffect = (
                     dmg += spellBonus;
                     console.log(`[SpellDamageAura] 缇坦妮娅法术增伤 +${spellBonus}，最终伤害=${dmg}`);
                 }
+                dmg = (dmg || 0) * getSpellDamageMultiplier(context.owner); // [2026-08-27] 法术狂潮：持有方法术伤害翻倍
                 let shouldSplash = effect.params.splashAdjacent; // [新增] 动态溅射开关
 
                 // 拦截器：如果存在增伤条件
@@ -809,11 +835,14 @@ export const processEffect = (
                 //   'enemy_nexus'  → 永远指敌方阵营的水晶
                 //   'player_nexus' → 永远指我方阵营的水晶
                 if (target.type === 'enemy_nexus') {
-                    nextGame.enemyNexus -= dmg;
-                    events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: dmg } });
+                    // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：法术/效果直伤打水晶同样减免 1（事件 amount 同步为实际伤害，飘字一致）
+                    const finalNexusDmg = nextGame.enemyNexusTough ? Math.max(0, dmg - 1) : dmg;
+                    nextGame.enemyNexus -= finalNexusDmg;
+                    events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: finalNexusDmg } });
                 } else if (target.type === 'player_nexus') {
-                    nextGame.playerNexus -= dmg;
-                    events.push({ type: 'nexus_damage', payload: { target: 'player', amount: dmg } });
+                    const finalNexusDmg = nextGame.playerNexusTough ? Math.max(0, dmg - 1) : dmg;
+                    nextGame.playerNexus -= finalNexusDmg;
+                    events.push({ type: 'nexus_damage', payload: { target: 'player', amount: finalNexusDmg } });
                 } else if (target.id) {
 
                     // =====================================
@@ -873,7 +902,7 @@ export const processEffect = (
 
                             if (actualDmg > 0) {
                                 events.push({ type: 'unit_damage', payload: { id: nextCard.id, amount: actualDmg } });
-                                nextCard.damageTaken = (nextCard.damageTaken || 0) + actualDmg;
+                                nextCard.damageTaken = (nextCard.damageTaken || 0) + actualDmg + deadlyLethalInject(nextCard, actualDmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                                 nextCard.animState = 'hit' as const;
 
                                 // ==========================================
@@ -938,6 +967,9 @@ export const processEffect = (
                         // [核心修复] 提取当前真实面板攻击力（基础 + 永久 Buff + 临时 Buff + 回合Buff）
                         const damageToDef = getPower(attacker);
                         const damageToAtk = getPower(defender);
+                        // [2026-08-29 调试] 单挑结算快照：真实攻/血（含 roundBuffs）→ 排查"迂回防守加血后仍被单挑打死"
+                        const hpSnap = (c: CardData) => (c.health || 0) + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
+                        console.log(`[单挑] 进攻方=${attacker.name}(攻${damageToDef}) | 防守方=${defender.name}(HP${hpSnap(defender)} 基础${defender.health} roundBuffs=${JSON.stringify(defender.roundBuffs)} 受伤${defender.damageTaken ?? 0})`);
 
                         const applyDamage = (c: CardData, dmg: number, didStrike: boolean) => {
                             let finalDmg = dmg;
@@ -954,7 +986,8 @@ export const processEffect = (
                             }
 
                             // [致命 Bug 修复] 绝不减 c.health，只累加 damageTaken
-                            let newDamageTaken = (c.damageTaken || 0) + finalDmg;
+                            // [2026-09-12 莉莉子 剧毒] 擦伤即解构：法术单挑打到剧毒单位同样致死
+                            let newDamageTaken = (c.damageTaken || 0) + finalDmg + deadlyLethalInject(c, finalDmg);
                             if (finalDmg > 0) {
                                 events.push({ type: 'unit_damage', payload: { id: c.id, amount: finalDmg } });
 
@@ -972,7 +1005,10 @@ export const processEffect = (
                             if (attacker.keywords.includes('Overwhelm')) {
                                 const currentHealth = c.health + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0); // [2026-07-31] 碾压溢出计入本回合临时血
                                 if (finalDmg > currentHealth) {
-                                    const excess = finalDmg - currentHealth;
+                                    const rawExcess = finalDmg - currentHealth;
+                                    // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：碾压溢出打水晶同样减免 1（事件 amount 同步为实际伤害，飘字一致）
+                                    const excess = (context.owner === 'player' ? nextGame.enemyNexusTough : nextGame.playerNexusTough)
+                                        ? Math.max(0, rawExcess - 1) : rawExcess;
                                     if (context.owner === 'player') {
                                         nextGame.enemyNexus -= excess;
                                         events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: excess } });
@@ -1049,6 +1085,54 @@ export const processEffect = (
                         }
 
                         events.push({ type: 'sfx_strike', payload: null });
+
+                        // [2026-08-30 莉莉子] after_attack/after_attacked 强化全覆盖：单挑互打双方都挥击且受击
+                        const atkOwnerSide = context.owner; // 单挑 ally = 施法者侧
+                        const defOwnerSide = context.owner === 'player' ? 'enemy' : 'player';
+                        const atkEnh = atkOwnerSide === 'player' ? nextGame.rogueEnhancements : nextGame.enemyEnhancements;
+                        const defEnh = defOwnerSide === 'player' ? nextGame.rogueEnhancements : nextGame.enemyEnhancements;
+                        // 结算后重新定位实时单位（含伤害），存活才成长
+                        const locateDuelUnit = (id: string): CardData | undefined => {
+                            let u = nextPlayerBench.find(c => c.id === id) || nextEnemyBench.find(c => c.id === id);
+                            if (!u && nextCombatField) {
+                                const f = nextCombatField.find(fx => (fx.attacker && fx.attacker.id === id) || (fx.blocker && fx.blocker.id === id));
+                                if (f) u = f.attacker?.id === id ? f.attacker : f.blocker;
+                            }
+                            return u;
+                        };
+                        const curAtk = locateDuelUnit(attackerId);
+                        const curDef = locateDuelUnit(defenderId);
+                        // [2026-09-15 莉莉子 BUG修复] 存活判据改用统一版本（叠加真实血量）：
+                        // 单挑只累加 damageTaken、不设 animState='dying'，原判据形同虚设 → 被这一击
+                        // 打死的单位仍会吃到成长的 +1/+1，血量由 0 拉回 1 = 变相复活（铁壁反击 BUG）。
+                        if (isStrikeTargetAlive(curAtk)) {
+                            const buffedAtk = applyStrikeEnhancement(atkEnh, 'after_attack', curAtk);
+                            const buffedAtk2 = applyStrikeEnhancement(atkEnh, 'after_attacked', buffedAtk);
+                            nextPlayerBench = updateCardInList(nextPlayerBench, attackerId, c => c === curAtk ? buffedAtk2 : c);
+                            nextEnemyBench = updateCardInList(nextEnemyBench, attackerId, c => c === curAtk ? buffedAtk2 : c);
+                            if (nextCombatField) {
+                                nextCombatField = nextCombatField.map(fx => {
+                                    const nf = { ...fx };
+                                    if (nf.attacker?.id === attackerId) nf.attacker = buffedAtk2;
+                                    if (nf.blocker?.id === attackerId) nf.blocker = buffedAtk2;
+                                    return nf;
+                                });
+                            }
+                        }
+                        if (isStrikeTargetAlive(curDef)) {
+                            const buffedDef = applyStrikeEnhancement(defEnh, 'after_attack', curDef);
+                            const buffedDef2 = applyStrikeEnhancement(defEnh, 'after_attacked', buffedDef);
+                            nextPlayerBench = updateCardInList(nextPlayerBench, defenderId, c => c === curDef ? buffedDef2 : c);
+                            nextEnemyBench = updateCardInList(nextEnemyBench, defenderId, c => c === curDef ? buffedDef2 : c);
+                            if (nextCombatField) {
+                                nextCombatField = nextCombatField.map(fx => {
+                                    const nf = { ...fx };
+                                    if (nf.attacker?.id === defenderId) nf.attacker = buffedDef2;
+                                    if (nf.blocker?.id === defenderId) nf.blocker = buffedDef2;
+                                    return nf;
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -1067,9 +1151,11 @@ export const processEffect = (
                 const acaciaIdx = targetBench.findIndex(c =>
                     c.key === 'acacia_chrono_echo' && c.isChampion && c.level === 1
                 );
-                // [2026-07-31 架构修复] 无条件记录全局升级状态（对齐猫汐尔"场下达成条件、打出后升级"）
+                // [2026-07-31 架构修复] 无条件记录升级状态（对齐猫汐尔"场下达成条件、打出后升级"）
                 // 即使安卡不在场，之后打出安卡也会直接以 Lv2 入场
-                nextGame.leveledChampions = [...new Set([...(nextGame.leveledChampions || []), 'acacia_chrono_echo'])];
+                // [2026-09-13 莉莉子] 改用统一入口按方写入（全局 + 分阵营两套同步维护）；
+                // 阵营取自 context.owner —— 谁打出朔望之期，就只标记谁家的安卡。
+                markLeveledUp(nextGame, context.owner, 'acacia_chrono_echo');
 
                 if (acaciaIdx >= 0) {
                     // ① 升级安卡
@@ -1226,6 +1312,10 @@ export const processEffect = (
             const health = params.health || 0;
             const duration = params.duration || 'PERMANENT'; // [新增] 提取增益持续时间
             const keywords = params.keywords || [];
+            // [2026-08-29 调试] 迂回防守 BUFF 是否真正施加
+            if (effect.id === 'effect_temp_spell_15') {
+                console.log(`[迂回防守] BUFF执行: 目标=${finalTargets.map(t => `${t.name}(${t.health}血, roundBuffs=${JSON.stringify(t.roundBuffs)})`).join(',')} 加血=${health} duration=${duration}`);
+            }
 
             // [新增] 机器 A：专属“数值改造机”
             const applyStats = (c: CardData, p: number, h: number): CardData => {
@@ -1360,6 +1450,15 @@ export const processEffect = (
                             };
                             console.log('[BUFF] 从 ' + processed.name + ' 移除了关键词: ' + removeKws.join(', '));
                         }
+                    }
+
+                    // [2026-08-18 莉莉子] 藕断丝长：额外附加亡语（阵亡抽3）
+                    // 亡语清算中心按 EFFECT_DB 动态查 timing=LAST_BREATH 的效果，无需改动核心引擎
+                    if (effect.id === 'effect_mauxir_ouduan_si_chang') {
+                        processed = {
+                            ...processed,
+                            effects: [...(processed.effects || []), 'effect_mauxir_ouduan_si_chang_death'],
+                        };
                     }
 
                     return {
@@ -1721,7 +1820,14 @@ export const processEffect = (
             const extraHealth = fsParams.health || 0;
             const extraKeywords = (fsParams.keywords || []) as any[];
 
+            // [2026-08-28 莉莉子 修复] 镜爻同款保护：交战区满 6 格不再硬塞飞剑（防止超过 6 个一起进攻）。
+            // 满场一把都没召出 → 整个飞剑效果跳过（计数/减费/阿尔维娜/玛格丽特充能都不触发），与镜爻满场不召唤语义一致。
+            let anySwordSummoned = false;
             for (let i = 0; i < fsCount; i++) {
+                if (nextCombatField && nextCombatField.length >= 6) {
+                    console.log(`[飞剑] 交战区已满（${nextCombatField.length}/6），停止召唤飞剑。`);
+                    break;
+                }
                 // 1. 创建飞剑衍生物
                 const token = createCard(tokenKey);
                 const sword = {
@@ -1747,9 +1853,12 @@ export const processEffect = (
                         blocker: null,
                         owner: context.owner === 'player' ? 'player' : 'enemy',
                     }];
+                    anySwordSummoned = true;
                 }
                 // 不再直接造成水晶伤害——飞剑需要通过格挡→战斗结算来打伤害
             }
+            // 满场一把都没召出 → 整个飞剑效果跳过（计数/减费/阿尔维娜/玛格丽特充能不触发）
+            if (!anySwordSummoned) break;
 
             // [2026-07-29 安卡希雅] 飞剑计数系统（按 discountCount 累计，确保集中模式等效 4 剑）
             if (context.owner === 'player') {
@@ -1982,7 +2091,7 @@ export const processEffect = (
                                 targetHand.push(tutoredCard);
                                 console.log(`[Tutor] 成功将 ${tutoredCard.name} 从位置 ${foundIndex} 提取并加入手牌！`);
                                 // 发射抽卡动画事件，演出从牌库飞入中央再到手牌的完整流程
-                                const animId = `tutor_${context.owner}_${tutoredCard.id}_${Date.now()}`;
+                                const animId = nextAnimId('tutor', context.owner, tutoredCard.id);
                                 eventBus.emit(GameEvents.DRAW_START, {
                                     animId,
                                     card: tutoredCard,
@@ -2252,7 +2361,7 @@ export const processEffect = (
                     const isPlayer = target.type === 'player_nexus';
                     const currentHP = isPlayer ? nextGame.playerNexus : nextGame.enemyNexus;
                     // [2026-08-11] 玩家水晶回血上限跟随 playerNexusMax（肉鸽=run.maxHp，真衔接必需），敌方仍固定 20
-                    const nexusMax = isPlayer ? (nextGame.playerNexusMax ?? NEXUS_MAX_HP) : NEXUS_MAX_HP;
+                    const nexusMax = isPlayer ? (nextGame.playerNexusMax ?? NEXUS_MAX_HP) : (nextGame.enemyNexusMax ?? NEXUS_MAX_HP);
                     const actualHeal = Math.min(nexusMax - currentHP, amount);
 
                     if (actualHeal > 0) {
@@ -2737,10 +2846,15 @@ export const processEffect = (
                 newCard = { ...newCard, keywords: [...(newCard.keywords || []), 'Volatile' as any] };
             }
             if (targetHand.length < 10) {
-                targetHand.push(newCard);
-                // [2026-07-09] 改为 sfx_generate 事件，由动画层处理"中央展示→飞入手中"
-                events.push({ type: 'sfx_generate', payload: newCard });
-                console.log(`[GenerateDebug] 生成了 ${newCard.name} 到 ${context.owner} 手牌 (effect=${effect.id})`);
+                // [2026-09-04 莉莉子 修复] 同 id 去重：同一实例若已在该手牌（事件重复双触），不再追加，防 React key 撞车
+                if (!targetHand.some(c => c.id === newCard.id)) {
+                    targetHand.push(newCard);
+                    // [2026-07-09] 改为 sfx_generate 事件，由动画层处理"中央展示→飞入手中"
+                    events.push({ type: 'sfx_generate', payload: newCard });
+                    console.log(`[GenerateDebug] 生成了 ${newCard.name} 到 ${context.owner} 手牌 (effect=${effect.id})`);
+                } else {
+                    console.warn(`[Generate] ⚠️ ${newCard.name} 已在手牌（id=${newCard.id}），跳过重复生成`);
+                }
             } else {
                 console.log(`[Generate] 手牌已满(10/10)，${newCard.name} 被销毁`);
             }
@@ -2769,16 +2883,111 @@ export const processEffect = (
 
                 // 将克隆体加入牌库
                 if (context.owner === 'player') {
-                    nextPlayerDeck = [...nextPlayerDeck, ...clones];
+                    nextPlayerDeck = [...(nextPlayerDeck ?? []), ...clones]; // [2026-08-27] 判空
                 } else {
-                    nextEnemyDeck = [...nextEnemyDeck, ...clones];
+                    nextEnemyDeck = [...(nextEnemyDeck ?? []), ...clones];
                 }
 
                 events.push({ type: 'sfx_shuffle', payload: { count: cloneCount, sourceKey } });
                 console.log(`[CloneToDeck] 复制了 ${cloneCount} 张 ${sourceCard.name} 并洗入牌库`);
+
+                // [2026-09-13 莉莉子] 逐张播放"中央亮相 → 翻背飞回牌库"动画。
+                // 按 180ms 递进错开：每张各自亮相满 500ms 再起飞，形成连珠效果而不糊成一坨。
+                clones.forEach((clone, i) => {
+                    eventBus.emit(GameEvents.CARD_TO_DECK, {
+                        animId: nextAnimId('todeck', context.owner, clone.id),
+                        card: clone,
+                        owner: context.owner,
+                        delay: i * 180,
+                    });
+                });
             } else {
                 console.warn("[CloneToDeck] 没有指定要复制的目标手牌");
             }
+            break;
+        }
+
+        // =============================================
+        // [2026-08-18 莉莉子] 机制：面板强制设定 (SET_STATS)
+        // 止水凝形：本回合将任意单位的面板强制设置为 1/6
+        // 原理：复用临时账本 roundBuffs，注入等额偏移把真实面板"强行"拉到目标值，
+        //       回合末被全局清理机制自动还原（与冻结引擎同一套路）
+        // =============================================
+        case 'SET_STATS': {
+            const targetPower = effect.params.targetPower ?? 1;
+            const targetHealth = effect.params.targetHealth ?? 6;
+            const setTarget = finalTargets[0];
+            if (!setTarget || !setTarget.id) { console.warn("[SetStats] 缺少目标单位"); break; }
+
+            const applyOverride = (c: CardData): CardData => {
+                const curPower = getPower(c);
+                const curHealth = getHealth(c);
+                const offsetP = targetPower - curPower;
+                const offsetH = targetHealth - curHealth;
+                return {
+                    ...c,
+                    roundBuffs: {
+                        power: (c.roundBuffs?.power || 0) + offsetP,
+                        health: (c.roundBuffs?.health || 0) + offsetH,
+                    },
+                    animState: 'buff' as const,
+                };
+            };
+
+            nextPlayerBench = updateCardInList(nextPlayerBench, setTarget.id, applyOverride);
+            nextEnemyBench = updateCardInList(nextEnemyBench, setTarget.id, applyOverride);
+
+            // 同步交战区中的目标（战斗中被定格的单位）
+            if (nextCombatField) {
+                nextCombatField = nextCombatField.map(fight => {
+                    const newFight = { ...fight };
+                    if (newFight.attacker && newFight.attacker.id === setTarget.id) newFight.attacker = applyOverride(newFight.attacker);
+                    if (newFight.blocker && newFight.blocker.id === setTarget.id) newFight.blocker = applyOverride(newFight.blocker);
+                    return newFight;
+                });
+            }
+
+            const targetName = [...nextPlayerBench, ...nextEnemyBench].find(c => c.id === setTarget.id)?.name ?? '单位';
+            events.push({ type: 'sfx_buff', payload: { id: setTarget.id } });
+            console.log(`[SetStats] ${targetName} 面板强制设定为 ${targetPower}/${targetHealth}（本回合）`);
+            break;
+        }
+
+        // =============================================
+        // [2026-08-18 莉莉子] 机制：复制到手 (CLONE_TO_HAND)
+        // 忆影拓印：选择任意单位，生成一张瞬逝的白板复制牌到手牌
+        // 白板 = 基础面板（createCard 天然不带增益/装备），保留原卡关键词
+        // =============================================
+        case 'CLONE_TO_HAND': {
+            const cloneTarget = finalTargets[0];
+            if (!cloneTarget || !cloneTarget.id) { console.warn("[CloneToHand] 缺少目标单位"); break; }
+
+            let sourceUnit = nextPlayerBench.find(c => c.id === cloneTarget.id)
+                || nextEnemyBench.find(c => c.id === cloneTarget.id);
+            if (!sourceUnit && nextCombatField) {
+                const fight = nextCombatField.find(f => f.attacker?.id === cloneTarget.id || f.blocker?.id === cloneTarget.id);
+                if (fight) sourceUnit = fight.attacker?.id === cloneTarget.id ? fight.attacker : fight.blocker;
+            }
+            if (!sourceUnit) { console.warn("[CloneToHand] 找不到目标单位实体"); break; }
+
+            const HAND_MAX = 10;
+            const ownerHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+            if (ownerHand.length >= HAND_MAX) {
+                console.warn(`[CloneToHand] 手牌已满(${HAND_MAX}/10)，复制牌被销毁`);
+                events.push({ type: 'sfx_draw_burn', payload: { name: sourceUnit.name } });
+                break;
+            }
+
+            // createCard 返回基础白板（无增益/装备），保留原卡关键词 → 附加瞬逝
+            const clone = createCard(sourceUnit.key);
+            const volatileClone: CardData = {
+                ...clone,
+                keywords: [...(clone.keywords || []), 'Volatile' as Keyword],
+                isCollectible: false,
+            };
+            ownerHand.push(volatileClone);
+            events.push({ type: 'sfx_generate', payload: volatileClone });
+            console.log(`[CloneToHand] 复制 ${sourceUnit.name} → 手牌（瞬逝白板）`);
             break;
         }
 
@@ -3073,7 +3282,7 @@ export const processEffect = (
                     }
                     if (dmg > 0) {
                         events.push({ type: 'unit_damage', payload: { id: nc.id, amount: dmg } });
-                        nc.damageTaken = (nc.damageTaken || 0) + dmg;
+                        nc.damageTaken = (nc.damageTaken || 0) + dmg + deadlyLethalInject(nc, dmg); // [2026-09-12 莉莉子 剧毒] 擦伤即解构
                         nc.animState = 'hit' as const;
                     }
                     return nc;

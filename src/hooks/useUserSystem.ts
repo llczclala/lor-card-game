@@ -11,10 +11,16 @@ import {
     DEV_ADMIN_UID,       // [新增] 导入唯一标识
     DEV_ADMIN_PROFILE    // [新增] 导入名片模板
 } from '../data/initialUserData';
-import type { UserProfile, UserSettings, UserCollection, SavedDeck, UserSummary } from '../types';
+import type { UserProfile, UserSettings, UserCollection, SavedDeck, UserSummary, AnalystPassData, BattleMode, UserBattleRecord } from '../types';
 import type { GachaResult } from '../logic/gachaLogic';
 import type { MissionDef } from '../data/missionData';
 import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局，用于任务奖励发货
+import { reloadHeroProgressionCache } from './useHeroProgression'; // [2026-09-04 莉莉子 修复] 切号后重载英雄养成缓存（模块级缓存不会自动跟随 USER_ID）
+import { reloadArmamentCache } from './useArmamentConfig'; // [2026-09-07] 切号后重载武装槽/品质档缓存
+import { computeAnalystLevels, ANALYST_LEVEL_REWARDS, type AnalystLevelupReward } from '../data/roguelike/analystProgression'; // [2026-08-29 通行证] 分析员升级
+import { computeAccountLevels, ACCOUNT_LEVEL_REWARD_DATA_GOLD, createAnalystPass, createEmptyBattleRecord } from '../data/accountProgression'; // [2026-09-04 账号等级]
+import { getArmamentDefs } from '../data/equipment'; // [2026-08-29 通行证] 卡包随机武装
+import { readArmStock, addArmStock, consumeArmStock, type ArmStockMap } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
 
 export interface UserSystemState {
     userId: string;
@@ -30,6 +36,10 @@ export const useUserSystem = () => {
     // --- 1. 核心状态 ---
     const [userId, setUserId] = useState<string>('');
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    // [2026-09-04 账号等级] 评估嘉勉通行证独立存档（profile.level/exp 已正名账号等级）
+    const [analystPass, setAnalystPass] = useState<AnalystPassData>({ level: 1, exp: 0 });
+    // [2026-09-04 战绩记录器] 持久对战记录（档案面板真战绩）
+    const [battleRecord, setBattleRecord] = useState<UserBattleRecord | null>(null);
     const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
     const [collection, setCollection] = useState<UserCollection | null>(null);
     const [decks, setDecks] = useState<SavedDeck[]>([]);
@@ -51,7 +61,36 @@ export const useUserSystem = () => {
             userProfile = createInitialProfile(targetUid);
             StorageUtils.save(profileKey, userProfile);
         }
+
+        // [2026-09-04 账号等级·评估嘉勉迁移] profile.level/exp 正名为"账号等级"；
+        // 老账号该字段里存的其实是评估嘉勉通行证等级 → 一次性迁到独立键。
+        // 幂等守卫 = pass 键已存在（存在即视为已迁移，绝不再读老 profile / 绝不二次重置）。
+        // 红线：不丢老进度、不删任何键、只在首次迁移时把账号等级重置回 1。
+        const passKey = `${STORAGE_KEYS.ANALYST_PASS}_${targetUid}`;
+        let passData = StorageUtils.load<AnalystPassData | null>(passKey, null);
+        let passMigratedNow = false;
+        if (!passData) {
+            const legacyLevel = userProfile.level ?? 1;
+            const legacyExp = userProfile.exp ?? 0;
+            const hasLegacy = legacyLevel > 1 || legacyExp > 0;
+            passData = hasLegacy ? { level: legacyLevel, exp: legacyExp } : createAnalystPass();
+            StorageUtils.save(passKey, passData); // 老通行证进度落独立键（不丢）
+            if (hasLegacy) {
+                userProfile = { ...userProfile, level: 1, exp: 0 }; // 账号等级从 1 起步
+                StorageUtils.save(profileKey, userProfile);
+            }
+            passMigratedNow = true;
+        }
+        // DEV 便利：管理员号首迁移后账号等级给高起点（便于测试高等级面板；只在该分支内执行，天然幂等）
+        if (passMigratedNow && targetUid === DEV_ADMIN_UID && (userProfile.level || 1) < 30) {
+            userProfile = { ...userProfile, level: 30, exp: 0 };
+            StorageUtils.save(profileKey, userProfile);
+        }
+        setAnalystPass(passData);
         setProfile(userProfile);
+
+        // [2026-09-04 战绩记录器] 读本账号持久战绩
+        setBattleRecord(StorageUtils.load<UserBattleRecord | null>(`${STORAGE_KEYS.USER_BATTLE_RECORD}_${targetUid}`, null));
 
         // [新增] 更新全局用户索引
         StorageUtils.updateUserIndex({
@@ -75,6 +114,19 @@ export const useUserSystem = () => {
                 unlockedCardBacks: FULL_SETTINGS.unlockedCardBacks,
                 unlockedDesks: FULL_SETTINGS.unlockedDesks,
             };
+        }
+        // [2026-09-07 真数量库存] 武装库存一次性迁移 → settings.armamentStock（权威），ownedArmaments 降级为种类名（兼容旧读取）
+        // 计法：起始 1 把英雄应援装（现名「香蒲的白兔应援」，原「盈实徽记」）+ 旧档武装槽里每格各计 1 份（此前可跨英雄重复装）+ 旧 ownedArmaments 至少 1
+        if (!userSettings.armamentStock) {
+            const armKey = `${STORAGE_KEYS.ROGUE_ARMAMENT}_${targetUid}`;
+            const armConfig = StorageUtils.load<Record<string, (string | null)[]>>(armKey, {});
+            const stock: Record<string, number> = { arm_power_health: 1 }; // 起始集：香蒲的白兔应援（原「盈实徽记」）
+            const bump = (id: string) => { stock[id] = Math.max(stock[id] ?? 0, 0) + 1; };
+            Object.values(armConfig).forEach(slots => (slots ?? []).forEach(id => { if (id) bump(id); }));
+            (userSettings.ownedArmaments ?? []).forEach(id => { if (id) stock[id] = Math.max(stock[id] ?? 0, 1); });
+            const kinds = Object.keys(stock).filter(id => (stock[id] ?? 0) > 0);
+            userSettings = { ...userSettings, armamentStock: stock, ownedArmaments: kinds };
+            StorageUtils.save(settingsKey, userSettings);
         }
         setSettings(userSettings);
 
@@ -132,6 +184,9 @@ export const useUserSystem = () => {
 
         setUserId(targetUid);
         localStorage.setItem(STORAGE_KEYS.USER_ID, targetUid);
+        // [2026-09-04 莉莉子 修复] 切号后同步英雄养成缓存（顺序必须在写入新 USER_ID 之后）
+        reloadHeroProgressionCache();
+        reloadArmamentCache(); // [2026-09-07] 切号后同步武装槽配置/品质档缓存（同理由：模块级 shared 不自动跟随 USER_ID）
 
         // 模拟一点点延迟，让 Loading 动画能展示出来
         setTimeout(() => setIsReady(true), 500);
@@ -201,6 +256,9 @@ export const useUserSystem = () => {
         StorageUtils.remove(`${STORAGE_KEYS.USER_ASSETS}_${targetUid}`);
         StorageUtils.remove(`${STORAGE_KEYS.USER_DECKS}_${targetUid}`);
         StorageUtils.remove(`${STORAGE_KEYS.USER_SETTINGS}_${targetUid}`);
+        // [2026-09-04 账号等级] 删号一并清理通行证独立存档与战绩（防重建同 uid 残留）
+        StorageUtils.remove(`${STORAGE_KEYS.ANALYST_PASS}_${targetUid}`);
+        StorageUtils.remove(`${STORAGE_KEYS.USER_BATTLE_RECORD}_${targetUid}`);
 
         // 刷新列表
         setUserList(StorageUtils.getUserIndex());
@@ -538,6 +596,190 @@ export const useUserSystem = () => {
     // [军需系统专属接口] 任务奖励提货通道
     // 支持新皮肤解锁、重复皮肤自动转为 1 比特金、卡背解锁
     // ==========================================
+    /** [2026-08-29 评估嘉勉] 解锁一个武装（加入已拥有集合，武装库按此过滤） */
+    // [2026-09-07 真数量库存] 发放/消耗统一维护 armamentStock（普通封顶3/消耗品不限）；ownedArmaments 同步为种类名（stock>0）
+    const applyArmStock = useCallback((prev: UserSettings, id: string, fn: (s: ArmStockMap) => ArmStockMap | null): UserSettings | null => {
+        if (!id) return null;
+        const stock = readArmStock(prev);
+        const nextStock = fn(stock);
+        if (!nextStock) return null;
+        const kinds = Object.keys(nextStock).filter(k => (nextStock[k] ?? 0) > 0);
+        return { ...prev, armamentStock: nextStock, ownedArmaments: kinds };
+    }, []);
+
+    /** [2026-08-29 评估嘉勉] 发放武装库存（amount 份；普通武装单种上限 3，消耗品不限） */
+    const grantArmament = useCallback((armamentId: string, amount = 1) => {
+        if (!armamentId) return;
+        setSettings(prev => {
+            if (!prev) return prev;
+            const updated = applyArmStock(prev, armamentId, s => addArmStock(s, armamentId, amount));
+            if (!updated) return prev;
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, updated);
+            return updated;
+        });
+    }, [applyArmStock, userId]);
+
+    /** [2026-09-07 消耗品武装] 用掉 amount 份（归零自动移除）；库存不足则不扣（防越界） */
+    const removeOwnedArmament = useCallback((armamentId: string, amount = 1) => {
+        if (!armamentId) return;
+        setSettings(prev => {
+            if (!prev) return prev;
+            const updated = applyArmStock(prev, armamentId, s => consumeArmStock(s, armamentId, amount));
+            if (!updated) return prev;
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, updated);
+            return updated;
+        });
+    }, [applyArmStock, userId]);
+
+    /** [2026-08-29 通行证] 解锁迷宫强化（进 passUnlockedEnhancements → 强化池可遇到） */
+    const grantPassEnhancement = useCallback((enhancementId: string) => {
+        if (!enhancementId) return;
+        setSettings(prev => {
+            if (!prev) return prev;
+            const cur = prev.passUnlockedEnhancements ?? [];
+            if (cur.includes(enhancementId)) return prev;
+            const newSettings = { ...prev, passUnlockedEnhancements: [...cur, enhancementId] };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+    }, [userId]);
+
+    /** [2026-08-29 通行证] 发放局外数据金（大厅货币） */
+    const grantDataGold = useCallback((amount: number) => {
+        if (!amount) return;
+        setCollection(prev => {
+            if (!prev) return prev;
+            const newCollection = { ...prev, resources: { ...prev.resources, dataGold: (prev.resources.dataGold || 0) + amount } };
+            StorageUtils.save(`${STORAGE_KEYS.USER_ASSETS}_${userId}`, newCollection);
+            return newCollection;
+        });
+    }, [userId]);
+
+    // ==========================================
+    // [2026-09-04 账号等级系统] 账号经验 / 持久战绩
+    // profile.level/exp = 账号等级（任何真实模式对局结束发经验）
+    // ==========================================
+
+    /** 加账号等级经验：连续升级则逐级发 320 数据金（跨级连升连发）。返回跨级清单供 UI 播报。 */
+    const grantAccountExp = useCallback((amount: number): { leveled: { from: number; to: number }[] } => {
+        if (!profile || !amount) return { leveled: [] };
+        const res = computeAccountLevels(profile.level, profile.exp, amount);
+        updateProfile({ level: res.level, exp: res.exp });
+        if (res.leveled.length > 0) {
+            res.leveled.forEach(() => grantDataGold(ACCOUNT_LEVEL_REWARD_DATA_GOLD));
+        }
+        return res;
+    }, [profile, updateProfile, grantDataGold]);
+
+    /** 持久战绩：真实对局结算时累计（PvE/教程/迷宫整局）。heroKeys 用于代表英雄统计。 */
+    const recordBattle = useCallback((info: { won: boolean; mode: BattleMode; heroKeys?: string[] }) => {
+        if (!userId) return;
+        setBattleRecord(prev => {
+            const cur = prev ?? createEmptyBattleRecord();
+            const next: UserBattleRecord = {
+                ...cur,
+                totalMatches: cur.totalMatches + 1,
+                wins: cur.wins + (info.won ? 1 : 0),
+                losses: cur.losses + (info.won ? 0 : 1),
+                updatedAt: Date.now(),
+                byMode: {
+                    ...cur.byMode,
+                    [info.mode]: {
+                        totalMatches: (cur.byMode?.[info.mode]?.totalMatches ?? 0) + 1,
+                        wins: (cur.byMode?.[info.mode]?.wins ?? 0) + (info.won ? 1 : 0),
+                    },
+                },
+                heroes: { ...cur.heroes },
+            };
+            (info.heroKeys ?? []).forEach(k => { if (k) next.heroes[k] = (next.heroes[k] ?? 0) + 1; });
+            StorageUtils.save(`${STORAGE_KEYS.USER_BATTLE_RECORD}_${userId}`, next);
+            return next;
+        });
+    }, [userId]);
+
+    /** [2026-08-29 通行证] 打开卡包：随机获得一个武装（丰富武装获取渠道）
+     *  [2026-09-07 程拍板] 消耗品武装（碳原子板/重修申请）不再从卡包开出 → 池子排除 consumable（改由每日推演任务供给） */
+    const grantPack = useCallback((): string | null => {
+        const armaments = getArmamentDefs().filter(a => !a.consumable);
+        if (armaments.length === 0) return null;
+        const pick = armaments[Math.floor(Math.random() * armaments.length)];
+        grantArmament(pick.id);
+        return pick.id;
+    }, [grantArmament]);
+
+    /** [2026-08-29 通行证] 获得一个待打开卡包（打开时才随机武装） */
+    const grantPendingPack = useCallback(() => {
+        setSettings(prev => {
+            if (!prev) return prev;
+            const newSettings = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) + 1 };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+    }, [userId]);
+
+    /** [2026-08-29 通行证] 打开一个卡包：随机武装 + 扣减待打开数 */
+    const openPack = useCallback((): string | null => {
+        const pick = grantPack();
+        if (pick) {
+            // [2026-09-15 莉莉子 BUG修复] 必须用**函数式**更新，且不能再用闭包 settings 整体覆盖。
+            // 成因：grantPack() 内部已通过 grantArmament 排队了一个函数式 setSettings（写入新武装库存），
+            // 此处若紧接着塞一个「值更新」，React 批处理时会用它**直接替换**掉前一个函数式更新的计算结果
+            // —— armamentStock 回到旧值 → 表现为「卡包开出的武装没入库、武装配置界面完全找不到」
+            // （武装库按 armamentStock 过滤，见 RogueHeroInfoModal.readArmStock）。
+            // 同一坑在 claimPassReward 里已用函数式累积规避，此处是漏网。
+            setSettings(prev => {
+                if (!prev || (prev.pendingPacks ?? 0) <= 0) return prev;
+                const newSettings = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) - 1 };
+                StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+                return newSettings;
+            });
+        }
+        return pick;
+    }, [grantPack, userId]);
+
+    /** [2026-09-04 账号等级] 加分析员经验 → 评估嘉勉通行证已迁独立存档键（ANALYST_PASS_uid），不再占 profile.level/exp（那是账号等级） */
+    const grantAnalystExp = useCallback((amount: number): { leveled: { from: number; to: number }[]; rewards: AnalystLevelupReward[] } => {
+        if (!amount) return { leveled: [], rewards: [] };
+        const cur = analystPass ?? createAnalystPass();
+        const res = computeAnalystLevels(cur.level, cur.exp, amount);
+        const nextPass: AnalystPassData = { level: res.level, exp: res.exp };
+        setAnalystPass(nextPass);
+        StorageUtils.save(`${STORAGE_KEYS.ANALYST_PASS}_${userId}`, nextPass);
+        return res;
+    }, [analystPass, userId]);
+
+    /** [2026-09-04 账号等级] 手动领取某等级通行证奖励（等级读 analystPass 独立键） */
+    const claimPassReward = useCallback((level: number): boolean => {
+        const reward = ANALYST_LEVEL_REWARDS[level];
+        if (!reward || !analystPass || level > analystPass.level) return false;
+        if (reward.armamentId) grantArmament(reward.armamentId);
+        if (reward.pack) grantPendingPack(); // 卡包进待打开队列
+        if (reward.unlockEnhancement) grantPassEnhancement(reward.unlockEnhancement);
+        if (reward.dataGold) grantDataGold(reward.dataGold);
+        // 标记已领取：函数式累积，避免一键领取多个奖励时互相覆盖
+        setSettings(prev => {
+            if (!prev) return prev;
+            const cur = prev.passClaimedRewards ?? [];
+            if (cur.includes(level)) return prev;
+            const newSettings = { ...prev, passClaimedRewards: [...cur, level] };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+        return true;
+    }, [analystPass, grantArmament, grantPendingPack, grantPassEnhancement, grantDataGold, userId]);
+
+    /** [2026-09-04 账号等级] 一键领取当前通行证等级所有未领取奖励（上限读 analystPass） */
+    const claimAllPassRewards = useCallback((): number => {
+        if (!analystPass || !settings) return 0;
+        let count = 0;
+        for (let lv = 1; lv <= analystPass.level; lv++) {
+            if (ANALYST_LEVEL_REWARDS[lv] && !(settings.passClaimedRewards ?? []).includes(lv)) {
+                if (claimPassReward(lv)) count++;
+            }
+        }
+        return count;
+    }, [analystPass, settings, claimPassReward]);
+
     const grantMissionReward = useCallback((reward: MissionDef['reward']) => {
         if (!collection || !settings) return;
 
@@ -582,6 +824,13 @@ export const useUserSystem = () => {
             }
             needsCollectionSave = true;
         }
+        // [2026-08-29 评估嘉勉] 分析员经验 / 稀有武装奖励（各自内部处理升级/解锁与持久化）
+        else if (reward.type === 'analystExp' && reward.amount) {
+            grantAnalystExp(reward.amount);
+        }
+        else if (reward.type === 'armament' && reward.armamentId) {
+            grantArmament(reward.armamentId, reward.amount ?? 1); // [2026-09-07] 支持一次性发多份（版本福利 6 个消耗品）
+        }
 
         if (needsCollectionSave) {
             setCollection(newCollection);
@@ -591,7 +840,7 @@ export const useUserSystem = () => {
             setSettings(newSettings);
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
         }
-    }, [collection, settings, userId]);
+    }, [collection, settings, userId, grantAnalystExp, grantArmament]);
 
 
     // 暴露给全局以便调试
@@ -604,6 +853,9 @@ export const useUserSystem = () => {
         // State
         userId,
         profile,
+        // [2026-09-04 账号等级] 评估嘉勉通行证独立存档 / 持久战绩
+        analystPass,
+        battleRecord,
         settings,
         collection,
         decks,
@@ -634,6 +886,22 @@ export const useUserSystem = () => {
 
         // Mission Actions
         grantMissionReward, // [军需提货专属口]
+
+        // [2026-08-29 通行证]
+        grantArmament,           // 解锁武装（加入已拥有集合）
+        removeOwnedArmament,     // [2026-09-07 消耗品] 移除已拥有武装（用后消失）
+        grantAnalystExp,         // 加分析员经验（升级，奖励由通行证手动领取）
+        claimPassReward,         // 领取某等级通行证奖励
+        claimAllPassRewards,     // 一键领取所有可领奖励
+        grantPack,               // 打开卡包（随机武装）
+        grantPendingPack,        // 获得待打开卡包
+        openPack,                // 打开一个卡包（扣待打开数 + 随机武装）
+        grantPassEnhancement,    // 解锁迷宫强化（强化池可遇）
+        grantDataGold,           // 发放局外数据金
+
+        // [2026-09-04 账号等级系统]
+        grantAccountExp,         // 账号等级经验（逐级发 320 数据金）
+        recordBattle,            // 持久战绩累计
 
         // Helpers
         setCardBack: (index: number) => updateSettings({ customization: { ...settings.customization, currentCardBackIndex: index } }),

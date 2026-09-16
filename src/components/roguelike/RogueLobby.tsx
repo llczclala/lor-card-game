@@ -10,11 +10,11 @@ import { CroppedAvatar } from '../CroppedAvatar'; // [2026-08-10] 大厅头像�
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { useHeroProgression } from '../../hooks/useHeroProgression'; // [2026-08-12 天启者养成] 等级/加成
 import { HeroLevelBadge } from './HeroLevelBadge'; // [2026-08-12 天启者养成] 等级徽章 + 经验条
-import rogueBg from '../../image/icon/rogue_background.png';
-import rogueIcon1 from '../../image/icon/rogue_icon_1.png';
-import rogueIcon2 from '../../image/icon/rogue_icon_2.png';
-import rogueIcon3 from '../../image/icon/rogue_icon_3.png';
-import rogueStar from '../../image/icon/rogue_star.png';
+import rogueBg from '../../image/icon/rogue_background.webp';
+import rogueIcon1 from '../../image/icon/rogue_icon_1.webp';
+import rogueIcon2 from '../../image/icon/rogue_icon_2.webp';
+import rogueIcon3 from '../../image/icon/rogue_icon_3.webp';
+import rogueStar from '../../image/icon/rogue_star.webp';
 
 // ==========================================
 // [2026-08-07 图标缩放控制] 程可在此微调各图标按钮的显示尺寸
@@ -35,8 +35,14 @@ interface RogueLobbyProps {
     onBackToLobby: () => void;        // 返回大厅（右上角返回按钮左侧）
     onSelectHero: () => void;         // 头像大按钮 / 回收小按钮：打开天启者选择界面
     onOpenMission: () => void;        // 推演任务：打开任务系统
+    onOpenEvaluation: () => void;     // [2026-08-29 评估嘉勉] 打开分析员等级面板
+    onOpenCodex: () => void;          // [2026-08-20] 逻辑研习：打开肉鸽图鉴
     onStartRun: () => void;           // 前往推演：开始对局
     selectedHeroKey: string | null;   // 已选天启者
+    hasPendingRun?: boolean;          // [2026-08-28] 是否有未结算的肉鸽对局（前往推演置灰 + 上方显示结算/继续）
+    onSettleRun?: () => void;         // [2026-08-28] 结算当前未完成对局（App 弹二次确认）
+    onResumeRun?: () => void;         // [2026-08-28] 继续上一局（恢复对局进地图）
+    hasRogueClaimableReward?: boolean; // [2026-09-03 BUG修复] 是否有可领取的肉鸽任务奖励（点亮推演任务按钮黄点）
 }
 
 export const RogueLobby: React.FC<RogueLobbyProps> = ({
@@ -44,11 +50,18 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
     onBackToLobby,
     onSelectHero,
     onOpenMission,
+    onOpenEvaluation,
+    onOpenCodex,
     onStartRun,
     selectedHeroKey,
+    hasPendingRun = false,
+    onSettleRun,
+    onResumeRun,
+    hasRogueClaimableReward = false,
 }) => {
     const selectedHero = selectedHeroKey ? CARD_DB[selectedHeroKey] : null;
-    const canStart = !!selectedHeroKey;
+    // [2026-08-28] 有未结算对局时不能开新局（前往推演置灰）
+    const canStart = !!selectedHeroKey && !hasPendingRun;
     // [2026-08-12 天启者养成] 当前英雄等级 + 加成摘要
     const heroProgression = useHeroProgression();
     const heroProgress = selectedHeroKey ? heroProgression.getHeroProgress(selectedHeroKey) : null;
@@ -61,23 +74,31 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
         return () => clearTimeout(t);
     }, [placeholder]);
 
-    // 功能按钮：图片 + 黑底白字文本块（placeholderMsg 传入则点击仅弹占位提示）
-    const funcBtn = (icon: string, label: string, onClick: () => void, placeholderMsg?: string) => (
-        <button
-            onClick={() => {
-                eventBus.emit(GameEvents.UI_CLICK);
-                placeholderMsg ? setPlaceholder(placeholderMsg) : onClick();
-            }}
-            className="group flex flex-col items-center gap-1.5"
-        >
-            <div className={`${ICON_BUTTON.circle} rounded-full bg-black/50 border border-white/20 flex items-center justify-center overflow-hidden group-hover:border-purple-400/70 group-hover:scale-105 transition-all`}>
-                <img src={icon} alt={label} className={`${ICON_BUTTON.icon} object-contain`} draggable={false} />
-            </div>
-            <span className="bg-black/80 px-3 py-0.5 rounded text-sm text-white font-medium shadow-[0_0_10px_rgba(0,0,0,0.6)]">
-                {label}
-            </span>
-        </button>
-    );
+    // 功能按钮：图片 + 黑底白字文本块
+    // opts.placeholderMsg 传入则点击仅弹占位提示；opts.showDot 则右上角亮脉冲黄点（待领取提示）
+    const funcBtn = (icon: string, label: string, onClick: () => void, opts?: { placeholderMsg?: string; showDot?: boolean }) => {
+        const { placeholderMsg, showDot } = opts ?? {};
+        return (
+            <button
+                onClick={() => {
+                    eventBus.emit(GameEvents.UI_CLICK);
+                    placeholderMsg ? setPlaceholder(placeholderMsg) : onClick();
+                }}
+                className="group relative flex flex-col items-center gap-1.5"
+            >
+                {/* [2026-09-03 BUG修复] 肉鸽任务可领提示黄点（与大厅任务按钮同款脉冲） */}
+                {showDot && (
+                    <span className="absolute -top-1 right-0 z-10 w-4 h-4 bg-yellow-400 rounded-full border-2 border-yellow-200 shadow-[0_0_15px_yellow] animate-pulse" />
+                )}
+                <div className={`${ICON_BUTTON.circle} rounded-full bg-black/50 border border-white/20 flex items-center justify-center overflow-hidden group-hover:border-purple-400/70 group-hover:scale-105 transition-all`}>
+                    <img src={icon} alt={label} className={`${ICON_BUTTON.icon} object-contain`} draggable={false} />
+                </div>
+                <span className="bg-black/80 px-3 py-0.5 rounded text-sm text-white font-medium shadow-[0_0_10px_rgba(0,0,0,0.6)]">
+                    {label}
+                </span>
+            </button>
+        );
+    };
 
     return (
         <motion.div
@@ -140,9 +161,9 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
 
                 {/* 功能入口：从左到右横排一行 */}
                 <div className="flex items-end gap-5">
-                    {funcBtn(rogueIcon1, '推演任务', onOpenMission)}
-                    {funcBtn(rogueIcon2, '评估嘉勉', () => {}, '评估嘉勉 · 暂未开放')}
-                    {funcBtn(rogueIcon3, '逻辑研习', () => {}, '逻辑研习 · 暂未开放')}
+                    {funcBtn(rogueIcon1, '推演任务', onOpenMission, { showDot: hasRogueClaimableReward })}
+                    {funcBtn(rogueIcon2, '评估嘉勉', onOpenEvaluation)} {/* [2026-08-29] 移除占位，接评估嘉勉面板 */}
+                    {funcBtn(rogueIcon3, '逻辑研习', onOpenCodex)}
                 </div>
             </div>
 
@@ -153,17 +174,37 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
                 </div>
             )}
 
-            {/* 右下角：前往推演 */}
-            <button
-                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onStartRun(); }}
-                disabled={!canStart}
-                className={`absolute right-8 bottom-8 z-10 group transition-all ${canStart
-                    ? 'hover:scale-110 hover:drop-shadow-[0_0_25px_rgba(168,85,247,0.7)] cursor-pointer'
-                    : 'opacity-40 grayscale cursor-not-allowed'}`}
-                title={canStart ? '前往推演' : '请先选择天启者'}
-            >
-                <img src={rogueStar} alt="前往推演" className={`${START_BUTTON} object-contain`} draggable={false} />
-            </button>
+            {/* 右下角：未结算对局的结算/继续 + 前往推演 */}
+            <div className="absolute right-8 bottom-8 z-10 flex flex-col items-end gap-3">
+                {hasPendingRun && (
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onSettleRun?.(); }}
+                            className="px-7 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-red-500 font-black tracking-widest text-white hover:scale-105 transition-all hover:shadow-[0_0_20px_rgba(239,68,68,0.5)]"
+                            title="结算当前未完成的肉鸽对局（获得本场经验）"
+                        >
+                            结算
+                        </button>
+                        <button
+                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onResumeRun?.(); }}
+                            className="px-7 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 font-black tracking-widest text-white hover:scale-105 transition-all hover:shadow-[0_0_20px_rgba(16,185,129,0.5)]"
+                            title="继续上一局未结算的肉鸽对局"
+                        >
+                            继续
+                        </button>
+                    </div>
+                )}
+                <button
+                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onStartRun(); }}
+                    disabled={!canStart}
+                    className={`group transition-all ${canStart
+                        ? 'hover:scale-110 hover:drop-shadow-[0_0_25px_rgba(168,85,247,0.7)] cursor-pointer'
+                        : 'opacity-40 grayscale cursor-not-allowed'}`}
+                    title={canStart ? '前往推演' : hasPendingRun ? '有未结算的对局，请先结算或继续' : '请先选择天启者'}
+                >
+                    <img src={rogueStar} alt="前往推演" className={`${START_BUTTON} object-contain`} draggable={false} />
+                </button>
+            </div>
         </motion.div>
     );
 };

@@ -42,13 +42,28 @@ const NEW_VERSION = pkg.version;
 
 function findOldVersion() {
   // 从 release/ 的快照文件判断
+  // [2026-08-30 修复] 字符串排序 bug：".dist-snapshot-v1.0.9" > ".dist-snapshot-v1.0.13"（"1.0.1"<"1.0.9"），
+  //  导致基准永远是 v1.0.9，补丁把多版本累积差异全打进去（几百 MB）。
+  //  改为按语义化版本号数字比较，取「排除当前 NEW_VERSION 后的最大版本」作为基准。
   if (existsSync(RELEASE_DIR)) {
     const snaps = readdirSync(RELEASE_DIR)
       .filter(f => f.startsWith('.dist-snapshot-v') && f.endsWith('.json'))
-      .sort().reverse();
+      .map(f => f.match(/\.dist-snapshot-v([\d.]+)\.json$/) ? f.match(/\.dist-snapshot-v([\d.]+)\.json$/)[1] : null)
+      .filter(Boolean);
     if (snaps.length > 0) {
-      const m = snaps[0].match(/\.dist-snapshot-v([\d.]+)\.json$/);
-      if (m) return m[1];
+      const oldVersions = snaps.filter(v => v !== NEW_VERSION);
+      if (oldVersions.length === 0) return null;
+      // 版本号数字比较（降序，取最大）
+      oldVersions.sort((a, b) => {
+        const pa = a.split('.').map(Number);
+        const pb = b.split('.').map(Number);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+          const diff = (pb[i] ?? 0) - (pa[i] ?? 0);
+          if (diff !== 0) return diff;
+        }
+        return 0;
+      });
+      return oldVersions[0];
     }
   }
   return null;

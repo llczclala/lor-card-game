@@ -14,6 +14,7 @@ import { STORAGE_KEYS } from '../utils/storageUtils';
 import { Card } from './Card';
 import { gameLogger } from '../utils/gameLogger'; // [核心新增] 引入黑匣子
 import { MissionToast } from './MissionUI'; // [核心新增] 引入结算滑动提示框
+import { isSkinOwned as checkSkinOwned } from '../data/skinData'; // [皮肤门禁] 统一拥有判定（原画 0 恒拥有）
 
 // [新增] 自定义购买确认弹窗组件
 const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: any) => (
@@ -219,7 +220,9 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
     const currentBrowsingIdx = availableSkins.indexOf(browsingSkinId);
     const hasPrevSkin = currentBrowsingIdx > 0;
     const hasNextSkin = currentBrowsingIdx < availableSkins.length - 1;
-    const isSkinOwned = skinData ? (skinData.ownedSkins[currentCard.key]?.includes(browsingSkinId) ?? browsingSkinId === 0) : true;
+    // [2026-09-11 修复] 原写法用 `?? browsingSkinId === 0` 兜底，只在 ownedSkins 条目整个缺失时生效；
+    // 玩家一旦解锁过该卡皮肤（数组存在且不含 0），原画会被误判为「未拥有」而锁死 → 改用统一门禁
+    const isSkinOwned = skinData ? checkSkinOwned(skinData.ownedSkins, currentCard.key, browsingSkinId) : true;
     const isSkinCurrent = skinData ? browsingSkinId === skinData.currentSkinId : true;
     // 是否启用完整的皮肤切换功能（传了 onSkinChange 才启用）
     const enableSkinUI = !!skinData;
@@ -333,13 +336,13 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                 else navigateCard('prev');
             }}
         >
-            {/* 关闭按钮 */}
-            <button onClick={onClose} className="absolute top-4 right-4 md:top-8 md:right-8 text-white/80 hover:text-white bg-black/50 hover:bg-red-500/80 rounded-full p-2 transition-all z-[210]">
+            {/* 关闭按钮 [2026-08-26 莉莉子] data-tutorial-close 供教程引导层锚定提示定位 */}
+            <button onClick={onClose} data-tutorial-close="fullart" className="absolute top-4 right-4 md:top-8 md:right-8 text-white/80 hover:text-white bg-black/50 hover:bg-red-500/80 rounded-full p-2 transition-all z-[210]">
                 <X size={32} />
             </button>
 
             {/* [修改] 主容器：添加 overflow-hidden 以限制动画遮罩的范围，确保遮罩只在内容区出现 */}
-            <div className="relative flex flex-col md:flex-row max-w-5xl w-full h-full md:h-[90vh] items-stretch justify-center gap-0 md:gap-6 overflow-hidden rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="relative flex flex-col md:flex-row max-w-5xl w-full h-full md:h-[90%] items-stretch justify-center gap-0 md:gap-6 overflow-hidden rounded-2xl" onClick={e => e.stopPropagation()}>
 
                 {/* [新增] 购买确认弹窗挂载点 */}
                 {confirmState && (
@@ -717,7 +720,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                     const kwConfig = KEYWORD_DB[k];
                                     if (!kwConfig) return null;
                                     return (
-                                        <div key={k} className="group relative flex flex-col items-center gap-2 cursor-help">
+                                        <div key={k} data-tutorial-keyword={k} className="group relative flex flex-col items-center gap-2 cursor-help">
                                             <div className="w-16 h-16 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6 bg-black/30 rounded-xl p-2 border border-white/5 group-hover:border-white/20 shadow-lg">
                                                 <img src={kwConfig.icon} alt={kwConfig.label} className="w-full h-full object-contain drop-shadow-md" />
                                             </div>
@@ -836,9 +839,15 @@ interface GameOverProps {
     onPlayMovie?: (onEnd: () => void) => void;
     onPrepareMovie?: () => void; // [核心新增]
     missionSystem: any; // [核心新增] 透传任务系统大脑 ReturnType<typeof useMissionSystem>
+    exitLabel?: string; // [2026-08-29 莉莉子] 底部按钮文案（肉鸽传「返回地图」，默认「返回大厅」）
+    delayVictoryMovie?: boolean; // [2026-08-30 莉莉子] 升级影片仍在播放时为 true，胜利演出挂起等待，防放映机竞态
+    // [2026-09-04 账号等级/战绩] 真实对局模式 + 出战英雄 + 结算上抛（一次性入账）
+    mode?: 'pve' | 'tutorial' | 'rogue';
+    heroKeys?: string[];
+    onAccountSettle?: (payload: { result: 'victory' | 'defeat'; mode: 'pve' | 'tutorial' | 'rogue'; heroKeys: string[] }) => void;
 }
 
-export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMovie, missionSystem }: GameOverProps) => {
+export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMovie, missionSystem, exitLabel, delayVictoryMovie, mode, heroKeys, onAccountSettle }: GameOverProps) => {
     // 阶段：init(模糊+文字) -> blackout_in -> video -> blackout_out -> menu
     const [phase, setPhase] = useState<'init' | 'blackout_in' | 'video' | 'blackout_out' | 'menu'>('init');
 
@@ -915,6 +924,12 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                     console.error("[Economy] Failed to save earnings:", e);
                 }
             }
+
+            // [2026-09-04 账号等级/战绩] 真实对局一次性入账（PvE/教程）。
+            // 肉鸽逐节点战斗也过这里但被跳过（mode==='rogue'），整局经验/战绩由 App settleRun 结算一次，避免重复。
+            if (onAccountSettle && (mode === 'pve' || mode === 'tutorial') && result) {
+                onAccountSettle({ result, mode, heroKeys: heroKeys ?? [] });
+            }
         }
     }, [phase, result, scoreResult.silverEarned]);
 
@@ -925,6 +940,11 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
             setPhase('menu');
             return;
         }
+
+        // [2026-08-30 莉莉子 竞态修复] 升级影片仍在播放时，胜利演出挂起等待，
+        // 避免胜利影片与升级影片竞争同一台放映机（卜卜打爆水晶同时升级必触发的死锁）。
+        // levelUpCard 清空后 delayVictoryMovie 变 false，本 effect 重跑、继续胜利流程。
+        if (delayVictoryMovie) return;
 
         // [核心斩杀] 刚挂载组件、判定为胜利的瞬间，立刻让放映机后台装弹热车！
         // 此时距离真正切入黑屏(blackout_in)还有 1.5 秒，足够视频解码器把第一帧牢牢锁进显存！
@@ -947,7 +967,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
         }, 2000);
 
         return () => { clearTimeout(t1); clearTimeout(t2); };
-    }, [result]);
+    }, [result, delayVictoryMovie]);
 
     return (
         <div className="fixed inset-0 z-[300] overflow-hidden">
@@ -1056,7 +1076,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                             className="px-12 py-4 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-full border-2 border-blue-500/50 flex items-center gap-4 transition-all hover:scale-105 shadow-lg shadow-blue-900/50"
                         >
                             <RefreshCw size={20} />
-                            返回大厅
+                            {exitLabel ?? '返回大厅'}
                         </button>
                     </div>
                 </div>

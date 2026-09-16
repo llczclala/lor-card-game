@@ -5,70 +5,70 @@ import title_bg_2k from '../movie/title/烬中焰火/2k.webm';
 import title_bg_4k from '../movie/title/烬中焰火/4k.webm';
 // [核心重构] 导入大厅视频 —— 13角色 × 4场景
 // 阿卡夏
-import acacia_01 from '../movie/hall/acacia_01.mp4';
-import acacia_02 from '../movie/hall/acacia_02.mp4';
-import acacia_03 from '../movie/hall/acacia_03.mp4';
-import acacia_04 from '../movie/hall/acacia_04.mp4';
+import acacia_01 from '../movie/hall/acacia_01.webm';
+import acacia_02 from '../movie/hall/acacia_02.webm';
+import acacia_03 from '../movie/hall/acacia_03.webm';
+import acacia_04 from '../movie/hall/acacia_04.webm';
 // 辰星
-import chengxing_01 from '../movie/hall/chengxing_01.mp4';
-import chengxing_02 from '../movie/hall/chengxing_02.mp4';
-import chengxing_03 from '../movie/hall/chengxing_03.mp4';
-import chengxing_04 from '../movie/hall/chengxing_04.mp4';
+import chengxing_01 from '../movie/hall/chengxing_01.webm';
+import chengxing_02 from '../movie/hall/chengxing_02.webm';
+import chengxing_03 from '../movie/hall/chengxing_03.webm';
+import chengxing_04 from '../movie/hall/chengxing_04.webm';
 // 芬妮
-import fenny_01 from '../movie/hall/fenny_01.mp4';
-import fenny_02 from '../movie/hall/fenny_02.mp4';
-import fenny_03 from '../movie/hall/fenny_03.mp4';
-import fenny_04 from '../movie/hall/fenny_04.mp4';
+import fenny_01 from '../movie/hall/fenny_01.webm';
+import fenny_02 from '../movie/hall/fenny_02.webm';
+import fenny_03 from '../movie/hall/fenny_03.webm';
+import fenny_04 from '../movie/hall/fenny_04.webm';
 // 芬妮·泳装
-import fenny_swimsuit_01 from '../movie/hall/fenny_swimsuit_01.mp4';
-import fenny_swimsuit_02 from '../movie/hall/fenny_swimsuit_02.mp4';
-import fenny_swimsuit_03 from '../movie/hall/fenny_swimsuit_03.mp4';
-import fenny_swimsuit_04 from '../movie/hall/fenny_swimsuit_04.mp4';
+import fenny_swimsuit_01 from '../movie/hall/fenny_swimsuit_01.webm';
+import fenny_swimsuit_02 from '../movie/hall/fenny_swimsuit_02.webm';
+import fenny_swimsuit_03 from '../movie/hall/fenny_swimsuit_03.webm';
+import fenny_swimsuit_04 from '../movie/hall/fenny_swimsuit_04.webm';
 // 卡提亚
-import katya_01 from '../movie/hall/katya_01.mp4';
-import katya_02 from '../movie/hall/katya_02.mp4';
-import katya_03 from '../movie/hall/katya_03.mp4';
-import katya_04 from '../movie/hall/katya_04.mp4';
+import katya_01 from '../movie/hall/katya_01.webm';
+import katya_02 from '../movie/hall/katya_02.webm';
+import katya_03 from '../movie/hall/katya_03.webm';
+import katya_04 from '../movie/hall/katya_04.webm';
 // 卡提亚·婚纱
-import katya_wedding_01 from '../movie/hall/katya_wedding_01.mp4';
-import katya_wedding_02 from '../movie/hall/katya_wedding_02.mp4';
-import katya_wedding_03 from '../movie/hall/katya_wedding_03.mp4';
-import katya_wedding_04 from '../movie/hall/katya_wedding_04.mp4';
+import katya_wedding_01 from '../movie/hall/katya_wedding_01.webm';
+import katya_wedding_02 from '../movie/hall/katya_wedding_02.webm';
+import katya_wedding_03 from '../movie/hall/katya_wedding_03.webm';
+import katya_wedding_04 from '../movie/hall/katya_wedding_04.webm';
 // 里芙
-import lyfe_01 from '../movie/hall/lyfe_01.mp4';
-import lyfe_02 from '../movie/hall/lyfe_02.mp4';
-import lyfe_03 from '../movie/hall/lyfe_03.mp4';
-import lyfe_04 from '../movie/hall/lyfe_04.mp4';
-// 玛丽安
-import marian_01 from '../movie/hall/marian_01.mp4';
-import marian_02 from '../movie/hall/marian_02.mp4';
-import marian_03 from '../movie/hall/marian_03.mp4';
-import marian_04 from '../movie/hall/marian_04.mp4';
-// 玛丽安·婚纱
-import marian_wedding_01 from '../movie/hall/marian_wedding_01.mp4';
-import marian_wedding_02 from '../movie/hall/marian_wedding_02.mp4';
-import marian_wedding_03 from '../movie/hall/marian_wedding_03.mp4';
-import marian_wedding_04 from '../movie/hall/marian_wedding_04.mp4';
+import lyfe_01 from '../movie/hall/lyfe_01.webm';
+import lyfe_02 from '../movie/hall/lyfe_02.webm';
+import lyfe_03 from '../movie/hall/lyfe_03.webm';
+import lyfe_04 from '../movie/hall/lyfe_04.webm';
+// 茉莉安
+import marian_01 from '../movie/hall/marian_01.webm';
+import marian_02 from '../movie/hall/marian_02.webm';
+import marian_03 from '../movie/hall/marian_03.webm';
+import marian_04 from '../movie/hall/marian_04.webm';
+// 茉莉安·婚纱
+import marian_wedding_01 from '../movie/hall/marian_wedding_01.webm';
+import marian_wedding_02 from '../movie/hall/marian_wedding_02.webm';
+import marian_wedding_03 from '../movie/hall/marian_wedding_03.webm';
+import marian_wedding_04 from '../movie/hall/marian_wedding_04.webm';
 // 妮塔
-import nita_01 from '../movie/hall/nita_01.mp4';
-import nita_02 from '../movie/hall/nita_02.mp4';
-import nita_03 from '../movie/hall/nita_03.mp4';
-import nita_04 from '../movie/hall/nita_04.mp4';
+import nita_01 from '../movie/hall/nita_01.webm';
+import nita_02 from '../movie/hall/nita_02.webm';
+import nita_03 from '../movie/hall/nita_03.webm';
+import nita_04 from '../movie/hall/nita_04.webm';
 // 瑟瑞斯
-import siris_01 from '../movie/hall/siris_01.mp4';
-import siris_02 from '../movie/hall/siris_02.mp4';
-import siris_03 from '../movie/hall/siris_03.mp4';
-import siris_04 from '../movie/hall/siris_04.mp4';
+import siris_01 from '../movie/hall/siris_01.webm';
+import siris_02 from '../movie/hall/siris_02.webm';
+import siris_03 from '../movie/hall/siris_03.webm';
+import siris_04 from '../movie/hall/siris_04.webm';
 // 苔丝
-import tess_01 from '../movie/hall/tess_01.mp4';
-import tess_02 from '../movie/hall/tess_02.mp4';
-import tess_03 from '../movie/hall/tess_03.mp4';
-import tess_04 from '../movie/hall/tess_04.mp4';
+import tess_01 from '../movie/hall/tess_01.webm';
+import tess_02 from '../movie/hall/tess_02.webm';
+import tess_03 from '../movie/hall/tess_03.webm';
+import tess_04 from '../movie/hall/tess_04.webm';
 // 肴
-import yao_01 from '../movie/hall/yao_01.mp4';
-import yao_02 from '../movie/hall/yao_02.mp4';
-import yao_03 from '../movie/hall/yao_03.mp4';
-import yao_04 from '../movie/hall/yao_04.mp4';
+import yao_01 from '../movie/hall/yao_01.webm';
+import yao_02 from '../movie/hall/yao_02.webm';
+import yao_03 from '../movie/hall/yao_03.webm';
+import yao_04 from '../movie/hall/yao_04.webm';
 // [核心重构] 导入英雄多分辨率 WebM
 // 里芙
 import lyfe_levelup_1k from '../movie/level up/里芙_level up/1k.webm';
@@ -157,7 +157,7 @@ const HALL_BGM_BY_CHARACTER: Record<HallCharacterKey, BgmKey> = {
 const HALL_ENTRIES: HallCharacterEntry[] = [
   { characterKey: 'lyfe',           characterName: '里芙',         scenes: [lyfe_01, lyfe_02, lyfe_03, lyfe_04] },
   { characterKey: 'fenny',          characterName: '芬妮',         scenes: [fenny_01, fenny_02, fenny_03, fenny_04] },
-  { characterKey: 'marian',         characterName: '玛丽安',       scenes: [marian_01, marian_02, marian_03, marian_04] },
+  { characterKey: 'marian',         characterName: '茉莉安',       scenes: [marian_01, marian_02, marian_03, marian_04] },
   { characterKey: 'katya',          characterName: '卡提亚',       scenes: [katya_01, katya_02, katya_03, katya_04] },
   { characterKey: 'yao',            characterName: '肴',           scenes: [yao_01, yao_02, yao_03, yao_04] },
   { characterKey: 'chengxing',      characterName: '辰星',         scenes: [chengxing_01, chengxing_02, chengxing_03, chengxing_04] },
@@ -167,7 +167,7 @@ const HALL_ENTRIES: HallCharacterEntry[] = [
   { characterKey: 'fenny_swimsuit', characterName: '芬妮·泳装',    scenes: [fenny_swimsuit_01, fenny_swimsuit_02, fenny_swimsuit_03, fenny_swimsuit_04] },
   { characterKey: 'siris',          characterName: '瑟瑞斯',       scenes: [siris_01, siris_02, siris_03, siris_04] },
   { characterKey: 'acacia',         characterName: '阿卡夏',       scenes: [acacia_01, acacia_02, acacia_03, acacia_04] },
-  { characterKey: 'marian_wedding', characterName: '玛丽安·婚纱',   scenes: [marian_wedding_01, marian_wedding_02, marian_wedding_03, marian_wedding_04] },
+  { characterKey: 'marian_wedding', characterName: '茉莉安·婚纱',   scenes: [marian_wedding_01, marian_wedding_02, marian_wedding_03, marian_wedding_04] },
 ];
 
 /** 平坦列表 URL → 所属角色的查找表 */

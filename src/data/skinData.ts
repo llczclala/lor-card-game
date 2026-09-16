@@ -248,3 +248,28 @@ export const getMissionItems = (type?: CosmeticType): CosmeticConfig[] => {
     if (type) items = items.filter(item => item.type === type);
     return items;
 };
+
+// ==============================================================================
+// 皮肤拥有判定 (单一事实来源)
+// ==============================================================================
+
+/**
+ * 判断某张卡牌的指定皮肤是否「已拥有」。
+ *
+ * 规则：skinId 0 = 卡牌原画 (Base Art)，**恒视为已拥有**——本注册局从不发放
+ * skinId 0（见文件头规则 1），所以它永远不会出现在玩家的 ownedSkins 数组里，
+ * 必须由判定函数无条件放行，否则玩家一旦解锁了任意皮肤（数组存在且不含 0），
+ * 原画就会被误判为「未拥有」而锁死，无法切回默认。
+ *
+ * ⚠️ 全项目的皮肤门禁都必须走这里，不要在调用点各自拼 `id === 0 ||`——
+ * 2026-09-11 的「未拥有 皮肤0」BUG 就是各写一遍写歪了一处（漏了 0 的白名单）。
+ *
+ * @param ownedSkins 玩家收藏的皮肤字典（Key = 卡牌 Key, Value = 已拥有的 skinId 数组）
+ * @param cardKey    卡牌 Key
+ * @param skinId     待判定的皮肤 ID（0 = 原画）
+ */
+export const isSkinOwned = (
+    ownedSkins: Record<string, number[]> | undefined | null,
+    cardKey: string,
+    skinId: number
+): boolean => skinId === 0 || (ownedSkins?.[cardKey]?.includes(skinId) ?? false);

@@ -31,6 +31,19 @@ const persist = (next: Record<string, HeroProgressData>) => {
     listeners.forEach(fn => fn()); // 广播：所有实例刷新
 };
 
+/**
+ * [2026-09-04 莉莉子 修复] 账号切换后重载养成缓存
+ * sharedMap 是模块级缓存，只在模块加载时按当时的 USER_ID 读一次；
+ * 而切号（switchUser/createNewUser）不刷新页面 → 新账号会看到旧账号的等级/经验。
+ * 本函数按"当前 USER_ID"重读存档并广播给所有在用的界面。
+ * 调用时机：useUserSystem.loadUserData 写入新 USER_ID 之后。
+ * 只读不写，不影响任何已有账号数据。
+ */
+export const reloadHeroProgressionCache = (): void => {
+    sharedMap = StorageUtils.load<Record<string, HeroProgressData>>(getStorageKey(), {});
+    listeners.forEach(fn => fn());
+};
+
 export const useHeroProgression = () => {
     const [progressMap, setProgressMap] = useState<Record<string, HeroProgressData>>(sharedMap);
 

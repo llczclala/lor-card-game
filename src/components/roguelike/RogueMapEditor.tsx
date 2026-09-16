@@ -2,21 +2,25 @@
 // 悖论迷宫 · 肉鸽地图编辑器（GM STUDIO 插件）
 // 交互：左键拖节点 = 移动节点；左键拖空白 = 平移地图；右键按住拖 = 框选多选
 //      滚轮缩放 · Ctrl+Z 撤销 · Delete 删除 · 增删节点 · 调类型·大小·坐标
+// [2026-09-04 连线编辑] 工具栏「连线」模式：点起点→点终点建连（可扇出多个）；点已画线段删除该连接；点空白取消。
+//      属性面板「连接(next)」也可勾选目标 / ✕ 移除，带防自连/重复/防环守卫。
 // ⚠️ 坐标系统（对齐夏目大屏编辑器框选方案）：
 //    选框/节点都渲染在画布容器内部，用「画布内部坐标」；换算统一用
 //    canvasRef.getBoundingClientRect()（实时视觉坐标）÷ 缩放系数。换算与渲染共用
 //    同一个 rect，数学自洽，且自动适应侧边栏挤压/视口变化。
-// ⚠️ 数据源与游戏地图完全一致（同一 ROGUE_MAP_LAYOUT）。导出后粘贴回 mapLayout.ts 生效。
+// ⚠️ 数据源与游戏地图一致（三张难度图 ROGUE_MAPS，顶部切换 普通/机密/绝密 分别编辑）。导出后粘贴回 mapLayout.ts 对应常量生效。
 // ==========================================
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, Plus, Trash2, Copy, Undo2, Redo2, Map as MapIcon, MousePointerClick } from 'lucide-react';
+import { X, Plus, Trash2, Copy, Undo2, Redo2, Map as MapIcon, MousePointerClick, Link2 } from 'lucide-react';
 import {
-    ROGUE_MAP_LAYOUT, MAP_WIDTH, MAP_HEIGHT,
+    ROGUE_MAPS, MAP_WIDTH, MAP_HEIGHT,
     type RogueNode, type RogueNodeType,
 } from '../../data/roguelike/mapLayout';
+import { ROGUE_DIFFICULTIES, type RogueDifficulty } from '../../data/roguelike/difficulties'; // [2026-08-28] 三难度切换
 import { MapNode } from './MapNode';
-import mapZero from '../../image/map/map_zero.png';
+import mapZero from '../../image/map/map_zero.webp';
+import { DIALOGUE_BG_KEYS } from '../../data/roguelike/dialogueBg'; // [2026-08-27] 进入面板背景图选项
 
 const NODE_TYPE_OPTIONS: RogueNodeType[] = ['start', 'enhance', 'battle', 'elite', 'boss', 'rest', 'shop', 'event', 'treasure'];
 const TYPE_LABELS: Record<RogueNodeType, string> = {
@@ -31,9 +35,10 @@ interface RogueMapEditorProps {
 }
 
 export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
-    // ── 编辑数据（与游戏地图同一份数据源） ──
+    // ── 编辑数据（三张难度地图，切换编辑对应难度） ──
+    const [difficulty, setDifficulty] = useState<RogueDifficulty>('normal'); // [2026-08-28] 当前编辑难度
     const [nodes, setNodes] = useState<RogueNode[]>(() =>
-        (ROGUE_MAP_LAYOUT[0]?.nodes ?? []).map(n => ({ ...n }))
+        (ROGUE_MAPS.normal[0]?.nodes ?? []).map(n => ({ ...n }))
     );
     const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
     const [past, setPast] = useState<RogueNode[][]>([]);
@@ -41,6 +46,11 @@ export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
     const [copied, setCopied] = useState(false);
     // 框选：画布内部坐标（除以缩放系数后的原始坐标）
     const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+    // [2026-09-04 连线编辑] 连线模式 + 待连起点（pending 源节点高亮）
+    const [linkMode, setLinkMode] = useState(false);
+    const [linkFromId, setLinkFromId] = useState<string | null>(null);
+    const linkFromIdRef = useRef(linkFromId);
+    useEffect(() => { linkFromIdRef.current = linkFromId; }, [linkFromId]);
 
     // 画布变换：画布居中 + translate(tx,ty) 平移 + scale 缩放（origin center，夏目式）
     const [canvasTf, setCanvasTf] = useState({ scale: 0.3, tx: 0, ty: 0 });
@@ -295,6 +305,26 @@ export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
         setMarquee(null);
     };
 
+    // [2026-08-28 莉莉子] 三难度编辑切换：加载对应难度图（当前工具「导出即保存」，有未导出修改时确认丢弃）
+    const DIFFICULTY_STYLE: Record<RogueDifficulty, string> = {
+        normal: 'text-emerald-400 border-emerald-400/40',
+        secret: 'text-sky-400 border-sky-400/40',
+        topsecret: 'text-red-400 border-red-400/40',
+    };
+    const switchDifficulty = (d: RogueDifficulty) => {
+        if (d === difficulty) return;
+        const dirty = past.length > 0 || future.length > 0;
+        if (dirty && !window.confirm('切换难度将丢弃当前未导出的编辑，继续？')) return;
+        setDifficulty(d);
+        setNodes((ROGUE_MAPS[d][0]?.nodes ?? []).map(n => ({ ...n })));
+        setSelectedIds(new Set());
+        setLinkMode(false);      // [2026-09-04 连线编辑] 切难度重置连线状态
+        setLinkFromId(null);
+        setPast([]);
+        setFuture([]);
+        setCopied(false);
+    };
+
     // ── 增删节点 ──
     const addNode = () => {
         const id = `node_${Date.now()}`;
@@ -314,14 +344,64 @@ export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
         setSelectedIds(new Set());
     };
 
+    // ==========================================
+    // [2026-09-04 连线编辑] 创建/删除节点连接（next）
+    // ==========================================
+    /** 建立 fromId→toId 连接。防自连 / 防重复 / 防环（若 to 已能回到 from 则成环，阻止）。
+     *  @returns 是否成功加入 */
+    const addLink = useCallback((fromId: string, toId: string): boolean => {
+        if (fromId === toId) return false;
+        const list = nodesRef.current;
+        const from = list.find(n => n.id === fromId);
+        const to = list.find(n => n.id === toId);
+        if (!from || !to) return false;
+        if (to.type === 'start') { window.alert('起点(start)只能作为出发端，不能作为连接目标'); return false; }
+        if (from.next.includes(toId)) return false; // 已存在
+        // 防环：若 to 已可达 from，再加 from→to 会形成死循环路径
+        const nextMap = new Map(list.map(n => [n.id, n.next]));
+        const seen = new Set<string>();
+        const stack = [toId];
+        while (stack.length) {
+            const id = stack.pop()!;
+            if (id === fromId) { window.alert(`⚠️ 该连接会形成死循环（${toId} 已能绕回 ${fromId}），已阻止`); return false; }
+            if (seen.has(id)) continue;
+            seen.add(id);
+            (nextMap.get(id) ?? []).forEach(x => stack.push(x));
+        }
+        commit(list.map(n => (n.id === fromId ? { ...n, next: [...n.next, toId] } : n)));
+        return true;
+    }, [commit]);
+
+    /** 移除 fromId→toId 连接 */
+    const removeLink = useCallback((fromId: string, toId: string) => {
+        commit(nodesRef.current.map(n => (n.id === fromId ? { ...n, next: n.next.filter(x => x !== toId) } : n)));
+    }, [commit]);
+
+    /** 连线模式下的节点点击：第一下设起点（高亮），第二下连向目标（保持起点便于扇出）；再点起点取消 */
+    const handleLinkNodeClick = (node: RogueNode) => {
+        if (linkFromIdRef.current === null) {
+            setLinkFromId(node.id);
+            setSelectedIds(new Set([node.id]));
+            return;
+        }
+        if (linkFromIdRef.current === node.id) {
+            setLinkFromId(null); // 再点一次取消起点
+            return;
+        }
+        addLink(linkFromIdRef.current, node.id);
+        setSelectedIds(new Set([node.id])); // 目标高亮；起点仍 pending（linkFromId 不变）便于扇出
+    };
+
     // ── 导出源码 ──
     const exportCode = () => {
         const list = nodesRef.current.map(n => {
             const sizePart = n.size ? `, size: ${n.size}` : '';
+            const bgPart = n.dialogueBg ? `, dialogueBg: '${n.dialogueBg}'` : ''; // [2026-08-27] 进入面板背景图
             const nextPart = n.next.length ? `[${n.next.map(id => `'${id}'`).join(', ')}]` : '[]';
-            return `            { id: '${n.id}', type: '${n.type}', x: ${n.x}, y: ${n.y}${sizePart}, next: ${nextPart} },`;
+            return `            { id: '${n.id}', type: '${n.type}', x: ${n.x}, y: ${n.y}${sizePart}${bgPart}, next: ${nextPart} },`;
         }).join('\n');
-        const code = `export const ROGUE_MAP_LAYOUT: RogueAct[] = [
+        const constName = `ROGUE_MAP_${difficulty.toUpperCase()}`; // [2026-08-28] 按当前难度导出对应常量
+        const code = `export const ${constName}: RogueAct[] = [
     {
         index: 1,
         name: '悖论迷宫',
@@ -336,13 +416,13 @@ ${list}
         });
     };
 
-    // 连线（地图坐标，svg viewBox 自动缩放）
+    // 连线（地图坐标，svg viewBox 自动缩放）；携带 fromId/toId 供连线模式点选删除
     const nodeById = new Map(nodes.map(n => [n.id, n]));
-    const lines: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+    const lines: Array<{ fromId: string; toId: string; x1: number; y1: number; x2: number; y2: number }> = [];
     for (const node of nodes) {
         for (const nextId of node.next) {
             const t = nodeById.get(nextId);
-            if (t) lines.push({ x1: node.x, y1: node.y, x2: t.x, y2: t.y });
+            if (t) lines.push({ fromId: node.id, toId: nextId, x1: node.x, y1: node.y, x2: t.x, y2: t.y });
         }
     }
 
@@ -374,6 +454,20 @@ ${list}
             <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-slate-900 border-b border-white/10">
                 <MapIcon size={20} className="text-emerald-400" />
                 <span className="font-black tracking-widest mr-2">肉鸽地图编辑器</span>
+                {/* [2026-08-28] 三难度切换（普通/机密/绝密分别编辑保存） */}
+                <div className="flex items-center gap-1 ml-1">
+                    {ROGUE_DIFFICULTIES.map(d => (
+                        <button key={d.key} onClick={() => switchDifficulty(d.key)}
+                            title={`编辑${d.label}难度地图`}
+                            className={`px-3 py-1.5 rounded-md text-sm font-bold border transition-colors ${
+                                difficulty === d.key
+                                    ? `bg-white/10 ${DIFFICULTY_STYLE[d.key]}`
+                                    : 'bg-white/5 border-transparent text-gray-500 hover:bg-white/10 hover:text-gray-300'
+                            }`}>
+                            {d.label}
+                        </button>
+                    ))}
+                </div>
                 <button onClick={undo} disabled={past.length === 0} title="撤销 (Ctrl+Z)"
                     className="p-2 rounded-md bg-white/5 hover:bg-white/15 disabled:opacity-30">
                     <Undo2 size={16} />
@@ -382,7 +476,7 @@ ${list}
                     className="p-2 rounded-md bg-white/5 hover:bg-white/15 disabled:opacity-30">
                     <Redo2 size={16} />
                 </button>
-                <span className="text-xs text-gray-600 font-mono ml-1 hidden lg:inline">左键拖节点移动 · 左键拖空白平移 · 右键拖框选 · 滚轮缩放 · Ctrl+Z 撤销</span>
+                <span className="text-xs text-gray-600 font-mono ml-1 hidden lg:inline">左键拖节点移动 · 左键拖空白平移 · 右键拖框选 · 滚轮缩放 · Ctrl+Z 撤销 · 「连线」点两点建连/点线段删连</span>
                 <div className="flex-1" />
                 <span className="text-xs text-gray-500 font-mono">{selectedCount > 0 ? `已选 ${selectedCount} 个节点` : ''}</span>
                 <button onClick={addNode} className="px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-sm font-bold flex items-center gap-1.5">
@@ -391,6 +485,13 @@ ${list}
                 <button onClick={deleteSelected} disabled={selectedIds.size === 0}
                     className="px-3 py-1.5 rounded-md bg-red-700 hover:bg-red-600 disabled:opacity-40 text-sm font-bold flex items-center gap-1.5">
                     <Trash2 size={16} /> 删除
+                </button>
+                <button onClick={() => { setLinkMode(m => !m); setLinkFromId(null); }}
+                    title="连线模式：点起点节点 → 点终点节点建连（可连多个=扇出）；点线段删除该连接；点空白取消起点"
+                    className={`px-3 py-1.5 rounded-md text-sm font-bold flex items-center gap-1.5 border transition-colors ${
+                        linkMode ? 'bg-yellow-500/20 border-yellow-400/60 text-yellow-300' : 'bg-white/5 border-transparent text-gray-400 hover:bg-white/10 hover:text-white'
+                    }`}>
+                    <Link2 size={16} /> {linkMode ? '连线中' : '连线'}
                 </button>
                 <button onClick={exportCode} className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-sm font-bold flex items-center gap-1.5">
                     <Copy size={16} /> {copied ? '已复制 ✓' : '导出源码'}
@@ -423,33 +524,62 @@ ${list}
                     >
                         <img src={mapZero} width={MAP_WIDTH} height={MAP_HEIGHT}
                             className="w-full h-full object-cover pointer-events-none" draggable={false} alt="地图背景" />
-                        {/* 连线层（viewBox 自动缩放地图坐标） */}
-                        <svg className="absolute inset-0 w-full h-full pointer-events-none"
+                        {/* 连线层（viewBox 自动缩放地图坐标）；连线模式下可点线段删除、点空白取消待连起点 */}
+                        <svg
+                            className="absolute inset-0 w-full h-full"
+                            style={{ pointerEvents: linkMode ? 'auto' : 'none' }}
                             width={MAP_WIDTH} height={MAP_HEIGHT}
-                            viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}>
-                            {lines.map((l, i) => (
-                                <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
-                                    stroke="white" strokeWidth={6 / scale} strokeDasharray={`${20 / scale} ${16 / scale}`} strokeOpacity="0.55" />
-                            ))}
+                            viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
+                            onPointerDown={(e) => {
+                                if (linkMode) { e.stopPropagation(); if (linkFromId) setLinkFromId(null); } // 点空白 → 取消待连起点
+                            }}
+                        >
+                            {lines.map((l, i) => {
+                                const isFromPending = linkMode && linkFromId === l.fromId; // 待连起点发出的线亮黄
+                                return (
+                                    <g key={i}>
+                                        <line x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+                                            stroke={isFromPending ? '#facc15' : 'white'}
+                                            strokeWidth={6 / scale} strokeDasharray={`${20 / scale} ${16 / scale}`}
+                                            strokeOpacity={isFromPending ? 0.9 : 0.55} />
+                                        {linkMode && (
+                                            <line x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+                                                stroke="transparent" strokeWidth={26 / scale}
+                                                style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+                                                onPointerDown={(e) => e.stopPropagation()}
+                                                onClick={(e) => { e.stopPropagation(); removeLink(l.fromId, l.toId); }} // 连线模式点线段 = 删除该连接
+                                            />
+                                        )}
+                                    </g>
+                                );
+                            })}
                         </svg>
                         {/* 节点（画布内部坐标，wrapper 居中） */}
                         {nodes.map(node => {
                             const isSel = selectedIds.has(node.id);
+                            const isLinkFrom = linkMode && linkFromId === node.id; // 连线模式的待连起点
+                            const highlight = isSel || isLinkFrom;
                             return (
                                 <div
                                     key={node.id}
                                     ref={(el) => { nodeRefs.current[node.id] = el; }}
                                     style={{ position: 'absolute', left: node.x, top: node.y, transform: 'translate(-50%, -50%)' }}
-                                    onPointerDown={(e) => onNodePointerDown(e, node)}
+                                    onPointerDown={(e) => {
+                                        if (linkMode) { e.stopPropagation(); return; } // 连线模式：不拖拽、交给点击连线下发
+                                        onNodePointerDown(e, node);
+                                    }}
+                                    onClick={(e) => {
+                                        if (linkMode) { e.stopPropagation(); handleLinkNodeClick(node); }
+                                    }}
                                     className="relative"
                                 >
                                     <MapNode
                                         type={node.type}
                                         x={0}
                                         y={0}
-                                        state={isSel ? 'current' : 'available'}
+                                        state={highlight ? 'current' : 'available'}
                                         size={node.size}
-                                        onActivate={() => setSelectedIds(new Set([node.id]))}
+                                        onActivate={() => { if (!linkMode) setSelectedIds(new Set([node.id])); }}
                                     />
                                 </div>
                             );
@@ -497,10 +627,52 @@ ${list}
                                 onChange={e => applyToSelected({ size: Number(e.target.value) })}
                                 className="w-full mb-4 accent-violet-500" />
 
-                            <label className="block text-xs text-gray-400 mb-1">连接（next）</label>
-                            <p className="text-xs font-mono text-gray-500 mb-4">
-                                {selected.next.length ? selected.next.join(' → ') : '无'}
-                            </p>
+                            <label className="block text-xs text-gray-400 mb-1">进入面板背景图 <span className="text-gray-600 font-mono">{selected.dialogueBg ? `dialogue/${selected.dialogueBg}.png` : '随机'}</span></label>
+                            <select value={selected.dialogueBg ?? ''}
+                                onChange={e => applyToSelected({ dialogueBg: e.target.value || undefined })}
+                                className="w-full mb-4 px-3 py-2 rounded-md bg-slate-800 border border-white/10 text-sm font-bold">
+                                <option value="">随机（进入时随机一张）</option>
+                                {DIALOGUE_BG_KEYS.map(k => <option key={k} value={k}>dialogue/{k}.png</option>)}
+                            </select>
+
+                            <label className="block text-xs text-gray-400 mb-1">连接（next）<span className="text-gray-600 font-mono"> {selected.next.length} 条</span></label>
+                            {selected.next.length > 0 ? (
+                                <div className="flex flex-wrap gap-1 mb-3">
+                                    {selected.next.map(tid => {
+                                        const tn = nodeById.get(tid);
+                                        return (
+                                            <span key={tid}
+                                                className="inline-flex items-center gap-1 pl-1.5 pr-0.5 py-0.5 bg-white/5 border border-white/10 rounded text-[10px] font-mono text-gray-300">
+                                                {tn?.id ?? tid}
+                                                <button title="删除此连接" onClick={() => removeLink(selected.id, tid)}
+                                                    className="px-1 rounded hover:bg-red-500/40 text-red-400 hover:text-red-200">✕</button>
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <p className="text-xs font-mono text-gray-600 mb-3">无 — 用下方勾选或工具栏「连线」添加</p>
+                            )}
+
+                            <label className="block text-xs text-gray-400 mb-1">加入目标节点</label>
+                            <div className="max-h-44 overflow-y-auto border border-white/10 rounded-md mb-4 bg-black/20 text-xs font-mono no-scrollbar">
+                                {nodes.filter(c => c.id !== selected.id && c.type !== 'start').map(c => {
+                                    const on = selected.next.includes(c.id);
+                                    return (
+                                        <label key={c.id}
+                                            className={`flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-white/5 transition-colors ${on ? 'text-yellow-300' : 'text-gray-400'}`}>
+                                            <input type="checkbox" checked={on}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) addLink(selected.id, c.id);
+                                                    else removeLink(selected.id, c.id);
+                                                }}
+                                                className="accent-yellow-500" />
+                                            <span className="truncate">{c.id}</span>
+                                            <span className="text-[9px] ml-auto shrink-0">{TYPE_LABELS[c.type]}</span>
+                                        </label>
+                                    );
+                                })}
+                            </div>
                         </>
                     ) : selectedIds.size > 1 ? (
                         <>
@@ -526,8 +698,8 @@ ${list}
                     )}
                     {selectedIds.size <= 1 && (
                         <p className="text-[11px] text-gray-600 leading-relaxed border-t border-white/10 pt-3 mt-4">
-                            数据源与游戏地图同一份 <span className="text-violet-400">ROGUE_MAP_LAYOUT</span>，节点坐标完全一致。
-                            点「导出源码」复制，粘贴回 <span className="text-violet-400">src/data/roguelike/mapLayout.ts</span> 覆盖生效。
+                            正在编辑 <span className="text-violet-400">ROGUE_MAP_{difficulty.toUpperCase()}</span>（{ROGUE_DIFFICULTIES.find(d => d.key === difficulty)?.label} 难度）地图。
+                            三张难度图分别编辑保存。点「导出源码」复制，粘贴回 <span className="text-violet-400">src/data/roguelike/mapLayout.ts</span> 覆盖对应常量生效。
                         </p>
                     )}
                 </div>

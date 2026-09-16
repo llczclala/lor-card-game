@@ -49,6 +49,10 @@ function getWatchEvents(subTask: TutorialSubTask): string[] {
       // [2026-08-15] 选中格挡者即完成（用于「尝试格挡隐秘单位」教学：格挡必然失败，不能等 block_assigned）
       events.push(GameEvents.SFX_SELECT_BLOCKER_UNIT);
       break;
+    case 'block_rejected':
+      // [2026-08-20 莉莉子] 格挡被拒（隐秘/凶恶）即完成：让学生真正点敌方单位，触发"吓退演出+播报"后再推进
+      events.push(GameEvents.BLOCK_REJECTED);
+      break;
     case 'block_recalled':
     case 'attack_recalled':
       events.push(GameEvents.SFX_RECALL_BLOCK);
@@ -71,6 +75,14 @@ function getWatchEvents(subTask: TutorialSubTask): string[] {
     case 'attack_declared':
       events.push(GameEvents.ATTACK_DECLARE);
       break;
+    case 'unit_die':
+      // [2026-08-26 莉莉子] 指定单位死亡（配合 targetCardKey 精确匹配，如单挑消灭安蒂娜）
+      events.push(GameEvents.UNIT_DIE);
+      break;
+    case 'spell_targets_selected':
+      // [2026-08-26 莉莉子] 法术目标全部选完、进入结算
+      events.push(GameEvents.TUTORIAL_SPELL_TARGETS_SELECTED);
+      break;
   }
   return events;
 }
@@ -81,6 +93,7 @@ function getWatchEvents(subTask: TutorialSubTask): string[] {
 function doesEventMatchCondition(
   eventName: string,
   subTask: TutorialSubTask,
+  payload?: any,
 ): boolean {
   const cond = subTask.expectedAction.completionCondition;
   switch (cond) {
@@ -89,6 +102,9 @@ function doesEventMatchCondition(
     case 'block_selected':
       // [2026-08-15] 选中格挡者即完成（对应 SFX_SELECT_BLOCKER_UNIT）
       return eventName === GameEvents.SFX_SELECT_BLOCKER_UNIT;
+    case 'block_rejected':
+      // [2026-08-20 莉莉子] 格挡被拒（对应 BLOCK_REJECTED）
+      return eventName === GameEvents.BLOCK_REJECTED;
     case 'block_recalled':
     case 'attack_recalled':
       return eventName === GameEvents.SFX_RECALL_BLOCK;
@@ -104,6 +120,16 @@ function doesEventMatchCondition(
       return eventName === GameEvents.PLAY_CARD;
     case 'attack_declared':
       return eventName === GameEvents.ATTACK_DECLARE;
+    case 'unit_die':
+      // [2026-08-26 莉莉子] 指定单位死亡；配了 targetCardKey 时精确匹配死亡单位（避免我方单位阵亡误判）
+      if (eventName !== GameEvents.UNIT_DIE) return false;
+      if (subTask.expectedAction.targetCardKey) {
+        return payload?.key === subTask.expectedAction.targetCardKey;
+      }
+      return true;
+    case 'spell_targets_selected':
+      // [2026-08-26 莉莉子] 法术目标全部选完、进入结算
+      return eventName === GameEvents.TUTORIAL_SPELL_TARGETS_SELECTED;
     default:
       return false;
   }
@@ -220,12 +246,11 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
 
   useEffect(() => {
     if (!state.currentTaskGroup || state.activeSubTaskIndex === -1) return;
-    const activeTask = state.currentTaskGroup.subTasks[state.activeSubTaskIndex];
-    if (activeTask && ['end_turn', 'free_block', 'free_attack'].includes(activeTask.id)) {
-      eventBus.emit(GameEvents.TUTORIAL_UNLOCK_ACTION);
-    } else {
-      eventBus.emit(GameEvents.TUTORIAL_LOCK_ACTION);
-    }
+    // [2026-08-20 莉莉子 BUG修复] task_group 的子任务都是"玩家操作步骤"（进攻/格挡/施法/结束回合等），
+    // 统一解锁主操作按钮；LOCK 只在非 task_group 步骤（对话/引导/等待，currentTaskGroup 为 null）时保持生效。
+    // 此前用 id 白名单（end_turn/attack/declare/free_*）漏掉施法/格挡类任务（cast_*/try_*），
+    // 导致主按钮被锁死 → 玩家无法施法/格挡/结束回合 → 教程卡死。
+    eventBus.emit(GameEvents.TUTORIAL_UNLOCK_ACTION);
   }, [state.currentTaskGroup, state.activeSubTaskIndex]);
 
   // ─── 子任务完成时解锁跳过按钮 ───
@@ -246,9 +271,9 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
   // 只当处于 task_group 步骤且有活跃子任务时才监听
   const activeSubTask = state.currentTaskGroup?.subTasks[state.activeSubTaskIndex] ?? null;
 
-  const handleGameEvent = useCallback((eventName: string) => {
+  const handleGameEvent = useCallback((eventName: string, payload?: any) => {
     if (!activeSubTask) return;
-    if (doesEventMatchCondition(eventName, activeSubTask)) {
+    if (doesEventMatchCondition(eventName, activeSubTask, payload)) {
       actions.completeSubTask(activeSubTask.id);
     }
   }, [activeSubTask, actions]);
@@ -258,9 +283,9 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
     const watchEvents = getWatchEvents(activeSubTask);
     if (watchEvents.length === 0) return;
 
-    // 分别绑定每个事件（以便知道哪个事件名触发了）
+    // 分别绑定每个事件（以便知道哪个事件名触发了）；[2026-08-26 莉莉子] 透传 payload 供 unit_die 精确匹配死亡单位
     const handlers = watchEvents.map(ev => {
-      const cb = () => handleGameEvent(ev);
+      const cb = (payload?: any) => handleGameEvent(ev, payload);
       eventBus.on(ev, cb);
       return { ev, cb };
     });

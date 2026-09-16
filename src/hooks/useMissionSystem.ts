@@ -74,11 +74,23 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
     const [isReady, setIsReady] = useState(false);
 
     // ==========================================
-    // 状态雷达：是否有可领取的奖励 (用于点亮大厅黄点)
+    // [2026-09-03 BUG修复] 状态雷达拆成两套：
+    //   - hasClaimableReward        普通任务可领 → 点亮大厅任务按钮黄点
+    //   - hasRogueClaimableReward   肉鸽任务可领 → 点亮悖论迷宫"推演任务"按钮黄点
+    // 之前共用一套导致：肉鸽任务完成也点亮大厅黄点，但大厅面板看不到肉鸽任务
     // ==========================================
+    const rogueMissionIds = useMemo(() => new Set(MISSIONS.filter(m => m.rogue).map(m => m.id)), []);
+    const normalMissionIds = useMemo(() => new Set(MISSIONS.filter(m => !m.rogue).map(m => m.id)), []);
+
+    // 大厅黄点：只统计普通任务（MissionUI 面板可见的任务）
     const hasClaimableReward = useMemo(() => {
-        return Object.values(progress).some(p => p.status === 'completed');
-    }, [progress]);
+        return Object.values(progress).some(p => p.status === 'completed' && normalMissionIds.has(p.id));
+    }, [progress, normalMissionIds]);
+
+    // 肉鸽黄点：只统计 rogue 标记任务（RogueMissionPanel 面板可见的任务）
+    const hasRogueClaimableReward = useMemo(() => {
+        return Object.values(progress).some(p => p.status === 'completed' && rogueMissionIds.has(p.id));
+    }, [progress, rogueMissionIds]);
 
     // ==========================================
     // 生命周期：初始化、数据合并与跨期重置
@@ -302,11 +314,55 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
         return missionDef.reward;
     }, [progress, userId]);
 
+    // ==========================================
+    // [2026-08-29 评估嘉勉] 肉鸽对局结算直接累加（不走 gameLogger 日志）
+    //   按"完成 1 场（任意结局）/ 通关 1 次"更新 rogue_run / rogue_win 条件任务
+    // ==========================================
+    const recordRogueRun = useCallback((info: { won: boolean; elites?: number; enhancements?: number; events?: number; gold?: number }): MissionUpdateResult[] => {
+        if (!userId || !isReady) return [];
+        const updates: MissionUpdateResult[] = [];
+        const newProgress = { ...progress };
+        let hasUpdates = false;
+
+        MISSIONS.forEach(mission => {
+            // [2026-08-30] 按条件类型处理：肉鸽专属任务 + 外部版本任务（用 rogue_* 条件的都入账）
+            const t = mission.condition.type;
+            if (t !== 'rogue_run' && t !== 'rogue_win' && t !== 'rogue_elite' && t !== 'rogue_enhance' && t !== 'rogue_event' && t !== 'rogue_gold') return;
+            const prog = newProgress[mission.id];
+            if (!prog || prog.status !== 'ongoing') return;
+            let add = 0;
+            if (t === 'rogue_run') add = 1;
+            else if (t === 'rogue_win') add = info.won ? 1 : 0;
+            else if (t === 'rogue_elite') add = info.elites ?? 0;
+            else if (t === 'rogue_enhance') add = info.enhancements ?? 0;
+            else if (t === 'rogue_event') add = info.events ?? 0;
+            else if (t === 'rogue_gold') add = info.gold ?? 0;
+            if (add <= 0) return;
+            prog.current = Math.min(prog.current + add, prog.target);
+            const justCompleted = prog.current >= prog.target;
+            if (justCompleted) { prog.status = 'completed'; prog.sort = 0; }
+            updates.push({
+                missionId: mission.id, addedAmount: add,
+                current: prog.current, target: prog.target,
+                justCompleted, title: mission.title,
+            });
+            hasUpdates = true;
+        });
+
+        if (hasUpdates) {
+            setProgress(newProgress);
+            localStorage.setItem(`sbr_mission_prog_${userId}`, JSON.stringify(newProgress));
+        }
+        return updates;
+    }, [userId, progress, isReady]);
+
     return {
         isReady,
         progress,
         hasClaimableReward,
+        hasRogueClaimableReward,
         scanLogs,
-        claimReward
+        claimReward,
+        recordRogueRun
     };
 };

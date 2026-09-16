@@ -7,7 +7,10 @@ import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes';
 import { TUTORIAL_STAGES } from '../../data/tutorialStages';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { getCardBackUrl } from '../../utils/styleUtils';
+import { getCardBackVideo } from '../../data/cardBackVideos'; // [2026-08-23] 动态卡背视频
 import { PERSONALIZATION_ASSETS } from '../../data/imageData';
+import { useUserSystem } from '../../hooks/useUserSystem'; // [2026-08-23] 读动态卡背开关
+import { CardBackVideo } from '../Card'; // [2026-08-23] 卡背动态视频组件
 // [新增] 悬停预览统一方案
 import { useCardGaze } from '../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../FloatingCardPreview';
@@ -39,7 +42,7 @@ const getDeckCovers = (deckList: any[], defaultHeroKey: string): { url: string; 
 };
 
 // [新增] 极简对抗型 2.5D 卡组模型 (为预览室特供)
-const PreviewDiorama = ({ covers, cardBackImg, boardImg, isEnemy }: any) => {
+const PreviewDiorama = ({ covers, cardBackImg, cardBackVideoUrl, boardImg, isEnemy }: any) => {
     return (
         <div className="relative w-64 h-64 transition-all duration-500 scale-100 opacity-100 z-40 filter drop-shadow-[0_15px_35px_rgba(0,0,0,0.7)]">
             {/* 棋盘底垫 */}
@@ -68,7 +71,11 @@ const PreviewDiorama = ({ covers, cardBackImg, boardImg, isEnemy }: any) => {
                                 }`}></div>
                             )}
 
-                            <img src={renderUrl} className={`w-full h-full object-cover relative z-10 ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt="" />
+                            {isBack && cardBackVideoUrl ? (
+                                <CardBackVideo src={cardBackVideoUrl} className="w-full h-full object-cover relative z-10 opacity-90 mix-blend-luminosity" />
+                            ) : (
+                                <img src={renderUrl} className={`w-full h-full object-cover relative z-10 ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt="" />
+                            )}
                             {isBack && <div className="absolute inset-0 bg-black/40 mix-blend-multiply z-20"></div>}
                         </div>
                     )
@@ -125,6 +132,11 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
 }) => {
     const stage = TUTORIAL_STAGES[stageId];
     const currentCardBackUrl = getCardBackUrl(cardBackIndex);
+    // [2026-08-23 莉莉子] 动态卡背视频（开关开启且该卡背有视频才生效）
+    const userSystem = useUserSystem();
+    const currentCardBackVideo = (userSystem.settings as any)?.cardBackDynamic ? getCardBackVideo(cardBackIndex) : undefined;
+    // [2026-08-23 莉莉子] 敌方微缩景观固定用反派卡背（index 1）
+    const enemyCardBackVideo = (userSystem.settings as any)?.cardBackDynamic ? getCardBackVideo(1) : undefined;
     // [核心修复] 将错误的 UI_IMAGES 替换为正确的 PERSONALIZATION_ASSETS，解决 undefined[0] 的白屏崩溃！
     const deskImage = PERSONALIZATION_ASSETS.desks[deskIndex] || PERSONALIZATION_ASSETS.desks[0];
 
@@ -221,6 +233,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                         <PreviewDiorama
                             covers={getDeckCovers(playerDeckList, playerHeroKey)}
                             cardBackImg={currentCardBackUrl}
+                            cardBackVideoUrl={currentCardBackVideo}
                             boardImg={deskImage}
                         />
                     </motion.div>
@@ -236,6 +249,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                         <PreviewDiorama
                             covers={getDeckCovers(enemyDeckList, enemyHeroKey)}
                             cardBackImg={PERSONALIZATION_ASSETS.cardBacks[1]} // 敌方固定使用反派卡背
+                            cardBackVideoUrl={enemyCardBackVideo}
                             boardImg={deskImage}
                             isEnemy={true}
                         />

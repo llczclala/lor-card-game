@@ -8,7 +8,7 @@
 // ==========================================
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X } from 'lucide-react';
+import { X, Lock } from 'lucide-react'; // [2026-08-27] Lock：未抵达节点占位
 import { type RogueNode, type RogueNodeType } from '../../data/roguelike/mapLayout';
 import { pickEnemyAvatarKey } from '../../data/roguelike/mapLayout';
 import { getBuffById, type MazeBuff } from '../../data/roguelike/buffs'; // [2026-08-11] 改读统一库 + 节点预分配实际携带
@@ -17,6 +17,7 @@ import { NODE_META, type MapNodeState } from './MapNode';
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes';
 import { CARD_DB } from '../../data/cards';
 import { EnhancementPreview, type EnhancementPreviewHover } from './EnhancementPreview';
+import { EnhancementCard } from './EnhancementCard'; // [2026-08-27] 迷宫强化图鉴卡（逻辑研习同款样式）
 
 // 节点类型 → 显示名（对齐 NodeEventModal 文案）
 const NODE_TITLE: Record<RogueNodeType, string> = {
@@ -31,15 +32,6 @@ const NODE_TITLE: Record<RogueNodeType, string> = {
     treasure: '宝箱',
 };
 
-// 当前节点按类型互动的按钮文案
-const INTERACT_LABEL: Partial<Record<RogueNodeType, string>> = {
-    enhance: '强化',
-    rest: '休整',
-    shop: '进入商店',
-    event: '探索',
-    treasure: '开启宝箱',
-};
-
 const PLACEHOLDER_DESC = '流派描述...'; // EnemyDeckEditor 新建流派默认占位文案
 
 interface NodePreviewPanelProps {
@@ -48,11 +40,12 @@ interface NodePreviewPanelProps {
     state: MapNodeState;
     onClose: () => void;
     onMoveTo: (nodeId: string) => void;
-    onBattle: (nodeType: RogueNodeType, archetypeId: string | undefined, nodeId: string) => void;
+    onBattle: (nodeType: RogueNodeType, archetypeId: string | undefined, nodeId: string, enemyBuffs?: string[]) => void; // [2026-08-27 莉莉子] enemyBuffs=节点预分配的迷宫强化（roll 子集）
+    onDevWin?: (nodeType: RogueNodeType, nodeId: string) => void; // [2026-08-29] 开发者一键胜利（跳过战斗）
     onInteractCurrent: (node: RogueNode) => void;
 }
 
-export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, state, onClose, onMoveTo, onBattle, onInteractCurrent }) => {
+export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, state, onClose, onMoveTo, onBattle, onInteractCurrent, onDevWin }) => {
     // [2026-08-11] BUFF 悬停预览：ref 定时器复刻 useCardGaze 手感（500ms delay + 150ms leaveBuffer）
     const [hoverBuff, setHoverBuff] = useState<EnhancementPreviewHover | null>(null);
     const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -98,10 +91,11 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
     if (state === 'available') {
         action = { label: '前往', onClick: () => onMoveTo(node.id) };
     } else if (state === 'current') {
+        // [2026-08-25] 统一「进入」按钮：确认进入当前节点（战斗/互动），由玩家主动点才触发
         if (isCombat) {
-            if (!isDefeated) action = { label: '挑战', onClick: () => onBattle(node.type, node.enemyArchetypeId, node.id) };
+            if (!isDefeated) action = { label: '战斗', onClick: () => onBattle(node.type, node.enemyArchetypeId, node.id, node.enemyBuffs) }; // [2026-08-27] 敌人详情「战斗」按钮（程要求）
         } else if (node.type !== 'start') {
-            action = { label: INTERACT_LABEL[node.type] ?? '互动', onClick: () => onInteractCurrent(node) };
+            action = { label: '进入', onClick: () => onInteractCurrent(node) };
         }
     }
 
@@ -123,15 +117,18 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
                     >
                         {/* 头部 */}
                         <div className="p-4 flex items-center justify-between border-b border-white/10 shrink-0">
-                            <h3 className="font-black tracking-widest text-gray-100 text-lg">{isCombat ? '敌人情报' : '节点情报'}</h3>
+                            <h3 className="font-black tracking-widest text-gray-100 text-lg">{state === 'locked' ? '未抵达的节点' : (isCombat ? '敌人情报' : '节点情报')}</h3>
                             <button onClick={onClose} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors">
                                 <X size={18} />
                             </button>
                         </div>
 
                         {/* 滚动内容 */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-                            {isCombat ? (
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                            {state === 'locked' ? (
+                                // [2026-08-27] 未抵达节点：不泄露具体内容，只显示锁占位 + 神秘文案
+                                <LockedSection />
+                            ) : isCombat ? (
                                 <EnemySection
                                     faceCard={faceCard} faceIsSpell={faceIsSpell} metaColor={meta.color} metaIcon={meta.icon}
                                     enemyName={arch?.name ?? '未知敌人'} nodeTitle={NODE_TITLE[node.type]}
@@ -145,16 +142,27 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
                         {/* 底部动作条 */}
                         <div className="border-t border-white/10 p-4 shrink-0">
                             {action ? (
-                                <button
-                                    onClick={action.onClick}
-                                    className="w-full py-3 rounded-xl font-black tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg"
-                                    style={{ background: 'linear-gradient(to right, #6366f1, #8b5cf6)' }}
-                                >
-                                    {action.label}
-                                </button>
+                                <div className="flex gap-3">
+                                    {/* [2026-08-29] 开发者一键胜利（战斗节点，战斗按钮左侧） */}
+                                    {action.label === '战斗' && onDevWin && (
+                                        <button
+                                            onClick={() => onDevWin(node.type, node.id)}
+                                            className="shrink-0 px-4 py-3 rounded-xl font-black tracking-widest text-white transition-all hover:scale-[1.02] bg-red-600/80 border-2 border-red-400 hover:bg-red-500 shadow-lg"
+                                        >
+                                            ⚡ 一键胜利
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={action.onClick}
+                                        className="flex-1 py-3 rounded-xl font-black tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg"
+                                        style={{ background: 'linear-gradient(to right, #6366f1, #8b5cf6)' }}
+                                    >
+                                        {action.label}
+                                    </button>
+                                </div>
                             ) : (
                                 <p className="text-center text-xs font-mono text-gray-500 py-2">
-                                    {state === 'done' ? '已击败' : state === 'missed' ? '已错过' : state === 'locked' ? '未到达' : '无法互动'}
+                                    {state === 'done' ? '已击败' : state === 'missed' ? '已错过' : state === 'locked' ? '未抵达的节点' : '无法互动'}
                                 </p>
                             )}
                         </div>
@@ -213,25 +221,38 @@ const EnemySection: React.FC<{
             )}
         </div>
 
-        {/* 敌人持有的迷宫BUFF */}
+        {/* 敌人持有的迷宫BUFF（[2026-08-27] 图鉴卡样式，对齐逻辑研习） */}
         <div>
             <h4 className="text-xs font-black tracking-widest text-gray-400 mb-1.5">持有迷宫BUFF</h4>
             {buffDefs.length === 0 ? (
                 <p className="text-sm text-gray-500 italic">暂无迷宫BUFF</p>
             ) : (
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 gap-3">
                     {buffDefs.map(buff => (
-                        <div
-                            key={buff.id}
-                            {...bindBuffHover(buff)}
-                            className="flex items-center gap-3 p-2.5 rounded-xl bg-white/5 border border-white/10 hover:border-white/25 hover:bg-white/10 cursor-pointer transition-colors"
-                        >
-                            <span className="text-base">{buff.name}</span>
-                            <span className="flex-1 text-xs text-gray-400 truncate">{buff.description}</span>
-                        </div>
+                        <EnhancementCard key={buff.id} e={buff} bindHover={bindBuffHover} />
                     ))}
                 </div>
             )}
+        </div>
+    </>
+);
+
+// ── [2026-08-27 莉莉子] 未抵达节点分支：锁占位 + 神秘文案（不泄露具体内容） ──
+const LockedSection: React.FC = () => (
+    <>
+        {/* 锁占位卡面 */}
+        <div className="w-full h-60 rounded-2xl border border-white/10 bg-slate-950 overflow-hidden relative flex items-center justify-center">
+            <div className="w-full h-full flex items-center justify-center" style={{ background: 'radial-gradient(circle at center, rgba(255,255,255,0.04), transparent 70%)' }}>
+                <span className="w-24 h-24 rounded-full bg-gray-800 flex items-center justify-center text-gray-500 scale-[1.6]">
+                    <Lock size={40} />
+                </span>
+            </div>
+        </div>
+
+        {/* 标题 + 文案 */}
+        <div className="text-center space-y-2 pt-2">
+            <h2 className="text-xl font-black text-gray-400 tracking-wider">未抵达的节点</h2>
+            <p className="text-sm text-gray-500 italic">到底会遇到什么呢？</p>
         </div>
     </>
 );

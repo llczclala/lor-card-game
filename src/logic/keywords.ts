@@ -16,6 +16,29 @@ export interface CombatInteractionResult {
     quickAttackEphemeralDeath: boolean;
 }
 
+// ==========================================
+// [2026-09-12 莉莉子] 【剧毒 Deadly】擦伤即解构 —— 统一判定入口
+//   Deadly 是**负面**词条：带有它的单位【受到】任何伤害即被消灭
+//   （2026-09-12 语义反转：原为"该单位造成的伤害必杀"＝给己方的增益，现为受体侧的 debuff）
+//   边界：
+//     · 只看减伤结算之后的最终伤害 > 0 才算"擦伤"——屏障全额抵挡 / 坚韧减到 0 → 不触发
+//     · 对水晶无效，只作用于单位（本函数仅在单位伤害落点调用）
+//     · 战斗打击 / 法术直伤 / 反伤反弹 三条伤害来源全覆盖
+//   实现手法沿用幻象（Ephemeral）：注入超大伤害，交由全局收尸系统统一裁决死亡与演出
+// ==========================================
+
+/** 剧毒引发的致死伤害注入值：远大于任何单位的血量上限 */
+export const POISON_LETHAL_DAMAGE = 9999;
+
+/**
+ * 计算剧毒需要额外注入的致死伤害。
+ * @param target 承受伤害的单位
+ * @param finalDamage 经屏障/坚韧等减伤结算后的最终伤害
+ * @returns 需追加进 damageTaken 的致死伤害；未触发剧毒时返回 0
+ */
+export const deadlyLethalInject = (target: CardData, finalDamage: number): number =>
+    (finalDamage > 0 && target.keywords.includes('Deadly')) ? POISON_LETHAL_DAMAGE : 0;
+
 /**
  * 处理回合开始时的关键词效果 (如 Regeneration)
  * @param cards 备战席上的卡牌数组
@@ -376,6 +399,15 @@ export const calculateCombatInteraction = (
         if (blockerBarrierActive && blockerDamage > 0) {
             blockerDamage = 0;
             blockerBarrierPopped = true;
+        }
+
+        // --- 5. Thorns (反伤) — [2026-09-04 莉莉子 补全] 防守反伤 ---
+        // 反伤单位作为被攻击方（阻挡者）时，若确实受到实质物理伤害
+        // （扣除自身坚韧/屏障后仍 >0），对攻击者回敬固定 1 点伤害。
+        // 放最末尾：反伤是独立固定伤害，不参与双方后续的坚韧/屏障减免
+        // （数值固定）。天然克制快攻——先攻/连击打刺杀不掉这点反弹。
+        if (blocker.keywords.includes('Thorns') && blockerDamage > 0) {
+            attackerDamage += 1;
         }
     }
 

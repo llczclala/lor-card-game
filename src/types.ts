@@ -53,13 +53,14 @@ export interface CardData {
   isDead?: boolean;         // [SBA] 逻辑死亡标记。true=已死，索敌/碰撞无视
   deathType?: DeathType;    // [2026-07-20] 死亡类型：KILLED(阵亡) / ELIMINATED(消亡替换)
   strikeCount: number;
+  strikeStamp?: number; // [2026-08-19 莉莉子] 撞击计数戳：连击第二撞时递增，触发动画容器重挂载重播撞击动画
   roundStrikes?: number; // [新增] 本回合打击次数记账本，用于法术动态增伤判定
   customProgress?: number; // [新增] 私人记账本：专门用于记录卡牌在场上“目睹”等局部任务的进度
   // [新增] 'ephemeral_dying' 用于区分瞬息自然消散与常规受击阵亡
   // [修改] 增加 'delayed_attacking' 以支持防守方的滞后反击动画
   // [新增] 'summoning' 用于召唤入场演出（碎片重组）
   // [2026-08-16 莉莉子] 增加 'channel_pulse'（引导脉冲动画）、'thawing'（解冻动画）——此前类型未收录，触发 10 条 TS 错误
-  animState?: 'idle' | 'attacking' | 'delayed_attacking' | 'hit' | 'dying' | 'ephemeral_dying' | 'transform' | 'regenerating' | 'buff' | 'summoning' | 'channel_pulse' | 'thawing';
+  animState?: 'idle' | 'attacking' | 'delayed_attacking' | 'hit' | 'dying' | 'ephemeral_dying' | 'transform' | 'regenerating' | 'buff' | 'summoning' | 'channel_pulse' | 'thawing' | 'swing_miss';
   damageTaken?: number;
   buffs?: { power: number, health: number };
   roundBuffs?: { power: number, health: number }; // [新增] 临时账本：专门记录单回合(ROUND)增益，用于回合末秋后算账
@@ -93,7 +94,7 @@ export interface CardData {
 // ==========================================
 // [新增] AI 策略配置类型
 // ==========================================
-export type AIPattern = 'DAMAGE' | 'BUFF' | 'RALLY' | 'DUEL' | 'HEAL' | 'DRAW' | 'KEYWORD_TRANSFER' | 'SUMMON' | 'SACRIFICE' | 'FROST' | 'CHOICE' | 'STRIKE' | 'CALIBRATE' | 'RECALL_AND_REPLACE'
+export type AIPattern = 'DAMAGE' | 'BUFF' | 'RALLY' | 'DUEL' | 'HEAL' | 'DRAW' | 'KEYWORD_TRANSFER' | 'SUMMON' | 'SACRIFICE' | 'FROST' | 'CHOICE' | 'STRIKE' | 'CALIBRATE' | 'RECALL_AND_REPLACE' | 'SET_STATS' | 'CLONE_TO_HAND'
 
 export interface AIConfig {
   pattern: AIPattern
@@ -245,9 +246,15 @@ export interface GameState {
   enemySpellMana: number;
   playerNexus: number;
   playerNexusMax?: number; // [2026-08-11] 玩家水晶回血上限（肉鸽=全局 run.maxHp，缺省 20；effectProcessor HEAL 封顶用）
+  playerNexusBarrier?: number; // [2026-08-27] 玩家水晶屏障（固若金汤：可挡伤害点数，回合末清零）
+  playerNexusTough?: boolean; // [2026-08-30 莉莉子] 玩家水晶坚韧（固若金汤：受击伤害永久 -1）
   rogueEnhancements?: string[]; // [2026-08-11] 玩家迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
+  enemyEnhancements?: string[]; // [2026-08-27] 敌方迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
   rogueFirstSummonDone?: boolean; // [2026-08-11] 暗影双生：本回合是否已触发过首次召唤复制（每回合开始重置）
   enemyNexus: number;
+  enemyNexusMax?: number; // [2026-08-30 莉莉子] 敌方水晶回血上限（=敌方水晶初值；肉鸽=难度基础+生命强化，缺省 20）
+  enemyNexusBarrier?: number; // [2026-08-27] 敌方水晶屏障（固若金汤：可挡伤害点数，回合末清零）
+  enemyNexusTough?: boolean; // [2026-08-30 莉莉子] 敌方水晶坚韧（固若金汤：受击伤害永久 -1）
   round: number;
   attackToken: {
     player: AttackTokenType;
@@ -273,6 +280,13 @@ export interface GameState {
   nexusDamage?: { target: 'player' | 'enemy', amount: number };
 
   leveledChampions: string[];
+  // [2026-09-13 莉莉子] 分阵营升级标记 —— 只服务「升级流程」的敌我判定。
+  // 背景：leveledChampions 是全局 key 列表（不记这名字属于哪一方）。
+  //   敌我双方场上有同名天启者时，我方升级写下的标记会让敌方 Lv1 同名英雄
+  //   在扫描时被误判为"该升级"，反复入队播影片、却因不达标而永远升不了级
+  //   → 升级影片无限循环（粉丝反馈）。
+  // 本字段按方记录，从根上分开敌我；leveledChampions 仍照常维护（另有 8 处读它）。
+  leveledChampionsBySide: { player: string[]; enemy: string[] };
   pendingLevelUps: CardData[]; // [新增] 待升级英雄候场区队列
   levelUpCard: CardData | null;
   lastActionTimestamp: number;
@@ -339,8 +353,8 @@ export interface AvatarConfig {
 export interface UserProfile {
   uid: string;           // 用户唯一ID
   displayName: string;   // 显示昵称 (如 "分析员#1234")
-  level: number;         // 玩家等级
-  exp: number;           // 当前经验值
+  level: number;         // [2026-09-04] 账号等级（任何模式对局给经验；评估嘉勉已迁独立存档键）
+  exp: number;           // 当前账号等级内经验
   avatarId: string;      // 头像ID (作为后备选项)
   avatarConfig?: AvatarConfig; // [新增] 自定义裁剪头像配置
   createdAt: number;     // 注册时间戳
@@ -363,6 +377,13 @@ export interface UserSettings {
   unlockedCardBacks: number[];    // 已解锁的卡背列表
   unlockedDesks: number[];        // 已解锁的牌桌列表
   unlockedRogueDifficulties?: string[]; // [2026-08-07] 肉鸽已解锁难度（normal/secret/topsecret，全卡档视为全解锁）
+  unlockedRogueEnhancements?: string[]; // [2026-08-26 逻辑研习] 肉鸽图鉴已解锁强化 id（获得过才解锁；开发者账号全解锁）
+  unlockedRogueEquipments?: string[];   // [2026-08-26 逻辑研习] 肉鸽图鉴已解锁装备 id（获得过才解锁；开发者账号全解锁）
+  ownedArmaments?: string[]; // [2026-08-29 评估嘉勉] 已拥有武装 id 的种类名（stock>0 的 id 集合；旧读取兼容，权威请用 armamentStock）
+  armamentStock?: Record<string, number>; // [2026-09-07 真数量库存] 每件武装库存数量（普通上限3/消耗品不限；装备占用、消耗品发挥后-1）
+  passUnlockedEnhancements?: string[]; // [2026-08-29 评估嘉勉·通行证] 已解锁的通行证专属迷宫强化 id（达到等级解锁后才在强化池可遇到）
+  pendingPacks?: number; // [2026-08-29 评估嘉勉·通行证] 待打开的卡包数（打开才随机获得武装）
+  passClaimedRewards?: number[]; // [2026-08-29 通行证·手动领取] 已领取的通行证奖励等级（达到等级后需在通行证面板手动领取）
   videoResolution?: '1k' | '2k' | '4k';
   lastSeenAnnouncementVersion?: string; // [2026-08-09] 已读过的公告版本号（新版本首次进大厅弹窗标记）
   skipGameStartDrawAnimation?: boolean; // 跳过开局抽卡动画
@@ -370,6 +391,7 @@ export interface UserSettings {
   skipVictoryMovie?: boolean;          // 默认跳过胜利影片
   deskDynamic?: boolean;               // [2026-08-13] 牌桌动态/静态切换（开启=用动态视频牌桌）
   heroDynamic?: boolean;               // [2026-08-16] 天启者动态卡面（开启=对局内手牌/场上英雄卡用动态视频）
+  cardBackDynamic?: boolean;           // [2026-08-23] 动态卡背（开启=对局内/选择预览/牌组预览用动态视频卡背）
 }
 
 export interface UserResources {
@@ -385,6 +407,25 @@ export interface UserCollection {
   // [皮肤] Key = 卡牌Key, Value = 已拥有的皮肤ID列表 (skinId 0即默认皮肤，默认拥有)
   ownedSkins: Record<string, number[]>;
   resources: UserResources;
+}
+
+// [2026-09-04 账号等级系统] 评估嘉勉通行证独立存档形状（与老 profile 一致，便于迁移）
+export interface AnalystPassData {
+  level: number;
+  exp: number;
+}
+
+// [2026-09-04 战绩记录器] 真实对局模式（沙盒练习不计入）
+export type BattleMode = 'pve' | 'tutorial' | 'rogue';
+
+// [2026-09-04 战绩记录器] 按用户持久化的对战记录（档案面板真战绩）
+export interface UserBattleRecord {
+  totalMatches: number;
+  wins: number;
+  losses: number;
+  updatedAt: number; // 最近一场真实对局时间
+  byMode: Partial<Record<BattleMode, { totalMatches: number; wins: number }>>;
+  heroes: Record<string, number>; // heroKey → 出场局数（代表英雄=最高者）
 }
 
 

@@ -5,7 +5,7 @@
 // 用于强化选择界面的卡牌右上角（替代法术速度位）
 // ==========================================
 import React from 'react';
-import { Circle, Triangle, Diamond, Star, type LucideIcon } from 'lucide-react';
+import { Circle, CircleDashed, Triangle, Diamond, Star, Octagon, type LucideIcon } from 'lucide-react';
 import type { EnhancementRarity } from '../../data/roguelike/enhancements';
 
 export const RARITY_META: Record<EnhancementRarity, {
@@ -17,10 +17,12 @@ export const RARITY_META: Record<EnhancementRarity, {
     cardBg: string;       // 卡面不透明渐变（深色 + 稀有度色调，避免透明露底）
     Icon: LucideIcon;
 }> = {
-    common:    { label: '普通', color: '#22c55e', iconClass: 'text-green-400',  bgClass: 'bg-green-500/20 border-green-500/60',   glowClass: 'shadow-[0_0_24px_rgba(34,197,94,0.55)]',   cardBg: 'linear-gradient(165deg, #13161c 0%, #0e2517 48%, #13161c 100%)',   Icon: Circle },
+    common:    { label: '普通', color: '#e5e7eb', iconClass: 'text-gray-200',   bgClass: 'bg-gray-400/20 border-gray-400/60',    glowClass: 'shadow-[0_0_24px_rgba(229,231,235,0.4)]',   cardBg: 'linear-gradient(165deg, #13161c 0%, #1c1e24 48%, #13161c 100%)',   Icon: CircleDashed },
+    uncommon:  { label: '优秀', color: '#22c55e', iconClass: 'text-green-400',  bgClass: 'bg-green-500/20 border-green-500/60',   glowClass: 'shadow-[0_0_24px_rgba(34,197,94,0.55)]',   cardBg: 'linear-gradient(165deg, #13161c 0%, #0e2517 48%, #13161c 100%)',   Icon: Circle },
     rare:      { label: '稀有', color: '#3b82f6', iconClass: 'text-blue-400',   bgClass: 'bg-blue-500/20 border-blue-500/60',    glowClass: 'shadow-[0_0_24px_rgba(59,130,246,0.55)]',  cardBg: 'linear-gradient(165deg, #13161c 0%, #0d1d30 48%, #13161c 100%)',  Icon: Triangle },
     epic:      { label: '史诗', color: '#a855f7', iconClass: 'text-purple-400', bgClass: 'bg-purple-500/20 border-purple-500/60', glowClass: 'shadow-[0_0_24px_rgba(168,85,247,0.55)]', cardBg: 'linear-gradient(165deg, #13161c 0%, #1e1234 48%, #13161c 100%)', Icon: Diamond },
     legendary: { label: '传说', color: '#facc15', iconClass: 'text-yellow-400', bgClass: 'bg-yellow-500/20 border-yellow-500/60', glowClass: 'shadow-[0_0_24px_rgba(250,204,21,0.65)]', cardBg: 'linear-gradient(165deg, #13161c 0%, #2d2207 48%, #13161c 100%)', Icon: Star },
+    mythic:    { label: '神话', color: '#ef4444', iconClass: 'text-red-400',    bgClass: 'bg-red-500/20 border-red-500/60',       glowClass: 'shadow-[0_0_24px_rgba(239,68,68,0.65)]',   cardBg: 'linear-gradient(165deg, #13161c 0%, #2a0e0e 48%, #13161c 100%)',  Icon: Octagon },
 };
 
 interface RarityIconProps {

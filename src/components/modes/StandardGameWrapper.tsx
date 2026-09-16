@@ -29,9 +29,11 @@ export const StandardGameWrapper: React.FC<StandardGameWrapperProps> = (props) =
     return (
         <GameSession
             {...props} // 透传通用属性
+            matchMode="pve" // [2026-09-04 账号等级/战绩] 标准 PvE 计为真实对局
             enemyDeck={props.encounter.deck}
             enemyHeroConfig={props.encounter.heroConfig}
             aiPersonality={props.encounter.aiPersonality ?? 'balanced'} // [2026-08-06] 透传流派性格
+            enemyCardBackIndex={props.encounter.enemyCardBackIndex ?? 0} // [2026-08-17 莉莉子] 敌方卡背
             onVictory={handleVictory}
             onDefeat={handleDefeat}
         />

@@ -23,6 +23,26 @@ export interface GuideTextAnnotation {
   text: string;
   /** 文字相对目标的位置 */
   position: 'top' | 'bottom' | 'left' | 'right' | 'center';
+  /** [2026-08-26 莉莉子] 气泡相对锚点的偏移微调（dx 正=右，dy 正=下；可选，不传不偏移） */
+  offset?: GuideOffset;
+}
+
+/** [2026-08-26 莉莉子] 引导气泡偏移微调：dx 水平偏移（正向右）、dy 垂直偏移（正向下） */
+export interface GuideOffset {
+  dx?: number;
+  dy?: number;
+}
+
+/** [2026-08-26 莉莉子] 锚定提示：把引导文字钉在指定元素旁（fixedPrompt 数组模式专用） */
+export interface AnchoredPrompt {
+  /** 提示文字内容 */
+  text: string;
+  /** 锚点目标选择器（如详情界面关键词图标 / 关闭按钮） */
+  targetSelector: string;
+  /** 文字相对目标的位置（默认 left） */
+  position?: 'top' | 'bottom' | 'left' | 'right' | 'center';
+  /** [2026-08-26 莉莉子] 气泡相对锚点的偏移微调（dx 正=右，dy 正=下；可选，不传不偏移） */
+  offset?: GuideOffset;
 }
 
 /** 引导层定义 */
@@ -38,6 +58,16 @@ export interface GuideLayerStep {
    * 激活时模拟鼠标悬停在这些卡牌上，浮现大图预览
    */
   forceHoverSelectors?: string[];
+  /** [2026-08-21 莉莉子] 右键任意卡牌（打开详情）即自动推进引导，无需再左键点击引导层 */
+  dismissOnRightClick?: boolean;
+  /** [2026-08-21 莉莉子] 覆盖引导层默认 z-index（配合详情界面等上层 UI，如 10010 盖在 FullArtOverlay 之上） */
+  zIndex?: number;
+  /** [2026-08-21 莉莉子] 独立提示模式：无遮罩无高亮，屏幕中上方显示提示文字（配合全屏详情界面）。点击提示关闭推进 */
+  fixedPrompt?: string;
+  /** [2026-08-26 莉莉子] 锚定提示列表：每个气泡钉在指定元素旁（配合详情界面等上层 UI，如关键词图标/关闭按钮） */
+  anchoredPrompts?: AnchoredPrompt[];
+  /** [2026-08-26 莉莉子] 点击命中这些选择器的元素时，引导层自动推进（如详情界面关闭按钮 X）——教玩家操作目标元素，而非点击引导层 */
+  dismissOnSelectorClick?: string[];
 }
 
 /** 对话定义 */
@@ -90,14 +120,18 @@ export interface TutorialSubTask {
      * 操作完成后如何判定：
      * - 'element_clicked': 点击了目标元素即可
      * - 'block_assigned': 格挡已分配
+     * - 'block_selected': 已选中格挡者
+     * - 'block_rejected': 格挡被拒（隐秘/凶恶，用于"尝试格挡失败"教学）
      * - 'block_recalled': 格挡已撤回
      * - 'block_confirmed': 格挡已确认
      * - 'free': 自由模式，自然完成
      * - 'round_end': 回合结束按钮被点击
      * - 'play_card': 打出了一张手牌
      * - 'attack_declared': 发起了进攻宣言
+     * - 'unit_die': [2026-08-26 莉莉子] 指定单位死亡（配合 targetCardKey 精确匹配，如单挑消灭安蒂娜）
+     * - 'spell_targets_selected': [2026-08-26 莉莉子] 法术目标全部选完、进入结算（如暗箭选完目标）
      */
-    completionCondition: 'element_clicked' | 'block_assigned' | 'block_selected' | 'block_recalled' | 'block_confirmed' | 'free' | 'round_end' | 'play_card' | 'attack_declared' | 'attack_recalled';
+    completionCondition: 'element_clicked' | 'block_assigned' | 'block_selected' | 'block_rejected' | 'block_recalled' | 'block_confirmed' | 'free' | 'round_end' | 'play_card' | 'attack_declared' | 'attack_recalled' | 'unit_die' | 'spell_targets_selected';
     /**
      * 锁死右下方"跳过"按钮
      * 防止玩家误触跳过教程，但保留上半部分"进攻"按钮可点击
@@ -108,6 +142,8 @@ export interface TutorialSubTask {
      * 防止玩家跳过教学步骤
      */
     lockActionButton?: boolean;
+    /** [2026-08-26 莉莉子] 完成判定的目标卡牌 key（如 unit_die 时精确匹配死亡单位是否为安蒂娜） */
+    targetCardKey?: string;
   };
 }
 
@@ -172,6 +208,16 @@ export interface TutorialScript {
   stageId: string;
   /** 初始战场配置 */
   initialState: InitialBattleState;
+  /**
+   * 开场演出配置（可选）：开局前演出法术秀（如暗箭连发）。
+   * 仅配置了该字段的剧本才会演出——未配置则直接进入教程。
+   */
+  openingShow?: {
+    /** 演出阶段：[{cardKey, owner, targetKey, count}] */
+    phases: { cardKey: string; owner: 'player' | 'enemy'; targetKey: string; count: number }[];
+  };
+  /** [2026-08-26 莉莉子] 开局初始暂停升级：关卡初始战场已达成英雄升级条件时，先暂停升级扫描，避免开局升级影片与教程对话重叠；配合步骤里的 resume_upgrade 手动触发升级影片 */
+  pauseUpgradeAtStart?: boolean;
   /** 演出步骤序列 */
   steps: TutorialStep[];
 }
@@ -201,6 +247,16 @@ export const BASIC_TUTORIAL_SCRIPT: TutorialScript = {
     ],
     playerHand: [],
     disableMulligan: true,
+  },
+
+  // ══════════════════════════════════════════════
+  // 开场演出：开局暗箭连发（仅基础教程第一关保留）
+  // ══════════════════════════════════════════════
+  openingShow: {
+    phases: [
+      { cardKey: 'hidden_arrow', owner: 'enemy', targetKey: 'lyfe', count: 2 },          // 敌方暗箭 ×2 → 里芙（6 血 → 4 血）
+      { cardKey: 'hidden_arrow', owner: 'player', targetKey: 'titan_gaimer', count: 4 }, // 我方暗箭 ×4 → 盖弥尔（8 血 → 4 血）
+    ],
   },
 
   // ══════════════════════════════════════════════
@@ -909,25 +965,44 @@ export const BASIC_TUTORIAL_SCRIPT_02: TutorialScript = {
     disableMulligan: true,
   },
 
+  // [2026-08-26 莉莉子] 芬妮升级条件"任一水晶血量≤10"开局即满足（enemyCrystalHp=10），
+  // 若不暂停，开局升级影片会与里芙开场白重叠。先暂停 → 开场白播完点继续 → resume_upgrade 触发升级影片
+  pauseUpgradeAtStart: true,
+
   steps: [
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '分析员，敌人的部队已经逼近了。我方枢纽非常脆弱，一旦被击中就会失守。但别担心——只要正确运用战术，我们就能化解危机。' } },
+    // [2026-08-26 莉莉子] 开场白播完（玩家点击继续）后恢复升级扫描 → 芬妮升级影片弹出 → 播完再继续后续教学
+    { type: 'auto_action', data: { action: 'resume_upgrade', params: {} } },
     { type: 'guide_layer', data: { highlightSelectors: ['[data-entity-id="player_nexus"]', '[data-card-key="Ghost_Squad_Antina"]', '[data-card-key="Ghost_Squad_Vez"]'], annotations: [{ targetSelector: '[data-entity-id="player_nexus"]', text: '我方枢纽仅剩1点生命，绝不能让任何敌方单位击中它', position: 'bottom' }, { targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '抵御敌人的进攻，任意对水晶的攻击都足以摧毁我们最后的防线', position: 'bottom' }], dismissOnClick: true } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '敌人开始进攻了！我们得想办法阻挡它们。' } },
     { type: 'auto_action', data: { action: 'enemy_attack', params: {} } },
-    { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="lyfe"]', '[data-card-key="fenny"]', '[data-entity-id="attack-token"]'], annotations: [{ targetSelector: '[data-card-key="lyfe"]', text: '点击里芙，然后点击你要格挡的敌人来分配格挡', position: 'right' }], dismissOnClick: true } },
-    { type: 'task_group', data: { groupName: '初识隐秘', subTasks: [{ id: 'try_block_antina', description: '尝试格挡安蒂娜', guidanceSteps: [{ text: '请点击里芙选择她作为格挡者', arrowTarget: '[data-card-key="lyfe"]', direction: 'right' }, { text: '现在请点击安蒂娜——看看会发生什么', arrowTarget: '[data-card-key="Ghost_Squad_Antina"]', direction: 'right' }], expectedAction: { type: 'click_target', targetSelector: '[data-card-key="lyfe"]', completionCondition: 'block_selected', lockActionButton: true } }] } },
+    // [2026-08-21 莉莉子 删除] 原引导层"点击里芙，然后点击你要格挡的敌人来分配格挡"与任务组分步引导重复，
+    // 且高亮区域盖住敌方槽位导致点击穿透、引导层无法按 dismissOnClick 关闭 → 玩家被卡在引导层。
+    // 由任务组分步引导接管（选里芙 → 点安蒂娜 → 拒绝演出 → 对话圆场），里芙被退回即进入下一步。
+    { type: 'task_group', data: { groupName: '初识隐秘', subTasks: [{ id: 'try_block_antina', description: '尝试格挡安蒂娜', guidanceSteps: [{ text: '请点击里芙选择她作为格挡者', arrowTarget: '[data-card-key="lyfe"]', direction: 'right' }, { text: '现在请点击安蒂娜——看看会发生什么', arrowTarget: '[data-card-key="Ghost_Squad_Antina"]', direction: 'right' }], expectedAction: { type: 'click_target', targetSelector: '[data-card-key="lyfe"]', completionCondition: 'block_rejected', lockActionButton: true } }] } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '不行！这个敌人有【隐秘】能力，我无法阻挡她……分析员，请右键点击那张卡牌，看看【隐秘】到底是什么效果。' } },
-    { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="Ghost_Squad_Antina"]'], annotations: [{ targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '📖 在卡牌上点击【右键】，打开卡牌详情界面查看关键词说明', position: 'bottom' }], dismissOnClick: true } },
-    { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="Ghost_Squad_Antina"]'], annotations: [{ targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '🔍 在详情界面中，将鼠标【悬停】到【隐秘】关键词上查看详细说明\n\n查看完毕后点击空白处或右上角关闭', position: 'bottom' }], dismissOnClick: true } },
+    { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="Ghost_Squad_Antina"]'], annotations: [{ targetSelector: '[data-card-key="Ghost_Squad_Antina"]', text: '📖 在卡牌上点击【右键】，打开卡牌详情界面查看关键词说明', position: 'bottom' }], dismissOnClick: true, dismissOnRightClick: true } },
+    { type: 'guide_layer', data: { highlightSelectors: [], annotations: [], dismissOnClick: true, zIndex: 10010, dismissOnSelectorClick: ['[data-tutorial-close="fullart"]'], anchoredPrompts: [
+      { text: '🔍 在详情界面中，将鼠标【悬停】到【隐秘】关键词上查看详细说明', targetSelector: '[data-tutorial-keyword="Elusive"]', position: 'left' },
+      { text: '查看完毕后点击这里关闭详情界面', targetSelector: '[data-tutorial-close="fullart"]', position: 'left' }
+    ] } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '原来【隐秘】的效果是「只能被拥有隐秘的单位阻挡」。难怪我无法挡住她……不过，我们可以用别的方法来解决她。分析员，请使用手牌中的「单挑」！' } },
-    { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="single_combat"]'], annotations: [{ targetSelector: '[data-card-key="single_combat"]', text: '「单挑」是一个【快速法术】。快速法术可以在战斗阶段打出，会进入法术堆叠等待结算。\n先选择敌方安蒂娜，再选择我方任意一个单位，让他们互相打击！', position: 'top' }], dismissOnClick: true } },
-    { type: 'task_group', data: { groupName: '快速法术·单挑', subTasks: [{ id: 'cast_single_combat', description: '从手牌打出「单挑」', guidanceSteps: [{ text: '请从手牌中打出「单挑」', arrowTarget: '[data-card-key="single_combat"]', direction: 'top' }, { text: '先后选择敌方安蒂娜和我方任意一个单位' }], expectedAction: { type: 'free', targetSelector: '[data-card-key="single_combat"]', completionCondition: 'play_card', lockActionButton: true } }] } },
+    { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="single_combat"]'], annotations: [{ targetSelector: '[data-card-key="single_combat"]', text: '「单挑」是一个【快速法术】。快速法术可以在战斗阶段打出，会进入法术堆叠等待结算。\n打出后先选择我方【芬妮】（只有她的 3 点攻击能消灭安蒂娜），再选择敌方【安蒂娜】，让他们互相打击！', position: 'top' }], dismissOnClick: true } },
+    { type: 'task_group', data: { groupName: '快速法术·单挑', subTasks: [
+      { id: 'cast_single_combat', description: '从手牌打出「单挑」', guidanceSteps: [{ text: '请从手牌中打出「单挑」', arrowTarget: '[data-card-key="single_combat"]', direction: 'top' }], expectedAction: { type: 'free', targetSelector: '[data-card-key="single_combat"]', completionCondition: 'play_card', lockActionButton: true } },
+      // [2026-08-26 莉莉子 BUG修复] 拆第二步：选芬妮+选安蒂娜，完成判定=安蒂娜死亡（UNIT_DIE+targetCardKey），不再"打出瞬间"就完成
+      { id: 'resolve_single_combat', description: '先选我方【芬妮】，再选敌方【安蒂娜】', guidanceSteps: [{ text: '先选择我方【芬妮】', arrowTarget: '[data-card-key="fenny"]', direction: 'top' }, { text: '再选择敌方【安蒂娜】，让芬妮与安蒂娜互打' }], expectedAction: { type: 'free', targetSelector: '', completionCondition: 'unit_die', targetCardKey: 'Ghost_Squad_Antina', lockActionButton: true } }
+    ] } },
     { type: 'auto_action', data: { action: 'wait', params: { delay: 2000 } } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '漂亮的配合！安蒂娜被解决了。现在让我来挡住剩下的敌人……' } },
     { type: 'auto_action', data: { action: 'wait', params: { delay: 3000 } } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '等等……敌人在准备一个大型法术！那是慢速法术，不会立即生效——我们有时间反制它！' } },
     { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="hidden_arrow"]'], annotations: [{ targetSelector: '[data-card-key="hidden_arrow"]', text: '敌方施放的是【慢速法术】——进入堆叠后不会立即结算。\n\n「暗箭」是【极速法术】——可在任意阶段打出，且【立即结算】！\n\n打出暗箭，在慢速法术生效前摧毁目标！', position: 'top' }], dismissOnClick: true } },
-    { type: 'task_group', data: { groupName: '极速法术·暗箭', subTasks: [{ id: 'cast_hidden_arrow', description: '打出「暗箭」反制', guidanceSteps: [{ text: '请从手牌中打出「暗箭」', arrowTarget: '[data-card-key="hidden_arrow"]', direction: 'top' }, { text: '选择敌方目标' }], expectedAction: { type: 'free', targetSelector: '[data-card-key="hidden_arrow"]', completionCondition: 'play_card', lockActionButton: true } }] } },
+    { type: 'task_group', data: { groupName: '极速法术·暗箭', subTasks: [
+      { id: 'cast_hidden_arrow', description: '打出「暗箭」反制', guidanceSteps: [{ text: '请从手牌中打出「暗箭」', arrowTarget: '[data-card-key="hidden_arrow"]', direction: 'top' }], expectedAction: { type: 'free', targetSelector: '[data-card-key="hidden_arrow"]', completionCondition: 'play_card', lockActionButton: true } },
+      // [2026-08-26 莉莉子 BUG修复] 拆第二步：选择目标，完成判定=目标选完进入结算（替代"打出瞬间"完成）
+      { id: 'resolve_hidden_arrow', description: '选择任意一个敌方单位或水晶作为目标', guidanceSteps: [{ text: '选择任意一个敌方单位或水晶作为目标' }], expectedAction: { type: 'free', targetSelector: '', completionCondition: 'spell_targets_selected', lockActionButton: true } }
+    ] } },
     { type: 'auto_action', data: { action: 'wait', params: { delay: 2000 } } },
     { type: 'guide_layer', data: { highlightSelectors: ['[data-entity-id="game-action-btn"]'], annotations: [{ targetSelector: '[data-entity-id="game-action-btn"]', text: '📚 三种法术速度小结：\n\n⚡ 极速(Burst)：任意阶段打出，立即结算\n🔵 快速(Fast)：战斗阶段可打出，按顺序结算\n🟡 慢速(Slow)：仅主阶段打出，最晚结算\n\n💡 极速 > 快速 > 慢速，速度越快越能抢得先机！', position: 'top' }], dismissOnClick: true } },
     { type: 'dialogue', data: { speakerKey: 'lyfe', speakerName: '里芙', text: '敌方的威胁解除了！现在轮到我们反击了。准备进入下一回合吧。' } },
@@ -1498,7 +1573,7 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
       data: {
         speakerKey: 'lyfe',
         speakerName: '里芙',
-        text: '分析员！这次我们来学习【快攻】。这两个单位攻击力相近，但左边那个有快攻能力——它能先发制人！',
+        text: '分析员！这次我们来学习【先攻】。这两个单位攻击力相近，但左边那个有先攻能力——它能先发制人！',
       },
     },
 
@@ -1514,12 +1589,12 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
         annotations: [
           {
             targetSelector: '[data-card-key="test_quickattack"]',
-            text: '⚡【快攻】进攻时先出手——若击杀格挡者则不会受到反击',
+            text: '⚡【先攻】进攻时先出手——若击杀格挡者则不会受到反击',
             position: 'bottom',
           },
           {
             targetSelector: '[data-card-key="test_overwhelm"]',
-            text: '❌ 这个单位没有快攻——进攻时会和格挡者互相攻击',
+            text: '❌ 这个单位没有先攻——进攻时会和格挡者互相攻击',
             position: 'bottom',
           },
         ],
@@ -1562,7 +1637,7 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
       data: {
         speakerKey: 'lyfe',
         speakerName: '里芙',
-        text: '看到了吗？快攻单位先出手击杀了格挡者，所以没有受到反击——它活下来了！而没有快攻的单位虽然也赢了，但自己也被打伤了。这就是【快攻】的优势！',
+        text: '看到了吗？先攻单位先出手击杀了格挡者，所以没有受到反击——它活下来了！而没有先攻的单位虽然也赢了，但自己也被打伤了。这就是【先攻】的优势！',
       },
     },
 
@@ -1576,7 +1651,7 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
         annotations: [
           {
             targetSelector: '[data-card-key="test_quickattack"]',
-            text: '💡【快攻】总结：\n\n进攻时 → 快攻单位先出手\n→ 击杀格挡者 → 不受反击\n→ 未击杀 → 正常受反击\n\n优势：先手击杀，保全自己！',
+            text: '💡【先攻】总结：\n\n进攻时 → 先攻单位先出手\n→ 击杀格挡者 → 不受反击\n→ 未击杀 → 正常受反击\n\n优势：先手击杀，保全自己！',
             position: 'bottom',
           },
         ],
@@ -1618,7 +1693,7 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
       data: {
         speakerKey: 'lyfe',
         speakerName: '里芙',
-        text: '格挡者已经不在了！让快攻单位发挥它的速度优势，抢先终结战斗吧！',
+        text: '格挡者已经不在了！让先攻单位发挥它的速度优势，抢先终结战斗吧！',
       },
     },
 

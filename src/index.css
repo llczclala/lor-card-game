@@ -130,6 +130,68 @@ html, body {
 .animate-bump-up-long { animation: bump-up-long 0.3s ease-in-out; }
 .animate-bump-down-long { animation: bump-down-long 0.3s ease-in-out; }
 
+/* --- [2026-08-19 莉莉子] 连击第二撞变体 ---
+   与 bump 系列 keyframes 相同，但类名不同。
+   连击第二撞时 className 从 bump-up → bump-up-second，
+   CSS 检测到 animation-name 变化会强制重播，实现"零重挂载"的二次撞击动画。 */
+@keyframes bump-up-2 {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-200px) scale(1.1); }
+  100% { transform: translateY(0); }
+}
+@keyframes bump-down-2 {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(200px) scale(1.1); }
+  100% { transform: translateY(0); }
+}
+@keyframes bump-up-long-2 {
+  0% { transform: translateY(0); }
+  40% { transform: translateY(-450px) scale(1.2); }
+  100% { transform: translateY(0); }
+}
+@keyframes bump-down-long-2 {
+  0% { transform: translateY(0); }
+  40% { transform: translateY(450px) scale(1.2); }
+  100% { transform: translateY(0); }
+}
+.animate-bump-up-second { animation: bump-up-2 0.3s ease-in-out; }
+.animate-bump-down-second { animation: bump-down-2 0.3s ease-in-out; }
+.animate-bump-up-long-second { animation: bump-up-long-2 0.3s ease-in-out; }
+.animate-bump-down-long-second { animation: bump-down-long-2 0.3s ease-in-out; }
+
+/* --- [2026-08-19 莉莉子] 挥空动画：无法进攻时原地左右晃动 ---
+   三种挥空场景统一触发：
+   1. 空气墙阻挡（isGhostBlocked）
+   2. 阻挡者被击杀/撤回已不在场
+   3. 攻击力为 0（冻结 / 无法攻击 CantAttack / 本身攻击力为 0） */
+@keyframes swing-miss {
+  0% { transform: translateX(0) rotate(0); }
+  20% { transform: translateX(-18px) rotate(-7deg); }
+  40% { transform: translateX(16px) rotate(6deg); }
+  60% { transform: translateX(-12px) rotate(-4deg); }
+  80% { transform: translateX(8px) rotate(3deg); }
+  100% { transform: translateX(0) rotate(0); }
+}
+.animate-swing-miss { animation: swing-miss 0.5s ease-in-out; }
+
+/* [2026-08-20 莉莉子] 格挡被拒吓退动画：备战席阻挡者朝敌方槽位冲上去 → 撞墙颤抖 → 弹回原位
+   --reject-dx / --reject-dy 由 JS 按"卡牌→目标槽位"的屏幕位移动态注入 */
+@keyframes card-reject-lunge {
+  0%   { transform: translate(0, 0) scale(1); }
+  22%  { transform: translate(calc(var(--reject-dx, 0px) * 0.86), calc(var(--reject-dy, 0px) * 0.86)) scale(1.07); }
+  30%  { transform: translate(calc(var(--reject-dx, 0px) * 0.83), calc(var(--reject-dy, 0px) * 0.86)) scale(1.02); }
+  38%  { transform: translate(calc(var(--reject-dx, 0px) * 0.86), calc(var(--reject-dy, 0px) * 0.83)) scale(1.06) rotate(-1.5deg); }
+  46%  { transform: translate(calc(var(--reject-dx, 0px) * 0.81), calc(var(--reject-dy, 0px) * 0.86)) scale(0.98) rotate(1.5deg); }
+  54%  { transform: translate(calc(var(--reject-dx, 0px) * 0.85), calc(var(--reject-dy, 0px) * 0.81)) scale(1.05); }
+  62%  { transform: translate(calc(var(--reject-dx, 0px) * 0.72), calc(var(--reject-dy, 0px) * 0.76)) scale(0.99); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+.card-reject-lunge {
+  animation: card-reject-lunge 0.9s cubic-bezier(0.34, 1.56, 0.64, 1);
+  will-change: transform;
+  z-index: 60;
+}
+
 @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -435,27 +497,27 @@ html, body {
 
 /* 1. 默认发呆兜底 */
 html, body {
-    cursor: url('./image/icon/mouse/mouse_0.png') 0 0, default !important;
+    cursor: url('./image/icon/mouse/mouse_0.webp') 0 0, default !important;
 }
 
 /* 2. 交互悬停 (自动拦截HTML原生按钮、链接，以及 Tailwind 类) */
 button, [role="button"], a, [href], summary, .cursor-pointer {
-    cursor: url('./image/icon/mouse/mouse_1.png') 0 0, pointer !important;
+    cursor: url('./image/icon/mouse/mouse_1.webp') 0 0, pointer !important;
 }
 
 /* 3. 文本输入 (自动拦截各类输入框) */
 input, textarea, .cursor-text {
-    cursor: url('./image/icon/mouse/mouse_2.png') 12 12, text !important;
+    cursor: url('./image/icon/mouse/mouse_2.webp') 12 12, text !important;
 }
 
 /* 4. 禁用状态 (自动拦截禁用按钮) */
 :disabled, [aria-disabled="true"], .cursor-not-allowed {
-    cursor: url('./image/icon/mouse/mouse_7.png') 0 0, not-allowed !important;
+    cursor: url('./image/icon/mouse/mouse_7.webp') 0 0, not-allowed !important;
 }
 
 /* 5. 可抓取预示 (自动拦截可拖拽元素) */
 [draggable="true"], .cursor-grab {
-    cursor: url('./image/icon/mouse/mouse_3.png') 12 12, grab !important;
+    cursor: url('./image/icon/mouse/mouse_3.webp') 12 12, grab !important;
 }
 
 
@@ -464,30 +526,30 @@ input, textarea, .cursor-text {
 /* 拖拽中 */
 body[data-game-cursor="HAND_GRAB"],
 body[data-game-cursor="HAND_GRAB"] * {
-    cursor: url('./image/icon/mouse/mouse_4.png') 12 12, grabbing !important;
+    cursor: url('./image/icon/mouse/mouse_4.webp') 12 12, grabbing !important;
 }
 
 /* 查看详情 */
 body[data-game-cursor="INSPECT"],
 body[data-game-cursor="INSPECT"] * {
-    cursor: url('./image/icon/mouse/mouse_5.png') 0 0, help !important;
+    cursor: url('./image/icon/mouse/mouse_5.webp') 0 0, help !important;
 }
 
 /* 施法/挑战瞄准 */
 body[data-game-cursor="TARGET"],
 body[data-game-cursor="TARGET"] * {
-    cursor: url('./image/icon/mouse/mouse_6.png') 16 16, crosshair !important;
+    cursor: url('./image/icon/mouse/mouse_6.webp') 16 16, crosshair !important;
 }
 
 /* 攻击冲锋指令 */
 body[data-game-cursor="ATTACK"],
 body[data-game-cursor="ATTACK"] * {
-    cursor: url('./image/icon/mouse/mouse_8.png') 16 16, crosshair !important;
+    cursor: url('./image/icon/mouse/mouse_8.webp') 16 16, crosshair !important;
 }
 
 /* 10. 处理中/等待 (鼠标9) */
 [data-game-cursor="BUSY"], .cursor-wait {
-    cursor: url('./image/icon/mouse/mouse_9.png') 16 16, wait !important;
+    cursor: url('./image/icon/mouse/mouse_9.webp') 16 16, wait !important;
 }
 
 /* =================================================================
@@ -676,4 +738,60 @@ body[data-game-cursor="ATTACK"] * {
 .custom-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+/* [2026-08-26 莉莉子] 肉鸽地图：可达路径上闪烁的前进箭头 */
+@keyframes mapArrowBlink {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+/* =================================================================
+   【悖论迷宫 · 推演开场】2026-08-28 莉莉子
+   老电视逐行显影：雪花开场闪 → 背景逐行显影 + 扫描带 → 节点依次点亮
+   仅本局首进地图播放（App 层 reveal 标记控制）
+   ================================================================= */
+/* 节点从暗弹出（transform 含 translate(-50%,-50%) 对齐 MapNode 定位；
+   backwards 保证 delay 期间保持 0% 帧、结束后恢复自身样式，hover 缩放不受影响） */
+@keyframes rogue-map-node-in {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0); }
+  55%  { opacity: 1; transform: translate(-50%, -50%) scale(1.25); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+/* 连线渐显 */
+@keyframes rogue-map-line-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+/* 背景逐行显影：clip-path 从顶向下展开（inset 底部 100%→0，老电视显影感） */
+@keyframes rogue-map-bg-reveal {
+  0%   { clip-path: inset(0 0 100% 0); }
+  100% { clip-path: inset(0 0 0 0); }
+}
+.rogue-map-bg-anim {
+  animation: rogue-map-bg-reveal 1.2s ease-in-out 0.3s forwards;
+}
+/* [2026-08-29 通关/败亡结算氛围光：通关金辉 / 败亡暗涌] */
+.rogue-win-glow {
+  background: radial-gradient(ellipse at center, rgba(250, 204, 21, 0.18) 0%, rgba(250, 204, 21, 0.05) 40%, transparent 70%);
+}
+.rogue-lose-glow {
+  background: radial-gradient(ellipse at center, rgba(239, 68, 68, 0.15) 0%, rgba(239, 68, 68, 0.04) 40%, transparent 70%);
+}
+/* 逐行显影扫描带：蓝白亮条从顶扫到底（配合 clip-path 增强显影感） */
+@keyframes rogue-map-scan {
+  0%   { top: -14%; }
+  100% { top: 114%; }
+}
+.rogue-map-scan-anim {
+  animation: rogue-map-scan 1.2s linear 0.3s forwards;
+}
+/* 开场雪花白闪：亮起后快速熄灭（复用老电视雪花语言） */
+@keyframes rogue-map-boot-flash {
+  0%   { opacity: 0; }
+  12%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+.rogue-map-boot-anim {
+  animation: rogue-map-boot-flash 0.6s ease-out 0.02s forwards;
 }

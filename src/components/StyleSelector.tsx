@@ -2,6 +2,8 @@ import React, {useState} from 'react';
 import { X, Check, Lock } from 'lucide-react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 import { DeskMedia } from './DeskMedia'; // [2026-08-13] 动态牌桌媒体组件
+import { getCardBackVideo } from '../data/cardBackVideos'; // [2026-08-23] 动态卡背视频
+import { CardBackVideo } from './Card'; // [2026-08-23] 卡背动态视频组件
 
 interface StyleSelectorProps {
     type: 'cardBack' | 'desk'; // 当前选择的是卡背还是牌桌
@@ -10,6 +12,7 @@ interface StyleSelectorProps {
     onSelect: (index: number) => void; // 确认选择回调
     onClose: () => void;       // 关闭回调
     deskDynamic?: boolean;     // [2026-08-13] 动态牌桌开关（牌桌类型时生效）
+    cardBackDynamic?: boolean; // [2026-08-23] 动态卡背开关（卡背类型时生效）
 }
 
 export const StyleSelector: React.FC<StyleSelectorProps> = ({
@@ -18,7 +21,8 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
     unlockedIndices,
     onSelect,
     onClose,
-    deskDynamic = false
+    deskDynamic = false,
+    cardBackDynamic = false
 }) => {
     // 临时预览索引 (用户在模态框里随便点，点"确认"前不生效)
     const [previewIndex, setPreviewIndex] = useState(currentSelected);
@@ -118,14 +122,18 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                         `}
                         onWheel={handleWheel}
                     >
-                        {/* 切换动画需要 Key 变化（[2026-08-13] 牌桌类型用动态视频 DeskMedia） */}
+                        {/* 切换动画需要 Key 变化（[2026-08-13] 牌桌类型用动态视频 DeskMedia；[2026-08-23] 卡背类型用动态视频 CardBackVideo） */}
                         {type === 'cardBack' ? (
-                            <img
-                                key={previewIndex}
-                                src={assets[previewIndex]}
-                                className="w-full h-full object-cover animate-fade-in"
-                                alt="预览"
-                            />
+                            cardBackDynamic && getCardBackVideo(previewIndex) ? (
+                                <CardBackVideo key={previewIndex} src={getCardBackVideo(previewIndex)!} className="w-full h-full object-cover animate-fade-in" />
+                            ) : (
+                                <img
+                                    key={previewIndex}
+                                    src={assets[previewIndex]}
+                                    className="w-full h-full object-cover animate-fade-in"
+                                    alt="预览"
+                                />
+                            )
                         ) : (
                             <DeskMedia key={previewIndex} deskIndex={previewIndex} dynamic={deskDynamic} className="w-full h-full object-cover animate-fade-in" />
                         )}

@@ -32,10 +32,15 @@ interface SettingsModalProps {
     // [2026-08-16] 天启者动态卡面开关
     heroDynamic?: boolean;
     onToggleHeroDynamic?: () => void;
+    // [2026-08-23] 动态卡背开关
+    cardBackDynamic?: boolean;
+    onToggleCardBackDynamic?: () => void;
     // [2026-08-16] 恢复默认设置（系统标签页入口）
     onResetSettings?: () => void;
     // [新增] 对局操作
     isInGame?: boolean;
+    // [2026-08-25 莉莉子 开发者] 肉鸽开发者重开入口：开发者账号在 rogue_game 时也显示"重开对局"（正常账号照旧隐藏）
+    isRogueDevRestart?: boolean;
     onRestartMatch?: () => void;
     onReturnToLobby?: () => void;
 }
@@ -119,7 +124,7 @@ const ToggleRow = ({ title, desc, enabled, onToggle }: { title: string; desc: st
     </div>
 );
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, deskDynamic = false, onToggleDeskDynamic, heroDynamic = false, onToggleHeroDynamic, onResetSettings, isInGame = false, onRestartMatch, onReturnToLobby }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, deskDynamic = false, onToggleDeskDynamic, heroDynamic = false, onToggleHeroDynamic, cardBackDynamic = false, onToggleCardBackDynamic, onResetSettings, isInGame = false, isRogueDevRestart = false, onRestartMatch, onReturnToLobby }) => {
 
     // [2026-08-16] 当前激活的标签页
     const [activeTab, setActiveTab] = useState<SettingsTab>('audio');
@@ -160,7 +165,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
-                    className="fixed inset-0 z-[1000] bg-[#0f172a] flex flex-col overflow-hidden"
+                    /* [2026-09-15 莉莉子] z-1000→1100：配合局内暂停层上调（z-800→1000，让其盖住抽卡动画的 z-999），
+                       设置面板需保持更高一级（面板是从暂停层打开的）。与 1150 数据金弹窗 / 9998+ 记录层的既有关系不变。 */
+                    className="fixed inset-0 z-[1100] bg-[#0f172a] flex flex-col overflow-hidden"
                 >
                         {/* 标题栏 */}
                         <div className="flex justify-between items-center px-8 py-6 border-b border-white/10 bg-white/5">
@@ -247,6 +254,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">动态特效</h3>
                                                     <ToggleRow title="动态牌桌" desc="使用动态视频牌桌（10 张牌桌全部支持）" enabled={deskDynamic} onToggle={onToggleDeskDynamic} />
                                                     <ToggleRow title="动态卡面" desc="对局内英雄卡面使用动态视频（5 位天启者全部支持）" enabled={heroDynamic} onToggle={onToggleHeroDynamic} />
+                                                    <ToggleRow title="动态卡背" desc="对局内/选择预览/牌组预览的卡背使用动态视频（16 张卡背支持）" enabled={cardBackDynamic} onToggle={onToggleCardBackDynamic} />
                                                 </div>
                                             </>
                                         )}
@@ -288,23 +296,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                         {/* 底部功能区（固定，始终可见） */}
                         <div className="px-6 py-4 border-t border-white/10 flex justify-between items-center bg-black/20">
                             <div className="flex items-center gap-3">
+                                {(isInGame || isRogueDevRestart) && (
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onRestartMatch?.(); }}
+                                        className="flex items-center gap-2 px-5 py-2 bg-yellow-900/30 hover:bg-yellow-600 border border-yellow-800 hover:border-yellow-500 text-yellow-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
+                                    >
+                                        <RotateCw size={16} className="group-hover:scale-110 transition-transform" />
+                                        重开对局
+                                    </button>
+                                )}
                                 {isInGame && (
-                                    <>
-                                        <button
-                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onRestartMatch?.(); }}
-                                            className="flex items-center gap-2 px-5 py-2 bg-yellow-900/30 hover:bg-yellow-600 border border-yellow-800 hover:border-yellow-500 text-yellow-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
-                                        >
-                                            <RotateCw size={16} className="group-hover:scale-110 transition-transform" />
-                                            重开对局
-                                        </button>
-                                        <button
-                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onReturnToLobby?.(); }}
-                                            className="flex items-center gap-2 px-5 py-2 bg-blue-900/30 hover:bg-blue-600 border border-blue-800 hover:border-blue-500 text-blue-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
-                                        >
-                                            <Home size={16} className="group-hover:scale-110 transition-transform" />
-                                            返回大厅
-                                        </button>
-                                    </>
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onReturnToLobby?.(); }}
+                                        className="flex items-center gap-2 px-5 py-2 bg-blue-900/30 hover:bg-blue-600 border border-blue-800 hover:border-blue-500 text-blue-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
+                                    >
+                                        <Home size={16} className="group-hover:scale-110 transition-transform" />
+                                        返回大厅
+                                    </button>
                                 )}
                             </div>
 

@@ -12,8 +12,8 @@
 // 任务类型：每日(次日6点重置) | 每周(周一6点重置) | 永久成就(不重置) | 版本活动(不重置)
 export type MissionCategory = 'daily' | 'weekly' | 'achievement' | 'version';
 
-// 奖励类型：数据金 | 皮肤 | 卡背 | 卡牌
-export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack' | 'card';
+// 奖励类型：数据金 | 皮肤 | 卡背 | 卡牌 | 分析员经验 | 稀有武装
+export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack' | 'card' | 'analystExp' | 'armament';
 
 // 监听条件类型
 export type MissionConditionType =
@@ -25,7 +25,13 @@ export type MissionConditionType =
     | 'win_with_champion'  // [2026-06-27] 携带指定英雄获胜
     | 'win_with_squad'     // [2026-07-12] 携带指定后勤小队全员获胜
     | 'damage_dealt'       // [2026-07-22] 指定单位累计造成伤害 (用于莲驱臆莲基座任务)
-    | 'direct_claim';      // [2026-06-27] 无需条件，直接领取
+    | 'direct_claim'       // [2026-06-27] 无需条件，直接领取
+    | 'rogue_run'          // [2026-08-29 评估嘉勉] 完成一场悖论迷宫推演（任意结局）
+    | 'rogue_win'          // [2026-08-29 评估嘉勉] 通关一次悖论迷宫
+    | 'rogue_elite'        // [2026-08-29 肉鸽任务] 击败精英（对局累计）
+    | 'rogue_enhance'      // [2026-08-29 肉鸽任务] 获得迷宫强化（对局累计）
+    | 'rogue_event'        // [2026-08-29 肉鸽任务] 完成事件节点（对局累计）
+    | 'rogue_gold';        // [2026-08-29 肉鸽任务] 累计金币（每局结算时累计）
 
 export interface MissionDef {
     id: string;
@@ -38,6 +44,7 @@ export interface MissionDef {
         amount?: number;         // 货币数量 (如 1600, 4800)
         cosmeticId?: string;     // 对应 skinData.ts 中的 missionId
         cardKeys?: string[];     // [新增] 卡牌奖励：要发放的卡牌 key 列表
+        armamentId?: string;     // [2026-08-29 评估嘉勉] 稀有武装奖励：要解锁的武装 id
     };
     condition: {
         type: MissionConditionType;
@@ -49,6 +56,8 @@ export interface MissionDef {
     showCondition?: {
         accountCreatedBefore?: string; // 注册时间早于此日期才显示
     };
+    // [2026-08-29 肉鸽专属任务] 标 rogue 的任务显示在 RogueMissionPanel（悖论推演委派），普通军功面板过滤
+    rogue?: boolean;
 }
 
 export const MISSIONS: MissionDef[] = [
@@ -72,6 +81,22 @@ export const MISSIONS: MissionDef[] = [
         targetCount: 3,
         reward: { type: 'dataGold', amount: 4800 },
         condition: { type: 'game_end' }
+    },
+
+    // ==========================================
+    // 📊 评估嘉勉·每日（分析员经验）
+    // ==========================================
+    {
+        id: 'analyst_daily_run_1',
+        category: 'daily', title: '推演例行', description: '完成 1 场悖论迷宫推演（任意结局）',
+        targetCount: 1, reward: { type: 'analystExp', amount: 120 }, // [2026-09-07] 分析员升太快：200→120
+        condition: { type: 'rogue_run' }, rogue: true
+    },
+    {
+        id: 'analyst_daily_win_1',
+        category: 'daily', title: '推演凯旋', description: '通关 1 次悖论迷宫',
+        targetCount: 1, reward: { type: 'analystExp', amount: 240 }, // [2026-09-07] 分析员升太快：400→240
+        condition: { type: 'rogue_win' }, rogue: true
     },
 
     // ==========================================
@@ -416,12 +441,12 @@ export const MISSIONS: MissionDef[] = [
     // 旧 ID 的存档会自动保留，新 ID 会被视为全新任务，已领取玩家也能再次领取。
     // ==========================================
     {
-        id: 'version_old_friend_20260816',
-        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-08-16）',
+        id: 'version_old_friend_20260913',
+        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-09-13）',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'dataGold', amount: 8000 },
         condition: { type: 'direct_claim' },
-        showCondition: { accountCreatedBefore: '2026-08-16' }
+        showCondition: { accountCreatedBefore: '2026-09-13' }
     },
     {
         id: 'version_new_start',
@@ -624,5 +649,173 @@ export const MISSIONS: MissionDef[] = [
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
         condition: { type: 'win_with_squad', targetKeys: ['Sacred_Tree_Squad_Lumi', 'Sacred_Tree_Squad_Margaret', 'Sacred_Tree_Squad_Alvina'] }
+    },
+
+    // ==========================================
+    // 🏅 评估嘉勉·里程碑（分析员经验 / 稀有武装）
+    // ==========================================
+    {
+        id: 'analyst_milestone_run_10',
+        category: 'achievement', title: '推演常客', description: '累计完成 10 场悖论迷宫推演',
+        targetCount: 10, reward: { type: 'analystExp', amount: 600 }, // [2026-09-07] 分析员升太快：1000→600
+        condition: { type: 'rogue_run' }, rogue: true
+    },
+    {
+        id: 'analyst_milestone_win_5',
+        category: 'achievement', title: '迷宫征服者', description: '累计通关 5 次悖论迷宫',
+        targetCount: 5, reward: { type: 'analystExp', amount: 900 }, // [2026-09-07] 分析员升太快：1500→900
+        condition: { type: 'rogue_win' }, rogue: true
+    },
+    {
+        id: 'analyst_milestone_arm_first',
+        category: 'achievement', title: '初露锋芒', description: '累计通关 3 次悖论迷宫，获得稀有武装',
+        targetCount: 3, reward: { type: 'armament', armamentId: 'arm_elusive_cloak' },
+        condition: { type: 'rogue_win' }, rogue: true
+    },
+
+    // ==========================================
+    // 🌀 悖论推演委派·肉鸽专属任务（每日 / 里程碑，RogueMissionPanel 显示）
+    // ==========================================
+    {
+        id: 'rogue_daily_elite_2',
+        category: 'daily', title: '精英猎手', description: '击败 2 个精英敌人',
+        targetCount: 2, reward: { type: 'dataGold', amount: 150 },
+        condition: { type: 'rogue_elite' }, rogue: true
+    },
+    {
+        id: 'rogue_daily_enhance_2',
+        category: 'daily', title: '强化收集', description: '获得 2 个迷宫强化',
+        targetCount: 2, reward: { type: 'dataGold', amount: 150 },
+        condition: { type: 'rogue_enhance' }, rogue: true
+    },
+    {
+        id: 'rogue_daily_event_2',
+        category: 'daily', title: '事件调查', description: '完成 2 个事件节点',
+        targetCount: 2, reward: { type: 'dataGold', amount: 100 },
+        condition: { type: 'rogue_event' }, rogue: true
+    },
+    // [2026-09-07 程拍板] 消耗品武装每日供给：碳原子板 / 重修申请 不再从卡包·通行证·里程碑获得，只靠每日任务各 1 个（日重置，用完次日可再领）
+    {
+        id: 'rogue_daily_resonance_1',
+        category: 'daily', title: '余音共振', description: '完成 1 场悖论迷宫推演（任意结局），领取消耗品武装「碳原子板」（通关时经验翻倍并消耗，未通关可留用）',
+        targetCount: 1, reward: { type: 'armament', armamentId: 'arm_resonance_crystal' },
+        condition: { type: 'rogue_run' }, rogue: true
+    },
+    {
+        id: 'rogue_daily_retrain_1',
+        category: 'daily', title: '进修批文', description: '通关 1 次悖论迷宫，领取消耗品武装「重修申请」（携带通关可将所在槽位可装备品质提升一级，升档后消失）',
+        targetCount: 1, reward: { type: 'armament', armamentId: 'arm_retrain' },
+        condition: { type: 'rogue_win' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_win_10',
+        category: 'achievement', title: '迷宫征服者·深', description: '累计通关 10 次悖论迷宫',
+        targetCount: 10, reward: { type: 'analystExp', amount: 900 }, // [2026-09-07] 分析员升太快：1500→900
+        condition: { type: 'rogue_win' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_win_20',
+        category: 'achievement', title: '迷宫征服者·极', description: '累计通关 20 次悖论迷宫',
+        targetCount: 20, reward: { type: 'analystExp', amount: 1500 }, // [2026-09-07] 分析员升太快：2500→1500
+        condition: { type: 'rogue_win' }, rogue: true
+    },
+    // [2026-09-07 程拍板] 里程碑不再给重修申请（改每日任务供给，见上方 rogue_daily_retrain_1）
+    {
+        id: 'rogue_mile_elite_20',
+        category: 'achievement', title: '精英绞杀·初', description: '累计击败 20 个精英敌人',
+        targetCount: 20, reward: { type: 'dataGold', amount: 800 },
+        condition: { type: 'rogue_elite' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_elite_50',
+        category: 'achievement', title: '精英绞杀·极', description: '累计击败 50 个精英敌人',
+        targetCount: 50, reward: { type: 'dataGold', amount: 1500 },
+        condition: { type: 'rogue_elite' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_enhance_30',
+        category: 'achievement', title: '强化大师·初', description: '累计获得 30 个迷宫强化',
+        targetCount: 30, reward: { type: 'dataGold', amount: 800 },
+        condition: { type: 'rogue_enhance' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_enhance_60',
+        category: 'achievement', title: '强化大师·极', description: '累计获得 60 个迷宫强化',
+        targetCount: 60, reward: { type: 'dataGold', amount: 1500 },
+        condition: { type: 'rogue_enhance' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_event_20',
+        category: 'achievement', title: '事件调查员', description: '累计完成 20 个事件节点',
+        targetCount: 20, reward: { type: 'dataGold', amount: 800 },
+        condition: { type: 'rogue_event' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_gold_3000',
+        category: 'achievement', title: '财源广进·初', description: '累计获得 3000 金币',
+        targetCount: 3000, reward: { type: 'dataGold', amount: 800 },
+        condition: { type: 'rogue_gold' }, rogue: true
+    },
+    {
+        id: 'rogue_mile_gold_8000',
+        category: 'achievement', title: '财源广进·极', description: '累计获得 8000 金币',
+        targetCount: 8000, reward: { type: 'dataGold', amount: 1500 },
+        condition: { type: 'rogue_gold' }, rogue: true
+    },
+
+    // ==========================================
+    // 📢 版本任务·悖论迷宫启航（外部版本任务，配合肉鸽更新）
+    // 非 rogue 标记 → 显示在普通任务面板「版本活动」Tab，引导体验肉鸽新内容
+    // ==========================================
+    // [2026-09-08 程拍板] 消耗品武装福利放送：直接领取各 6 个（真数量库存，可囤积连用）
+    {
+        id: 'version_gift_retrain_6',
+        category: 'version', title: '破格进修·福利', description: '版本福利放送：直接领取 6 个「重修申请」（携带通关可按难度提升所在槽位可装备品质上限）',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'armament', armamentId: 'arm_retrain', amount: 6 },
+        condition: { type: 'direct_claim' }
+    },
+    {
+        id: 'version_gift_resonance_6',
+        category: 'version', title: '余音共振·福利', description: '版本福利放送：直接领取 6 个「碳原子板」（携带通关经验翻倍）',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'armament', armamentId: 'arm_resonance_crystal', amount: 6 },
+        condition: { type: 'direct_claim' }
+    },
+    {
+        id: 'version_rogue_enter',
+        category: 'version', title: '悖论初探', description: '完成 1 场悖论迷宫推演（任意结局）',
+        targetCount: 1, reward: { type: 'dataGold', amount: 200 },
+        condition: { type: 'rogue_run' }
+    },
+    {
+        id: 'version_rogue_win',
+        category: 'version', title: '迷宫征服', description: '通关 1 次悖论迷宫',
+        targetCount: 1, reward: { type: 'dataGold', amount: 400 },
+        condition: { type: 'rogue_win' }
+    },
+    {
+        id: 'version_rogue_elite',
+        category: 'version', title: '精英猎手', description: '击败 3 个精英敌人',
+        targetCount: 3, reward: { type: 'dataGold', amount: 300 },
+        condition: { type: 'rogue_elite' }
+    },
+    {
+        id: 'version_rogue_enhance',
+        category: 'version', title: '强化收集', description: '获得 5 个迷宫强化',
+        targetCount: 5, reward: { type: 'dataGold', amount: 300 },
+        condition: { type: 'rogue_enhance' }
+    },
+    {
+        id: 'version_rogue_gold',
+        category: 'version', title: '财源广进', description: '累计获得 2000 金币',
+        targetCount: 2000, reward: { type: 'dataGold', amount: 500 },
+        condition: { type: 'rogue_gold' }
+    },
+    {
+        id: 'version_rogue_win3',
+        category: 'version', title: '深渊征服', description: '累计通关 3 次悖论迷宫',
+        targetCount: 3, reward: { type: 'analystExp', amount: 240 }, // [2026-09-07] 分析员升太快：400→240
+        condition: { type: 'rogue_win' }
     },
 ];

@@ -40,3 +40,11 @@ export const DIFFICULTY_LEVEL_BONUS: Record<RogueDifficulty, number> = {
     secret: 1,
     topsecret: 2,
 };
+
+// [2026-08-28 程拍板] 敌方水晶基础生命值：普通 10 / 机密 20 / 绝密 25
+// 中后段（深度≥1/3）敌人额外持有 +10 生命强化、Boss 额外持有 +20 生命强化（mapLayout 预分配 → encounterBuilder 折算进敌方水晶初值）
+export const ENEMY_NEXUS_BASE: Record<RogueDifficulty, number> = {
+    normal: 10,
+    secret: 20,
+    topsecret: 25,
+};

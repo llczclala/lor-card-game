@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { CardData, GameState } from '../types';
 import { canAffordCard } from '../utils/gameRules';
 import { evaluate } from '../logic/aiSpellStrategies';
+import { getPower, getHealth } from '../logic/keywords'; // [2026-08-29 莉莉子] 真实面板数值（含 buffs/roundBuffs/伤害）——AI 攻血判定必须用它，否则 buff 后的单位被当成白板
 import { resolveAIConfig } from '../data/aiDifficulty';
 import type { AIDifficultyLevel, AIDifficultyConfig } from '../data/aiDifficulty';
 import type { EnemyArchetype } from '../data/enemies/archetypes';
@@ -15,11 +16,12 @@ type AIProps = {
     actions: any;
     setMessage: (msg: string) => void;
     disabled?: boolean; // ★ 教程模式禁用AI自动行动
+    paused?: boolean; // [2026-08-30 莉莉子] 局内暂停冻结 AI（暂停时 effect 直接 return 不建 timer）
     difficulty?: AIDifficultyLevel; // [2026-08-06] AI 难度档位（默认 normal）
     personality?: EnemyArchetype['aiPersonality']; // [2026-08-06] AI 流派性格（默认 balanced）
 };
 
-export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, actions, setMessage, disabled = false, difficulty = 'normal', personality = 'balanced' }: AIProps) => {
+export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, actions, setMessage, disabled = false, paused = false, difficulty = 'normal', personality = 'balanced' }: AIProps) => {
     // [修改] 将 playerBench 加入 Ref
     const stateRef = useRef({ game, enemyHand, enemyBench, playerBench, combatField });
     // [新增] 法术冷却标记：刚打出法术后跳过一轮判断，防止 async commitSpell 期间重复施法
@@ -37,6 +39,8 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
     useEffect(() => {
         // ★ 教程模式：AI 不自动行动，由剧本控制
         if (disabled) return;
+        // [2026-08-30 莉莉子] 局内暂停：冻结 AI（paused 变化时 effect 重跑会 clearTimeout 掉旧 timer）
+        if (paused) return;
         const { game: currGame } = stateRef.current;
 
         // [核心修改] 植入 AI 逻辑锁：增加对 pendingLevelUps 队列的监控。
@@ -87,7 +91,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 // 计算敌方（玩家）本回合总潜在伤害，判断是否对我方水晶构成致命威胁。
                 // 威胁感知高的困难 AI 会优先格挡高攻进攻者防止被杀；
                 // 简单 AI（threatAwareness 低）可能漏判，放血水过去。
-                const lethalThreat = g.enemyNexus <= field.reduce((s, f) => s + (f.attacker?.power || 0), 0);
+                const lethalThreat = g.enemyNexus <= field.reduce((s, f) => s + (f.attacker ? getPower(f.attacker) : 0), 0); // [2026-08-29] 真实攻血
                 const cfg_threatAware = cfg.threatAwareness >= 0.6;
 
                 // 遍历每一个战斗槽位进行决策
@@ -101,7 +105,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                         // 如果攻击者有隐秘，必须用隐秘阻挡
                         if (attacker.keywords.includes('Elusive') && !b.keywords.includes('Elusive')) return false;
                         // [2026-07-08 修复] 凶恶：只能被攻击力3或以上的单位阻挡
-                        const bPower = (b.power || 0) + (b.buffs?.power || 0);
+                        const bPower = getPower(b); // [2026-08-29] 真实攻血
                         if (attacker.keywords.includes('Fearsome') && bPower < 3) return false;
                         return true;
                     });
@@ -113,11 +117,11 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                     // [2026-07-09] 格挡关键词辅助函数
                     const canSurvive = (b: CardData, atkPower: number) => {
                         if (b.keywords.includes('Barrier')) return true;
-                        const hp = b.health + (b.keywords.includes('Tough') ? 1 : 0);
+                        const hp = getHealth(b) + (b.keywords.includes('Tough') ? 1 : 0); // [2026-08-29] 真实面板
                         return hp > atkPower;
                     };
                     const canKillAtk = (b: CardData, atkHealth: number) => {
-                        const p = b.power + (b.keywords.includes('Thorns') ? 1 : 0);
+                        const p = getPower(b) + (b.keywords.includes('Thorns') ? 1 : 0); // [2026-08-29] 真实面板
                         return p >= atkHealth;
                     };
 
@@ -132,14 +136,14 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                             chosenBlocker = barrierBlockers.sort((a, b) => a.cost - b.cost)[0];
                         } else {
                             // 尝试找能完美扛住的 (有效HP > Atk)
-                            const survivors = validBlockers.filter(b => canSurvive(b, attacker.power));
+                            const survivors = validBlockers.filter(b => canSurvive(b, getPower(attacker)));
                             if (survivors.length > 0) {
                                 chosenBlocker = survivors.sort((a, b) => a.cost - b.cost)[0];
                             } else {
                                 // 没人能抗住，选有效血量最高的当肉盾 (考虑坚韧)
                                 chosenBlocker = validBlockers.sort((a, b) => {
-                                    const hpB = b.health + (b.keywords.includes('Tough') ? 1 : 0);
-                                    const hpA = a.health + (a.keywords.includes('Tough') ? 1 : 0);
+                                    const hpB = getHealth(b) + (b.keywords.includes('Tough') ? 1 : 0);
+                                    const hpA = getHealth(a) + (a.keywords.includes('Tough') ? 1 : 0);
                                     return hpB - hpA;
                                 })[0];
                             }
@@ -149,23 +153,23 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                     else {
                         // 策略A: 完美白吃 (我活，敌死) - 最优解
                         const perfectKillers = validBlockers.filter(b =>
-                            canSurvive(b, attacker.power) && canKillAtk(b, attacker.health)
+                            canSurvive(b, getPower(attacker)) && canKillAtk(b, getHealth(attacker))
                         );
 
                         // 策略B: 免费格挡 (我活，敌不死) - 拖延/蹭血
-                        const survivors = validBlockers.filter(b => canSurvive(b, attacker.power));
+                        const survivors = validBlockers.filter(b => canSurvive(b, getPower(attacker)));
 
                         // 策略C: 牺牲格挡 (我死) - 包含互换(Trade)和填旋(Chump Block)
                         // [关键修改] 只有满足特定价值公式，AI 才愿意牺牲单位
                         const sacrificeCandidates = validBlockers.filter(b => {
                             // 能活就不算牺牲
-                            if (canSurvive(b, attacker.power)) return false;
+                            if (canSurvive(b, getPower(attacker))) return false;
                             // [2026-07-09] 幻象(Ephemeral)：回合结束必死，无脑填入
                             if (b.keywords.includes('Ephemeral')) return true;
                             // 斩杀保护：如果不挡水晶就炸了
-                            if (g.enemyNexus <= attacker.power) return true;
-                            // 价值公式：挽回的水晶伤害 >= 2倍 损失的单位生命值
-                            if (attacker.power >= 2 * b.health) return true;
+                            if (g.enemyNexus <= getPower(attacker)) return true;
+                            // 价值公式：挽回的水晶伤害 >= 2倍 损失的单位生命值（[2026-08-29] 均用真实面板）
+                            if (getPower(attacker) >= 2 * getHealth(b)) return true;
                             return false;
                         });
 
@@ -187,14 +191,14 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                         } else if (sacrificeCandidates.length > 0) {
                             // 3. 必须牺牲时，在“愿意牺牲”的名单里挑
                             // 优先选能换掉对手的 (Traders)
-                            const traders = sacrificeCandidates.filter(b => canKillAtk(b, attacker.health));
+                            const traders = sacrificeCandidates.filter(b => canKillAtk(b, getHealth(attacker)));
 
                             if (traders.length > 0) {
                                 // 能换掉对手，选最便宜的
                                 chosenBlocker = traders.sort((a, b) => a.cost - b.cost)[0];
                             } else {
                                 // 换不掉对手 (纯填旋)，选最便宜且血最少的 (止损)
-                                chosenBlocker = sacrificeCandidates.sort((a, b) => a.cost - b.cost || a.health - b.health)[0];
+                                chosenBlocker = sacrificeCandidates.sort((a, b) => a.cost - b.cost || getHealth(a) - getHealth(b))[0];
                             }
                         }
                         // 4. 如果以上都不满足 (会死，且不满足价值公式)
@@ -202,7 +206,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                         // 威胁感知高的 AI 即使亏也强行填旋阻挡，保水晶优先
                         if (!chosenBlocker && lethalThreat && cfg_threatAware) {
                             // 从牺牲候选人里强制选一个填旋（哪怕纯止损）
-                            const lastResort = [...sacrificeCandidates].sort((a, b) => (a.health || 0) - (b.health || 0))[0];
+                            const lastResort = [...sacrificeCandidates].sort((a, b) => getHealth(a) - getHealth(b))[0];
                             if (lastResort) chosenBlocker = lastResort;
                         }
                         // 否则不格挡，脸接伤害
@@ -353,57 +357,90 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
 
                     // [2026-08-06] 斩杀线检测：敌方水晶已在所有攻击者总攻击力之下 → 困难AI全力进攻
                     // 简单AI可能忽略（mistakeRate 高），难度越高越重视斩杀
-                    const totalPow = bench
-                        .filter(u => !u.isDead && (u.power || 0) > 0 && !u.keywords.includes('CantAttack'))
-                        .reduce((s, u) => s + (u.power || 0), 0);
-                    const lethalReachable = totalPow >= g.playerNexus;
+                    // ═══ [2026-08-28 莉莉子 重构] 进攻决策：阻挡者容量 + 总攻收益 ═══
+                    // 旧逻辑问题：逐单位问"会不会被对手白吃"（isSuicide），却忽略"对手一次只能挡几个"。
+                    // 例：AI 铺 6 单位、玩家只有 1 个里芙能白吃大部分 → 旧 AI 判定 5 个都是"自杀"不敢上，
+                    // 实际里芙只能挡 1 路，其余 4 个会穿过去打脸 → 观感"铺满场却只打 1 点"。
+                    // 修复：① 引入阻挡者容量（超容量 = 必打脸）② 算全压净收益（脸伤 vs 损失）按 aggression 权衡。
+                    // 本函数被标准对战 + 肉鸽共用（都经 GameSession → useAI），全模式生效，非肉鸽专属。
+                    const playerBlockers = pBench.filter((b: CardData) =>
+                        !b.isDead && !b.animState?.startsWith('dying') && !b.keywords.includes('CantBlock')
+                    );
+                    const capacity = playerBlockers.length; // 对手最多能合法阻挡几个
+
+                    const sureHitUnits: CardData[] = [];  // 必打脸（无合法阻挡者，如隐秘无对应阻挡）
+                    const safeUnits: CardData[] = [];     // 不会被白吃（对手挡了也不亏）
+                    const doomedUnits: CardData[] = [];   // 会被白吃（受容量 + aggression 约束）
 
                     bench.forEach(unit => {
                         if (unit.isDead || unit.animState === 'dying' || unit.animState === 'ephemeral_dying') return;
-                        if (unit.power === 0) return;
+                        if (getPower(unit) === 0) return; // [2026-08-29] 真实攻血
                         if (unit.keywords.includes('CantAttack')) return; // [CantAttack] 无法造成伤害，不派去进攻
 
                         // [2026-07-09] 幻象(Ephemeral) → 回合结束必死，无脑进攻
-                        if (unit.keywords.includes('Ephemeral')) {
-                            attackers.push(unit);
-                            return;
-                        }
+                        if (unit.keywords.includes('Ephemeral')) { attackers.push(unit); return; }
 
-                        // 畏惧逻辑 — 考虑关键词过滤有效阻挡者
-                        const isSuicide = pBench.some(blocker => {
-                            // 忽略无法格挡的单位
-                            if (blocker.keywords.includes('CantBlock')) return false;
-
+                        // 该单位的合法阻挡者（含 Elusive / Fearsome 规则过滤）
+                        const blockers = playerBlockers.filter(b => {
                             // [2026-07-09] 隐秘(Elusive) → 只有隐秘才能阻挡隐秘
-                            if (unit.keywords.includes('Elusive') && !blocker.keywords.includes('Elusive')) return false;
-
+                            if (unit.keywords.includes('Elusive') && !b.keywords.includes('Elusive')) return false;
                             // [2026-07-09] 凶恶(Fearsome) → 只有攻击力≥3才能阻挡
-                            const bPower = (blocker.power || 0) + (blocker.buffs?.power || 0);
+                            const bPower = getPower(b); // [2026-08-29] 真实攻血
                             if (unit.keywords.includes('Fearsome') && bPower < 3) return false;
-
-                            const canKillAttacker = blocker.power >= unit.health;
-                            const willSurvive = blocker.health > unit.power;
-                            return canKillAttacker && willSurvive;
+                            return true;
                         });
+                        if (blockers.length === 0) { sureHitUnits.push(unit); return; } // 挡不住 → 必打脸
 
-                        // [2026-08-06 莉莉子 进攻增强] 换子收益评估：即使是"会被白吃"的单位，
-                        // 若攻击力≥敌方单位生命（换子不亏）或攻击力>敌方水晶剩余（斩杀价值）也值得进攻。
-                        // 难度越高（planningDepth 高、aggression 高），越愿意承担风险换价值。
-                        const tradeValue = isSuicide ? pBench.filter(b => b.power >= unit.health && b.health <= unit.power).length : 0;
-
-                        if (!isSuicide) {
-                            attackers.push(unit);
-                        } else if (lethalReachable && cfg.aggression >= 0.7) {
-                            // 可斩杀时，高侵略性的困难 AI 愿意全压进攻（即使会被换）
-                            attackers.push(unit);
-                        } else if (tradeValue > 0 && cfg.aggression >= 0.8) {
-                            // 换子不亏（能拼掉对方至少一个），极端进攻型的 AI 也愿意打
-                            attackers.push(unit);
-                        } else if (Math.random() < cfg.mistakeRate) {
-                            // 简单 AI 的失误：本来该缩的也瞎冲
-                            attackers.push(unit);
-                        }
+                        const isSuicide = blockers.some(b =>
+                            getPower(b) >= getHealth(unit) && getHealth(b) > getPower(unit)
+                        ); // [2026-08-29] 真实攻血
+                        if (isSuicide) doomedUnits.push(unit);
+                        else safeUnits.push(unit);
                     });
+
+                    // —— 总攻收益账 ——
+                    // 全压候选；sureHit 伤害必中；blockable（safe+doomed）按对手挡"攻击力最高 capacity 个"估损失
+                    const allInUnits = [...sureHitUnits, ...safeUnits, ...doomedUnits];
+                    const sureHitDmg = sureHitUnits.reduce((s, u) => s + getPower(u), 0);
+                    const blockableUnits = [...safeUnits, ...doomedUnits].sort((a, b) => getPower(b) - getPower(a));
+                    const blockableDmg = blockableUnits.reduce((s, u) => s + getPower(u), 0);
+                    const blockedDmg = blockableUnits.slice(0, Math.min(capacity, blockableUnits.length))
+                        .reduce((s, u) => s + getPower(u), 0);
+                    const guaranteedFace = sureHitDmg + Math.max(0, blockableDmg - blockedDmg); // 全压时至少打这么多脸
+                    const allInDamage = allInUnits.reduce((s, u) => s + getPower(u), 0);
+                    const lethalAllIn = allInDamage >= g.playerNexus;
+                    const lossValue = blockableUnits.slice(0, Math.min(capacity, blockableUnits.length))
+                        .reduce((s, u) => s + (u.cost || 0), 0); // 被挡单位的损失价值（费用）
+
+                    // 决策①：全压可斩杀 → 果断全压（aggression 越高越果断）
+                    if (lethalAllIn && cfg.aggression >= 0.6) {
+                        attackers.push(...allInUnits);
+                    }
+                    // 决策②：全压收益评估——脸伤价值 ≥ 被挡损失的 aggression 加权 → 值就全压。
+                    //   aggression 高（困难/激进性格）越愿意为脸伤送单位；低（保守）越惜命。
+                    else if (guaranteedFace >= lossValue * cfg.aggression) {
+                        attackers.push(...allInUnits);
+                    }
+                    // 决策③：保守但带容量意识——必打脸 + 安全单位全派；doomed 里超容量部分必打脸也派；
+                    //   被挡住的 doomed 按 aggression 决定（换子不亏/极端激进才送）。
+                    else {
+                        attackers.push(...sureHitUnits, ...safeUnits);
+                        const doomedByPow = [...doomedUnits].sort((a, b) => getPower(b) - getPower(a));
+                        const surplus = Math.max(0, doomedUnits.length - capacity); // 挡不完 → 必打脸
+                        attackers.push(...doomedByPow.slice(0, surplus));
+                        const blockedDoomed = doomedByPow.slice(surplus);
+                        // 换子不亏（能拼掉对方至少一个）→ 高侵略愿意送
+                        const tradeable = blockedDoomed.filter(u =>
+                            pBench.some(b => getPower(b) >= getHealth(u) && getHealth(b) <= getPower(u))
+                        ); // [2026-08-29] 真实攻血
+                        if (cfg.aggression >= 0.7) attackers.push(...tradeable);
+                        // 极端侵略（困难 + 激进性格）→ 纯送逼血也打
+                        if (cfg.aggression >= 0.85) attackers.push(...blockedDoomed.filter(u => !tradeable.includes(u)));
+                        // 简单 AI 失误兜底：本该缩的也随机冲 1-2 个（mistakeRate 高）
+                        if (attackers.length === 0 && allInUnits.length > 0 && Math.random() < cfg.mistakeRate) {
+                            attackers.push(...blockableUnits.slice(0, Math.min(2, blockableUnits.length)));
+                        }
+                    }
 
                     if (attackers.length > 0) {
                         console.log(`[AI] ⚔️ 发起进攻: ${attackers.length} 个单位 (截取前 ${Math.min(attackers.length, 6)})`);
@@ -423,11 +460,11 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                                 const target = available.sort((a, b) => {
                                     const score = (c: CardData) =>
                                         (c.isChampion ? 100 : 0) +
-                                        (c.power || 0) * 3 +
+                                        getPower(c) * 3 +
                                         (c.keywords.includes('QuickAttack') ? 15 : 0) +
                                         (c.keywords.includes('Overwhelm') ? 15 : 0) +
                                         (c.keywords.includes('Channel') ? 10 : 0) +
-                                        (c.health || 0);
+                                        getHealth(c);
                                     return score(b) - score(a);
                                 })[0];
                                 challengerTargets.set(attacker.id, target);
@@ -490,5 +527,6 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
         combatField.length, // 监听战场变化
         game.spellCasting?.step, // [2026-07-20] AI 抉择结束/开始时唤醒/暂停
         game.calibratePending,   // [2026-07-20] AI 校准结束/开始时唤醒/暂停
+        paused,                  // [2026-08-30 莉莉子] 暂停/恢复时重跑 effect，清掉旧 timer
     ]);
 };

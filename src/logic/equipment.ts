@@ -8,8 +8,10 @@ import type { CardData } from '../types';
 
 /**
  * 执行卡牌装备的打出时效果。
- * 当前仅一类：STRIKE_ENEMY_BENCH —— 对敌方备战席所有单位造成 value 点伤害。
- * 伤害处理参照 effectProcessor STRIKE：Barrier 破盾不受伤 / Tough 减 1。
+ * 现两类：
+ *   · STRIKE_ENEMY_BENCH —— 对敌方备战席所有单位造成 value 点伤害。
+ *     伤害处理参照 effectProcessor STRIKE：Barrier 破盾不受伤 / Tough 减 1。
+ *   · POISON_ENEMY_ALL —— [2026-09-12 莉莉子 剧毒] 赋予敌方全体【剧毒】（负面 debuff）。
  * @param enemyBench 调用方传入的敌方备战席最新快照（我方打出 → enemyBench；敌方打出 → playerBench）
  * @returns 更新后的敌方备战席数组；无打出效果时返回 null（调用方无需写回）
  */
@@ -18,10 +20,21 @@ export const executeEquipmentOnPlay = (
     card: CardData,
 ): CardData[] | null => {
     const defs = getEquipmentDefs(card.equipment);
-    const onPlay = defs.find(d => d.onPlay?.class === 'STRIKE_ENEMY_BENCH');
-    if (!onPlay?.onPlay) return null;
+    const onPlay = defs.find(d => d.onPlay)?.onPlay;
+    if (!onPlay) return null;
 
-    const dmg = onPlay.onPlay.value;
+    // ---- [剧毒] 瓦莱莉的送行礼箱：打出时给敌方全体上毒 ----
+    // 注：ON_PLAY 发生在 main 阶段，此时交战区按引擎不变量恒为空（见 09-11 交战区不变量守卫），
+    //     故"敌方全体"在实战中即等于"敌方备战席全体"，与 STRIKE_ENEMY_BENCH 口径一致。
+    if (onPlay.class === 'POISON_ENEMY_ALL') {
+        return enemyBench.map(c =>
+            c.keywords.includes('Deadly')
+                ? c // 已中毒的不重复叠加
+                : { ...c, keywords: [...c.keywords, 'Deadly' as const] }
+        );
+    }
+
+    const dmg = onPlay.value;
 
     const dealDamage = (c: CardData): CardData => {
         let next: CardData = { ...c };

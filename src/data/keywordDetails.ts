@@ -339,26 +339,26 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
         ]
     },
     'Deadly': {
-        id: 'Deadly', nameEn: 'DEADLY', nameCn: '致命', testCardId: 'test_deadly', availableModes: ['bench', 'combat'],
+        id: 'Deadly', nameEn: 'DEADLY', nameCn: '剧毒', testCardId: 'test_deadly', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',
                 paragraphs: [
-                    '武器模组涂装了高浓度的侵蚀代码与反物质毒素。',
-                    '任何被该单位的物理攻击擦伤的敌方目标（哪怕仅造成了 1 点微弱伤害），其底层的生命阈值将直接被无视，并被系统执行无条件的彻底解构。'
+                    '机体循环系统被注入了高浓度的侵蚀代码与反物质毒素，结构完整性正在持续崩解。',
+                    '在此协议被清除之前，该实体承受的任何一丝干涉——无论是交战打击、法术直伤还是反伤反弹（哪怕仅造成了 1 点微弱伤害）——都会被底层逻辑判定为致命冲击，并被系统执行无条件的彻底解构。'
                 ]
             },
             {
                 heading: '战术指引 // TACTICS',
                 paragraphs: [
-                    '这是突破“重装高血量单位”的绝对利刃。',
-                    '拥有致命标签的单位，即便自身基础面板极低，也能在防守端迫使敌方的高阶天启者不敢轻举妄动，形成极具威慑力的兑子威胁。'
+                    '一柄递给敌方、却悬在敌方头顶的达摩克利斯之剑——将剧毒强行植入敌方的高阶天启者，哪怕对方叠满了增益与重装护甲，一次最廉价的擦伤就能将其整条血线一并抹除。',
+                    '反过来，被标记者必须立刻撤离交火线：任何试图用低攻单位“垫刀”试探的行为，都只是在替对手完成处决。'
                 ]
             }
         ]
     },
     'SpellShield': {
-        id: 'SpellShield', nameEn: 'SPELL SHIELD', nameCn: '法术护盾', testCardId: 'test_spellshield', availableModes: ['bench', 'combat'],
+        id: 'SpellShield', nameEn: 'SPELL SHIELD', nameCn: '魔免', testCardId: 'test_spellshield', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',
@@ -415,7 +415,7 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
         ]
     },
     'Cleave': {
-        id: 'Cleave', nameEn: 'CLEAVE', nameCn: '顺劈', testCardId: 'test_cleave', availableModes: ['bench', 'combat'],
+        id: 'Cleave', nameEn: 'CLEAVE', nameCn: '溅射', testCardId: 'test_cleave', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',
@@ -428,13 +428,13 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
                 heading: '战术指引 // TACTICS',
                 paragraphs: [
                     '对敌方密集防御阵型的严厉惩罚。',
-                    '拥有顺劈机制的单位，能够让敌方的“炮灰联防”战术付出惨痛的连带代价，逼迫敌方在排兵布阵时必须谨慎处理核心单位的站位。'
+                    '拥有溅射机制的单位，能够让敌方的“炮灰联防”战术付出惨痛的连带代价，逼迫敌方在排兵布阵时必须谨慎处理核心单位的站位。'
                 ]
             }
         ]
     },
     'Thorns': {
-        id: 'Thorns', nameEn: 'THORNS', nameCn: '荆棘', testCardId: 'test_thorns', availableModes: ['bench', 'combat'],
+        id: 'Thorns', nameEn: 'THORNS', nameCn: '反伤', testCardId: 'test_thorns', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',
@@ -447,7 +447,7 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
                 heading: '战术指引 // TACTICS',
                 paragraphs: [
                     '让敌方快攻集群投鼠忌器的防守利器。',
-                    '面对生命值脆弱的敌方突击集群，荆棘单位仅仅是站在防线前方，就能让敌方在发起冲锋时体验到“伤敌一千，自损八百”的苦楚。'
+                    '面对生命值脆弱的敌方突击集群，反伤单位仅仅是站在防线前方，就能让敌方在发起冲锋时体验到“伤敌一千，自损八百”的苦楚。'
                 ]
             }
         ]
@@ -548,7 +548,7 @@ export const KEYWORD_DETAILS: Record<string, KeywordDetail> = {
         ]
     },
     'Immobile': {
-        id: 'Immobile', nameEn: 'IMMOBILE', nameCn: '固定', testCardId: 'test_immobile', availableModes: ['bench', 'combat'],
+        id: 'Immobile', nameEn: 'IMMOBILE', nameCn: '哨兵', testCardId: 'test_immobile', availableModes: ['bench', 'combat'],
         sections: [
             {
                 heading: '机制解密 // EFFECT',

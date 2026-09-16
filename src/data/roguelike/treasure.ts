@@ -39,7 +39,7 @@ const RANDOM_TREASURE_POOL: { kind: RandomTreasureResult['kind']; weight: number
 ];
 
 /** 按权重抽一种随机宝箱奖励并生成内容 */
-export const pickRandomTreasure = (): RandomTreasureResult => {
+export const pickRandomTreasure = (unlockedPass?: string[]): RandomTreasureResult => {
     const total = RANDOM_TREASURE_POOL.reduce((s, x) => s + x.weight, 0);
     let r = Math.random() * total;
     let kind: RandomTreasureResult['kind'] = 'gold';
@@ -56,7 +56,7 @@ export const pickRandomTreasure = (): RandomTreasureResult => {
             return { kind: 'card', cardKey: offer.cardKey, equipId: offer.equipId };
         }
         case 'enhancement': {
-            const enh = pickRandomEnhancements(1)[0];
+            const enh = pickRandomEnhancements(1, undefined, undefined, unlockedPass)[0]; // [2026-08-29 通行证]
             return enh ? { kind: 'enhancement', enhancementId: enh.id } : { kind: 'gold', amount: GOLD_TREASURE_AMOUNT };
         }
         case 'maxHp':

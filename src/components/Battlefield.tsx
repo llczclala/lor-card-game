@@ -19,6 +19,7 @@ interface BattlefieldProps {
     onChallengerClick: (cardId: string) => void;
         // [新增] 接收卡背图片路径
     cardBackUrl?: string;
+    cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL
     // [新增] 战场卡牌拖拽入口 — 用于战场→备战席反向拖拽
     onCombatPointerDown?: (e: React.PointerEvent, card: CardData, index: number, role: 'attacker' | 'blocker') => void;
 
@@ -27,7 +28,7 @@ interface BattlefieldProps {
     previewAttackerCount?: number;
 
     // [新增] 战场悬停预览
-    cardGazeEvents?: (card: CardData) => { onMouseEnter: () => void; onMouseLeave: () => void; };
+    cardGazeEvents?: (card: CardData) => { onMouseEnter: (e: React.MouseEvent) => void; onMouseLeave: () => void; };
     skinOverrides?: Record<string, number>;
 
 }
@@ -39,6 +40,7 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
     selectedChallengerId, onChallengerClick,
         // [新增] 解构
     cardBackUrl,
+    cardBackVideoUrl,
     onCombatPointerDown, // [新增] 战场拖拽
     dragPreviewSlots,
     previewAttackerCount,
@@ -99,7 +101,7 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                                 isFacingQuickAttack={fight.attacker.keywords.includes('QuickAttack')}
                                 // [新增] 补全：告诉这张卡"你被挑战了"，它才会显示橙色特效
                                 isChallengedTarget={fight.isChallenged}
-                                cardBackUrl={cardBackUrl}
+                                cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl}
                             />
                             </div> :
                          null}
@@ -126,7 +128,7 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                                 attackType={fight.blocker ? 'clash' : 'direct'}
                                 onClick={() => onCardClick(fight.attacker, 'combat', 'player')}
                                 // ...略过中间 props
-                                cardBackUrl={cardBackUrl}
+                                cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl}
                                 onViewArt={onViewArt}
                                 isSpeaking={fight.attacker.id === speakingCardId} // [修正] 拼写错误
                                 // [新增] 如果已有阻挡者，不再传递点击回调 -> 从而隐藏挑战者图标
@@ -146,7 +148,7 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
                                 onClick={() => onCardClick(fight.blocker!, 'combat', fight.owner === 'player' ? 'enemy' : 'player')}
                                 onViewArt={onViewArt}
                                 isSpeaking={fight.blocker.id === speakingCardId}
-                                cardBackUrl={cardBackUrl}
+                                cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl}
                                 isFacingQuickAttack={fight.attacker.keywords.includes('QuickAttack')}
                                 isChallengedTarget={fight.isChallenged}
                                 onPointerDown={onCombatPointerDown ? (e) => onCombatPointerDown(e, fight.blocker!, i, 'blocker') : undefined}

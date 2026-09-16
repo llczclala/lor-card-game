@@ -37,10 +37,20 @@ interface TutorialGameWrapperProps {
     onExitGame: () => void;
     playBgm: (type: 'title' | 'default' | 'battle' | 'victory' | 'defeat') => void;
     playLevelUpMovie: (heroKey: string, onEnd?: () => void) => void;
+    prepareLevelUpMovie: (heroKey: string) => void; // [2026-08-27] 补漏：升级预热透传 GameSession
+    prepareVictoryMovie: (heroKeys: string[]) => void; // [2026-08-27] 补漏：胜利预热透传 GameSession
     playVictoryMovie: (heroKeys: string[], onEnd?: () => void) => void;
     stopMovie: (immediate?: boolean) => void;
     deskIndex: number;
     cardBackIndex?: number;
+    deskDynamic?: boolean; // [2026-08-13] 动态牌桌透传
+    heroDynamic?: boolean; // [2026-08-16] 动态卡面透传
+    missionSystem?: any; // [核心挂载] 军功大脑透传结算
+    onOpenSettings?: () => void; // [2026-08-30 莉莉子] 暂停层齿轮 → 打开设置面板
+    onQuitGame?: () => void; // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏
+    isSettingsOpen?: boolean; // [2026-08-30 莉莉子] 设置面板开合状态（暂停 ESC 协调）
+    // [2026-09-04 账号等级/战绩] 结算上抛（透传到 GameSession/GameOverScreen 一次性入账）
+    onAccountSettle?: (payload: { result: 'victory' | 'defeat'; mode: 'pve' | 'tutorial' | 'rogue'; heroKeys: string[] }) => void;
 }
 
 export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
@@ -119,21 +129,24 @@ export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
         eventBus.emit('TUTORIAL_AUTO_ACTION' as any, { action, params });
     }, []);
 
-    // ─── 8. 法术开场秀（在教程对局开始前演出暗箭连发） ───
+    // ─── 8. 法术开场秀（仅在剧本配置了 openingShow 时演出，如基础教程第一关的暗箭连发） ───
     const [spellShowDone, setSpellShowDone] = useState(false);
 
     useEffect(() => {
+        const phases = tutorialScript?.openingShow?.phases;
+
+        // 剧本未配置开场秀 → 跳过演出，直接进入教程
+        if (!phases) {
+            setSpellShowDone(true);
+            return;
+        }
+
         // 等 GameSession 挂载 + 布局完成后再触发
         const timer = setTimeout(() => {
             console.log('[Tutorial] 🎬 法术开场秀开始！');
             eventBus.emit('TUTORIAL_AUTO_ACTION', {
                 action: 'spell_show',
-                params: {
-                    phases: [
-                        { cardKey: 'hidden_arrow', owner: 'enemy', targetKey: 'lyfe', count: 2 },
-                        { cardKey: 'hidden_arrow', owner: 'player', targetKey: 'titan_gaimer', count: 4 }
-                    ]
-                }
+                params: { phases }
             });
         }, 800);
 
@@ -147,7 +160,7 @@ export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
             clearTimeout(timer);
             eventBus.off('TUTORIAL_SPELL_SHOW_COMPLETE', onComplete);
         };
-    }, []);
+    }, [tutorialScript]);
 
     // ─── 安全检查 ───
     if (!stage) {
@@ -180,9 +193,11 @@ export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
                 onVictory={handleVictory}
                 onDefeat={handleDefeat}
                 onExit={onExitGame}
+                matchMode="tutorial" // [2026-09-04 账号等级/战绩] 教程计为真实对局（程拍板：教程也算）
                 disableMulligan={true}
                 tutorialInit={tutorialInit}
                 firstAttacker={tutorialInit?.firstAttacker ?? 'enemy'} // [2026-08-15] 剧本指定先手（默认敌方）；关键词考核剧本已设 'player'
+                tutorialPauseUpgradeStart={tutorialScript?.pauseUpgradeAtStart} // [2026-08-26] 剧本可指定开局初始暂停升级（防升级影片与对话重叠）
                 disableAI={true}
                 turnTimer={999}
             />

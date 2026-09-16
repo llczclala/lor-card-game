@@ -6,7 +6,7 @@
 // 商品生成含稀有度权重（run.rarityBonus 联动英雄等级加成）。
 // ==========================================
 import { CARD_DB } from '../cards';
-import { EQUIPMENT_DEFS, getEquipmentById, type EquipmentRarity } from '../equipment';
+import { EQUIPMENT_DEFS, getEquipmentById, getEquipPoolForCard, type EquipmentRarity } from '../equipment';
 import { pickRandomEnhancements, type RarityBonusInput } from './enhancements';
 import type { EnhancementRarity } from './buffs';
 
@@ -39,15 +39,22 @@ export const getCardPrice = (cardKey: string, equipId?: string): number => {
     if (!equipId) return base;
     const equip = getEquipmentById(equipId);
     if (!equip) return base;
-    const add = equip.rarity === 'common' ? 40 : equip.rarity === 'rare' ? 80 : equip.rarity === 'epic' ? 120 : 180;
+    // [2026-08-27] 六档卡价加成：白25 / 绿40 / 蓝80 / 紫120 / 金180 / 红250
+    const add = equip.rarity === 'common' ? 25
+        : equip.rarity === 'uncommon' ? 40
+        : equip.rarity === 'rare' ? 80
+        : equip.rarity === 'epic' ? 120
+        : equip.rarity === 'legendary' ? 180 : 250;
     return base + add;
 };
 
+// [2026-08-27] 六档强化价格：白70 / 绿100 / 蓝150 / 紫200 / 金250 / 红320
 export const getEnhancementPrice = (rarity: EnhancementRarity): number =>
-    rarity === 'common' ? 100 : rarity === 'rare' ? 150 : rarity === 'epic' ? 200 : 250;
+    rarity === 'common' ? 70 : rarity === 'uncommon' ? 100 : rarity === 'rare' ? 150 : rarity === 'epic' ? 200 : rarity === 'legendary' ? 250 : 320;
 
+// [2026-08-27] 六档装备价格：白50 / 绿80 / 蓝120 / 紫180 / 金250 / 红330
 export const getEquipmentPrice = (rarity: EquipmentRarity): number =>
-    rarity === 'common' ? 80 : rarity === 'rare' ? 120 : rarity === 'epic' ? 180 : 250;
+    rarity === 'common' ? 50 : rarity === 'uncommon' ? 80 : rarity === 'rare' ? 120 : rarity === 'epic' ? 180 : rarity === 'legendary' ? 250 : 330;
 
 // ── 商品生成 ──
 const collectibleCards = () =>
@@ -58,10 +65,14 @@ const randomCardKey = (exclude: Set<string>): string => {
     return pool.length ? pool[Math.floor(Math.random() * pool.length)].key : 'lyfe';
 };
 
-const randomEquipId = (): string => EQUIPMENT_DEFS[Math.floor(Math.random() * EQUIPMENT_DEFS.length)].id;
+const randomEquipId = (card: { type: string }): string | undefined => {
+    const pool = getEquipPoolForCard(card); // [2026-08-29] 按卡筛：单位→全装备，法术→纯减费
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)].id : undefined;
+};
 
 /**
  * 生成 count 张不同卡（60% 带随机装备）——商店买卡区 / 卡牌宝箱共用。
+ * [2026-08-29] 法术卡只配纯减费装备（getEquipPoolForCard 过滤），杜绝数值/关键词等无效装备。
  */
 export const generateCardOffers = (count: number): ShopCardItem[] => {
     const cards: ShopCardItem[] = [];
@@ -70,7 +81,7 @@ export const generateCardOffers = (count: number): ShopCardItem[] => {
         const key = randomCardKey(used);
         used.add(key);
         const withEquip = Math.random() < 0.6;
-        const equipId = withEquip ? randomEquipId() : undefined;
+        const equipId = withEquip ? randomEquipId(CARD_DB[key]) : undefined;
         cards.push({ cardKey: key, equipId, price: getCardPrice(key, equipId) });
     }
     return cards;
@@ -80,11 +91,11 @@ export const generateCardOffers = (count: number): ShopCardItem[] => {
  * 生成一商店的商品：3 张卡（60% 带随机装备）+ 1 个迷宫强化 + 2 个装备。
  * @param rarityBonus 英雄等级的稀有度加成（影响强化/装备抽选权重）
  */
-export const generateShopStock = (rarityBonus?: RarityBonusInput): ShopStock => {
+export const generateShopStock = (rarityBonus?: RarityBonusInput, unlockedPass?: string[]): ShopStock => {
     const cards = generateCardOffers(3);
 
-    // 买迷宫强化：从玩家强化池抽 1 个（含稀有度权重）
-    const enh = pickRandomEnhancements(1, undefined, rarityBonus)[0];
+    // 买迷宫强化：从玩家强化池抽 1 个（含稀有度权重；[2026-08-29 通行证] 已解锁通行证强化也入池）
+    const enh = pickRandomEnhancements(1, undefined, rarityBonus, unlockedPass)[0];
     const enhancement: ShopEnhancementItem | null = enh
         ? { enhancementId: enh.id, price: getEnhancementPrice(enh.rarity) }
         : null;

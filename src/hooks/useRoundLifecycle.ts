@@ -7,10 +7,12 @@ import { processEffect } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus'; // [新增] 引入通用打击总线
-import { applyRoundStartKeywords, applyRoundEndKeywords, applyVolatileDiscard, executeTitanPulse, applyChannelOnRoundStart } from '../logic/keywords';
+import { applyRoundStartKeywords, applyRoundEndKeywords, applyVolatileDiscard, executeTitanPulse, applyChannelOnRoundStart, getPower } from '../logic/keywords'; // [2026-08-27] 高级强化：冻结/设面板（冻结逻辑已收编 rogueTrigger）
 import { accumulateMauxirDamage, isSummonerOrSummon, upgradeAcaciaHand } from '../utils/gameRules'; // [新增] 引入猫汐尔经验收集器
 import { gameLogger } from '../utils/gameLogger'; // [新增] 战术审计黑匣子
-import { getRogueDefs, flashRogueBuff } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发
+import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
+import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
+import { runRogueTrigger, commitSlicePatch, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎（原 rogueBattle 分发已收编）
 
 // ==========================================
 // [时间管理器] 独立封装的纯函数，等待通用打击特效播完
@@ -156,12 +158,15 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             // [新增] 如果都没找到，检查是否是水晶受击——直接扣水晶血量
             if (!found) {
                 if (targetId === 'nexus_enemy') {
-                    setGame(prev => ({ ...prev, enemyNexus: Math.max(0, prev.enemyNexus - damage) }));
-                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'enemy', amount: damage });
+                    // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：直扣水晶伤害减 1，飘字 amount 同步实际伤害
+                    const finalDmg = stateRef.current.game?.enemyNexusTough ? Math.max(0, damage - 1) : damage;
+                    setGame(prev => ({ ...prev, enemyNexus: Math.max(0, prev.enemyNexus - finalDmg) }));
+                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'enemy', amount: finalDmg });
                     found = true;
                 } else if (targetId === 'nexus_player') {
-                    setGame(prev => ({ ...prev, playerNexus: Math.max(0, prev.playerNexus - damage) }));
-                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'player', amount: damage });
+                    const finalDmg = stateRef.current.game?.playerNexusTough ? Math.max(0, damage - 1) : damage;
+                    setGame(prev => ({ ...prev, playerNexus: Math.max(0, prev.playerNexus - finalDmg) }));
+                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'player', amount: finalDmg });
                     found = true;
                 }
             }
@@ -245,7 +250,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 			const linePayload: { sourceId: string; targets: { id: string; type: string }[] }[] = [];
 
 			for (const p of pedestals) {
-				const power = (p.power || 0) + (p.buffs?.power || 0) + ((p.roundBuffs?.power || 0) < 0 ? (p.roundBuffs?.power || 0) : 0);
+				const power = getPower(p);
 				const bullets: { targetId: string; damage: number; barrierPopped: boolean }[] = [];
 				const lineTargets: { id: string; type: string }[] = [];
 
@@ -521,8 +526,14 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
                 // [安卡希雅] 块 B: 获得进攻标识时触发 (ON_GET_ATTACK_TOKEN)
                 // 扫描当前回合持有进攻标识的阵营的单位
-                const attackTokenOwner = tempGame.attackToken.player ? 'player' : tempGame.attackToken.enemy ? 'enemy' : null;
-                if (attackTokenOwner) {
+                // [2026-09-03 莉莉子 双剑兼容] 由"只取一侧"改为"对当前所有持剑方分别扫描"：
+                // 敌我双持 rally 剑（双方 attackToken 同时非 null）时，不再跳过另一侧的
+                // ON_GET_ATTACK_TOKEN 词条单位。去重核验：回合初的 rally 在 useGameState 的
+                // normal→rally 升级检测器（prev===null 不触发）不会重复触发本扫描。
+                const tokenOwners: ('player' | 'enemy')[] = [];
+                if (tempGame.attackToken.player) tokenOwners.push('player');
+                if (tempGame.attackToken.enemy) tokenOwners.push('enemy');
+                tokenOwners.forEach(attackTokenOwner => {
                     const ownerBench = attackTokenOwner === 'player' ? tempPBench : tempEBench;
                     ownerBench.forEach(unit => {
                         if (unit.effects) {
@@ -552,7 +563,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                             });
                         }
                     });
-                }
+                });
 
                 if (hasEffectTriggered) {
                     setGame(tempGame);
@@ -573,35 +584,80 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
     // ---------------------------------------------------------
     // 块 C: 新回合状态刷新序列
     // ---------------------------------------------------------
+    // [2026-08-31 莉莉子 修复] round_start 强化同回合去重：换牌后 triggerFirstRoundRogueEnhance 与每回合 startRound 可能叠加触发（useGameAnnouncer 的 drawCards 复用于换牌/每回合抽卡），记录最后触发过的 round，同 round 跳过，防重复生成暗箭
+    const lastRoundStartEnhRef = useRef(-1);
     // [2026-08-15 莉莉子] 迷宫强化 round_start：回合开始被动（暗箭难防生成 / 战意盎然备战）
     // 抽成独立函数，供 startRound（每回合）与换牌后第一回合触发（triggerFirstRoundRogueEnhance）共用
-    const runRoundStartRogueEnhancements = useCallback((queryGame: GameState, targetGame: GameState): GameState => {
-        let g = targetGame;
-        getRogueDefs(queryGame.rogueEnhancements, 'round_start').forEach(def => {
-            const be = def.battleEffect!;
-            if (be.effectClass === 'GENERATE') {
-                const genKey = be.params?.generateKey as string | undefined;
-                if (genKey) {
-                    const genCard = createFullCard(genKey);
-                    if (be.params?.isVolatile) genCard.keywords = [...(genCard.keywords || []), 'Volatile' as any];
-                    setPlayerHand(prev => prev.length < 10 ? [...prev, genCard] : prev);
-                    eventBus.emit('sfx_generate', genCard);
-                }
-            } else if (be.effectClass === 'RALLY') {
-                g = { ...g, attackToken: { ...g.attackToken, player: 'rally' } };
-                eventBus.emit('gain_token_rally', { owner: 'player' });
-            }
-            flashRogueBuff(def);
-        });
-        return g;
-    }, [setPlayerHand]);
+    const runRoundStartRogueEnhancements = useCallback((
+        queryGame: GameState,
+        targetGame: GameState,
+        // [2026-09-09 重构] startRound 已算出的新回合切片（final benches / restoreSpell19Cost 后的手牌），
+        // 作为 handler 的工作快照，避免 handler 读到 stateRef 旧值、commit 时洗掉 startRound 刚写的状态
+        seeds?: { playerBench?: CardData[]; enemyBench?: CardData[]; playerHand?: CardData[]; enemyHand?: CardData[] },
+    ): GameState => {
+        // [2026-08-31 莉莉子 修复] 同回合去重须按 targetGame.round（目标回合）判断：startRound 的 queryGame 仍是旧回合（round=N），targetGame 才是新回合（round=N+1）；
+        // 用 queryGame.round 会把第二回合 startRound 误判成第一回合重复（queryGame.round=1 === ref=1）→ 吞掉第二回合暗箭
+        if (targetGame.round === lastRoundStartEnhRef.current) return targetGame;
+        lastRoundStartEnhRef.current = targetGame.round;
+
+        // [2026-09-09 莉莉子 重构] 统一串行触发引擎：玩家+敌方 round_start 强化在同一份可变工作快照上按 priority 串行触发。
+        // 后一个 effect 实时读到前一个的效果（寒霜先冻结 → 衰弱重判到"当前最强"）；闪烁按执行序逐个 flash。
+        // [2026-09-09 莉莉子 修复·快速开局抽卡回归] seed 可能滞后于并发抽卡（快速模式 instantDrawCards 排队后同 tick 触发），
+        // 手牌/牌库一律走补丁式提交（commitSlicePatch），只改引擎动过的卡、保留 prev 里刚排队的抽卡；bench/field 无并发排队故仍全量。
+        const playerHandSeed = (seeds?.playerHand ?? stateRef.current.playerHand);
+        const enemyHandSeed = (seeds?.enemyHand ?? stateRef.current.enemyHand);
+        const playerDeckSeed = [...stateRef.current.playerDeck];
+        const enemyDeckSeed = [...stateRef.current.enemyDeck];
+        const ctx: RogueTriggerCtx = {
+            game: targetGame,
+            playerBench: (seeds?.playerBench ?? stateRef.current.playerBench).slice(),
+            enemyBench: (seeds?.enemyBench ?? stateRef.current.enemyBench).slice(),
+            combatField: [...stateRef.current.combatField],
+            playerHand: playerHandSeed.slice(),
+            enemyHand: enemyHandSeed.slice(),
+            playerDeck: playerDeckSeed.slice(),
+            enemyDeck: enemyDeckSeed.slice(),
+            owner: 'player',
+            trigger: 'round_start',
+            createFullCard,
+            info: {},
+            dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+        };
+        ctx.owner = 'player';
+        runRogueTrigger(ctx, queryGame.rogueEnhancements, 'round_start'); // 玩家强化
+        ctx.owner = 'enemy';
+        runRogueTrigger(ctx, queryGame.enemyEnhancements, 'round_start'); // 敌方强化
+
+        // 一次性提交脏切片（无变化切片不 commit，防洗掉 startRound 刚写入的状态；hand/deck 用补丁式保并发抽卡）
+        if (ctx.dirty.bench.has('player')) setPlayerBench(ctx.playerBench);
+        if (ctx.dirty.bench.has('enemy')) setEnemyBench(ctx.enemyBench);
+        if (ctx.dirty.field) setCombatField(ctx.combatField as any);
+        if (ctx.dirty.hand.has('player')) commitSlicePatch(playerHandSeed, ctx.playerHand, fn => setPlayerHand(fn));
+        if (ctx.dirty.hand.has('enemy')) commitSlicePatch(enemyHandSeed, ctx.enemyHand, fn => setEnemyHand(fn));
+        if (ctx.dirty.deck.has('player')) commitSlicePatch(playerDeckSeed, ctx.playerDeck, fn => setPlayerDeck(fn));
+        if (ctx.dirty.deck.has('enemy')) commitSlicePatch(enemyDeckSeed, ctx.enemyDeck, fn => setEnemyDeckState(fn));
+
+        // game 级变化（备战/坚韧/回血/暗影标志…）随返回值交给 startRound 的 setGame；无变化保持 identity，兼容首回合 merge 判定
+        return ctx.dirty.game ? ctx.game : targetGame;
+    }, [createFullCard, setPlayerBench, setEnemyBench, setCombatField, setPlayerHand, setEnemyHand, setPlayerDeck, setEnemyDeckState, stateRef]);
 
     // [2026-08-15 莉莉子] 换牌结束后第一回合开始：触发 round_start 强化（暗箭等）
     // 参考安卡库效 triggerGameStartGenerate 在换牌后执行的修复——开局 startRound 会跳过强化，由本函数在换牌后补触发
     const triggerFirstRoundRogueEnhance = useCallback(() => {
         const current = stateRef.current.game;
         const next = runRoundStartRogueEnhancements(current, current);
-        if (next !== current) setGame(next);
+        if (next !== current) {
+            // [2026-09-01 莉莉子 修复·烧绳根因防御] next 可能基于旧快照（drawCards 里 428 setGame(main) 刚入队、stateRef 仍 animating），
+            // 整体 setGame(next) 会把 phase 从 main 打回 animating → 主按钮卡"..."。改为函数式合并：
+            // 仅应用 next 相对 current 的变化字段，phase 永远以最新 prev 为准（任何时机调用都不覆盖 phase）。
+            setGame(prev => {
+                const changes: Record<string, unknown> = {};
+                Object.keys(next).forEach(k => {
+                    if (k !== 'phase' && (next as any)[k] !== (current as any)[k]) changes[k] = (next as any)[k];
+                });
+                return { ...prev, ...changes } as GameState;
+            });
+        }
     }, [runRoundStartRogueEnhancements, setGame]);
 
     const startRound = (skipRoundStartEnhance = false) => {
@@ -694,9 +750,10 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         const finalPlayerBench = flashRoundAbility(channelPlayerResult.cards);
         const finalEnemyBench = flashRoundAbility(channelEnemyResult.cards);
 
-        let tempGame = {
+        let tempGame: GameState = {
             ...currentGameState,
             ...nextRoundBase,
+            phase: nextRoundBase.phase as GameState['phase'], // [2026-08-27] 标注 GameState 后 nextRoundBase.phase 推断为 string，显式收窄
             playerSpellMana: armamentManaRestore ? 3 : Math.min(3, (nextRoundBase.playerSpellMana || 0) + channelManaPlayer), // [2026-08-14 武装] 秘法回响：回合开始恢复全部法术法力
             enemySpellMana: Math.min(3, (nextRoundBase.enemySpellMana || 0) + channelManaEnemy),
             playerRoundFlyingSwords: 0, // [2026-07-31] 新回合清零本回合飞剑计数
@@ -721,23 +778,44 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         tempGame.playerRoundSwordUsed = false;
         tempGame.enemyRoundSwordUsed = false;
 
+        // [2026-08-31 莉莉子 修复] 先写入新回合备战席再触发 round_start 强化：避免 runRoundStartRogueEnhancements 的 buff 被随后的 setPlayerBench(finalPlayerBench) 覆盖
+        // （回合加护"没触发"根因——finalPlayerBench 在 buff 之前基于旧备战席计算，末尾写入会把 buff 洗掉）
+        setPlayerBench(finalPlayerBench);
+        setEnemyBench(finalEnemyBench);
+
         // [2026-08-11 莉莉子] 迷宫强化 round_start：回合开始被动（暗箭难防生成 / 战意盎然备战）
         // [2026-08-15 莉莉子] 开局（换牌前）跳过：第一回合强化由 triggerFirstRoundRogueEnhance 在换牌后触发（参考安卡库效修复）
+        // [2026-09-09 重构] 传入新回合工作切片：handler 读 final benches（已清屏障/清 roundBuffs）而非旧 stateRef
         if (!skipRoundStartEnhance) {
-            tempGame = runRoundStartRogueEnhancements(currentGameState, tempGame);
+            tempGame = runRoundStartRogueEnhancements(currentGameState, tempGame, {
+                playerBench: finalPlayerBench,
+                enemyBench: finalEnemyBench,
+                playerHand: restoreSpell19Cost(stateRef.current.playerHand),
+                enemyHand: restoreSpell19Cost(stateRef.current.enemyHand),
+            });
         }
         // [2026-08-11 莉莉子] 重置暗影双生「每回合首次」标志
         tempGame = { ...tempGame, rogueFirstSummonDone: false };
 
         setGame(tempGame as GameState);
-        setPlayerBench(finalPlayerBench);
-        setEnemyBench(finalEnemyBench);
     };
 
     // ---------------------------------------------------------
     // 块 B: 回合末综合清算序列 (幻象/鞭策/基座扫射/脉冲)
     // ---------------------------------------------------------
-    const executeRoundEndSequence = async () => {
+
+    // [2026-09-03 莉莉子 死锁逃生] 交战区幸存者归位安全网（回合末清理用）
+    // 正常路径交战区已被 resolveCombatAnimation 清空 → no-op；异常/残留时把存活交战单位放回备战席，
+    // 防止带残留单位开新回合导致跨回合卡场。
+    const reconcileLeftoverCombatSurvivors = () => {
+        const ref = stateRef.current;
+        if (!ref.combatField || ref.combatField.length === 0) return;
+        recoverCombatSurvivors(ref.combatField, ref.playerBench, ref.enemyBench, {
+            setPlayerBench, setEnemyBench, setCombatField, setGame,
+        });
+    };
+
+    const executeRoundEndSequenceInner = async () => {
         console.log('[LILITH-DEBUG] 🎬 executeRoundEndSequence 入口被调用');
         // [2026-08-04 莉莉子] 收集待播瞬逝弃置动画的卡 id，供 startRound 前等待动画播完
         const volatilePending = new Set<string>();
@@ -777,6 +855,45 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         let nextPlayerBench = applyRoundEndKeywords(stateRef.current.playerBench);
         let nextEnemyBench = applyRoundEndKeywords(stateRef.current.enemyBench);
         let nextCombatField = stateRef.current.combatField.map(f => ({ ...f }));
+
+        // [2026-08-27] 迷宫强化 round_end（王见王 / 回旋余力）
+        // [2026-09-09 莉莉子 重构] 收编进统一串行触发引擎：玩家+敌方 round_end 强化在同一份工作快照（nextXxx）上串行触发。
+        // 王见王由 DUEL_STRONGEST handler 经 ctx.info.duelDone 跨双方去重（先到先执行）；回旋余力 RANDOM_ALLY_BUFF 各自侧触发。
+        // handler 全部在 ctx 数组（即 nextXxx）原地改写 + 提交，杜绝"旧 stateRef 覆盖局部 buff"的 2026-09-01 修复场景。
+        {
+            const ctx: RogueTriggerCtx = {
+                game: { ...stateRef.current.game },
+                playerBench: nextPlayerBench,
+                enemyBench: nextEnemyBench,
+                combatField: nextCombatField,
+                playerHand: [],
+                enemyHand: [],
+                playerDeck: [],
+                enemyDeck: [],
+                owner: 'player',
+                trigger: 'round_end',
+                createFullCard,
+                info: {},
+                dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+            };
+            ctx.owner = 'player';
+            runRogueTrigger(ctx, stateRef.current.game.rogueEnhancements, 'round_end'); // 玩家强化（王见王/回旋余力）
+            ctx.owner = 'enemy';
+            runRogueTrigger(ctx, stateRef.current.game.enemyEnhancements, 'round_end'); // 敌方强化
+            // 同步局部变量引用（ctx 数组即 nextXxx 本体，handler 已原地改写元素对象）
+            nextPlayerBench = ctx.playerBench;
+            nextEnemyBench = ctx.enemyBench;
+            nextCombatField = ctx.combatField;
+            // 一次性提交（对齐旧"函数式写 state + 更新局部变量"双保险）
+            if (ctx.dirty.bench.has('player')) setPlayerBench(nextPlayerBench);
+            if (ctx.dirty.bench.has('enemy')) setEnemyBench(nextEnemyBench);
+            if (ctx.dirty.field) setCombatField(nextCombatField);
+            // 王见王碾压溢出水晶伤害（engine 已在 ctx.game 副本上扣减）写回，仅动 nexus 两字段
+            if (ctx.dirty.game) {
+                const gNexus = ctx.game;
+                setGame(prev => ({ ...prev, enemyNexus: gNexus.enemyNexus, playerNexus: gNexus.playerNexus }));
+            }
+        }
 
         // --- 1. 回合末鞭策与强化 ---
         // [核心重构] 升级为异步函数，彻底拆解“伤害”与“强化”的原子操作！
@@ -972,7 +1089,12 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                     // ==========================================
                     // [2026-07-10 精灵小队] ROUND_END 通用效果触发（一次性）
                     // ==========================================
-                    if (def && def.timing.includes('ROUND_END')) {
+                    // [2026-09-15 莉莉子 BUG修复] 与上方「回合末光环」分支互斥，防同回合重复结算。
+                    // 清泉医疗鳄的 def 同时带 timing:'ROUND_END' 与 params.roundEndBuff:true → 两个并列 if 都命中，
+                    // processEffect 被调用两次 → selfDamage:1 结算两遍 → 「每回合直接 -2 血自杀」。
+                    // 两条分支语义不同，不可叠加：roundEndBuff = 每回合重复触发且不摘除效果；
+                    // 本分支 = 一次性触发后摘除（见下方 removeEffect）。
+                    if (def && def.timing.includes('ROUND_END') && !def.params?.roundEndBuff) {
                         // [SpiritDebug] 斯涅妮卡回合末治疗触发
                         if (effId === 'effect_spirit_snenika_roundend_heal') {
                             console.log(`[SpiritDebug] ROUND_END触发: unit=${unit.name}(id=${unit.id}), owner=${owner}`);
@@ -1068,10 +1190,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                 });
 
                 if (shouldAttack) {
-                    const baseP = unit.power || 0;
-                    const permP = unit.buffs?.power || 0;
-                    const tempP = unit.roundBuffs?.power || 0;
-                    const power = baseP + permP + (tempP < 0 ? tempP : 0);
+                    const power = getPower(unit);
 
                     if (power <= 0) continue;
 
@@ -1173,15 +1292,18 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                     // 等待子弹全部落地后，将刚才预演中累积的水晶伤害直接写入引擎，并呼叫震屏与飘字反馈。
                     if (nexusDamageAccumulator > 0) {
                         const targetNexusId = owner === 'player' ? 'nexus_enemy' : 'nexus_player';
+                        // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：弹夹扫射累积打水晶减 1，飘字 amount 同步实际伤害
+                        const isScTough = owner === 'player' ? !!stateRef.current.game?.enemyNexusTough : !!stateRef.current.game?.playerNexusTough;
+                        const finalScDmg = isScTough ? Math.max(0, nexusDamageAccumulator - 1) : nexusDamageAccumulator;
                         setGame(prev => ({
                             ...prev,
                             ...(owner === 'player'
-                                ? { enemyNexus: Math.max(0, prev.enemyNexus - nexusDamageAccumulator) }
-                                : { playerNexus: Math.max(0, prev.playerNexus - nexusDamageAccumulator) })
+                                ? { enemyNexus: Math.max(0, prev.enemyNexus - finalScDmg) }
+                                : { playerNexus: Math.max(0, prev.playerNexus - finalScDmg) })
                         }));
                         // 发射震动与飘字事件，触发 UI 层的受击反馈
-                        eventBus.emit('unit_damage', { id: targetNexusId, amount: nexusDamageAccumulator });
-                        eventBus.emit(GameEvents.NEXUS_STRIKED, { target: owner === 'player' ? 'enemy' : 'player', amount: nexusDamageAccumulator });
+                        eventBus.emit('unit_damage', { id: targetNexusId, amount: finalScDmg });
+                        eventBus.emit(GameEvents.NEXUS_STRIKED, { target: owner === 'player' ? 'enemy' : 'player', amount: finalScDmg });
                     }
 
                     // [新增] 记录回合结束伤害到战术日志（用于臆莲基座等累计伤害任务）
@@ -1286,6 +1408,48 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             });
         });
 
+        // [2026-09-15 程拍板] 幻象死亡同样算「单位阵亡」→ 接入 unit_die 迷宫强化（英魂传承 / 献祭仪式）。
+        //   病根：combat.ts 把幻象强制标记为 ephemeral_dying（优先级高于 dying），而 useGameState 的死亡清算
+        //   显式排除该状态（为防重复触发/防覆盖消散演出）→ 飞剑（安卡量产）与全部 unit_die 强化零联动。
+        //   此处是幻象死亡的唯一收口（bench + field 同时覆盖）且一次性收集、天然去重，就地补触发。
+        //   触发顺序与 useGameState.processDeaths 一致：强化触发先于亡语入队（judgeLifeAndDeath 在其后）。
+        //   ⚠️ 排除复活类（亡灵军团 / 不死军团）：飞剑是量产幻象，复活会形成"死了又活"的循环。
+        //   ⚠️ 不封顶：飞剑4 一轮多次触发本就是安卡的强势点（程拍板保留）。
+        //   ⚠️ 现排除了唯一会改 bench 的 RESURRECT，故可安全早于下方 setPlayerBench(nextPlayerBench)；
+        //      若将来新增改 bench 的 unit_die 效果类，需把本段后移到 stateRef 同步之后。
+        (['player', 'enemy'] as const).forEach(dieSide => {
+            const myDead = allEphemeralDead.filter(d => d.owner === dieSide);
+            if (myDead.length === 0) return;
+            const dieEnh = dieSide === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements;
+            const ctx: RogueTriggerCtx = {
+                game: { ...stateRef.current.game },
+                playerBench: dieSide === 'player' ? [...nextPlayerBench] : [...stateRef.current.playerBench],
+                enemyBench: dieSide === 'enemy' ? [...nextEnemyBench] : [...stateRef.current.enemyBench],
+                combatField: [...nextCombatField],
+                playerHand: [...stateRef.current.playerHand],
+                enemyHand: [...stateRef.current.enemyHand],
+                playerDeck: [...stateRef.current.playerDeck],
+                enemyDeck: [...stateRef.current.enemyDeck],
+                owner: dieSide,
+                trigger: 'unit_die',
+                createFullCard,
+                info: { resurrectedSide: undefined },
+                dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+            };
+            myDead.forEach(d => {
+                ctx.info.deadUnit = d.card;
+                runRogueTrigger(ctx, dieEnh, 'unit_die', (ec) => ec !== 'RESURRECT');
+            });
+            // 回写被强化改动的切片（与 useGameState.processDeaths 同构）
+            if (ctx.dirty.bench.has('player')) setPlayerBench(ctx.playerBench);
+            if (ctx.dirty.bench.has('enemy')) setEnemyBench(ctx.enemyBench);
+            if (ctx.dirty.field) setCombatField(ctx.combatField);
+            if (ctx.dirty.hand.has('player')) setPlayerHand(ctx.playerHand);
+            if (ctx.dirty.hand.has('enemy')) setEnemyHand(ctx.enemyHand);
+            if (ctx.dirty.deck.has('player')) setPlayerDeck(ctx.playerDeck);
+            if (ctx.dirty.deck.has('enemy')) setEnemyDeckState(ctx.enemyDeck);
+        });
+
         setPlayerBench(nextPlayerBench);
         setEnemyBench(nextEnemyBench);
         if (hasCombatDeath) setCombatField(nextCombatField);
@@ -1352,7 +1516,8 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                     let simBoard = [...enemyBoard];
                     const bullets: { targetId: string; damage: number; barrierPopped: boolean }[] = [];
 
-                    for (let i = 0; i < event.params.shots; i++) {
+                    const shots = event.params.shots ?? 0; // [2026-08-27] 判空
+                    for (let i = 0; i < shots; i++) {
                         if (validTargets.length === 0) break;
                         const target = validTargets[Math.floor(Math.random() * validTargets.length)];
 
@@ -1458,14 +1623,17 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                     }
 
                     if (nexusDmg > 0) {
+                        // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：盖弥尔 AOE 打水晶减 1，飘字 amount 同步实际伤害
+                        const isGmTough = enemyPlayer === 'player' ? !!stateRef.current.game?.playerNexusTough : !!stateRef.current.game?.enemyNexusTough;
+                        const finalGmDmg = isGmTough ? Math.max(0, nexusDmg - 1) : nexusDmg;
                         setGame(prev => ({
                             ...prev,
                             ...(enemyPlayer === 'player'
-                                ? { playerNexus: Math.max(0, (prev.playerNexus || 20) - nexusDmg) }
-                                : { enemyNexus: Math.max(0, (prev.enemyNexus || 20) - nexusDmg) }),
+                                ? { playerNexus: Math.max(0, (prev.playerNexus || 20) - finalGmDmg) }
+                                : { enemyNexus: Math.max(0, (prev.enemyNexus || 20) - finalGmDmg) }),
                         }));
-                        eventBus.emit('unit_damage', { id: `nexus_${enemyPlayer}`, amount: nexusDmg });
-                        eventBus.emit(GameEvents.NEXUS_STRIKED, { target: enemyPlayer, amount: nexusDmg });
+                        eventBus.emit('unit_damage', { id: `nexus_${enemyPlayer}`, amount: finalGmDmg });
+                        eventBus.emit(GameEvents.NEXUS_STRIKED, { target: enemyPlayer, amount: finalGmDmg });
                     }
 
                     console.log(`[盖弥尔] AOE 伤害：对敌方全体 ${dmg} 点（水晶 ${nexusDmg}）`);
@@ -1525,8 +1693,44 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             });
         }
 
-        // 7. 开启新回合
+        // 7. 开启新回合（先做交战区幸存者归位安全网；正常路径交战区已空 → no-op）
+        reconcileLeftoverCombatSurvivors();
         startRound();
+    };
+
+    // ==========================================
+    // [2026-09-03 莉莉子 死锁逃生] executeRoundEndSequence 外层守卫
+    // 内层从 phase:'animating' 一路跑到 startRound()，全程无异常保护；任一回合末效果抛错
+    // 就会停在 animating、且交战区幸存单位永不归位（跨回合卡场）。
+    // 外层 try/catch/finally：异常时先归位交战区幸存者，再兜底推进新回合 / 强置 main。
+    // ==========================================
+    const executeRoundEndSequence = async () => {
+        const roundAtEntry = stateRef.current.game.round;
+        bumpAnimProgress();
+        setGame(prev => ({ ...prev, phase: 'animating' as const }));
+        let advanced = false;
+        try {
+            await executeRoundEndSequenceInner();
+            advanced = true;
+        } catch (err) {
+            console.error('[executeRoundEndSequence] 💥 异常，应急归位交战区并推进回合', err);
+            reconcileLeftoverCombatSurvivors();
+            if (!advanced && stateRef.current.game.round === roundAtEntry) {
+                try {
+                    startRound();
+                    advanced = true;
+                } catch (e2) {
+                    console.error('[executeRoundEndSequence] startRound 二次失败，强置 main', e2);
+                    setGame(prev => prev.phase === 'animating'
+                        ? { ...prev, phase: 'main' as const, consecutivePasses: 0, lastActionTimestamp: Date.now() }
+                        : prev);
+                }
+            } else if (stateRef.current.game.phase === 'animating') {
+                setGame(prev => ({ ...prev, phase: 'main' as const, consecutivePasses: 0, lastActionTimestamp: Date.now() }));
+            }
+        } finally {
+            bumpAnimProgress();
+        }
     };
 
     return {

@@ -10,7 +10,7 @@
  */
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import type { GuideLayerStep, GuideTextAnnotation } from '../../data/tutorialScript';
+import type { GuideLayerStep, GuideTextAnnotation, AnchoredPrompt } from '../../data/tutorialScript';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 
 // ════════════════════════════════════════════════════════════
@@ -54,8 +54,10 @@ function measureHighlights(selectors: string[]): HighlightRect[] {
 interface AnnotationBubbleProps {
   annotation: GuideTextAnnotation;
   targetRect: HighlightRect;
+  /** [2026-08-20 莉莉子 BUG修复] 点击气泡时回调（关闭引导层）。此前气泡 pointerEvents:'auto' 吞掉点击却无处理 → 点说明文字引导层关不掉 */
+  onBubbleClick?: () => void;
 }
-const AnnotationBubble: React.FC<AnnotationBubbleProps> = ({ annotation, targetRect }) => {
+const AnnotationBubble: React.FC<AnnotationBubbleProps> = ({ annotation, targetRect, onBubbleClick }) => {
   // 与 ScaleWrapper 一致的缩放比
   const [scale, setScale] = useState(1);
   useEffect(() => {
@@ -109,6 +111,16 @@ const AnnotationBubble: React.FC<AnnotationBubbleProps> = ({ annotation, targetR
   };
 
   const posStyle = getPosition();
+  // [2026-08-26 莉莉子] 应用偏移微调（dx 正=右，dy 正=下；可选，不传不偏移）
+  const offset = annotation.offset;
+  if (offset) {
+    const dx = offset.dx ?? 0;
+    const dy = offset.dy ?? 0;
+    if (typeof posStyle.top === 'number') posStyle.top = posStyle.top + dy;
+    if (typeof posStyle.bottom === 'number') posStyle.bottom = posStyle.bottom - dy;
+    if (typeof posStyle.left === 'number') posStyle.left = posStyle.left + dx;
+    if (typeof posStyle.right === 'number') posStyle.right = posStyle.right - dx;
+  }
   // 剥离 transform 交给内层，外层只负责定位
   const { transform: _, ...positionStyle } = posStyle;
 
@@ -133,8 +145,10 @@ const AnnotationBubble: React.FC<AnnotationBubbleProps> = ({ annotation, targetR
 
   return (
     <div
-      className="fixed z-[100]"
-      style={{ ...positionStyle, pointerEvents: 'auto' }}
+      className="fixed z-[100] cursor-pointer"
+      // [2026-08-26 莉莉子] 无可点击回调时气泡不拦截鼠标（纯提示），避免挡住下层元素
+      style={{ ...positionStyle, pointerEvents: onBubbleClick ? 'auto' : 'none' }}
+      onClick={onBubbleClick}
     >
       <div
         className="px-4 py-3 rounded-xl
@@ -162,6 +176,50 @@ const AnnotationBubble: React.FC<AnnotationBubbleProps> = ({ annotation, targetR
         {annotation.text}
       </div>
     </div>
+  );
+};
+
+// ════════════════════════════════════════════════════════════
+// 锚定提示气泡组件（[2026-08-26 莉莉子] fixedPrompt 数组模式专用）
+// ════════════════════════════════════════════════════════════
+
+/**
+ * 锚定提示气泡：测量目标元素位置，把引导文字钉在其旁。
+ * 复用 AnnotationBubble 的定位/防溢出逻辑，但无遮罩无高亮，
+ * 配合全屏详情界面（FullArtOverlay 等上层 UI）使用。
+ */
+const AnchoredPromptBubble: React.FC<{
+  prompt: AnchoredPrompt;
+  onBubbleClick?: () => void;
+}> = ({ prompt, onBubbleClick }) => {
+  const [rect, setRect] = useState<HighlightRect | null>(null);
+
+  useEffect(() => {
+    const measure = () => {
+      const el = document.querySelector(prompt.targetSelector);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setRect({ selector: prompt.targetSelector, top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    // 详情界面可能因打开动画延迟挂载：挂载后多测几次，确保锚点元素出现后再定位
+    measure();
+    const t1 = setTimeout(measure, 150);
+    const t2 = setTimeout(measure, 400);
+    window.addEventListener('resize', measure);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('resize', measure);
+    };
+  }, [prompt.targetSelector]);
+
+  if (!rect) return null;
+  return (
+    <AnnotationBubble
+      annotation={{ targetSelector: prompt.targetSelector, text: prompt.text, position: prompt.position ?? 'left', offset: prompt.offset }}
+      targetRect={rect}
+      onBubbleClick={onBubbleClick}
+    />
   );
 };
 
@@ -214,11 +272,71 @@ export const GuideLayer: React.FC<GuideLayerProps> = ({ step, onDismiss }) => {
     }
   };
 
+  // [2026-08-26 莉莉子] 点击指定选择器（如详情界面关闭按钮 X）即自动推进引导层——
+  // 教玩家操作目标元素本身（打开/关闭详情），而非点击引导层。用 ref 避免 onDismiss 变化导致监听反复重挂。
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  useEffect(() => {
+    const selectors = step.dismissOnSelectorClick ?? [];
+    if (selectors.length === 0) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (!target) return;
+      if (selectors.some(sel => target.closest(sel))) {
+        onDismissRef.current();
+      }
+    };
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
+  }, [step.dismissOnSelectorClick]);
+
+  const layerZ = step.zIndex ?? 90;
+
+  // [2026-08-26 莉莉子] 锚定提示模式：多个气泡分别钉在指定元素旁（配合全屏详情界面的关键词图标/关闭按钮等）。
+  // 无遮罩无高亮；默认点击气泡关闭推进（dismissOnClick 仍生效）。
+  // 配了 dismissOnSelectorClick（点击目标元素推进）时，气泡退化为纯提示（不拦截点击），推进由目标元素点击驱动。
+  if (step.anchoredPrompts && step.anchoredPrompts.length > 0) {
+    const bubbleClickable = step.dismissOnClick && !step.dismissOnSelectorClick?.length;
+    return (
+      <div className="fixed inset-0 pointer-events-none" style={{ zIndex: layerZ }}>
+        {step.anchoredPrompts.map((prompt, i) => (
+          <AnchoredPromptBubble
+            key={`anchored-${i}`}
+            prompt={prompt}
+            onBubbleClick={bubbleClickable ? onDismiss : undefined}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // [2026-08-21 莉莉子] 独立提示模式：无遮罩无高亮，屏幕中上方提示文字（配合全屏详情界面等上层 UI）。
+  // 点击提示关闭推进（dismissOnClick 仍生效）。
+  if (step.fixedPrompt) {
+    return (
+      <div
+        className="fixed inset-0 pointer-events-none flex items-start justify-center pt-[12vh]"
+        style={{ zIndex: layerZ }}
+      >
+        <div
+          className="px-5 py-4 rounded-xl bg-slate-900/95 border border-cyan-500/40 shadow-lg shadow-cyan-500/20 text-white text-sm leading-relaxed whitespace-pre-line text-center pointer-events-auto cursor-pointer max-w-md"
+          onClick={step.dismissOnClick ? onDismiss : undefined}
+        >
+          {step.fixedPrompt}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={overlayRef}
       className="fixed inset-0 z-[90]"
-      style={{ pointerEvents: 'auto' }}
+      // [2026-08-20 莉莉子 BUG修复] 根容器必须 pointer-events-none：
+      // 此前 'auto' 让覆盖全屏的容器拦截所有点击（含高亮目标卡牌），
+      // 点击/右键无法穿透到卡牌 → 教程引导操作卡死（施法的速度格挡教学实测复现）。
+      // 点击关闭改由内部"交互块"（拆分 4 块、pointer-events auto）负责，高亮区域无覆盖自然穿透。
+      style={{ zIndex: layerZ, pointerEvents: 'none' }}
     >
       {/* 1. 定义 SVG 蒙版引擎 (白留黑透) */}
       <svg className="absolute w-0 h-0 pointer-events-none">
@@ -234,15 +352,49 @@ export const GuideLayer: React.FC<GuideLayerProps> = ({ step, onDismiss }) => {
         </defs>
       </svg>
 
-      {/* 2. 真正的全屏遮罩层 (唯一的一层，杜绝黑影叠加) */}
+      {/* 2. 视觉遮罩层（mask 挖洞，纯视觉；pointer-events-none 不拦截点击，穿透到下层） */}
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300 pointer-events-none"
         style={{
           WebkitMask: 'url(#tutorial-hole-mask)',
           mask: 'url(#tutorial-hole-mask)',
         }}
-        onClick={handleOverlayClick}
       />
+
+      {/* [2026-08-21 莉莉子] 交互拦截层：全屏左键拦截（点击屏幕任意处=关闭推进，恢复"点击屏幕也能推进"），
+          右键一律阻止浏览器默认菜单。引导层保持整体拦截，玩家不会点到游戏；需要右键操作的卡牌由下方的"右键处理层"接管。 */}
+      <div
+        className="absolute inset-0"
+        style={{ pointerEvents: 'auto' }}
+        onClick={handleOverlayClick}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+
+      {/* [2026-08-21 莉莉子] 高亮右键处理层：dismissOnRightClick 步骤专用（如"右键卡牌打开详情"教学）。
+          覆盖高亮卡牌区域：左键=关闭推进；右键=关闭推进 + 向卡牌元素派发 contextmenu（触发其 onViewArt 打开详情）。
+          不依赖 contextmenu 冒泡到 document（卡牌自身 stopPropagation 也不受影响）。 */}
+      {step.dismissOnRightClick && highlights.map(h => {
+        const cardKey = h.selector.match(/data-card-key=["']([^"']+)["']/)?.[1];
+        return (
+          <div
+            key={`right-click-${h.selector}`}
+            className="absolute"
+            style={{ top: h.top, left: h.left, width: h.width, height: h.height, pointerEvents: 'auto' }}
+            onClick={handleOverlayClick}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleOverlayClick();
+              if (cardKey) {
+                const cardEl = document.querySelector(`[data-card-key="${cardKey}"]`);
+                if (cardEl) {
+                  cardEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+                }
+              }
+            }}
+          />
+        );
+      })}
 
       {/* 3. 独立渲染高光边框 (放在遮罩之上，防止被蒙版一起切掉) */}
       {highlights.map((h) => (
@@ -267,6 +419,7 @@ export const GuideLayer: React.FC<GuideLayerProps> = ({ step, onDismiss }) => {
             key={`${ann.targetSelector}-${i}`}
             annotation={ann}
             targetRect={target}
+            onBubbleClick={step.dismissOnClick ? handleOverlayClick : undefined}
           />
         );
       })}

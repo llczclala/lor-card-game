@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, useMotionValue, useVelocity, useTransform, useSpring } from 'framer-motion';
 import { Card } from './Card';
+import { getGameScale } from '../utils/gameScale'; // [2026-09-01] 分辨率适配：逃出 scale 容器后按 gameScale 补偿
 import type { CardData } from '../types';
 
 /**
@@ -57,6 +58,14 @@ export const DragGhostCard: React.FC<DragGhostCardProps> = ({
   const smoothRotateY = useSpring(rawRotateY, springConfig);
   const smoothRotateX = useSpring(rawRotateX, springConfig);
 
+  // [2026-09-01 莉莉子 修复·分辨率适配] w/h 是屏幕 rect 尺寸；Card 内部元素（攻击/生命数值等）用固定 Tailwind 字号，
+  // 若直接以「屏幕尺寸」容器渲染，低分辨率（scale<1）下文字相对卡过大、高分辨率下偏小 → 表现不一致。
+  // 改为：Card 以「逻辑尺寸」渲染（w/gameScale × h/gameScale，再乘 ghost 额外放大 scale），
+  // 外层 transform scale(gameScale) 缩放到屏幕 → 文字/元素随分辨率一起缩放。
+  const gameScale = getGameScale();
+  const logicW = (w * scale) / gameScale;
+  const logicH = (h * scale) / gameScale;
+
   return createPortal(
     <>
       {cards.map((card, i) => (
@@ -66,26 +75,29 @@ export const DragGhostCard: React.FC<DragGhostCardProps> = ({
             position: 'fixed',
             left: `${i * CARD_STACK_SPREAD}px`,
             top: 0,
-            width: Math.round(w),
-            height: Math.round(h),
+            width: Math.round(logicW),
+            height: Math.round(logicH),
             zIndex: 9999 - i,
             pointerEvents: 'none',
             // [修复 Bug A] 彻底清空所有自带的裁剪和阴影（overflow、borderRadius、boxShadow）
             // 让内部的 Card 组件自己处理精美的阴影与发光，杜绝外层容器放大时透出边框！
             transformPerspective: 1000,
+            transformOrigin: 'center center',
             x: posX,
             y: posY,
-            scale,
             rotateX: smoothRotateX,
             rotateY: smoothRotateY,
           }}
         >
-          {/* [核心修复] 彻底接通皮肤神经线！替身也披上皮肤战衣！ */}
-          <Card
-             data={card}
-             location={location}
-             skinId={skinOverrides[card.key] || 0}
-          />
+          {/* [2026-09-01] 内层按 gameScale 缩放到屏幕：Card 在逻辑尺寸渲染（文字正常），再随分辨率缩放 */}
+          <div style={{ width: '100%', height: '100%', transform: `scale(${gameScale})`, transformOrigin: 'top left' }}>
+            {/* [核心修复] 彻底接通皮肤神经线！替身也披上皮肤战衣！ */}
+            <Card
+               data={card}
+               location={location}
+               skinId={skinOverrides[card.key] || 0}
+            />
+          </div>
         </motion.div>
       ))}
     </>,

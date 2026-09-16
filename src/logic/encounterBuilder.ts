@@ -3,7 +3,9 @@ import { ENEMY_ARCHETYPES } from '../data/enemies/archetypes';
 import { TUTORIAL_STAGES } from '../data/tutorialStages';
 import type { EnemyHeroConfig } from '../types/gameModeTypes';
 import type { RogueDifficulty } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统]
-import { DIFFICULTY_HP_MULTIPLIER, DIFFICULTY_LEVEL_BONUS } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统]
+import { DIFFICULTY_HP_MULTIPLIER, DIFFICULTY_LEVEL_BONUS, ENEMY_NEXUS_BASE } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统] [2026-08-28 敌方水晶基础生命]
+import { getBuffById } from '../data/roguelike/buffs'; // [2026-08-28] 敌方水晶生命强化折算
+import { getEquipPoolForCard, type EquipmentRarity } from '../data/equipment'; // [2026-08-30] 敌人随机装备
 
 /**
  * 遭遇战结果接口
@@ -13,6 +15,12 @@ interface EncounterData {
     heroConfig: EnemyHeroConfig;
     passiveEffects: string[]; // 本场对局的全局被动 (天启)
     aiPersonality?: 'aggressive' | 'control' | 'balanced'; // [2026-08-06] AI 流派性格
+
+    // [2026-08-17 莉莉子] 敌方卡背索引（来自 EnemyArchetype.cardBackIndex，未配置=默认卡背 0）
+    enemyCardBackIndex?: number;
+    enemyBuffs?: string[]; // [2026-08-27 莉莉子] 敌方迷宫强化 id（流派配置 archetype.rogueBuffs，战斗内 battleEffect 生效）
+    enemyNexusHp?: number; // [2026-08-28 莉莉子] 敌方水晶初始血量（肉鸽：难度基础值 + 生命强化折算；缺省 20）
+    enemyEquipments?: Record<string, string[]>; // [2026-08-30 程拍板] 敌方单位卡随机佩戴的装备（难度分级：普通无紫金/机密无红/绝密全红）
 }
 
 /**
@@ -24,6 +32,19 @@ const getLogisticsPool = (): string[] => {
         .filter(c => c.region === 'Logistics' && !c.isChampion)
         .map(c => c.key);
 };
+
+/**
+ * [2026-08-28 莉莉子] 敌方水晶生命强化折算：扫描 enemyBuffs 里 NEXUS_HP_BOOST 效果的 value 和
+ * （中后段敌人 +10 / Boss +20，节点预分配进 enemyBuffs，这里折算进敌方水晶初始血量）
+ */
+const sumNexusBoost = (enemyBuffs: string[]): number =>
+    enemyBuffs.reduce((sum, id) => {
+        const b = getBuffById(id);
+        if (b?.battleEffect?.effectClass === 'NEXUS_HP_BOOST') {
+            sum += (b.battleEffect.params?.value as number) ?? 0;
+        }
+        return sum;
+    }, 0);
 
 /**
  * [核心新增] 辅助：解析核心卡组配置
@@ -102,7 +123,54 @@ export const buildStandardEncounter = (): EncounterData => {
         },
         passiveEffects: [], // 标准模式不启用天启系统
         aiPersonality: archetype.aiPersonality, // [2026-08-06] 把流派性格传给 AI
+        enemyCardBackIndex: archetype.cardBackIndex ?? 0, // [2026-08-17 莉莉子] 敌方卡背
     };
+};
+
+// [2026-08-30 程拍板] 敌人随机装备品质上限（难度分级）：普通最高蓝 / 机密最高金 / 绝密全红
+const RARITY_RANK: Record<EquipmentRarity, number> = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 };
+const QUALITY_MAX: Record<RogueDifficulty, EquipmentRarity> = {
+    normal: 'rare',
+    secret: 'legendary',
+    topsecret: 'mythic',
+};
+const QUALITY_WEIGHTS: Record<EquipmentRarity, number> = { common: 15, uncommon: 45, rare: 25, epic: 10, legendary: 4, mythic: 1 };
+
+/**
+ * [2026-08-30 程拍板] 敌人随机装备：按难度挑单位卡佩戴随机装备。
+ *  带装备卡数：普通 1~2 / 机密 2~3 / 绝密 3~4（baseCount 普通1/机密2/绝密3 + 精英+1/Boss+2）
+ *  品质上限：普通无紫金 / 机密无红 / 绝密全红；品质加权抽（白绿为主，高档渐稀）。
+ */
+const rollEnemyEquipments = (deck: string[], nodeType: 'battle' | 'elite' | 'boss', difficulty: RogueDifficulty): Record<string, string[]> => {
+    const baseCount = difficulty === 'topsecret' ? 3 : difficulty === 'secret' ? 2 : 1;
+    const extraCount = nodeType === 'boss' ? 2 : nodeType === 'elite' ? 1 : 0;
+    const count = baseCount + extraCount;
+
+    // 只给单位卡（非天启者）配装备，去重后洗牌挑 count 张
+    const unitKeys = Array.from(new Set(deck.filter(k => {
+        const c = CARD_DB[k];
+        return c && c.type === 'unit' && !c.isChampion;
+    })));
+    const shuffled = unitKeys.sort(() => Math.random() - 0.5);
+    const picked = shuffled.slice(0, Math.min(count, unitKeys.length));
+
+    const maxRank = RARITY_RANK[QUALITY_MAX[difficulty]];
+    const result: Record<string, string[]> = {};
+    for (const key of picked) {
+        const card = CARD_DB[key];
+        const pool = getEquipPoolForCard(card).filter(e => RARITY_RANK[e.rarity] <= maxRank);
+        if (!pool.length) continue;
+        const weights = pool.map(e => QUALITY_WEIGHTS[e.rarity] ?? 5);
+        const total = weights.reduce((s, w) => s + w, 0);
+        let roll = Math.random() * total;
+        let chosen = pool[0];
+        for (let i = 0; i < pool.length; i++) {
+            roll -= weights[i];
+            if (roll <= 0) { chosen = pool[i]; break; }
+        }
+        result[key] = [chosen.id];
+    }
+    return result;
 };
 
 /**
@@ -110,7 +178,7 @@ export const buildStandardEncounter = (): EncounterData => {
  * 难度曲线：Act 越高越强；精英/Boss 更高等级 + 血量倍率
  * 框架阶段：从现有流派随机选，Boss/精英通过 level + hpMultiplier 强化
  */
-export const buildRoguelikeEncounter = (nodeType: 'battle' | 'elite' | 'boss', _act: number, difficulty: RogueDifficulty = 'normal', archetypeId?: string): EncounterData => {
+export const buildRoguelikeEncounter = (nodeType: 'battle' | 'elite' | 'boss', _act: number, difficulty: RogueDifficulty = 'normal', archetypeId?: string, enemyBuffs?: string[]): EncounterData => {
     const archetypeKeys = Object.keys(ENEMY_ARCHETYPES);
     // [2026-08-10 预分配敌人] 优先用节点预分配的流派（保证地图头像与实际对手一致），否则随机
     const archetype = archetypeId ? ENEMY_ARCHETYPES[archetypeId] : ENEMY_ARCHETYPES[archetypeKeys[Math.floor(Math.random() * archetypeKeys.length)]];
@@ -123,6 +191,10 @@ export const buildRoguelikeEncounter = (nodeType: 'battle' | 'elite' | 'boss', _
     const baseHp = nodeType === 'boss' ? 1.5 : nodeType === 'elite' ? 1.25 : 1;
     const hpMultiplier = baseHp * DIFFICULTY_HP_MULTIPLIER[difficulty];
     const level = ((nodeType === 'boss' || nodeType === 'elite') ? 2 : 1) + DIFFICULTY_LEVEL_BONUS[difficulty];
+    // [2026-08-28 莉莉子] 敌方水晶初始血量 = 难度基础值 + 生命强化折算（中后段 +10 / Boss +20，来自节点预分配）
+    const finalEnemyBuffs = enemyBuffs ?? archetype.rogueBuffs ?? [];
+    // [2026-08-30 程拍板] 敌人随机装备（难度分级 + 精英/Boss 修正）
+    const enemyEquipments = rollEnemyEquipments(fullDeck, nodeType, difficulty);
     return {
         deck: fullDeck,
         heroConfig: {
@@ -133,6 +205,10 @@ export const buildRoguelikeEncounter = (nodeType: 'battle' | 'elite' | 'boss', _
         },
         passiveEffects: [],
         aiPersonality: archetype.aiPersonality, // [2026-08-06] 透传流派性格
+        enemyCardBackIndex: archetype.cardBackIndex ?? 0, // [2026-08-17 莉莉子] 敌方卡背
+        enemyBuffs: finalEnemyBuffs, // [2026-08-27 莉莉子] 敌方迷宫强化：优先节点预分配（mapLayout roll 子集，与地图预览一致）；兜底流派配置库（旧调用兼容）
+        enemyNexusHp: ENEMY_NEXUS_BASE[difficulty] + sumNexusBoost(finalEnemyBuffs), // [2026-08-28 莉莉子] 敌方水晶初始血量
+        enemyEquipments,
     };
 };
 

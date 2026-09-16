@@ -13,6 +13,10 @@ export const STORAGE_KEYS = {
     USER_INDEX: `${STORAGE_PREFIX}user_index`,
     ROGUE_HERO_PROGRESS: `${STORAGE_PREFIX}rogue_hero_progress`, // [2026-08-12 天启者养成] 每英雄独立等级/经验
     ROGUE_ARMAMENT: `${STORAGE_PREFIX}rogue_armament`, // [2026-08-14 武装] 每英雄武装槽配置（局外带入）
+    ROGUE_ARMAMENT_QUALITY: `${STORAGE_PREFIX}rogue_armament_quality`, // [2026-09-07 重修申请] 每英雄每槽可装备品质额外档（0-3，重修胜利+1）
+    ROGUE_PENDING_RUN: `${STORAGE_PREFIX}rogue_pending_run`, // [2026-08-28] 肉鸽未结算对局存档（暂离/继续）
+    ANALYST_PASS: `${STORAGE_PREFIX}analyst_pass`, // [2026-09-04 账号等级] 评估嘉勉通行证独立存档（每用户）
+    USER_BATTLE_RECORD: `${STORAGE_PREFIX}battle_record`, // [2026-09-04 战绩记录器] 持久对战记录（每用户）
 };
 
 // [新增] 简要用户信息接口 (用于列表展示)

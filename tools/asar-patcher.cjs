@@ -82,19 +82,34 @@ function writeAsar(outputPath, fileMap) {
     }
   }
 
-  // 2. 计算偏移
+  // 2. 计算偏移 + 记录物理写入顺序
+  // ⚠️ [2026-09-13 莉莉子] 这两者【必须同源】，否则 asar 内容整体错位！
+  //
+  // 原实现的 bug：算 offset 用「树形深度优先」，写数据用「全路径字符串排序」。
+  // 平时两者结果一致，但在 node_modules 里存在 "mesh/"(目录) 与 "mesh-extras/"(目录)
+  // 这类"前缀冲突路径"时，两种排序给出的先后顺序不同：
+  //   字符串比较：'-'(0x2D) < '/'(0x2F) → mesh-extras 排在 mesh 前面
+  //   树形遍历　：'mesh' 是 'mesh-extras' 的前缀，短的排前面 → mesh 在前
+  // 结果 JSON 头声明的 offset 与实际落盘位置错位，读音按 offset 取文件会拿到
+  // 隔壁文件的内容（实测 7239 个文件里有 325 个受影响，涉及 @pixi / react /
+  // react-dom / framer-motion —— 游戏直接黑屏）。
+  //
+  // 修复：遍历时顺手把顺序记进 dataOrder，写入阶段直接复用，两套顺序天然合一。
   let offset = 0;
-  (function calcOff(node) {
+  const dataOrder = [];
+  (function calcOff(node, prefix) {
     if (!node.files) return;
     for (const [name, entry] of Object.entries(node.files).sort(([a],[b]) => a<b ? -1 : 1)) {
+      const fullPath = prefix ? `${prefix}/${name}` : name;
       if (entry.files) {
-        calcOff(entry);
+        calcOff(entry, fullPath);
       } else {
         entry.offset = String(offset);
         offset += entry.size;
+        dataOrder.push(fullPath);
       }
     }
-  })(root);
+  })(root, '');
 
   // 3. 序列化为 JSON
   const jsonStr = JSON.stringify(root);
@@ -121,9 +136,9 @@ function writeAsar(outputPath, fileMap) {
     fs.writeSync(outFd, outerBuf, 0, outerBuf.length, null);
     fs.writeSync(outFd, pickleBuf, 0, pickleBuf.length, null);
 
-    // 按文件路径排序（与 JSON 头计算偏移的顺序一致）
-    const sortedPaths = Object.keys(fileMap).sort();
-    for (const p of sortedPaths) {
+    // 按 dataOrder 写入 —— 与上方 calcOff 分配 offset 的顺序【完全同源】
+    // ⚠️ 切勿改回 Object.keys(fileMap).sort()：两套排序不一致会让文件内容整体错位
+    for (const p of dataOrder) {
       const content = fileMap[p];
       fs.writeSync(outFd, content, 0, content.length, null);
     }

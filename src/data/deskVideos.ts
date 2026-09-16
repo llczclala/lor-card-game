@@ -4,16 +4,16 @@
 // [2026-08-15 莉莉子] 全部 10 张牌桌动态版已接入（01.mp4 ~ 10.mp4）
 //   默认仍为静态牌桌（deskDynamic=false），玩家在设置里手动开启动态版
 // ==========================================
-import desk_01 from '../movie/desk/01.mp4';
-import desk_02 from '../movie/desk/02.mp4';
-import desk_03 from '../movie/desk/03.mp4';
-import desk_04 from '../movie/desk/04.mp4';
-import desk_05 from '../movie/desk/05.mp4';
-import desk_06 from '../movie/desk/06.mp4';
-import desk_07 from '../movie/desk/07.mp4';
-import desk_08 from '../movie/desk/08.mp4';
-import desk_09 from '../movie/desk/09.mp4';
-import desk_10 from '../movie/desk/10.mp4';
+import desk_01 from '../movie/desk/01.webm';
+import desk_02 from '../movie/desk/02.webm';
+import desk_03 from '../movie/desk/03.webm';
+import desk_04 from '../movie/desk/04.webm';
+import desk_05 from '../movie/desk/05.webm';
+import desk_06 from '../movie/desk/06.webm';
+import desk_07 from '../movie/desk/07.webm';
+import desk_08 from '../movie/desk/08.webm';
+import desk_09 from '../movie/desk/09.webm';
+import desk_10 from '../movie/desk/10.webm';
 
 // deskIndex → 动态视频 URL（deskIndex 是 desks 数组索引，与 PNG 编号差 1：
 //   desks = [01.png, 02.png, ..., 10.png] → 01.png 对应索引 0，10.png 对应索引 9）

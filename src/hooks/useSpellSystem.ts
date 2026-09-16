@@ -6,10 +6,15 @@ import type { TargetType } from '../data/effectRegistry';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { executeSpellEffect } from '../logic/spells';
 import { applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
+import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { CARD_DB } from '../data/cards';
-import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck } from '../utils/gameRules';
+import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck, getLeveledUpCard } from '../utils/gameRules';
 import { StrikeEvents } from '../utils/eventBus'; // [新增] 引入全新的打击信号总线
 import { getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
+import { getFlyingSwordOwner, getDefensiveSide } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具
+import { applyPermanentBuff, getEquipTriggers } from '../logic/rogueBattle'; // [2026-08-19] 迷宫强化分发（分发已收编 rogueTrigger）
+import { runRogueTrigger, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
+import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
 
 // ==========================================
 // [时间管理器] 独立封装的纯函数，等待通用打击特效播完
@@ -504,6 +509,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 // [核心修复 BUG 1]：完成目标选择后，绝不主动销毁前台 UI 连线！
                 // 将新目标存入状态以维持连线渲染，并向上层大脑汇报。由底层（useGameState）控制何时真正 cancel
                 setSelectedTargets(newTargets);
+                // [2026-08-26 莉莉子] 法术目标全部选完：通知教程控制器（替代"打出瞬间"的 play_card 判定，精确到施法操作完成）
+                eventBus.emit(GameEvents.TUTORIAL_SPELL_TARGETS_SELECTED, { card: castingCard, owner });
                 onComplete(castingCard, newTargets);
             } else {
                 // 还没完 -> 存入并进下一步
@@ -567,6 +574,56 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         }
     };
 
+    // =============================================
+    // [2026-09-13 莉莉子] 天启者法术回库
+    // 兑现卡面「使用后，在牌库里生成一张"XXX"」的承诺。
+    // 覆盖 6 张天启者抉择法术：里芙的决意 / 芬妮的狂热 / 卜卜的卜卦 /
+    //                        猫汐尔的演算 / 安卡希雅的剑舞 / 安卡希雅的重锋(Lv2)
+    //
+    // 判定口径：抉择子卡回指原法术（parentCard），原法术须带 associatedChampionKey + choices。
+    //   支援技（冻沙激流等）虽带 associatedChampionKey 但无 choices → 天然排除，不会误生成。
+    //
+    // ⚠️ 调用点必须避开 commitSpell 的"1 秒悬停撤回熔断"（撤回时法术未实际打出，不可投放）；
+    //    也必须晚于 resolveStack 的 NEGATE 反制检查（被无效化的法术不投放）。
+    // =============================================
+    const grantChampionSpellCopy = (card: CardData, owner: 'player' | 'enemy') => {
+        const src = ((card as any).parentCard ?? card) as CardData;
+        const champKey = (src as any)?.associatedChampionKey as string | undefined;
+        const hasChoices = Array.isArray((src as any)?.choices) && (src as any).choices.length > 0;
+        if (!champKey || !hasChoices || !CARD_DB[champKey]) return;
+
+        // 英雄已全局升级时生成 Lv2 副本，与变形系统 processHandTransformation 的取牌口径一致
+        let champCard = createFullCard(champKey);
+        if (stateRef.current.game.leveledChampions?.includes(champKey)) {
+            champCard = getLeveledUpCard(champCard);
+        }
+
+        // Fisher-Yates 洗入牌堆（与 useGameState.shuffleDeck 同算法）——
+        // 抽牌是从牌库顶 splice，追加到末尾等于沉底，必须打散才有意义
+        const shuffleIn = (deck: CardData[]) => {
+            const next = [...deck, champCard];
+            for (let i = next.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [next[i], next[j]] = [next[j], next[i]];
+            }
+            return next;
+        };
+
+        if (owner === 'player') {
+            setPlayerDeck(prev => { const n = shuffleIn(prev); stateRef.current.playerDeck = n; return n; });
+        } else {
+            setEnemyDeckState(prev => { const n = shuffleIn(prev); stateRef.current.enemyDeck = n; return n; });
+        }
+
+        // 表现层：中央亮相 → 翻背 → 飞回牌库（单向事件，牌已洗入，动画纯表现）
+        eventBus.emit(GameEvents.CARD_TO_DECK, {
+            animId: nextAnimId('todeck', owner, champCard.id),
+            card: champCard,
+            owner,
+        });
+        console.log(`[ChampionSpell] ✅ ${src.name} 使用后，牌库生成一张 ${champCard.name}`);
+    };
+
     const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
         // [2026-07-20 对局记录修复] 使用 setTimeout 将事件推入宏任务队列，
         // 确保它在 commitSpell 后续所有的 setGame(cleanSnapshot) 同步状态覆盖完成后再执行
@@ -574,10 +631,73 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             eventBus.emit('spell_record', { card, owner, targets });
         }, 0);
 
+        // [2026-08-19 莉莉子] 迷宫强化 on_cast_spell：打出法术时随机友军永久 +1/+1（法术共鸣/法术渗透）
+        // [2026-09-09 莉莉子 重构] 收编统一串行触发引擎（commitSpell 顶部，无并发 bench 队列，脏切片一次性提交安全）
+        if ((owner === 'player' || owner === 'enemy') && stateRef.current.game[owner === 'player' ? 'rogueEnhancements' : 'enemyEnhancements']?.length) {
+            const enhList = owner === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements;
+            const sCtx: RogueTriggerCtx = {
+                game: { ...stateRef.current.game },
+                playerBench: [...stateRef.current.playerBench],
+                enemyBench: [...stateRef.current.enemyBench],
+                combatField: [...stateRef.current.combatField],
+                playerHand: [...stateRef.current.playerHand],
+                enemyHand: [...stateRef.current.enemyHand],
+                playerDeck: [...stateRef.current.playerDeck],
+                enemyDeck: [...stateRef.current.enemyDeck],
+                owner,
+                trigger: 'on_cast_spell',
+                createFullCard,
+                info: {},
+                dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+            };
+            runRogueTrigger(sCtx, enhList, 'on_cast_spell');
+            if (sCtx.dirty.bench.has('player')) setPlayerBench(sCtx.playerBench);
+            if (sCtx.dirty.bench.has('enemy')) setEnemyBench(sCtx.enemyBench);
+            if (sCtx.dirty.field) setCombatField(sCtx.combatField);
+        }
+
+        // [2026-08-20 莉莉子] 成长装备 player_cast_spell：我方施法后，在场成长装触发（歌莉娅的课题权杖〔原法术温养〕/乐手的疗愈独奏〔原灵气传导〕）
+        // 仅扫描我方交战区存活单位（装备卡须在场才成长）；self → 装备卡自己；random_ally → 随机在场友军
+        if (owner === 'player') {
+            const fieldUnits = stateRef.current.combatField
+                .filter((f: any) => f.owner === 'player' && f.attacker && !f.attacker.isDead && f.attacker.animState !== 'dying' && f.attacker.animState !== 'ephemeral_dying')
+                .map((f: any) => f.attacker as CardData);
+            if (fieldUnits.length) {
+                const growth: { id: string; buffed: CardData }[] = [];
+                // 合并同卡多次成长（一张卡可挂多件同事件成长装，避免写回时只取第一条丢 buff）
+                const addGrowth = (target: CardData, p: number, h: number) => {
+                    const idx = growth.findIndex(x => x.id === target.id);
+                    if (idx >= 0) growth[idx] = { id: target.id, buffed: applyPermanentBuff(growth[idx].buffed, p, h) };
+                    else growth.push({ id: target.id, buffed: applyPermanentBuff(target, p, h) });
+                };
+                fieldUnits.forEach(unit => {
+                    getEquipTriggers(unit, 'player_cast_spell').forEach(t => {
+                        if (t.target === 'self') {
+                            addGrowth(unit, t.power, t.health);
+                        } else if (t.target === 'random_ally') {
+                            const pick = fieldUnits[Math.floor(Math.random() * fieldUnits.length)];
+                            if (pick) addGrowth(pick, t.power, t.health);
+                        }
+                    });
+                });
+                if (growth.length) {
+                    setCombatField(prev => prev.map(f => {
+                        const hit = growth.find(x => x.id === f.attacker?.id);
+                        return hit && f.owner === 'player' ? { ...f, attacker: hit.buffed } : f;
+                    }));
+                }
+            }
+        }
+
         const existingPending = stateRef.current.game.pendingSpell;
         let cleanSnapshot = { ...stateRef.current.game };
         const safePhase = originalPhase || (cleanSnapshot.phase === 'animating' ? 'main' : cleanSnapshot.phase);
 
+        // [2026-09-03 莉莉子 死锁逃生] commitSpell 主体包 try/finally：
+        // 敌方演出分支（置 animating 后 await wait）或玩家极速法术"撤回熔断"(return 在恢复点前)
+        // 一旦异常/中途退出，phase 会残留 animating → 对局死锁。finally 兜底恢复。
+        // 刻意不清 spellStack（敌方慢速法术需留在堆叠交玩家响应）。
+        try {
         // [2026-08-06 莉莉子 Echo 回响] 法术打出并结算后：在手牌生成一张该牌的瞬逝复制品
         if (card.keywords.includes('Echo')) {
             const echoOwnerHand = owner === 'player'
@@ -593,7 +713,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     stateRef.current.enemyHand = echoResult.hand;
                 }
                 echoResult.echoedCards.forEach(echoCard => {
-                    const animId = `echo-${echoCard.id}-${Date.now()}`;
+                    const animId = nextAnimId('echo', echoCard.id);
                     eventBus.emit(GameEvents.DRAW_START, {
                         animId, card: echoCard, owner,
                         skipHandAdd: true,
@@ -713,6 +833,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [2026-07-11 绿灵·艾娃] 极速法术触发艾娃光环
             checkEvaAura(card, owner, '[BURST]');
 
+            // [2026-09-13 莉莉子] 天启者法术回库：等法术弹道演出播完再投放，避免中央特效打架
+            grantChampionSpellCopy(card, owner);
+
             // [2026-07-21 对局记录] 极速法术 — 全量对比发射
             {
                 const burstEntities = computeChangesFromMap(burstBeforeMap);
@@ -805,6 +928,21 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     )
                 }));
                 setMessage("敌方打出法术，请响应");
+            }
+        }
+        } catch (err) {
+            console.error('[commitSpell] 💥 异常', err, { card: card.key, owner });
+        } finally {
+            bumpAnimProgress();
+            if (stateRef.current.game.phase === 'animating') {
+                console.warn('[commitSpell] 应急恢复 phase →', safePhase);
+                setGame(prev => ({
+                    ...prev,
+                    phase: (safePhase === 'animating' ? 'main' : safePhase) as GameState['phase'],
+                    spellCasting: null,
+                    activeCard: null,
+                    lastActionTimestamp: Date.now(),
+                }));
             }
         }
     };
@@ -1019,6 +1157,33 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             return;
         }
 
+        if (sc?.step === 'select_hand_target') {
+            // [2026-09-03 莉莉子] 白猎手牌目标选择取消：退回卡牌；单位型（playCard 已扣费）退费，
+            // 法术型（费用在 commitSpell 才扣、此时未扣）只退卡不退费，避免误加费用。
+            const activeCard = stateRef.current.game.activeCard;
+            if (activeCard) {
+                setPlayerHand(prev => [...prev, activeCard]);
+                if (activeCard.type.includes('unit')) {
+                    const costToRefund = activeCard.cost || 0;
+                    setGame(prev => {
+                        let newMana = prev.playerMana + costToRefund;
+                        let newSpellMana = prev.playerSpellMana;
+                        if (newMana > prev.playerMaxMana) {
+                            newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
+                            newMana = prev.playerMaxMana;
+                        }
+                        return { ...prev, playerMana: newMana, playerSpellMana: newSpellMana, activeCard: null, spellCasting: null };
+                    });
+                } else {
+                    setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
+                }
+            } else {
+                setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
+            }
+            setMessage("已取消");
+            return;
+        }
+
         const pending = stateRef.current.game.pendingSpell;
         if (!pending || pending.owner !== 'player') return;
 
@@ -1049,6 +1214,31 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         const originalPhase = stateRef.current.game.phase; // [修正] 用 stateRef 防闭包
         setGame(prev => ({ ...prev, phase: 'animating' }));
         const stack = [...stateRef.current.game.spellStack];
+
+        // [2026-09-03 莉莉子 死锁逃生] 结算收尾段抽成局部函数，供正常与异常路径共用。
+        // 异常时也必须把 spellStack 清空并写回 phase，杜绝 .then(() => passTurn()) 接力
+        // 读到滞后的 animating 造成回合错误跳过 / 分支A 反复 resolveStack 死循环。
+        const settleStack = () => {
+            // [SBA] 法术结算后同步清尸
+            judgeLifeAndDeath();
+            const nextPhase = originalPhase === 'react_to_block' ? 'react_to_block' : 'main';
+            // [2026-08-24 莉莉子 飞剑竞态根治] 结算后若交战区有飞剑，同步进入格挡阶段，
+            // 不依赖异步守卫 effect 切换。react_to_block 情形（快速飞剑响应汇入战斗）不得强制拉回格挡。
+            const fsOwner = getFlyingSwordOwner(stateRef.current.combatField);
+            const forceBlock = nextPhase === 'main' && !!fsOwner;
+            setGame(prev => ({
+                ...prev,
+                phase: forceBlock ? ('block_declare' as const) : nextPhase,
+                turnOwner: forceBlock ? getDefensiveSide(fsOwner) : prev.turnOwner,
+                spellStack: [],
+                // 【机制修复】如果是从防守响应阶段结算的法术，将让过次数设为 1
+                // 这样接力调用的 passTurn 看到 >=1 就会立刻无缝触发 resolveCombatAnimation()！
+                consecutivePasses: forceBlock ? 0 : (nextPhase === 'react_to_block' ? 1 : 0),
+                lastActionTimestamp: Date.now(),
+            }));
+        };
+
+        try {
         for (const spell of stack) {
             // [2026-08-05 NEGATE] 法术可能已在堆叠中被无效化移除（法术8/6/7），跳过不再结算
             const stillOnStack = stateRef.current.game.spellStack.some(s => s.card.id === spell.card.id);
@@ -1072,11 +1262,11 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 await waitForStrikeComplete();
 
                 // 基座攻击力减半（对总攻击力 base + buffs 减半）
-                const halvePower = (c: CardData) => {
+                const halvePower = (c: CardData): CardData => {
                     const baseP = c.power || 0;
                     const totalP = baseP + (c.buffs?.power || 0);
                     const halfP = Math.floor(totalP / 2);
-                    return { ...c, buffs: { ...(c.buffs || {}), power: halfP - baseP } };
+                    return { ...c, buffs: { power: halfP - baseP, health: c.buffs?.health ?? c.health } };
                 };
                 setPlayerBench(prev => prev.map(c => {
                     if (c.key === 'mauxir_lotus_pedestal') return halvePower(c);
@@ -1136,11 +1326,26 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [2026-07-11 绿灵·艾娃] 栈内法术触发艾娃光环
             checkEvaAura(spell.card, spell.owner, '[STACK]');
 
+            // [2026-09-13 莉莉子] 天启者法术回库（慢速/快速抉择走堆栈结算，极速走 commitSpell）
+            grantChampionSpellCopy(spell.card, spell.owner);
+
+            // [2026-08-30 莉莉子 死锁护栏] 升级影片/队列等待加超时上限，
+            // 杜绝升级影片 onEnd 挂起（芬妮单挑、卜卜胜利竞态）导致的无限死锁。
+            // 超时后强制清空升级队列放行——升级数值/效果已入账，仅截断演出，绝不冻结对局。
+            const levelUpQueueLen = (stateRef.current.game.pendingLevelUps || []).length;
+            const levelUpWaitLimit = Math.max(20000, levelUpQueueLen * 12000); // 单英雄20s，每多一个英雄+12s
+            let levelUpWaitMs = 0;
             while (
                 stateRef.current.game.levelUpCard !== null ||
                 (stateRef.current.game.pendingLevelUps && stateRef.current.game.pendingLevelUps.length > 0)
             ) {
+                if (levelUpWaitMs >= levelUpWaitLimit) {
+                    console.warn(`[resolveStack] ⏱️ 升级等待超时(${levelUpWaitLimit}ms)，强制清空升级队列放行，防止死锁`);
+                    setGame(prev => ({ ...prev, levelUpCard: null, pendingLevelUps: [] }));
+                    break;
+                }
                 await wait(200);
+                levelUpWaitMs += 200;
             }
 
             // [2026-07-21 对局记录] 全量对比发射
@@ -1174,22 +1379,18 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 }
             }
         }
-        // [SBA] 法术结算后同步清尸
-        judgeLifeAndDeath();
-        const nextPhase = originalPhase === 'react_to_block' ? 'react_to_block' : 'main';
-        setGame(prev => ({
-            ...prev,
-            phase: nextPhase,
-            spellStack: [],
-            // 【机制修复】如果是从防守响应阶段结算的法术，将让过次数设为 1
-            // 这样接力调用的 passTurn 看到 >=1 就会立刻无缝触发 resolveCombatAnimation()！
-            consecutivePasses: nextPhase === 'react_to_block' ? 1 : 0
-        }));
+        } catch (err) {
+            console.error('[resolveStack] 💥 异常，清空堆叠安全放行', err, stack.map(s => s.card?.key));
+            judgeLifeAndDeath();
+        } finally {
+            settleStack();
 
-        // 【致命核心修复】强制让出主线程 50ms，确保上述的 setGame 被 React 批处理刷入 stateRef！
-        // 防止外层的 .then(() => passTurn()) 同步执行时，读到滞后的 'animating' 阶段而导致回合被错误跳过
-        await wait(50);
-        setMessage("法术结算完毕");
+            // 【致命核心修复】强制让出主线程 50ms，确保上述的 setGame 被 React 批处理刷入 stateRef！
+            // 防止外层的 .then(() => passTurn()) 同步执行时，读到滞后的 'animating' 阶段而导致回合被错误跳过
+            await wait(50);
+            setMessage("法术结算完毕");
+            bumpAnimProgress();
+        }
     };
 
     // --- 5. 导出状态供 UI 使用 ---

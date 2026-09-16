@@ -9,11 +9,11 @@ import { ArrowLeft, Lock } from 'lucide-react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { ROGUE_DIFFICULTIES } from '../../data/roguelike/difficulties';
 import type { RogueDifficulty } from '../../data/roguelike/difficulties';
-import mapZero from '../../image/map/map_zero.png';
+import mapZero from '../../image/map/map_zero.webp';
 import type { useUserSystem } from '../../hooks/useUserSystem';
 
 // 缩略图切片：map_zero/1.png ~ 8.png（1 秒轮播）
-const sliceModules = import.meta.glob('../../image/map/map_zero/*.png', { eager: true });
+const sliceModules = import.meta.glob('../../image/map/map_zero/*.webp', { eager: true });
 const MAP_SLICE_IMAGES = Object.entries(sliceModules)
     .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
     .map(([, mod]) => (mod as any).default);

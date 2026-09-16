@@ -8,7 +8,7 @@
 import React, { useState, useMemo } from 'react';
 import { Plus, X, Pencil } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
-import { buildStarterDeck } from '../../data/roguelike/rogueStarterDecks';
+import { buildStarterDeck, isStaleRogueStarterDeck } from '../../data/roguelike/rogueStarterDecks';
 import { PERSONALIZATION_ASSETS, getSkinImage } from '../../data/imageData';
 import { StyleSelector } from '../StyleSelector';
 import { DeskMedia } from '../DeskMedia'; // [2026-08-13] 动态牌桌媒体组件
@@ -128,22 +128,28 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
     const heroName = CARD_DB[heroKey]?.name ?? heroKey;
 
     // [2026-08-13] 数据源：userSystem 中注册的肉鸽初始牌组（开发者编辑过）优先，否则 buildStarterDeck 默认
+    // [2026-09-09 净化] 卡组组成过时（isStaleRogueStarterDeck）→ 展示用官方默认组成，但保留该卡组自身的
+    // 个性化字段（卡背/牌桌/皮肤/名字等）——净化只改组成、不写本地存档、不动个性化配置。
     const deck = useMemo(() => {
         const existing = userSystem.decks?.find((d: any) => d.id === `rogue_starter_${heroKey}`);
-        if (existing) return existing;
-        const starter = buildStarterDeck(heroKey);
-        const cards: Record<string, number> = {};
-        starter.forEach(k => { cards[k] = (cards[k] || 0) + 1; });
+        const stale = existing ? isStaleRogueStarterDeck(heroKey, existing.cards) : false;
+        let cards = (!existing || stale) ? null : existing.cards;
+        if (!cards) {
+            const starter = buildStarterDeck(heroKey);
+            const c: Record<string, number> = {};
+            starter.forEach(k => { c[k] = (c[k] || 0) + 1; });
+            cards = c;
+        }
         return {
             id: `rogue_starter_${heroKey}`,
-            name: `肉鸽·${heroName}`,
+            name: existing?.name ?? `肉鸽·${heroName}`,
             hero: heroKey,
             cards,
-            skinOverrides: {},
-            createdAt: 0,
-            updatedAt: 0,
-            cardBackIndex: userSystem.settings?.customization?.currentCardBackIndex,
-            boardIndex: userSystem.settings?.customization?.currentDeskIndex,
+            skinOverrides: existing?.skinOverrides ?? {},
+            createdAt: existing?.createdAt ?? 0,
+            updatedAt: existing?.updatedAt ?? 0,
+            cardBackIndex: existing?.cardBackIndex ?? userSystem.settings?.customization?.currentCardBackIndex,
+            boardIndex: existing?.boardIndex ?? userSystem.settings?.customization?.currentDeskIndex,
         };
     }, [heroKey, heroName, userSystem.decks, userSystem.settings]);
 
@@ -290,6 +296,7 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
                         }}
                         onClose={() => setSelectorType(null)}
                         deskDynamic={(userSystem.settings as any)?.deskDynamic} // [2026-08-13] 动态牌桌
+                        cardBackDynamic={(userSystem.settings as any)?.cardBackDynamic} // [2026-08-23] 动态卡背
                     />
                 </div>
             )}
