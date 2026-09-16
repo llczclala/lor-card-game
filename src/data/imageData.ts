@@ -360,6 +360,8 @@ const CARD_KEY_MAP: Record<string, string> = {
   dakors: 'Star_Bright_Squad_Dakors',
   mabel: 'Chongye_Squad_Mabel',
   elice: 'Chongye_Squad_Elice',
+  // [2026-09-16 1.0.16 茉莉安] 獠牙信标：图片由 units glob 自动登记为 cardKey 'Marian_Wolf_Tooth_Beacon'
+  wolf_tooth_beacon: 'Marian_Wolf_Tooth_Beacon',
   golia: 'Chongye_Squad_Golia',
 
   // --- Illustration Squad: 图征小队 (Mauxir) ---

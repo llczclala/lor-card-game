@@ -1971,6 +1971,23 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: SPELL_IMAGES.temp_spell_17,
   },
 
+  // ===========================================================
+  // [2026-09-16 1.0.16 茉莉安大版本] 新增内容
+  // ===========================================================
+
+  // --- 衍生物：獠牙信标 ---
+  // 站位在【对手】的备战席 —— 由 ④【库效】/ 茉莉安本体入场 / 支援技召唤
+  // ⚠️ 引擎视角它只是「宿主方的普通单位」：可挡刀、可被法术指定、可吃任何 buff（宿主随便养）
+  // ⚠️ 不再自带【暴露】—— 这是 2026-09-14 设计改动的关键一条（原方案作废）
+  'Marian_Wolf_Tooth_Beacon': {
+    key: 'Marian_Wolf_Tooth_Beacon', name: '獠牙信标', cost: 0, power: 0, health: 20, maxHealth: 20,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Last Breath'],
+    description: '【亡语】阵亡时，对本方全体分摊伤害。\n敌方每有 1 个单位进攻，本单位 -1 血；若这次进攻拉取了我方暴露单位挡刀，则再 -1 血。',
+    imageUrl: UNIT_IMAGES.wolf_tooth_beacon,
+    effects: [], // [T09 待补] 亡语分摊伤害 —— 现有全部 LAST_BREATH 效果只有 SUMMON/DRAW/GENERATE，需新建
+    isCollectible: false,
+  },
+
   // --- 测试专用卡 ---
   // ===========================================================
   // 36 关键词 专项测试卡组 (Manual Test Set)
