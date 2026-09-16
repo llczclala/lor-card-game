@@ -148,6 +148,11 @@ export const checkCardLevelUp = (card: CardData, playerNexusHealth: number, enem
     // [新增] 猫汐尔莲驱：我方召唤者和召唤物累计造成 30 点伤害（customProgress 追踪）
     if (card.key === 'mauxir_lotus_drive' && (card.customProgress || 0) >= 30) return true;
 
+    // [2026-09-16 1.0.16 茉莉安] 我方召唤的「獠牙信标」被破坏 ≥ 2 次
+    //   进度由 bumpBeaconDeaths 全域扫描累计 → 【不需要茉莉安在场】也计入
+    //   ⚠️ 读的是专属字段 beaconDeaths，不是自定义位域 customProgress（目标 2 与 bit2 撞车）
+    if (card.key === 'marian' && (card.beaconDeaths || 0) >= 2) return true;
+
     return false;
 };
 
@@ -495,6 +500,32 @@ export const accumulateMauxirDamage = (
     }
 
     return false; // 不越权触发升级
+};
+
+/**
+ * [2026-09-16 1.0.16 茉莉安] 我方召唤的「獠牙信标」被破坏一次 → 累计茉莉安的升级进度
+ *
+ * **纯函数**：只返回新的区域数组，不碰 setState。
+ * 之所以不用 accumulateMauxirDamage 那套「传 setter」的写法 ——
+ * 调用点在微队列处理器内部，那里全程操作局部数组（`nextPlayerBench` 等）、
+ * 最后统一在 2156~2160 行写回 React state。中途调 setState 反而会被后续赋值覆盖。
+ *
+ * 与猫汐尔同构：**扫描 bench / hand / deck 全域**，所以【不需要茉莉安在场】也计入进度。
+ *
+ * ⚠️ 写的是专属字段 `beaconDeaths`，不是共用的 `customProgress` 位域 ——
+ *    茉莉安的升级目标 2 与 customProgress 的 bit2（绿色降费标记）同值，
+ *    复用会把「降费」误判成「升级达成」（详见 types.ts 的字段注释）。
+ */
+export const bumpBeaconDeaths = (zone: CardData[]): CardData[] => {
+    let changed = false;
+    const next = zone.map(card => {
+        if (card.key === 'marian' && card.level === 1 && (card.beaconDeaths || 0) < 2) {
+            changed = true;
+            return { ...card, beaconDeaths: (card.beaconDeaths || 0) + 1 };
+        }
+        return card;
+    });
+    return changed ? next : zone; // 没有命中就原样返回，避免无谓 re-render
 };
 
 /** [2026-07-14 梵音] 检测觉悟状态（我方法力值上限是否达到10点） */

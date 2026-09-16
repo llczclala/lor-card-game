@@ -12,7 +12,7 @@ import { canAfford } from '../logic/core';
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { applyChannelOnSummon, applyEchoOnPlay, getPower } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
-import { checkCardLevelUp, accumulateMauxirDamage, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide } from '../utils/gameRules';
+import { checkCardLevelUp, accumulateMauxirDamage, bumpBeaconDeaths, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide } from '../utils/gameRules';
 import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
 import { bumpAnimProgress, animGuard, ANIM_STALL_MS } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
 import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
@@ -2020,6 +2020,27 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 } else {
                     nextGame.enemyUnitDeaths = (nextGame.enemyUnitDeaths || 0) + 1;
                     nextGame.enemyGraveyard = [...(nextGame.enemyGraveyard || []), makeGraveSnapshot(unit)];
+                }
+
+                // =====================================
+                // [2026-09-16 1.0.16 茉莉安 · T07] 獠牙信标被破坏 → 累计茉莉安的升级进度
+                // ── 归属推导：信标【只会被召唤到召唤者的对面】（库效/本体/支援技三者皆然），
+                //    所以「它倒在哪一侧」就等价于「它由对面召唤」—— 这是构造性结论，不是猜测。
+                // ── 与猫汐尔同构：扫描 bench / hand / deck 全域，所以【茉莉安不在场】也计入进度
+                // ── 全程操作局部数组，由本函数末尾（2156~2160）统一写回 React state
+                // =====================================
+                if (unit.key === 'Marian_Wolf_Tooth_Beacon') {
+                    const summonerIsPlayer = owner === 'enemy'; // 倒在敌方 → 由玩家召唤
+                    if (summonerIsPlayer) {
+                        nextPlayerBench = bumpBeaconDeaths(nextPlayerBench);
+                        nextPlayerHand = bumpBeaconDeaths(nextPlayerHand);
+                        if (nextPlayerDeck) nextPlayerDeck = bumpBeaconDeaths(nextPlayerDeck);
+                    } else {
+                        nextEnemyBench = bumpBeaconDeaths(nextEnemyBench);
+                        nextEnemyHand = bumpBeaconDeaths(nextEnemyHand);
+                        if (nextEnemyDeck) nextEnemyDeck = bumpBeaconDeaths(nextEnemyDeck);
+                    }
+                    console.log(`[BeaconDebug] 獠牙信标被破坏：召唤者=${summonerIsPlayer ? 'player' : 'enemy'}，已累计茉莉安升级进度`);
                 }
 
                 if (unit.effects && unit.effects.length > 0) {
