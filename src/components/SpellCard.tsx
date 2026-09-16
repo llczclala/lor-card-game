@@ -62,6 +62,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
     const isPupu = data.region === 'Pupu';
     const isMauxir = data.region === 'Mauxir';
     const isAcacia = data.region === 'Acacia';
+    const isMarian = data.region === 'Marian'; // [2026-09-16 茉莉安] 品红阵营
     const isLogistics = data.region === 'Logistics';
     const isAnalyst = data.region === 'Analyst'; // [2026-08-08 莉莉子] 分析员黑色卡面
 
@@ -70,6 +71,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
         : isPupu ? 'border-red-900'
         : isMauxir ? 'border-purple-900'
         : isAcacia ? 'border-sky-900'
+        : isMarian ? 'border-fuchsia-900' // [2026-09-16 茉莉安]
         : isLogistics ? 'border-white-900'
         : isLyfe ? 'border-blue-900'
         : isAnalyst ? 'border-gray-950'
@@ -80,6 +82,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
         : isPupu ? 'bg-gradient-to-b from-gray-900 via-red-950 to-gray-900'
         : isMauxir ? 'bg-gradient-to-b from-gray-900 via-purple-950 to-gray-900'
         : isAcacia ? 'bg-gradient-to-b from-gray-900 via-sky-950 to-gray-900'
+        : isMarian ? 'bg-gradient-to-b from-gray-900 via-fuchsia-950 to-gray-900' // [2026-09-16 茉莉安]
         : isLogistics ? 'bg-gradient-to-b from-gray-900 via-white-950 to-gray-900'
         : isLyfe ? 'bg-gradient-to-b from-gray-900 via-blue-950 to-gray-900'
         : isAnalyst ? 'bg-gradient-to-b from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员纯黑
@@ -90,6 +93,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
         : isPupu ? 'bg-red-600 border-red-400'
         : isMauxir ? 'bg-purple-600 border-purple-400'
         : isAcacia ? 'bg-sky-600 border-sky-400'
+        : isMarian ? 'bg-fuchsia-600 border-fuchsia-400' // [2026-09-16 茉莉安]
         : isLogistics ? 'bg-gray-600 border-gray-400'
         : isLyfe ? 'bg-blue-600 border-blue-400'
         : isAnalyst ? 'bg-gray-800 border-gray-500' // [2026-08-08 莉莉子] 分析员灰黑费用

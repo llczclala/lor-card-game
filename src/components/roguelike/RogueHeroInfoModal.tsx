@@ -6,7 +6,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; // [2026-08-26 莉莉子] 拖拽跟手图标 Portal 到 body，逃出 ScaleWrapper 缩放容器保证 1:1 跟手
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Sword, Shield, Zap, Ghost, X, RefreshCw, ChevronsRight, ChevronsLeft, Minus, Lock, type LucideIcon } from 'lucide-react';
+import { Sparkles, Sword, Shield, Zap, Ghost, Bird, X, RefreshCw, ChevronsRight, ChevronsLeft, Minus, Lock, type LucideIcon } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { LORE_DB } from '../../data/loreData'; // [2026-08-13] 总览背景故事
 import type { CardData } from '../../types';
@@ -34,6 +34,8 @@ const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
     pupu_specular_soul: { icon: Sparkles, color: HERO_THEMES.pupu_specular_soul.color }, // Pupu 红
     mauxir_lotus_drive: { icon: Ghost, color: HERO_THEMES.mauxir_lotus_drive.color },    // Mauxir 紫
     acacia_chrono_echo: { icon: Sword, color: HERO_THEMES.acacia_chrono_echo.color },    // Acacia 天蓝
+    // [2026-09-16 茉莉安] 霄鹰 → Bird；品红阵营色。不放这里的话会落到 Shield 兜底（与里芙撞）
+    marian: { icon: Bird, color: HERO_THEMES.marian.color },                  // Marian 品红
 };
 
 // [2026-08-13] 总览界面几何常量（程可微调，px）

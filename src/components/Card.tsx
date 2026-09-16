@@ -1143,6 +1143,7 @@ export const Card: React.FC<CardProps> = ({
             : data.region === 'Pupu' ? 'from-gray-950 via-red-950 to-gray-950'
             : data.region === 'Mauxir' ? 'from-gray-950 via-purple-950 to-gray-950'
             : data.region === 'Acacia' ? 'from-gray-950 via-sky-950 to-gray-950'
+            : data.region === 'Marian' ? 'from-gray-950 via-fuchsia-950 to-gray-950' // [2026-09-16 茉莉安] 品红
             : data.region === 'Logistics' ? 'from-gray-950 via-gray-800 to-gray-950'
             : data.region === 'Analyst' ? 'from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员黑色卡面
             : 'bg-slate-900';
@@ -1237,6 +1238,7 @@ export const Card: React.FC<CardProps> = ({
                                 : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
+                                : data.region === 'Marian' ? 'from-fuchsia-600/40 via-fuchsia-500/20 to-fuchsia-300/5' // [2026-09-16 茉莉安] 品红
                                 : data.region === 'Analyst' ? 'from-black/60 via-gray-950/30 to-black/5' // [2026-08-08 莉莉子] 分析员黑色卡面
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
@@ -1488,6 +1490,7 @@ export const Card: React.FC<CardProps> = ({
                         : data.region === 'Pupu' ? 'bg-gradient-to-b from-gray-950 via-red-950 to-gray-950'
                         : data.region === 'Mauxir' ? 'bg-gradient-to-b from-gray-950 via-purple-950 to-gray-950'
                         : data.region === 'Acacia' ? 'bg-gradient-to-b from-gray-950 via-sky-950 to-gray-950'
+                        : data.region === 'Marian' ? 'bg-gradient-to-b from-gray-950 via-fuchsia-950 to-gray-950' // [2026-09-16 茉莉安] 品红
                         : data.region === 'Logistics' ? 'bg-gradient-to-b from-gray-950 via-gray-800 to-gray-950'
                         : data.region === 'Analyst' ? 'bg-gradient-to-b from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员黑色卡面
                         : 'bg-slate-900'
@@ -1518,6 +1521,7 @@ export const Card: React.FC<CardProps> = ({
                                 : data.region === 'Pupu' ? 'from-red-600/40 via-red-500/20 to-red-300/5'
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
+                                : data.region === 'Marian' ? 'from-fuchsia-600/40 via-fuchsia-500/20 to-fuchsia-300/5' // [2026-09-16 茉莉安] 品红
                                 : data.region === 'Analyst' ? 'from-black/60 via-gray-950/30 to-black/5' // [2026-08-08 莉莉子] 分析员黑色卡面
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>

@@ -1274,6 +1274,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                     { key: 'Pupu', label: '卜卜' },
                                                     { key: 'Mauxir', label: '猫汐尔' },
                                                     { key: 'Acacia', label: '安卡希雅' },
+                                                    { key: 'Marian', label: '茉莉安' }, // [2026-09-16 1.0.16 新阵营]
                                                     { key: 'Titan', label: '泰坦' },
                                                     { key: 'Analyst', label: '分析员' },
                                                     { key: 'Logistics', label: '后勤' },
