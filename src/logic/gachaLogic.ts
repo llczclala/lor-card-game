@@ -29,7 +29,7 @@ export interface GachaResult {
 }
 
 // [新增] 卡池配置系统 ==========================================
-export type PoolId = 'permanent' | 'lotus';
+export type PoolId = 'permanent' | 'lotus' | 'zenith';
 
 export interface GachaPoolConfig {
     id: PoolId;
@@ -48,7 +48,8 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
     permanent: {
         id: 'permanent',
         name: '常守之誓',
-        heroKeys: ['lyfe', 'fenny', 'acacia_chrono_echo'],
+        // [2026-09-16 1.0.16] 安卡希雅已迁往新池「苍穹回响」(zenith)
+        heroKeys: ['lyfe', 'fenny'],
         cardBackIndices: [1, 2, 3],
         deskIndices: [1, 2, 3, 4],
         // [2026-08-15 莉莉子] 常驻池排除：
@@ -69,6 +70,21 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
         deskIndices: [5, 6, 7, 8, 9],
         // 排除 里芙(Lyfe) 和 芬妮(Fenny) 区域的后勤卡，以及蓄意渗透
         includeInCommonPool: (card) => card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
+    },
+    // [2026-09-16 1.0.16 茉莉安] 新池「苍穹回响」
+    //   收纳 安卡希雅·时之重奏 + 茉莉安·霄鹰（与「烬中镜火」收纳卜卜/猫汐尔同构）
+    //   ⚠️ 安卡希雅已从 permanent 的 heroKeys 迁出
+    zenith: {
+        id: 'zenith',
+        name: '苍穹回响',
+        heroKeys: ['acacia_chrono_echo', 'marian'],
+        // ⚠️ 卡背 index 1~16 已被 permanent / lotus / 永恒之约 / 英雄任务全部占满，
+        //    本池暂无专属卡背 → 先留空。需程出 3 张（见问题记录 I10）。
+        cardBackIndices: [],
+        deskIndices: [10], // 牌桌 index 10「苍穹回响」（图已就位，本次一并注册）
+        // 与 lotus 同构：排除常驻池两位英雄的阵营卡
+        includeInCommonPool: (card) =>
+            card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
     },
 };
 // ================================================================

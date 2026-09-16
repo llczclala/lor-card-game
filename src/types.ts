@@ -7,6 +7,7 @@ export type Race = 'summoner' | 'summon' | 'titan'; // [新增] 种族：召唤�
 export const GachaPoolEnum = {
     Permanent: 'permanent', // 常守之誓
     Lotus: 'lotus',         // 烬中镜火
+    Zenith: 'zenith',       // [2026-09-16 1.0.16] 苍穹回响 —— 收纳「安卡希雅 + 茉莉安」
 } as const;
 export type GachaPoolId = (typeof GachaPoolEnum)[keyof typeof GachaPoolEnum];
 // 完整的 36 个关键词定义

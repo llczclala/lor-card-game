@@ -216,6 +216,8 @@ export const COSMETIC_REGISTRY: CosmeticConfig[] = [
     { type: 'desk', index: 7, name: '极光前哨', source: 'BOTH', price: 5 },
     { type: 'desk', index: 8, name: '甜心赛博', source: 'BOTH', price: 5 },
     { type: 'desk', index: 9, name: '月殿宫廷', source: 'BOTH', price: 5 },
+    // [2026-09-16 1.0.16 茉莉安] 新池「苍穹回响」专属牌桌（图 10.webp 早已就位，此前未注册）
+    { type: 'desk', index: 10, name: '苍穹回响', source: 'BOTH', price: 5 },
 ];
 
 // ==============================================================================
