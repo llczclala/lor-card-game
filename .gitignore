@@ -4,3 +4,14 @@ dist/
 .idea/
 .env
 tsc_result.txt
+
+# ---- 转码暂存（纯中间产物，不入库）----
+# 两者都是「源素材 → webp/ogg/webm」的暂存区，不是游戏运行所需资源。
+# 2026-09-16 退出 git 跟踪（文件仍在磁盘上，只是不再提交）。
+transcode-staging/
+转码暂存/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.DS_Store
+Thumbs.db
