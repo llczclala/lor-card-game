@@ -3,12 +3,12 @@ import type { MutableRefObject } from 'react';
 import type { CardData, GameState, GameRecordCategory, RecordEntity } from '../types';
 import { calculateRoundStart } from '../logic/core';
 import { getCurrentHP } from '../logic/combat';
-import { processEffect } from '../logic/effectProcessor';
+import { processEffect, relayEffectEvents } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
 import { EFFECT_DB } from '../data/effectRegistry';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus'; // [新增] 引入通用打击总线
 import { applyRoundStartKeywords, applyRoundEndKeywords, applyVolatileDiscard, executeTitanPulse, applyChannelOnRoundStart, getPower } from '../logic/keywords'; // [2026-08-27] 高级强化：冻结/设面板（冻结逻辑已收编 rogueTrigger）
-import { accumulateMauxirDamage, isSummonerOrSummon, upgradeAcaciaHand } from '../utils/gameRules'; // [新增] 引入猫汐尔经验收集器
+import { accumulateMauxirDamage, isSummonerOrSummon, upgradeAcaciaHand, assembleBeaconCard, isLeveledUpForSide } from '../utils/gameRules'; // [新增] 引入猫汐尔经验收集器 · [2026-09-19] 信标落场装配器 / 升级标记查询
 import { gameLogger } from '../utils/gameLogger'; // [新增] 战术审计黑匣子
 import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
 import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
@@ -460,6 +460,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
                                     // [2026-07-17 阿尔戈重做] 将 processEffect 返回的事件发射到 eventBus
                                     // 使用延时错开多个伤害飘字，避免碰撞重叠
+                                    relayEffectEvents(res.events); // [2026-09-19] 同上（此前这里只转发了 nexus_damage）
                                     res.events.forEach(event => {
                                         if (event.type === 'nexus_damage') {
                                             const targetId = event.payload.target === 'enemy' ? 'nexus_enemy' : 'nexus_player';
@@ -520,6 +521,68 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
                 scanDeckAuras('player');
                 scanDeckAuras('enemy');
+
+                // =====================================
+                // [2026-09-18 1.0.16 茉莉安] 【库效】每回合开始：敌方备战席缺「獠牙信标」则补一个
+                // ── 与 scanAndApply 的分工：库效扫的是【手牌 + 牌库】（茉莉安不在场也生效），
+                //    scanAndApply 只扫【备战席】上真正在场的单位
+                // ── 判重天然成立：落点已有同名单位 → 跳过，正好就是「若没有则召唤一个」
+                // ── ⚠️ 必须排在 scanAndApply 之前：先补 → 再让在场的茉莉安打伤害（先补后打）
+                // =====================================
+                {
+                    const scanLibrarySummon = (side: 'player' | 'enemy') => {
+                        const hand = side === 'player' ? tempPHand : tempEHand;
+                        const deck = side === 'player' ? stateRef.current.playerDeck : stateRef.current.enemyDeck;
+                        const carrier = [...(hand || []), ...(deck || [])].find(c =>
+                            c.effects?.some(id => EFFECT_DB[id]?.params?.gameStartSummon)
+                        );
+                        if (!carrier) return;
+
+                        const effId = carrier.effects!.find(id => EFFECT_DB[id]?.params?.gameStartSummon)!;
+                        const p = EFFECT_DB[effId].params!;
+                        const summonKey = p.gameStartSummon!;
+
+                        // =====================================
+                        // [2026-09-19 T38 茉莉安] 【库效】每回合补信标 → **仅 Lv2**
+                        // ── 设计目标（程拍板）：信标要从「每回合白给的装置」变成「茉莉安限量发放的资源」。
+                        //    Lv1 的信标只有两个来源：① 对局开始那一个（useGameState 的 game_start 路径）
+                        //    ② 茉莉安入场发放的那一个（含「补兵券」）。
+                        //    ⇒ 本扫描（回合开始）不再管 Lv1，只有升级后才恢复每回合补。
+                        // ── 判据用「分阵营升级标记」而非手牌/牌库实例的 level：
+                        //    她是升级后才在场上变成 Lv2 实例的，牌库副本未必同步。
+                        // =====================================
+                        if (summonKey === 'Marian_Wolf_Tooth_Beacon' && !isLeveledUpForSide(tempGame, side, 'marian')) {
+                            return;
+                        }
+
+                        const landSide: 'player' | 'enemy' = p.gameStartSummonSide === 'opponent'
+                            ? (side === 'player' ? 'enemy' : 'player')
+                            : side;
+                        const bench = landSide === 'player' ? tempPBench : tempEBench;
+
+                        // [2026-09-18 BUG修复] 只算【存活】的信标 ——
+                        //   阵亡单位的尸体要等 ~2.5s 才被清出数组，此前不判存活 →
+                        //   信标被打爆后仍被当成「已有」→ 下个回合永远补不上新的
+                        if (bench.some(c => c.key === summonKey && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying')) return;
+                        if (bench.length >= 6) {
+                            console.log(`[LibrarySummon] 库效补信标：${landSide} 备战席已满，跳过`);
+                            return;
+                        }
+
+                        // [2026-09-19 莉莉子 BUG修复] 必须走公共装配器：此前 createFullCard 直建，
+                        //   绕过了虹彩累计的 beaconMaxHealthMod → 补出来的信标满血落场
+                        //   （程实测：两个虹彩在场，补出的信标剩 15 血，预期 5）。
+                        const unit = assembleBeaconCard(createFullCard(summonKey), tempGame.beaconMaxHealthMod);
+                        if (landSide === 'player') tempPBench = [...tempPBench, unit];
+                        else tempEBench = [...tempEBench, unit];
+                        // [2026-09-19] 库效是**直接往备战席 push**（不走 SUMMON 效果），
+                        //   而召唤音发在 effectProcessor 的 SUMMON 分支里 ⇒ 绕过去就没声。此处补上。
+                        eventBus.emit(GameEvents.SFX_SUMMON);
+                        console.log(`[LibrarySummon] ④库效（每回合开始）：为 ${landSide} 补一个「${summonKey}」`);
+                    };
+                    scanLibrarySummon('player');
+                    scanLibrarySummon('enemy');
+                }
 
                 scanAndApply(tempPBench, 'player');
                 scanAndApply(tempEBench, 'enemy');

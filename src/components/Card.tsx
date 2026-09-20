@@ -14,6 +14,7 @@ import { CARD_CROP_CONFIG } from '../data/cardCropConfig';
 import type { CropConfig } from '../types';
 // [新增] 引入全新的智能卡槽模块
 import { KeywordTray } from './KeywordTray';
+import { getChampionUpgradeProgress } from '../utils/gameRules'; // [2026-09-19] 升级进度唯一口径
 // [新增] 引入事件总线用于触发音效
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于兜底替换{value}
@@ -199,6 +200,7 @@ interface CardProps {
   isChallengerActive?: boolean;
   isChallengedTarget?: boolean;
   canBeChallenged?: boolean;
+  isAttackDeclare?: boolean; // [2026-09-18] 进攻宣言阶段（暴露常驻标记的显示时机）
   isFacingQuickAttack?: boolean;
   isFaceUp?: boolean;
   cardBackUrl?: string;
@@ -350,7 +352,7 @@ export const Card: React.FC<CardProps> = ({
     heroDynamic: heroDynamicProp, // [2026-08-16] 动态卡面显式覆盖（悬停大图等 portal 场景，Context 无法穿透）
     onClick, isBlocker, isSelected, highlightTarget, onViewArt, isEnemyCombatant, attackType = 'clash',
     isSpeaking, isPlayable,
-    onChallengerClick, isChallengerActive, isChallengedTarget, canBeChallenged, isFacingQuickAttack,
+    onChallengerClick, isChallengerActive, isChallengedTarget, canBeChallenged, isAttackDeclare, isFacingQuickAttack,
     isFaceUp = true,
     cardBackUrl,
     cardBackVideoUrl,
@@ -770,6 +772,7 @@ export const Card: React.FC<CardProps> = ({
             } else if (diff > 0) {
                 // 增益：先高光，延迟后跳字
                 setLocalFlash(true);
+                eventBus.emit(GameEvents.SFX_BUFF_APPLY); // [2026-09-19] 金光一亮就响：生命↑/攻击↑/获得词条 三个触发点共用
                 const newId = hitIdRef.current++;
                 setTimeout(() => {
                     setLocalFlash(false); // 高光结束 (0.4秒)
@@ -819,6 +822,7 @@ export const Card: React.FC<CardProps> = ({
                 // [泰坦] 泰坦脉冲的特效由 KeywordEffects 的 animState:'buff' 独立处理，不触发通用的金色高光
                 if (!data.keywords.includes('Titan')) {
                     setLocalFlash(true);
+                eventBus.emit(GameEvents.SFX_BUFF_APPLY); // [2026-09-19] 金光一亮就响：生命↑/攻击↑/获得词条 三个触发点共用
                 }
                 setTimeout(() => {
                     setLocalFlash(false);
@@ -834,25 +838,38 @@ export const Card: React.FC<CardProps> = ({
     // =====================================
     // [新增分离] 3. 检测词条变化 (专为纯词条 BUFF 提供高光)
     // =====================================
-    const prevKeywordsLenRef = useRef(data.keywords?.length || 0);
+    // [2026-09-19] 由「词条数量」改为「词条集合」—— 才能分辨新增的是增益还是减益（暴露）
+    const prevKeywordsSetRef = useRef<Set<string>>(new Set(data.keywords || []));
     const prevKeywordsCardIdRef = useRef(data.id);
 
     useEffect(() => {
         // [身份闸门] 换卡时重置词条基准并跳过，不误播金色高光
         if (prevKeywordsCardIdRef.current !== data.id) {
             prevKeywordsCardIdRef.current = data.id;
-            prevKeywordsLenRef.current = data.keywords?.length || 0;
+            prevKeywordsSetRef.current = new Set(data.keywords || []);
             return;
         }
-        const currentLen = data.keywords?.length || 0;
-        // 如果新词条数量大于上一帧的词条数量，说明获得了新的词条
-        if (currentLen > prevKeywordsLenRef.current) {
+        // =====================================
+        // [2026-09-19 BUG修复] 只认【增益类】新词条 —— 减益标记不算"获得词条"
+        // ── 病根：此前只比词条**数量**，于是【暴露 Exposed】这种减益一贴上去
+        //    也被当成"获得词条" ⇒ 误亮金光 + 误响 BUFF 音效。
+        //    （程实测：打出「松露·蕈影」给敌方贴暴露时会响 BUFF 音）
+        // ── 口径：逐条比对"新增了哪些词条"，命中 DEBUFF_KEYWORDS 的不计入。
+        //    将来若出现其它减益词条，往这个名单里加即可。
+        // =====================================
+        const DEBUFF_KEYWORDS = ['Exposed'];
+        const prevKw = prevKeywordsSetRef.current;
+        const addedBuffKeywords = (data.keywords || []).filter(
+            k => !prevKw.has(k) && !DEBUFF_KEYWORDS.includes(k as string)
+        );
+        if (addedBuffKeywords.length > 0) {
             setLocalFlash(true);
+            eventBus.emit(GameEvents.SFX_BUFF_APPLY); // [2026-09-19] 金光一亮就响：生命↑/攻击↑/获得增益词条 三个触发点共用
             setTimeout(() => {
                 setLocalFlash(false);
             }, 1000); // 与数值高光保持相同的 1 秒持续时间
         }
-        prevKeywordsLenRef.current = currentLen;
+        prevKeywordsSetRef.current = new Set(data.keywords || []);
     }, [data.keywords, data.id]);
 
     const [_showEye, setShowEye] = useState(false);
@@ -1129,6 +1146,7 @@ export const Card: React.FC<CardProps> = ({
                         onChallengerClick={onChallengerClick}
                         isChallengerActive={isChallengerActive}
                         canBeChallenged={canBeChallenged}
+                        isAttackDeclare={isAttackDeclare}
                         isChallengedTarget={isChallengedTarget}
                         highlightTarget={highlightTarget}
                         isBlocking={isBlocking}
@@ -1373,6 +1391,7 @@ export const Card: React.FC<CardProps> = ({
                                         depletedKeywords={data.depletedKeywords}
                                         titanCount={displayTitanCount}
                                         isOnBoard={true}
+                                        side={isPlayerSide ? 'player' : 'enemy'} // [2026-09-19 侦察修复] 状态按阵营取
                                     />
                                 </div>
                             )}
@@ -1391,6 +1410,7 @@ export const Card: React.FC<CardProps> = ({
                                         depletedKeywords={data.depletedKeywords}
                                         titanCount={displayTitanCount}
                                         isOnBoard={true}
+                                        side={isPlayerSide ? 'player' : 'enemy'} // [2026-09-19 侦察修复] 状态按阵营取
                                     />
                                 </div>
                             )}
@@ -1595,6 +1615,7 @@ export const Card: React.FC<CardProps> = ({
                                                 titanCount={displayTitanCount}
                                                 className="scale-110" // 微缩以适配紧凑布局
                                                 isOnBoard={false}
+                                                side={isPlayerSide ? 'player' : 'enemy'} // [2026-09-19 侦察修复]
                                             />
                                         </div>
                                     )}
@@ -1614,6 +1635,7 @@ export const Card: React.FC<CardProps> = ({
                                         titanCount={displayTitanCount}
                                         className="scale-[1.8]"
                                         isOnBoard={true}
+                                        side={isPlayerSide ? 'player' : 'enemy'} // [2026-09-19 侦察修复]
                                     />
                                  </div>
                              )}
@@ -1640,20 +1662,12 @@ export const Card: React.FC<CardProps> = ({
                                                 let currentProgress = 0;
                                                 const target = data.levelUpTarget || 1;
 
-                                                if (data.key === 'fenny') {
-                                                    const pHealth = playerNexusHealth ?? 20;
-                                                    const eHealth = enemyNexusHealth ?? 20;
-                                                    if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
-                                                } else if (data.key === 'lyfe') {
-                                                    currentProgress = data.strikeCount || 0;
-                                                } else if (data.key === 'pupu_specular_soul') {
-                                                    currentProgress = data.customProgress || 0;
-                                                } else if (data.key === 'mauxir_lotus_drive') {
-                                                    currentProgress = data.customProgress || 0;
-                                                } else if (data.key === 'acacia_chrono_echo') {
-                                                    // [2026-07-31] 场下升级：朔望之期打出后 customProgress 标记达成（1/1）
-                                                    currentProgress = data.customProgress || 0;
-                                                }
+                                                // [2026-09-19 BUG修复] 改走公共口径 —— 此前是 if/else 链，
+                                                //   新增天启者漏抄一处那处就恒显示 0（茉莉安三处全漏）
+                                                currentProgress = getChampionUpgradeProgress(data, {
+                                                    player: playerNexusHealth,
+                                                    enemy: enemyNexusHealth,
+                                                });
 
                                                 const displayProgress = Math.min(currentProgress, target);
                                                 const progressPercentage = Math.min((displayProgress / target) * 100, 100);
@@ -1703,6 +1717,7 @@ export const Card: React.FC<CardProps> = ({
                 onChallengerClick={onChallengerClick}
                 isChallengerActive={isChallengerActive}
                 canBeChallenged={canBeChallenged}
+                isAttackDeclare={isAttackDeclare}
                 isChallengedTarget={isChallengedTarget}
                 highlightTarget={highlightTarget}
                 isBlocking={isBlocking}
@@ -2018,17 +2033,11 @@ export const Card: React.FC<CardProps> = ({
                                 // 动作 2：提取进度数据
                                 let currentProgress = 0;
                                 const target = data.levelUpTarget || 1;
-                                if (data.key === 'fenny') {
-                                    const pHealth = playerNexusHealth ?? 20;
-                                    const eHealth = enemyNexusHealth ?? 20;
-                                    if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
-                                } else if (data.key === 'lyfe') {
-                                    currentProgress = data.strikeCount || 0;
-                                } else if (data.key === 'pupu_specular_soul') {
-                                    currentProgress = data.customProgress || 0;
-                                } else if (data.key === 'mauxir_lotus_drive') {
-                                    currentProgress = data.customProgress || 0;
-                                }
+                                // [2026-09-19 BUG修复] 同上，改走公共口径
+                                currentProgress = getChampionUpgradeProgress(data, {
+                                    player: playerNexusHealth,
+                                    enemy: enemyNexusHealth,
+                                });
 
                                 const cappedProgress = Math.min(currentProgress, target);
 

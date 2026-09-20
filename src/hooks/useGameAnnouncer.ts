@@ -4,7 +4,7 @@ import type { AnnouncementData } from '../components/GameAnnouncement';
 
 interface UseGameAnnouncerProps {
     game: GameState;
-    drawCards: (count: number) => void;
+    drawCards: (count: number, reason?: 'mulligan') => void;
     // [新增] 接收换牌阶段状态，用于判断何时开始第一回合
     isMulliganPhase: boolean;
     // ★ 教程模式：跳过初始抽卡
@@ -111,7 +111,7 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase, disableMull
                  // ★ 教程模式跳过初始抽卡，由 tutorialInit 布置战场
                  if (!disableMulligan) {
                      setMsg("第一回合", "ROUND 1", 'round', 1500);
-                     drawCards(4);
+                     drawCards(4); // [2026-09-19] 换牌结束后的补抽＝普通抽卡（换牌开局的发牌音在 GameSession 播）
                      console.log(`[Announcer] 📤 drawCards(4) 已调用`);
                  }
 

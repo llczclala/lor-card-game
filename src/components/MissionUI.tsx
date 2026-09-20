@@ -231,6 +231,19 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                     );
                                                 }
 
+                                                // [2026-09-20 1.0.16 版本福利] 迷宫卡包奖励展示（此前无此类型 → 会掉进"未定资产"兜底）
+                                                if (mission.reward.type === 'pack') {
+                                                    return (
+                                                        <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-yellow-500/30 min-w-[120px]">
+                                                            <Gift size={18} className="text-yellow-400 shrink-0" />
+                                                            <div className="flex flex-col items-start overflow-hidden">
+                                                                <span className="text-[8px] font-bold text-yellow-500/80 tracking-widest uppercase">PACK</span>
+                                                                <span className="font-bold text-xs text-yellow-300">迷宫卡包 ×{mission.reward.amount ?? 1}</span>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
                                                 if (mission.reward.type === 'dataGold') {
                                                     return (
                                                         <div className="flex items-center gap-1.5 bg-black/40 px-3 py-1.5 rounded-lg border border-purple-500/30">

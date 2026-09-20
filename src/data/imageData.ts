@@ -28,6 +28,14 @@ import mauxir_rush_attack from '../image/effect/mauxir_lotus_rush_attack.webp';
 import mauxir_rush_be_attacked from '../image/effect/mauxir_lotus_rush_be_attacked.webp';
 // [新增] 程准备的差异化法术受击特效（BUFF/治疗分类专用）
 import effect_buff_all from '../image/effect/BUFF_ALL.webp';
+import marian_beacon_explode from '../image/effect/marian_beacon_explode.webp'; // [2026-09-19 茉莉安] 信标引爆
+// [2026-09-19 茉莉安] 大招「最终指令」逐击六帧（源：Gemini 雪碧图，切图 + 去噪后入项目）
+import marian_ult_aim from '../image/effect/marian_ult_aim.webp';
+import marian_ult_shockwave from '../image/effect/marian_ult_shockwave.webp';
+import marian_ult_beam from '../image/effect/marian_ult_beam.webp';
+import marian_ult_boom_a from '../image/effect/marian_ult_boom_a.webp';
+import marian_ult_boom_b from '../image/effect/marian_ult_boom_b.webp';
+import marian_ult_afterglow from '../image/effect/marian_ult_afterglow.webp';
 import effect_buff_keyword from '../image/effect/BUFF_Keyword.webp';
 import effect_buff_life from '../image/effect/BUFF_Life.webp';
 import effect_buff_power from '../image/effect/BUFF_Power.webp';
@@ -276,6 +284,10 @@ import cb_11 from '../image/card_back/11.webp';
 import cb_12 from '../image/card_back/12.webp';
 import cb_13 from '../image/card_back/13.webp';
 import cb_mauxir_lotus_drive from '../image/card_back/mauxir_lotus_drive.webp';
+// [2026-09-17] 新池「自往昔归还」专属卡背 ×3
+import cb_17 from '../image/card_back/17.webp';
+import cb_18 from '../image/card_back/18.webp';
+import cb_19 from '../image/card_back/19.webp';
 
 // [新增] 批量引入牌桌 (01-05)
 import desk_01 from '../image/desk/01.webp';
@@ -288,6 +300,12 @@ import desk_07 from '../image/desk/07.webp';
 import desk_08 from '../image/desk/08.webp';
 import desk_09 from '../image/desk/09.webp';
 import desk_10 from '../image/desk/10.webp';
+// [2026-09-17] 新牌桌 ×5（11~15）
+import desk_11 from '../image/desk/11.webp';
+import desk_12 from '../image/desk/12.webp';
+import desk_13 from '../image/desk/13.webp';
+import desk_14 from '../image/desk/14.webp';
+import desk_15 from '../image/desk/15.webp';
 
 
 // ==========================================
@@ -334,6 +352,10 @@ const TOKEN_SKIN_ALIASES: Record<string, string> = {
   'Loka_Phantom_Serpent': 'SacredChants_Squad_Loka',
   // [2026-07-15 达努] 墓穴蜘蛛与班西共用卡面
   'Tomb_Spider': 'Danu_Squad_Banshee',
+  // [2026-09-17 1.0.16 松露小队] 三个衍生物各自的无人机，分别复用三位后勤的原画
+  'Truffle_Drone_NightVision': 'Truffle_Squad_Mushroom_Shadows',
+  'Truffle_Drone_Firefly': 'Truffle_Squad_Elm',
+  'Truffle_Drone_Gardener': 'Truffle_Squad_Iris',
 };
 for (const [tokenKey, parentKey] of Object.entries(TOKEN_SKIN_ALIASES)) {
   if (SKIN_IMAGES[parentKey]) {
@@ -371,6 +393,11 @@ const CARD_KEY_MAP: Record<string, string> = {
   elice: 'Chongye_Squad_Elice',
   // [2026-09-16 1.0.16 茉莉安] 獠牙信标：图片由 units glob 自动登记为 cardKey 'Marian_Wolf_Tooth_Beacon'
   wolf_tooth_beacon: 'Marian_Wolf_Tooth_Beacon',
+  // [2026-09-17 1.0.16 茉莉安] 「松露」小队三后勤
+  // ⚠️ UNIT_IMAGES 只从本表（短 key → cardKey）构建，不登记就取不到图 —— 卡片 imageUrl 用短 key
+  mushroom_shadows: 'Truffle_Squad_Mushroom_Shadows',
+  elm: 'Truffle_Squad_Elm',
+  iris: 'Truffle_Squad_Iris',
   golia: 'Chongye_Squad_Golia',
 
   // --- Illustration Squad: 图征小队 (Mauxir) ---
@@ -446,10 +473,6 @@ const CARD_KEY_MAP: Record<string, string> = {
 };
 
 
-import PGgachaDeskImg from '../image/gacha/PermanentGachaPool/desk.webp';
-import PGgachaBtnImg from '../image/gacha/PermanentGachaPool/button.webp';
-import LgachaDeskImg from '../image/gacha/GachaPool1/desk.webp';
-import LgachaBtnImg from '../image/gacha/GachaPool1/button.webp';
 
 import titan_mutant from '../image/enemy/Titan_Mutant.webp';
 import titan_hybrid from '../image/enemy/Titan_Titan_Hybrid.webp';
@@ -472,16 +495,20 @@ export interface HeroImages {
 
 export const PERSONALIZATION_ASSETS = {
     // [核心修复] 按序排布 7 张卡背。索引 1/2/3 入盲盒，索引 4/5/6 锁死给未来任务系统！
-    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_fenny, cb_lyfe, cb_pupu, cb_05, cb_06, cb_07, cb_08, cb_09, cb_10, cb_11, cb_12, cb_13, cb_mauxir_lotus_drive],
-    desks: [desk_01, desk_02, desk_03, desk_04, desk_05, desk_06, desk_07, desk_08, desk_09, desk_10]
+    // ⚠️ 取图方式是 `cardBacks[registry.index]` / `desks[registry.index]`（见 GachaPoolViewer.tsx:105/108），
+    //    所以 **数组下标 == registry 索引**，第 0 项是「默认款」（registry 里没有 index 0 的条目）。
+    //    2026-09-17 程拍板确认此读法（此前牌桌数组少一项，导致 index 10 取不到图）。
+    cardBacks: [cb_01, cb_02, cb_03, cb_04, cb_fenny, cb_lyfe, cb_pupu, cb_05, cb_06, cb_07, cb_08, cb_09, cb_10, cb_11, cb_12, cb_13, cb_mauxir_lotus_drive, cb_17, cb_18, cb_19],
+    desks: [
+        desk_01, desk_02, desk_03, desk_04, desk_05, desk_06, desk_07, desk_08, desk_09, desk_10,
+        // [2026-09-18] 索引 10~14 = 新牌桌 11~15（原误注册的「自往昔归还」占位格已删除，编号顺延）
+        desk_11, desk_12, desk_13, desk_14, desk_15,
+    ]
 };
 
-export const gacha_icon = {
-    PGgachaDeskImg,   // 永久池 封面
-    PGgachaBtnImg,    // 永久池 按钮
-    LgachaDeskImg,    // 烬中镜火池 封面
-    LgachaBtnImg,     // 烬中镜火池 按钮
-};
+// [2026-09-17 T02b] 原 `gacha_icon` 已移除 —— 池子 UI 图改为随 POOLS 配置走
+// （见 logic/gachaLogic.ts 的 GachaPoolConfig.coverImg / btnImg）。
+// 这样新增池子只需改配置一处，UI 层遍历 POOLS 渲染，不再写死三元表达式。
 
 // 导出英雄图库常量
 export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
@@ -575,6 +602,12 @@ export const SPELL_IMAGES = {
     marian_rush: marian_spell_01,
     marian_ultimate: marian_spell_02,
     marian_support: marian_spell_03,
+
+    // [2026-09-17 1.0.16 茉莉安 · T17~T19 阵营法术]
+    // ⚠️ 正式卡面待程出图（T29），暂用通用占位图 abc.webp
+    marian_faction_mark: abc_spell,
+    marian_faction_bait: abc_spell,
+    marian_faction_silence: abc_spell,
 
     // [2026-08-23 莉莉子] 猫汐尔阵营法术（正式卡面）
     mauxir_zhishui_ningxing: mauxir_zhishui_img,
@@ -752,6 +785,15 @@ export const EFFECT_IMAGES = {
     buffLife: effect_buff_life,       // 仅生命增益
     buffPower: effect_buff_power,     // 仅攻击增益
     healing: effect_healing,          // 治疗回血
+    // [2026-09-19 1.0.16 茉莉安] 獠牙信标引爆：浮现机体 + 紫色球心射出激光
+    marianBeaconExplode: marian_beacon_explode,
+    // [2026-09-19 1.0.16 茉莉安] 大招「最终指令」逐击六帧
+    marianUltAim: marian_ult_aim,            // 瞄准准星
+    marianUltShockwave: marian_ult_shockwave, // 命中冲击环
+    marianUltBeam: marian_ult_beam,           // 命中光柱
+    marianUltBoomA: marian_ult_boom_a,        // 击杀爆炸 A
+    marianUltBoomB: marian_ult_boom_b,        // 击杀爆炸 B
+    marianUltAfterglow: marian_ult_afterglow, // 收尾余波
 };
 
 export const TITAN_IMAGES = {

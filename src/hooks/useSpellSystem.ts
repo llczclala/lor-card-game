@@ -6,6 +6,7 @@ import type { TargetType } from '../data/effectRegistry';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { executeSpellEffect } from '../logic/spells';
 import { applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
+import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { CARD_DB } from '../data/cards';
 import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck, getLeveledUpCard } from '../utils/gameRules';
@@ -15,6 +16,18 @@ import { getFlyingSwordOwner, getDefensiveSide } from '../logic/combat'; // [202
 import { applyPermanentBuff, getEquipTriggers } from '../logic/rogueBattle'; // [2026-08-19] 迷宫强化分发（分发已收编 rogueTrigger）
 import { runRogueTrigger, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
 import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
+
+/**
+ * [2026-09-19 1.0.16 茉莉安] 是否为「连斩类」法术（目前只有「最终指令」）。
+ *
+ * 用途：**跳过通用弹道** —— 连斩的演出由 `UltimateStrikeLayer` 逐击全权负责。
+ * 不跳过的话，玩家指定的**首击**会被那发通用飞弹顶掉（后续续击才是专属特效），
+ * 表现为「第一击是默认特效、后面才是大招特效」。
+ *
+ * ⚠️ 判据取「效果类 == CHAIN_STRIKE」而非写死卡 key：将来复用该类的新卡自动生效。
+ */
+const isChainStrikeSpell = (card: CardData | null | undefined): boolean =>
+    !!card && (card.effects || []).some(id => EFFECT_DB[id]?.class === 'CHAIN_STRIKE');
 
 // ==========================================
 // [时间管理器] 独立封装的纯函数，等待通用打击特效播完
@@ -439,7 +452,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     ? sc.targets.filter((t: any) => t.id !== target.id)
                     : [...sc.targets, targetObj];
                 updateSpellCasting({ ...sc, targets: newTargets });
-                eventBus.emit(GameEvents.SFX_SELECT_UNIT);
+                // [2026-09-19] 施法选目标 → 专用事件（专属音效只服务施法，不再和通用选单位共用）
+                eventBus.emit(GameEvents.SFX_SPELL_TARGET);
                 return;
             }
         }
@@ -504,19 +518,34 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
 
             const newTargets = [...selectedTargets, targetObj];
 
-            // 检查是否选完了
-            if (currentStepIndex + 1 >= effect.targetRequirements.length) {
-                // [核心修复 BUG 1]：完成目标选择后，绝不主动销毁前台 UI 连线！
-                // 将新目标存入状态以维持连线渲染，并向上层大脑汇报。由底层（useGameState）控制何时真正 cancel
-                setSelectedTargets(newTargets);
-                // [2026-08-26 莉莉子] 法术目标全部选完：通知教程控制器（替代"打出瞬间"的 play_card 判定，精确到施法操作完成）
-                eventBus.emit(GameEvents.TUTORIAL_SPELL_TARGETS_SELECTED, { card: castingCard, owner });
-                onComplete(castingCard, newTargets);
-            } else {
-                // 还没完 -> 存入并进下一步
-                setSelectedTargets(newTargets);
-                setCurrentStepIndex(prev => prev + 1);
+            // =====================================
+            // [2026-09-19 莉莉子 BUG修复] 多目标需求（count > 1）必须点满 count 个才推进
+            // ── 病根：此前按「需求【条目】数」推进 —— 一个 `{ type:'ENEMY_UNIT', count:2 }`
+            //    点第一下就满足 `currentStepIndex+1 >= targetRequirements.length` 直接收工。
+            //    `count` 此前**只被 AI 自动选目标路径**（pickAITargets）消费，玩家手动选永远只能选到 1 个
+            //    ⇒「钢羽傍身 / 标记射击」描述写"选择两个敌方单位"，实战只能选一个。
+            // ── 口径：count<=0 视作 1（保住 ALL_ALLIES 这类"点一下即可"的旧行为，零回归）
+            // ── 本步骤已选几个 = 总已选数 - 前面各步骤需求之和
+            // =====================================
+            const countOf = (r: { count?: number }) => (r.count && r.count > 0 ? r.count : 1);
+            const priorNeed = effect.targetRequirements
+                .slice(0, currentStepIndex)
+                .reduce((n, r) => n + countOf(r), 0);
+            const needForCurrent = countOf(effect.targetRequirements[currentStepIndex]);
+            const currentReqSatisfied = newTargets.length - priorNeed >= needForCurrent;
+
+            setSelectedTargets(newTargets); // [核心修复 BUG 1] 先存状态以维持前台连线渲染，绝不提前销毁
+
+            if (currentReqSatisfied) {
+                if (currentStepIndex + 1 >= effect.targetRequirements.length) {
+                    // [2026-08-26 莉莉子] 法术目标全部选完：通知教程控制器（精确到施法操作完成）
+                    eventBus.emit(GameEvents.TUTORIAL_SPELL_TARGETS_SELECTED, { card: castingCard, owner });
+                    onComplete(castingCard, newTargets);
+                } else {
+                    setCurrentStepIndex(prev => prev + 1); // 本步骤选满 → 进下一步
+                }
             }
+            // 未选满：留在本步骤，让玩家继续点（连线保持）
         } else {
             // 点了不合法的目标 -> 可选：播放错误音效或提示
             console.log("Invalid target");
@@ -625,6 +654,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     };
 
     const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
+        // [2026-09-19] 确定打出法术音效 —— 极速法术紧随「打出」；快速/慢速在玩家点「确定」时走到这里
+        eventBus.emit(GameEvents.SFX_SPELL_CONFIRM);
         // [2026-07-20 对局记录修复] 使用 setTimeout 将事件推入宏任务队列，
         // 确保它在 commitSpell 后续所有的 setGame(cleanSnapshot) 同步状态覆盖完成后再执行
         setTimeout(() => {
@@ -802,13 +833,18 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             const burstBeforeMap = snapshotAllFieldUnits();
 
             // [核心升级] 极速法术弹道接入通用管线！
-            eventBus.emit(StrikeEvents.COMMAND, {
-                sourceId: card.id,
-                spellKey: card.key,
-                bullets: (targets || []).map(t => ({ targetId: t.id, damage: 0, barrierPopped: false })),
-                interval: 0
-            });
-            await waitForStrikeComplete();
+            // [2026-09-19 1.0.16 茉莉安] 连斩类法术（最终指令）**跳过通用弹道** ——
+            //   它的逐击演出由 UltimateStrikeLayer 全权负责；不跳过的话，玩家指定的**首击**
+            //   会被这发"通用飞弹"顶掉（后续续击才是专属特效）⇒ "第一击是默认特效"。
+            if (!isChainStrikeSpell(card)) {
+                eventBus.emit(StrikeEvents.COMMAND, {
+                    sourceId: card.id,
+                    spellKey: card.key,
+                    bullets: (targets || []).map(t => ({ targetId: t.id, damage: 0, barrierPopped: false })),
+                    interval: 0
+                });
+                await waitForStrikeComplete();
+            }
 
             executeSpellEffect(card.key, owner, targets, {
                 game: stateRef.current.game,
@@ -1049,7 +1085,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 const autoTargets = findAITargetsForEffect(effectDef!, choiceOwner, stateRef.current);
                 if (autoTargets.length > 0) {
                     setGame(prev => ({ ...prev, activeCard: transformed }));
-                    commitSpell(transformed, 'enemy', autoTargets, originalPhase);
+                    // [2026-09-19 方案C] 与手牌施法同源：AI 抉择法术也先走三拍演出
+                    void runEnemySpellCastBeats(autoTargets, wait).then(() =>
+                        commitSpell(transformed, 'enemy', autoTargets, originalPhase)
+                    );
                 } else {
                     console.warn(`[AI抉择] 找不到 ${transformed.name} 的合法目标，取消施法`);
                     // 直接清理状态，不调用 cancelChoice（后者会错误地归还手牌到玩家侧）
@@ -1296,13 +1335,16 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
 
             // [核心升级] 栈内法术弹道接入通用管线！
             // [核心修复] 放宽限制！即使没有具体目标，也必须发出施法指令以触发屏幕中央的法阵特效！
-            eventBus.emit(StrikeEvents.COMMAND, {
-                sourceId: spell.card.id,
-                spellKey: spell.card.key,
-                bullets: (spell.targets || []).map(t => ({ targetId: t.id, damage: 0, barrierPopped: false })),
-                interval: 0 // 法术默认齐射
-            });
-            await waitForStrikeComplete();
+            // [2026-09-19 1.0.16 茉莉安] 连斩类法术（最终指令）同样跳过 —— 见上方说明（首击会被顶掉）
+            if (!isChainStrikeSpell(spell.card)) {
+                eventBus.emit(StrikeEvents.COMMAND, {
+                    sourceId: spell.card.id,
+                    spellKey: spell.card.key,
+                    bullets: (spell.targets || []).map(t => ({ targetId: t.id, damage: 0, barrierPopped: false })),
+                    interval: 0 // 法术默认齐射
+                });
+                await waitForStrikeComplete();
+            }
 
             executeSpellEffect(spell.card.key, spell.owner, spell.targets, {
                 game: stateRef.current.game, setGame,
@@ -1399,7 +1441,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     return {
         // 原有 UI 目标选择层
         isCasting: !!castingCard,
-        isSelectionComplete: !!castingCard && selectedTargets.length >= (getEffectDef(castingCard)?.targetRequirements.length || 0),
+        // [2026-09-19 莉莉子 BUG修复] 判满口径：所有需求的 count【求和】，不是需求条目数
+        //   与点击推进逻辑（handleTargetSelect）同口径，否则 count:2 会在选到 1 个时就被判"已完成"
+        isSelectionComplete: !!castingCard && selectedTargets.length >= (getEffectDef(castingCard)?.targetRequirements || [])
+            .reduce((n, r) => n + (r.count && r.count > 0 ? r.count : 1), 0),
         activeCard: castingCard,
         currentRequirement, // [2026-08-05 莉莉子] 暴露当前目标需求（SPELL_ON_STACK 判断用）
         selectedTargets,

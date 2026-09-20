@@ -205,6 +205,12 @@ export const COSMETIC_REGISTRY: CosmeticConfig[] = [
     { type: 'cardBack', index: 15, name: '交给我吧', source: 'BOTH', price: 5 },
     { type: 'cardBack', index: 16, name: '莲心千瓣', source: 'MISSION', missionId: 'mission_cb_mauxir_lotus_drive' },
 
+    // [2026-09-17 1.0.16] 新池「自往昔归还」专属卡背 ×3（程出图，索引从 16 之后顺延）
+    // ⚠️ 名字为莉莉子拟稿，程可随时改（改这里一处即可）
+    { type: 'cardBack', index: 17, name: '时之重奏', source: 'BOTH', price: 5 },
+    { type: 'cardBack', index: 18, name: '双生回响', source: 'BOTH', price: 5 },
+    { type: 'cardBack', index: 19, name: '茉莉安 霄鹰', source: 'BOTH', price: 5 },
+
     // 牌桌 (Desks)
     { type: 'desk', index: 1, name: '富丽堂皇', source: 'BOTH', price: 5 },
     { type: 'desk', index: 2, name: '零区深地', source: 'BOTH', price: 5 },
@@ -216,8 +222,15 @@ export const COSMETIC_REGISTRY: CosmeticConfig[] = [
     { type: 'desk', index: 7, name: '极光前哨', source: 'BOTH', price: 5 },
     { type: 'desk', index: 8, name: '甜心赛博', source: 'BOTH', price: 5 },
     { type: 'desk', index: 9, name: '月殿宫廷', source: 'BOTH', price: 5 },
-    // [2026-09-16 1.0.16 茉莉安] 新池「苍穹回响」专属牌桌（图 10.webp 早已就位，此前未注册）
-    { type: 'desk', index: 10, name: '苍穹回响', source: 'BOTH', price: 5 },
+    // [2026-09-18] 原 index 10「自往昔归还」已删除 —— 9-16 误注册（把已被占用的 desk/10.webp
+    //   当成了闲置新图，实际那是 index 9「月殿宫廷」的图），该牌桌从无专属素材。
+    //   下方 5 张新牌桌顺延重编号为 10~14，与 desks 数组下标重新对齐。
+    // [2026-09-17 1.0.16] 新牌桌 ×5（程出图；名字为莉莉子拟稿，程可随时改）
+    { type: 'desk', index: 10, name: '潮汐白砂', source: 'BOTH', price: 5 },
+    { type: 'desk', index: 11, name: '指挥中枢', source: 'BOTH', price: 5 },
+    { type: 'desk', index: 12, name: '枫庭秋色', source: 'BOTH', price: 5 },
+    { type: 'desk', index: 13, name: '星轨观象', source: 'BOTH', price: 5 },
+    { type: 'desk', index: 14, name: '残垣废土', source: 'BOTH', price: 5 },
 ];
 
 // ==============================================================================

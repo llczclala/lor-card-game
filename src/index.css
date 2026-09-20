@@ -795,3 +795,111 @@ body[data-game-cursor="ATTACK"] * {
 .rogue-map-boot-anim {
   animation: rogue-map-boot-flash 0.6s ease-out 0.02s forwards;
 }
+
+/* =================================================================
+   [2026-09-19 1.0.16 茉莉安] 獠牙信标 · 引爆特效
+   ── 贴图浮现：缩放 + 淡入，最后淡出消散
+   ── 激光：stroke-dashoffset 从整段长度收 0 ⇒ 呈现「从炮口射向目标」的生长感
+   ── 两条动画的 delay 由组件内联覆盖（消散时刻取决于光束数量，是动态的）
+   ================================================================= */
+/* [2026-09-19 方案 F] 炸出式入场：过冲回弹取代缓慢淡入（150ms 与组件 APPEAR_MS 对齐） */
+@keyframes beacon-explode-appear {
+  0%   { opacity: 0; transform: scale(0.55); }
+  55%  { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes beacon-explode-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.beacon-explode-img {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: beacon-explode-appear 150ms cubic-bezier(.2,.9,.3,1) both,
+             beacon-explode-fade 320ms ease-in both;
+}
+
+@keyframes beacon-beam-fire {
+  from { stroke-dashoffset: var(--beam-len); opacity: .25; }
+  to   { stroke-dashoffset: 0; opacity: 1; }
+}
+.beacon-beam {
+  /* 单束生长 120ms（与组件 BEAM_GROW_MS 对齐）—— 让激光尽快飞到命中点 */
+  animation: beacon-beam-fire 120ms ease-out both;
+}
+
+/* [2026-09-19 方案 F] 命中反馈：白心爆闪 + 光环扩散（240ms 与组件 IMPACT_MS 对齐） */
+@keyframes beacon-impact-burst {
+  0%   { opacity: 1; transform: scale(0.35); }
+  60%  { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+.beacon-impact {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: beacon-impact-burst 240ms ease-out both;
+}
+
+/* =================================================================
+   [2026-09-19 1.0.16 茉莉安] 大招「最终指令」· 逐击四类帧
+   ── 时长与 UltimateStrikeLayer 内的常量一一对应（改一处记得改另一处）
+   ================================================================= */
+@keyframes ult-aim-in {
+  0%   { opacity: 0; transform: scale(1.35); }
+  45%  { opacity: 1; transform: scale(0.95); }
+  70%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+.ult-aim { transform-box: fill-box; transform-origin: center; animation: ult-aim-in 180ms ease-out both; }
+
+@keyframes ult-impact-pop {
+  0%   { opacity: 0; transform: scale(0.5); }
+  35%  { opacity: 1; transform: scale(1.06); }
+  70%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.02); }
+}
+.ult-impact { transform-box: fill-box; transform-origin: center; animation: ult-impact-pop 400ms ease-out both; }
+
+@keyframes ult-boom-pop {
+  0%   { opacity: 0; transform: scale(0.35); }
+  30%  { opacity: 1; transform: scale(1.15); }
+  65%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.1); }
+}
+.ult-boom { transform-box: fill-box; transform-origin: center; animation: ult-boom-pop 400ms ease-out both; }
+
+/* [2026-09-19] 余波（坑洞）拆成「淡入 + 淡出」两段 —— 中间的停留时长由组件**内联 animation-delay** 控，
+   想停留多久都行；这正是程要的"用最后一帧填充任意时长，最后淡出消失" */
+@keyframes ult-afterglow-appear {
+  0%   { opacity: 0; transform: scale(0.82); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes ult-afterglow-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.ult-afterglow {
+  transform-box: fill-box; transform-origin: center;
+  animation: ult-afterglow-appear 180ms ease-out both,
+             ult-afterglow-fade 320ms ease-in both;
+}
+
+/* =================================================================
+   [2026-09-19 莉莉子] 局内暂停 · CSS 动效全局冻结
+   ── 由 GameSession 对局根容器在 ESC 暂停时挂 .game-paused（见 GameSession 的全局冻结收口）
+   ── 只冻结 @keyframes 动画（animation），**不碰 transition** ⇒ 暂停层按钮的悬停/点击反馈照常
+   ── 视频（动态牌桌 / 动态卡背）CSS 管不了，由 GameSession 的巡检按 pause()/play() 处理
+   ================================================================= */
+.game-paused *,
+.game-paused *::before,
+.game-paused *::after {
+  animation-play-state: paused !important;
+}
+
+/* 例外：暂停层自身保持存活 —— 以后给它加动画也不会被自己冻住 */
+.game-paused .pause-overlay,
+.game-paused .pause-overlay *,
+.game-paused .pause-overlay *::before,
+.game-paused .pause-overlay *::after {
+  animation-play-state: running !important;
+}

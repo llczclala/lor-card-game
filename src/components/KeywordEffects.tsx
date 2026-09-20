@@ -14,6 +14,7 @@ interface KeywordEffectsProps {
     onChallengerClick?: () => void;
     isChallengerActive?: boolean;
     canBeChallenged?: boolean;
+    isAttackDeclare?: boolean; // [2026-09-18] 是否处于「进攻宣言阶段」—— 暴露常驻标记的显示时机
     isChallengedTarget?: boolean;
     highlightTarget?: boolean;
     isBlocking?: boolean;
@@ -28,6 +29,7 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
     onChallengerClick,
     isChallengerActive,
     canBeChallenged,
+    isAttackDeclare,
     isChallengedTarget,
     highlightTarget,
     isBlocking = false,
@@ -38,6 +40,32 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
     const isCombat = location === 'combat';
     const isBench = location === 'bench' || location === 'enemy_bench';
 
+    // ==========================================
+    // [2026-09-18 1.0.16 T12] 被挑战高亮：视觉分流
+    //   挑战者 = 金橙（05 完整准星）/ 暴露 = 紫（27 碎裂准星）
+    //   两者本就是一对镜像图标，同场必须一眼可分（此前两条来源共用挑战者的橙色视觉）
+    //   判定看【被拉的那个单位自己】是否带【暴露】：带 → 紫，否则 → 金橙（挑战者拉的）
+    // ==========================================
+    const isExposedCard = (data.keywords || []).includes('Exposed'); // 这张卡自己带【暴露】
+    const challengeHlIcon = isExposedCard ? KEYWORD_DB['Exposed']?.icon : KEYWORD_DB['Challenger']?.icon;
+    // 闪烁高亮（候选期）
+    const challengeHlBorder = isExposedCard
+        ? 'border-purple-500 shadow-[0_0_30px_#a855f7]'
+        : 'border-orange-500 shadow-[0_0_30px_orange]';
+    const challengeHlGlow = isExposedCard
+        ? 'drop-shadow-[0_0_15px_#a855f7]'
+        : 'drop-shadow-[0_0_15px_#f97316]';
+    const challengeHlCenterGlow = isExposedCard
+        ? 'drop-shadow-[0_0_30px_#c084fc]'
+        : 'drop-shadow-[0_0_30px_#ffffff]';
+    // 死锁态（已确定被拉，结算前压迫）
+    const challengeHlLockBorder = isExposedCard
+        ? 'border-purple-600 shadow-[0_0_30px_rgba(147,51,234,0.8)]'
+        : 'border-orange-600 shadow-[0_0_30px_rgba(234,88,12,0.8)]';
+    const challengeHlLockGlow = isExposedCard
+        ? 'drop-shadow-[0_0_20px_#a855f7]'
+        : 'drop-shadow-[0_0_20px_red]';
+
     // [瞬逝保险丝] 手牌 Volatile 卡挂载计数（供全局火焰档位统计，敌我共用）
     const isHandVolatile = location === 'hand' && data.keywords.includes('Volatile');
     useEffect(() => {
@@ -47,7 +75,9 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
     }, [isHandVolatile]);
 
     // [侦察] 订阅攻击宣言期侦察状态（active=全侦察有效 / invalid=混入无效 / null=非首次即已触发过）
-    const scoutState = useSyncExternalStore(subscribeScoutState, getScoutState);
+    // [2026-09-19 BUG修复] 按【本卡所属阵营】取状态 —— 此前取的是全局单值，敌人的侦察单位会被误判
+    const scoutSide: 'player' | 'enemy' = isEnemyCombatant ? 'enemy' : 'player';
+    const scoutState = useSyncExternalStore(subscribeScoutState, () => getScoutState(scoutSide));
     // [侦察] 仅战斗区显示：侦察单位进入战斗区进攻时，active=有效（翠绿旋转），invalid/null=无效（灰白停转）
     const isScoutAttacker = isCombat && !isBlocker && data.keywords.includes('Scout');
     const isScoutActive = isScoutAttacker && scoutState === 'active';
@@ -922,30 +952,50 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                 </div>
             )}
 
-            {/* 7. Challenger Target FX (猎物惊恐闪烁状态 - 无遮罩版循环残影) */}
-            {canBeChallenged && KEYWORD_DB['Challenger'] && (
+            {/* 6.5【暴露】常驻可见标记 —— 敌方备战席上带【暴露】的单位
+                [2026-09-18] 暴露是「防守方的公开漏洞」，应当一眼可见：
+                卡面挂暴露图标 + 外圈紫色发光轮廓。
+                显示时机经程拍板收窄为「**进攻宣言阶段**」——此前只有选中挑战者后才闪，太隐蔽。 */}
+            {isAttackDeclare && location === 'enemy_bench' && isExposedCard && (
+                <div className="absolute inset-0 z-40 pointer-events-none">
+                    {/* 外圈发光轮廓 */}
+                    <div className="absolute inset-0 border-4 border-purple-500 rounded-xl box-border shadow-[0_0_28px_#a855f7,inset_0_0_22px_rgba(168,85,247,0.45)]"></div>
+                    {/* 卡面中央图标 */}
+                    {KEYWORD_DB['Exposed'] && (
+                        <img
+                            src={KEYWORD_DB['Exposed'].icon}
+                            alt="暴露"
+                            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 h-20 object-contain drop-shadow-[0_0_14px_#a855f7]"
+                        />
+                    )}
+                </div>
+            )}
+
+            {/* 7. Challenge Target FX (被挑战者惊恐闪烁状态 - 无遮罩版循环残影)
+                [2026-09-18 T12] 图标/配色按来源分流：挑战者=金橙(05) / 暴露=紫(27) */}
+            {canBeChallenged && challengeHlIcon && (
                 <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden rounded-xl">
-                    <div className="absolute inset-0 border-4 border-orange-500 rounded-xl z-50 shadow-[0_0_30px_orange] box-border opacity-80"></div>
+                    <div className={`absolute inset-0 border-4 rounded-xl z-50 box-border opacity-80 ${challengeHlBorder}`}></div>
                     <div className="absolute inset-0">
                         {/* 完美错开的 1.25秒 循环时间轴，实现连续的位移扫描闪现 */}
-                        <motion.img src={KEYWORD_DB['Challenger'].icon} className="absolute w-20 h-20 object-contain drop-shadow-[0_0_15px_#f97316]"
+                        <motion.img src={challengeHlIcon} className={`absolute w-20 h-20 object-contain ${challengeHlGlow}`}
                             style={{ top: "20%", left: "20%", x: "-50%", y: "-50%", scale: 0.5 }}
                             animate={{ opacity: [0, 1, 0, 0] }} transition={{ duration: 1.25, times: [0, 0.1, 0.2, 1], repeat: Infinity, ease: "linear" }} />
 
-                        <motion.img src={KEYWORD_DB['Challenger'].icon} className="absolute w-20 h-20 object-contain drop-shadow-[0_0_15px_#f97316]"
+                        <motion.img src={challengeHlIcon} className={`absolute w-20 h-20 object-contain ${challengeHlGlow}`}
                             style={{ top: "80%", left: "80%", x: "-50%", y: "-50%", scale: 0.8 }}
                             animate={{ opacity: [0, 0, 1, 0, 0] }} transition={{ duration: 1.25, times: [0, 0.15, 0.25, 0.35, 1], repeat: Infinity, ease: "linear" }} />
 
-                        <motion.img src={KEYWORD_DB['Challenger'].icon} className="absolute w-20 h-20 object-contain drop-shadow-[0_0_15px_#f97316]"
+                        <motion.img src={challengeHlIcon} className={`absolute w-20 h-20 object-contain ${challengeHlGlow}`}
                             style={{ top: "80%", left: "20%", x: "-50%", y: "-50%", scale: 1.2 }}
                             animate={{ opacity: [0, 0, 1, 0, 0] }} transition={{ duration: 1.25, times: [0, 0.3, 0.4, 0.5, 1], repeat: Infinity, ease: "linear" }} />
 
-                        <motion.img src={KEYWORD_DB['Challenger'].icon} className="absolute w-20 h-20 object-contain drop-shadow-[0_0_15px_#f97316]"
+                        <motion.img src={challengeHlIcon} className={`absolute w-20 h-20 object-contain ${challengeHlGlow}`}
                             style={{ top: "20%", left: "80%", x: "-50%", y: "-50%", scale: 1.8 }}
                             animate={{ opacity: [0, 0, 1, 0, 0] }} transition={{ duration: 1.25, times: [0, 0.45, 0.55, 0.65, 1], repeat: Infinity, ease: "linear" }} />
 
                         {/* 第 5 闪：正中心最终锁定放大 */}
-                        <motion.img src={KEYWORD_DB['Challenger'].icon} className="absolute w-20 h-20 object-contain drop-shadow-[0_0_30px_#ffffff]"
+                        <motion.img src={challengeHlIcon} className={`absolute w-20 h-20 object-contain ${challengeHlCenterGlow}`}
                             style={{ top: "50%", left: "50%", x: "-50%", y: "-50%" }}
                             animate={{ scale: [3.0, 3.0, 4.0, 4.0], opacity: [0, 0, 1, 0] }} transition={{ duration: 1.25, times: [0, 0.6, 0.75, 1], repeat: Infinity, ease: "easeOut" }} />
                     </div>
@@ -1199,22 +1249,30 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                 </div>
             )}
 
-            {/* 8. Challenger Target Locked (死锁状态) - 结算前压迫，结算时卸除 */}
+            {/* 8. Challenge Target Locked (死锁状态) - 结算前压迫，结算时卸除
+                [2026-09-18 T12] 同样按来源分流：挑战者=橙 / 暴露=紫 */}
             {/* [核心精髓] 当进入动画对冲状态 (attacking 或 dying) 时，瞬间撤除所有锁定UI，还卡面以绝对的整洁！ */}
             {isChallengedTarget && data.animState !== 'attacking' && data.animState !== 'dying' && (
                 <div className="absolute inset-0 z-40 pointer-events-none">
-                    <div className="absolute inset-0 border-4 border-orange-600 rounded-2xl shadow-[0_0_30px_rgba(234,88,12,0.8)] box-border"></div>
+                    <div className={`absolute inset-0 border-4 rounded-2xl box-border ${challengeHlLockBorder}`}></div>
                     <svg className="absolute inset-0 w-full h-full overflow-visible">
                          <rect x="2" y="2" width="calc(100% - 4px)" height="calc(100% - 4px)" rx={borderRadius} ry={borderRadius} fill="none" stroke="white" strokeWidth="3" strokeDasharray="50% 150%" className="animate-beam-move opacity-80 filter drop-shadow-[0_0_5px_white]" />
                     </svg>
-                    {/* 中心缓慢呼吸的死兆星锁定图标 */}
-                    <motion.div
-                        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-                        animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
-                        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                    >
-                        {KEYWORD_DB['Challenger'] && <img src={KEYWORD_DB['Challenger'].icon} className="w-20 h-20 object-contain drop-shadow-[0_0_20px_red]" />}
-                    </motion.div>
+                    {/* 中心缓慢呼吸的死兆星锁定图标
+                        [2026-09-18 BUG修复] 居中位移必须交给**纯 CSS 外层**承担 ——
+                        此前把 `-translate-x-1/2 -translate-y-1/2` 写在 motion.div 的 className 上，
+                        而它的 animate 里同时输出了 scale；framer-motion 一旦接管 transform，
+                        就会**覆盖掉这两个 translate** → 图标左上角对齐容器中心 → 视觉上偏到右下
+                        （程实测截图：落在生命值数字的左上角）。
+                        修法：外层普通 div 负责居中，内层 motion.div 只管呼吸动画。 */}
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+                        <motion.div
+                            animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
+                            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                        >
+                            {challengeHlIcon && <img src={challengeHlIcon} className={`w-20 h-20 object-contain ${challengeHlLockGlow}`} />}
+                        </motion.div>
+                    </div>
                 </div>
             )}
             {/* [泰坦] 脉冲特效 — 2秒完整时序：渐变→遮罩→波纹（可出界）→爆闪→飘字 */}
@@ -1478,15 +1536,24 @@ export const VolatileFlame: React.FC<{ radius?: number }> = ({ radius: _radius =
 // [侦察] 攻击宣言期侦察状态 store
 // 'active' = 首次进攻全侦察（有效）/ 'invalid' = 混入非侦察 / null = 无侦察或非首次
 // GameSession 观察战斗区广播 → KeywordEffects / KeywordTray 订阅
+//
+// [2026-09-19 BUG修复] 改为【按阵营分开记账】——此前是单值全局：
+//   GameSession 的观察者只统计 owner==='player' 的进攻者，敌人用侦察进攻时算出的永远是 null，
+//   而消费端判据是 `scoutState !== 'active'` ⇒ 敌人的侦察单位恒被判为「无效」→ 永远播灰色特效。
+//   纯视觉问题（逻辑层给进攻标识是正确的），根因就是这个单值 store。
 // ==========================================
-let scoutState: 'active' | 'invalid' | null = null;
+export type ScoutSide = 'player' | 'enemy';
+export type ScoutState = 'active' | 'invalid' | null;
+let scoutStates: Record<ScoutSide, ScoutState> = { player: null, enemy: null };
 const scoutListeners = new Set<() => void>();
-export const notifyScoutState = (s: 'active' | 'invalid' | null) => {
-    scoutState = s;
+export const notifyScoutState = (side: ScoutSide, s: ScoutState) => {
+    if (scoutStates[side] === s) return; // 值没变就不惊动订阅者
+    scoutStates = { ...scoutStates, [side]: s };
     scoutListeners.forEach(l => l());
 };
 export const subscribeScoutState = (cb: () => void) => {
     scoutListeners.add(cb);
     return () => { scoutListeners.delete(cb); };
 };
-export const getScoutState = () => scoutState;
+/** ⚠️ 返回的是原始值（字符串）—— useSyncExternalStore 要求快照引用稳定，切勿在此返回新对象 */
+export const getScoutState = (side: ScoutSide): ScoutState => scoutStates[side];

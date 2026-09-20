@@ -831,6 +831,13 @@ export const useUserSystem = () => {
         else if (reward.type === 'armament' && reward.armamentId) {
             grantArmament(reward.armamentId, reward.amount ?? 1); // [2026-09-07] 支持一次性发多份（版本福利 6 个消耗品）
         }
+        // [2026-09-20 1.0.16 版本福利] 迷宫卡包奖励：进「待打开卡包」队列，打开时才随机武装
+        //   ⚠️ 刻意不置 needsSettingsSave —— grantPendingPack 内部是**函数式**累积，
+        //      此处若再塞一个基于闭包 settings 的值更新，React 批处理时会把它整个覆盖掉
+        //      （与 openPack 在 2026-09-15 修的是同一个坑）
+        else if (reward.type === 'pack' && reward.amount) {
+            for (let i = 0; i < reward.amount; i++) grantPendingPack();
+        }
 
         if (needsCollectionSave) {
             setCollection(newCollection);
@@ -840,7 +847,7 @@ export const useUserSystem = () => {
             setSettings(newSettings);
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
         }
-    }, [collection, settings, userId, grantAnalystExp, grantArmament]);
+    }, [collection, settings, userId, grantAnalystExp, grantArmament, grantPendingPack]);
 
 
     // 暴露给全局以便调试

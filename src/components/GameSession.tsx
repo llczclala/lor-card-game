@@ -7,9 +7,12 @@ import { RogueBuffFlash } from './roguelike/RogueBuffFlash'; // [2026-08-11] 迷
 import { RogueEnhancementPanel } from './roguelike/RogueEnhancementPanel'; // [2026-08-28] 战斗内敌我强化总览
 import { FullArtOverlay, LevelUpOverlay, GameOverScreen } from './Overlays';
 import { PauseOverlay } from './PauseOverlay'; // [2026-08-30 莉莉子] 局内暂停层
+import gsap from 'gsap'; // [2026-09-19 莉莉子] 局内暂停：冻结 GSAP 全局时间轴（法术弹道等 JS 驱动动效）
+import { BeaconExplosionLayer } from './BeaconExplosionLayer'; // [2026-09-19 1.0.16 茉莉安] 信标引爆特效层
+import { UltimateStrikeLayer } from './UltimateStrikeLayer'; // [2026-09-19 1.0.16 茉莉安] 大招逐击演出层
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
-import { evaluateChoiceCondition, canAffordCard } from '../utils/gameRules';
+import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason } from '../utils/gameRules';
 import { Battlefield } from './Battlefield';
 import { CARD_DB, createCard } from '../data/cards';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
@@ -176,7 +179,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     disableAI = false, // ★ 禁用AI自动行动
     aiPersonality, // [2026-08-06] AI 流派性格
     aiDifficulty, // [2026-08-06] AI 难度档位
-    turnTimer = 99, // [新增] 倒计时秒数，默认 99，教程模式 999
+    turnTimer = 30, // [新增] 倒计时秒数，默认 99，教程模式 999
     tutorialPauseUpgradeStart = false, // [2026-08-26 莉莉子] 教程开局初始暂停升级
     onOpenSettings, // [2026-08-30 莉莉子] 暂停层齿轮 → 打开设置
     onQuitGame, // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏
@@ -206,6 +209,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // 对局中按 ESC 暂停/恢复（capture 阶段拦截，抢在 App 全局 ESC 打开设置菜单之前）
     // ==========================================
     const [isPaused, setIsPaused] = useState(false);
+    const gameRootRef = useRef<HTMLDivElement>(null); // [2026-09-19] 对局根容器：暂停时冻结其内部一切动效
     useEffect(() => {
         const handlePauseKey = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') return;
@@ -218,6 +222,55 @@ export const GameSession: React.FC<GameSessionProps> = ({
         window.addEventListener('keydown', handlePauseKey, true); // capture 阶段先于 App 的 bubble 监听
         return () => window.removeEventListener('keydown', handlePauseKey, true);
     }, [game.gameResult, isSettingsOpen]);
+
+    // ==========================================
+    // [2026-09-19 莉莉子] 局内暂停 · 全局冻结收口（视觉 / 音频 / 动效一次管住）
+    // ── 病根：暂停此前只是本组件的局部 state，只有 AI / 回合倒计时 / 按钮三处消费它；
+    //    音频层、媒体层、动画层根本不知道「暂停」这回事
+    //    ⇒ BGM 照播、动态牌桌/背景照动、动态卡背照动、CSS 光效照闪。
+    // ── 本 effect 是「暂停」的唯一收口，四件事一次做齐：
+    //    ① CSS 动画：给根容器挂 .game-paused（规则见 index.css，只冻 @keyframes，不影响 transition）
+    //    ② 视频动效：暂停根容器内所有 <video>（动态牌桌 / 动态卡背 / 英灵立绘…）
+    //       ── 为什么是「巡检」而不是「暂停瞬间扫一遍」：暂停期间仍可能新挂载视频
+    //          （最典型：换牌 UI 的 1.5s 延时到点，卡片带着动态卡背弹出来）→ 它们会自己 play()。
+    //          故暂停期间每 400ms 补扫一次，新冒头的视频同样被按住。
+    //       ── 标记协议：被本机制按住的视频打 dataset.gp='1'；恢复时只唤醒带此标记的，
+    //          **不碰本来就没在播的视频**（避免把玩家/流程刻意停住的视频强行拉起来）。
+    //    ③ GSAP 全局时间轴：法术弹道 / 冲击层等 JS 驱动动效（CSS 管不到它们）
+    //    ④ 广播 GAME_PAUSE / GAME_RESUME —— BGM 是 App 侧 new Audio()，不在本组件 DOM 里
+    // ── 恢复逻辑写在 cleanup：组件卸载时也能保证不把 GSAP 时间轴永远冻住。
+    // ==========================================
+    useEffect(() => {
+        if (!isPaused) return;
+        const root = gameRootRef.current;
+
+        // 按住在播的每一个视频，并打上「恢复时要唤醒」的标记
+        const sweep = () => {
+            if (!root) return;
+            root.querySelectorAll<HTMLVideoElement>('video').forEach(v => {
+                if (!v.paused) {
+                    v.dataset.gp = '1';
+                    v.pause();
+                }
+            });
+        };
+        sweep();
+        const sweepTimer = setInterval(sweep, 400);
+
+        gsap.globalTimeline.pause();
+        eventBus.emit(GameEvents.GAME_PAUSE);
+
+        return () => {
+            clearInterval(sweepTimer);
+            gsap.globalTimeline.resume();
+            root?.querySelectorAll<HTMLVideoElement>('video[data-gp="1"]').forEach(v => {
+                delete v.dataset.gp;
+                const p = v.play();
+                if (p !== undefined) p.catch(() => { /* 自动播放策略拦截，忽略 */ });
+            });
+            eventBus.emit(GameEvents.GAME_RESUME);
+        };
+    }, [isPaused]);
 
     // [2026-09-04 莉莉子 沙盒防御] 真实对局挂载即清空黑匣子残留日志：
     // 沙盒练习直连 useGameState，会把 game_end 写进模块级 gameLogger 且不清；
@@ -281,7 +334,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
             setPostMulliganLock(true);
             // [2026-07-19] 移除强制赋予进攻标识——标识已由 startRound() + firstAttacker 正确管理
         },
-        skip: disableMulligan // ★ 教程模式：完全跳过换牌环节
+        skip: disableMulligan, // ★ 教程模式：完全跳过换牌环节
+        paused: isPaused       // [2026-09-19 莉莉子 BUG修复] 局内暂停冻结换牌倒计时（此前漏了这道守卫）
     });
 
     // ==========================================
@@ -338,17 +392,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
             let currentProgress = 0;
             const target = hero.levelUpTarget || 1;
 
-            if (hero.key === 'fenny') {
-                const pHealth = game.playerNexus ?? 20;
-                const eHealth = game.enemyNexus ?? 20;
-                if (pHealth <= 10 || eHealth <= 10) currentProgress = 1;
-            } else if (hero.key === 'lyfe') {
-                currentProgress = hero.strikeCount || 0;
-            } else if (hero.key === 'pupu_specular_soul') {
-                currentProgress = hero.customProgress || 0;
-            } else if (hero.key === 'mauxir_lotus_drive') {
-                currentProgress = hero.customProgress || 0;
-            }
+            // [2026-09-19 BUG修复] 改走公共口径 —— 此前三处各抄一遍，茉莉安三处全漏
+            //   ⇒ 左侧牌库位置的「升级进度小图标」对她永远不弹
+            currentProgress = getChampionUpgradeProgress(hero, {
+                player: game.playerNexus,
+                enemy: game.enemyNexus,
+            });
 
             const cappedProgress = Math.min(currentProgress, target);
 
@@ -406,6 +455,16 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // 覆盖 drawCards 释放 mulliganDrawLock 后到 showPhaseHint 之间的窗口
     const [isPostMulliganLock, setPostMulliganLock] = useState(false);
 
+    // [2026-09-19] 换牌阶段【开局发牌】音效：换牌 UI 一出现（那 4 张待换卡牌发出）时响一声。
+    //   ⚠️ 与「换牌结束后的补抽 4 张」区分 —— 后者走普通 DRAW_START（抽出卡牌音）。
+    const mulliganDealSfxRef = useRef(false);
+    useEffect(() => {
+        if (mulligan.isActive && showMulliganUI && !mulliganDealSfxRef.current) {
+            mulliganDealSfxRef.current = true;
+            eventBus.emit(GameEvents.SFX_MULLIGAN_DEAL);
+        }
+    }, [mulligan.isActive, showMulliganUI]);
+
     useEffect(() => {
         const timer = setTimeout(() => setShowMulliganUI(true), 1500);
         return () => clearTimeout(timer);
@@ -435,7 +494,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // [2026-08-20 莉莉子] 解构出 announce，供格挡拒绝等事件主动触发中央播报
     const { announcement, announce } = useGameAnnouncer({
         game,
-        drawCards: async (count) => {
+        drawCards: async (count, reason) => { // [2026-09-19] reason 透传给底层以区分「换牌开局抽卡」
             const skipAnim = (userSystem.settings as any)?.skipGameStartDrawAnimation;
             if (skipAnim) {
                 console.log(`[DrawCards] ⚡ 快速模式：跳过抽卡动画`);
@@ -459,9 +518,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 console.log(`[DrawCards] 开始抽卡 count=${count} isPostMulliganLock=${isPostMulliganLock} mulliganDrawLock=${mulliganDrawLock}`);
                 setGame(prev => prev.phase === 'main' ? { ...prev, phase: 'animating' } : prev);
                 console.log(`[DrawCards] 开始抽玩家 ${count} 张`);
-                await actions.drawCards(count, 'player');
+                await actions.drawCards(count, 'player', 0, reason);
                 console.log(`[DrawCards] 玩家抽卡完成，开始抽敌方 ${count} 张`);
-                await actions.drawCards(count, 'enemy');
+                await actions.drawCards(count, 'enemy', 0, reason);
                 console.log(`[DrawCards] 敌方抽卡完成，回到 main 阶段`);
                 setGame(prev => ({ ...prev, phase: 'main' }));
                 // [2026-08-31 莉莉子 修复] 仅换牌初始抽卡（count≥2）触发开局/第一回合强化：game_start（幽灵行动只开局召唤一次）+ round_start（第一回合暗箭）
@@ -944,18 +1003,23 @@ export const GameSession: React.FC<GameSessionProps> = ({
     const combatFieldRef = useRef(combatField);
     combatFieldRef.current = combatField;
 
-    // [侦察] 观察玩家攻击宣言 → 计算侦察状态（active=全侦察有效 / invalid=混入无效 / null=无）
+    // [侦察] 观察攻击宣言 → 计算侦察状态（active=全侦察有效 / invalid=混入无效 / null=无）
     // 纯观察：只读 combatField + attackToken，不改战斗逻辑；广播给卡面/卡槽特效层
+    // [2026-09-19 BUG修复] 敌我【两边都算】并按阵营分别广播 ——
+    //   此前只统计玩家侧（owner==='player'），敌人用侦察进攻时算出的永远是 null，
+    //   而消费端判据是 `!== 'active'` ⇒ 敌方侦察单位恒被判「无效」→ 永远播灰色特效。
     useEffect(() => {
-        const isFirstAttack = game.attackToken.player === 'normal';
-        const playerAttackers = combatField.filter(f => f.owner === 'player' && f.attacker);
-        const scoutCount = playerAttackers.filter(f => f.attacker?.keywords?.includes('Scout')).length;
-        let state: 'active' | 'invalid' | null = null;
-        if (isFirstAttack && playerAttackers.length > 0 && scoutCount > 0) {
-            state = scoutCount === playerAttackers.length ? 'active' : 'invalid';
-        }
-        notifyScoutState(state);
-    }, [combatField, game.attackToken.player]);
+        (['player', 'enemy'] as const).forEach(side => {
+            const isFirstAttack = game.attackToken[side] === 'normal';
+            const attackers = combatField.filter(f => f.owner === side && f.attacker);
+            const scoutCount = attackers.filter(f => f.attacker?.keywords?.includes('Scout')).length;
+            let state: 'active' | 'invalid' | null = null;
+            if (isFirstAttack && attackers.length > 0 && scoutCount > 0) {
+                state = scoutCount === attackers.length ? 'active' : 'invalid';
+            }
+            notifyScoutState(side, state);
+        });
+    }, [combatField, game.attackToken.player, game.attackToken.enemy]);
     const msgRef = useRef(setMessage);
     msgRef.current = setMessage;
 
@@ -1884,6 +1948,18 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     return false;
                 }
 
+                // [2026-09-19 BUG修复] 法术的「场上条件」拦截（卡面写着却从未实装）：
+                //   支援技已有信标/备战席满、小技能场上无信标 —— 拦截并提示，卡留在手里
+                //   ⚠️ 同源函数也用于手牌高亮，两处必须一致，否则"高光说能打、点了打不出去"
+                const spellBlockReason = getSpellPlayBlockReason(card, { playerBench, enemyBench, combatField });
+                if (spellBlockReason) {
+                    setMessage(`${spellBlockReason}，无法打出！`);
+                    return false;
+                }
+
+                // [2026-09-19] 打出法术音效（点击打出 / 拖出松手都汇到这条手牌点击路径）
+                eventBus.emit(GameEvents.SFX_SPELL_PLAY);
+
                 const effectId = card.effects && card.effects.length > 0 ? card.effects[0] : null;
                 const effectDef = effectId ? EFFECT_DB[effectId] : null;
                 // [核心修复] 不仅要看是否有 targetRequirements，更要看是否真的需要玩家"手动选人" (count > 0)
@@ -2140,7 +2216,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     return (
         <HeroCardMediaContext.Provider value={heroDynamic}>
-        <div className="w-full h-full bg-black text-white overflow-hidden relative font-sans select-none">
+        <div ref={gameRootRef} className={`w-full h-full bg-black text-white overflow-hidden relative font-sans select-none${isPaused ? ' game-paused' : ''}`}>
 
             {/* 1. 背景层（[2026-08-13] 动态牌桌：DeskMedia 统一处理，无视频自动兜底静态图） */}
             <div className="absolute inset-0 pointer-events-none z-0">
@@ -2166,6 +2242,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     ...game.spellStack.map(s => ({ sourceId: s.card.id, targets: s.targets, owner: s.owner }))
                 ]}
             />
+
+            {/* [2026-09-19 1.0.16 茉莉安] 獠牙信标引爆特效层：原位置浮现贴图 → 紫色球心射出激光。
+                与 VFXLayer 同层（SVG + getScreenCTM 逆变换），z 略高一线以盖住瞄准线 */}
+            <BeaconExplosionLayer />
+
+            {/* [2026-09-19 1.0.16 茉莉安] 大招「最终指令」逐击演出层（准星 → 冲击 → 击杀爆炸 → 余波） */}
+            <UltimateStrikeLayer />
+
             {/* ========================================================== */}
 
             {/* [新增] Step 3.5: 法术弹道特效层 */}
@@ -2230,8 +2314,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     onConfirm={(selectedId) => actions.confirmCalibrate(selectedId)}
                     onViewArt={handleViewCard}
                     isHidden={game.calibratePending.owner === 'enemy'}
-                    cardBackUrl={currentCardBackUrl}
-                    cardBackVideoUrl={currentCardBackVideo}
+                    // [2026-09-18 BUG修复] 敌方校准时显示的是**敌方**卡背 —— 此前误传玩家卡背，
+                    //   导致 AI 校准的 4 张暗牌全用自己的卡背（敌方牌库/手牌早已敌我分离，唯独此处漏了）
+                    cardBackUrl={game.calibratePending.owner === 'enemy' ? enemyCardBack : currentCardBackUrl}
+                    cardBackVideoUrl={game.calibratePending.owner === 'enemy' ? enemyCardBackVideo : currentCardBackVideo}
                 />
             )}
 
@@ -2757,6 +2843,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                             || (c.keywords || []).includes('Exposed')
                                         )
                                     }
+                                    // [2026-09-18] 暴露标记的显示时机：仅进攻宣言阶段（程拍板收窄）
+                                    isAttackDeclare={game.phase === 'attack_declare'}
                                     onClick={() => {
 
                                         if (spellSystem.isCasting) {
@@ -3121,6 +3209,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 onViewArt={handleViewCard}
                                 playerBench={playerBench}
                                 combatField={combatField}
+                                enemyBench={enemyBench} // [2026-09-19] 法术场上条件拦截用
                                 isCastingForHand={isCastingForHand} // [核心修复] 将索敌状态精准打通至手牌组件！
                                 handTargetFilter={handTargetFilter} // [2026-08-08 莉莉子] HAND_CARD 目标过滤条件，供手牌高亮
                                 onAnimComplete={(id) => onHandAnimComplete(id, 'player')} // [2026-07-22 莉莉子] 手牌动画完成回调

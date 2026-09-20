@@ -4,8 +4,14 @@ import type { CardData } from '../types';
 import { Card } from './Card';
 import { CARD_DB } from '../data/cards';
 import { SkipForward } from 'lucide-react';
-import { preloadLevelUpMovieByKey } from '../utils/videoPreloader'; // [新增] 影片预加载
+import { preloadLevelUpMovieByKey, getVideoUrl } from '../utils/videoPreloader'; // [新增] 影片预加载
+import { getLevelUpMovie } from '../data/movieData'; // [2026-09-17] 动态看门狗需查影片真实时长
 import { useUserSystem } from '../hooks/useUserSystem'; // [核心新增] 引入用户系统以感知画质配置
+
+/** [2026-09-17] 影片时长读取失败时的兜底看门狗超时（ms） */
+const WATCHDOG_FALLBACK_MS = 15000;
+/** [2026-09-17] 影片真实时长之外额外留出的余量（ms）—— 覆盖最后一帧到 onEnd 回调之间的空档 */
+const WATCHDOG_GRACE_MS = 2500;
 
 
 interface ChampionLevelUpProps {
@@ -94,22 +100,73 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
         }
     }, [phase, card.key, onPrepareMovie, videoRes]); // 补充依赖
 
-    // [新增] 监听阶段变化，控制跳过按钮
+    // [新增] 监听阶段变化，控制跳过按钮 + 动态看门狗
     useEffect(() => {
-        if (phase === 'video') {
-            // 视频开始 1 秒后显示跳过按钮
-            const timer = setTimeout(() => setShowSkip(true), 1000);
-            // [2026-08-30 莉莉子 死锁兜底] 视频阶段超时 8s 强制进入 burst，
-            // 防止视频 onEnd 挂起（胜利/升级影片竞态、onComplete 被覆盖）导致 levelUpCard 永不清空 → 升级队列死锁。
-            const forceBurst = setTimeout(() => {
-                console.warn(`[ChampionLevelUp] ⏱️ ${card.key} 升级影片 8s 未结束，强制进入爆发展示`);
-                setPhase('burst');
-            }, 8000);
-            return () => { clearTimeout(timer); clearTimeout(forceBurst); };
-        } else {
+        if (phase !== 'video') {
             setShowSkip(false);
+            return;
         }
-    }, [phase]);
+
+        // 视频开始 1 秒后显示跳过按钮
+        const skipTimer = setTimeout(() => setShowSkip(true), 1000);
+
+        // [2026-08-30 莉莉子 死锁兜底] 视频阶段超时强制进入 burst，
+        // 防止视频 onEnd 挂起（胜利/升级影片竞态、onComplete 被覆盖）导致 levelUpCard 永不清空 → 升级队列死锁。
+        //
+        // [2026-09-17 莉莉子 动态化] 原本固定 8000ms，但影片实际时长普遍 10~12s
+        // （里芙/安卡希雅 12.38s、猫汐尔 10.11s、卜卜 9.83s、茉莉安 12.01s），
+        // 固定 8s 会把升级影片提前砍断。改为读取影片真实时长后再设看门狗。
+        let cancelled = false;
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+
+        const armWatchdog = (ms: number, label: string) => {
+            if (cancelled) return;
+            watchdog = setTimeout(() => {
+                console.warn(`[ChampionLevelUp] ⏱️ ${card.key} 升级影片 ${label} 未结束，强制进入爆发展示`);
+                setPhase('burst');
+            }, ms);
+        };
+
+        const cleanup = () => {
+            cancelled = true;
+            clearTimeout(skipTimer);
+            if (watchdog) clearTimeout(watchdog);
+        };
+
+        const src = getLevelUpMovie(card.key, videoRes);
+        const url = src ? getVideoUrl(src) : null;
+
+        // 无影片（如该英雄未配置）→ 仍要保留兜底，否则 onEnd 永不触发会锁死升级队列
+        if (!url) {
+            armWatchdog(WATCHDOG_FALLBACK_MS, `兜底 ${WATCHDOG_FALLBACK_MS / 1000}s`);
+            return cleanup;
+        }
+
+        // 读影片真实时长：blob 已在 spin 阶段预加载，元数据解析很快
+        const probe = document.createElement('video');
+        probe.preload = 'metadata';
+        probe.onloadedmetadata = () => {
+            const dur = probe.duration;
+            probe.removeAttribute('src');
+            if (Number.isFinite(dur) && dur > 0) {
+                const ms = dur * 1000 + WATCHDOG_GRACE_MS;
+                armWatchdog(ms, `${dur.toFixed(1)}s + 余量`);
+            } else {
+                armWatchdog(WATCHDOG_FALLBACK_MS, `时长不可读，兜底 ${WATCHDOG_FALLBACK_MS / 1000}s`);
+            }
+        };
+        probe.onerror = () => {
+            armWatchdog(WATCHDOG_FALLBACK_MS, `元数据读取失败，兜底 ${WATCHDOG_FALLBACK_MS / 1000}s`);
+        };
+        probe.src = url;
+
+        return () => {
+            cleanup();
+            probe.onloadedmetadata = null;
+            probe.onerror = null;
+            probe.removeAttribute('src');
+        };
+    }, [phase, card.key, videoRes]);
 
     // [修改] 跳过逻辑
     const handleSkip = (e: React.MouseEvent) => {

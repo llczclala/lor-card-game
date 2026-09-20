@@ -214,7 +214,12 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             power: card.power + 1, // 5 → 6
             level2ImageUrl: card.level2ImageUrl,
             effects: [...(card.effects || [])],
-            // ⚠️ [T09② 待补] 「之后召唤的信标附带【复活】」阻塞于 Reborn 关键词实装（见问题记录 I12）
+            // [2026-09-19 程拍板] Lv2 机制由「之后召唤的信标附带【复活】」**改为**
+            //   「每回合首次信标被击败 → 在敌方备战席再补一个」。
+            //   原方案（T09②）阻塞于 Reborn 关键词未实装（问题记录 I12），现已废弃。
+            //   实装位置：useGameState 死亡漏斗（UNIT_DIED 分支末尾，亡语结算之后）。
+            //   触发口径：仅 Lv2 + 茉莉安本人活着在场 + 每回合首次 + 落点有空位且无现存信标。
+            description: '【库效】对局开始时：在敌方备战席召唤一个“獠牙信标”。\n回合开始时：若敌方备战席没有“獠牙信标”，则召唤一个。\n入场及回合开始时：对敌方备战席的“獠牙信标”造成等同于自己攻击力的伤害。\n每回合首次“獠牙信标”被击败后，在敌方备战席再补一个。\n参战：变化为“茉莉安的猎场”。',
         } as CardData;
     }
 
@@ -542,9 +547,106 @@ export const bumpBeaconDeaths = (zone: CardData[]): CardData[] => {
     return changed ? next : zone; // 没有命中就原样返回，避免无谓 re-render
 };
 
+/**
+ * [2026-09-19 1.0.16 茉莉安] 「獠牙信标」落场装配器 —— 建卡之后的**唯一**一道加工工序
+ *
+ * **纯函数**：套用虹彩（T23）在 `game.beaconMaxHealthMod` 上累计的生命上限永久修正。
+ *
+ * ⚠️ **为什么必须收口在这一处**（程实测 bug）：
+ *    信标有 3 条召唤路径，此前修正只写在 `effectProcessor` 的 SUMMON 分支里，
+ *    另两条（回合开始④库效补信标 / 对局开始④库效）走 `createFullCard` 直建 → **完全绕过修正**。
+ *    后果：两个虹彩在场（累计 −10）时，被打爆后下一回合补出来的信标仍**满血 20** 落场，
+ *    再挨茉莉安一记狙击 → 剩 15，而设计预期是 20−5−5−5 = **5**。
+ *    ⇒ 三条路径统一调用本函数，杜绝"每条路各抄一遍修正"。
+ *
+ * ⚠️ 保底 1 点：修正可能把上限压到 ≤0（多个虹彩叠加），此时不允许产生 0/负血量的信标。
+ * ⚠️ 绝不改 `CARD_DB`：那是模块级常量，改它会跨局污染（修正一律走 game state）。
+ */
+export const assembleBeaconCard = (card: CardData, mod?: number): CardData => {
+    if (card.key !== 'Marian_Wolf_Tooth_Beacon' || !mod) return card;
+    const newMax = Math.max(1, (card.maxHealth || 0) + mod);
+    const newHp = Math.max(1, (card.health || 0) + mod);
+    console.log(`[虹彩] 信标落场套用上限修正 ${mod} → ${newHp}/${newMax}`);
+    return { ...card, maxHealth: newMax, health: newHp };
+};
+
 /** [2026-07-14 梵音] 检测觉悟状态（我方法力值上限是否达到10点） */
 export const hasEnlightenment = (maxMana: number): boolean => {
     return maxMana >= 10;
+};
+
+/**
+ * [2026-09-19 BUG修复] 法术「打不出去」的原因（引擎与手牌高亮**共用唯一口径**）
+ *
+ * 返回 `null` = 可以打；返回字符串 = 不能打，且该字符串就是要弹给玩家的提示。
+ *
+ * ⚠️ 为什么要有这个函数：茉莉安的两张法术（支援技「重器制空」/ 小技能「钢羽傍身」）
+ *    卡面写着"XXX 时无法打出"，但**条件从未实装** ⇒ 卡面亮着可用高光、点下去也照打，
+ *    只是效果被 `summonOnlyIfAbsent` 静默跳过 —— 白花 3 费。
+ *    两处判断（手牌高亮 / 点击拦截）必须同源，否则又会出现"高光说能打、点了打不出去"。
+ */
+export const getSpellPlayBlockReason = (
+    card: CardData,
+    ctx: { playerBench?: CardData[]; enemyBench?: CardData[]; combatField?: any[] },
+): string | null => {
+    const BEACON_KEY = 'Marian_Wolf_Tooth_Beacon';
+    const isLive = (c: CardData | null | undefined): boolean =>
+        !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+    const benchHasLiveBeacon = (bench?: CardData[]) =>
+        (bench || []).some(c => c.key === BEACON_KEY && isLive(c));
+
+    // 支援技「重器制空」：在敌方备战席召唤信标 —— 已有存活信标 / 备战席满 都无法打出
+    if (card.key === 'marian_support') {
+        const enemyBench = ctx.enemyBench || [];
+        if (benchHasLiveBeacon(enemyBench)) return '敌方备战席已有「獠牙信标」';
+        if (enemyBench.length >= 6) return '敌方备战席已满';
+        return null;
+    }
+
+    // 小技能「钢羽傍身」：对信标造成伤害 —— 场上（敌我备战席 + 交战区）没有信标则无法打出
+    if (card.key === 'marian_rush') {
+        const fieldHasBeacon = (ctx.combatField || []).some(f =>
+            (f?.attacker?.key === BEACON_KEY && isLive(f.attacker))
+            || (f?.blocker?.key === BEACON_KEY && isLive(f.blocker)));
+        if (!benchHasLiveBeacon(ctx.playerBench) && !benchHasLiveBeacon(ctx.enemyBench) && !fieldHasBeacon) {
+            return '场上没有「獠牙信标」';
+        }
+        return null;
+    }
+
+    return null;
+};
+
+/**
+ * [2026-09-19 BUG修复] 天启者【升级进度】的唯一口径（UI 专用）
+ *
+ * ⚠️ 为什么必须收成一个函数：这条规则此前被 if/else 链**在 3 处各抄一遍** ——
+ *    `Card.tsx` 卡面进度环 / `Card.tsx` 牌库面板气泡 / `GameSession.tsx` 阶跃反馈仪（左侧弹小图标），
+ *    结果是**新加的天启者只要漏抄一处、那处就永远显示 0**：
+ *    茉莉安的进度存在专属字段 `beaconDeaths`，三处全漏 ⇒ 手牌、牌库面板、左侧弹窗统统显示 0。
+ *    （三处口径还不一致：`acacia_chrono_echo` 只有一处抄了。）
+ *
+ * ⚠️ 茉莉安的进度**刻意不复用 `customProgress`**（那是被多个系统共用的位域，bit2 = 绿色降费标记，
+ *    而她的升级目标恰好是 2 → 复用会把「降费」误判成「升级达成」）。见 types.ts 的字段注释。
+ */
+export const getChampionUpgradeProgress = (
+    card: CardData,
+    nexus?: { player?: number; enemy?: number },
+): number => {
+    switch (card.key) {
+        case 'fenny': {
+            const p = nexus?.player ?? 20;
+            const e = nexus?.enemy ?? 20;
+            return (p <= 10 || e <= 10) ? 1 : 0;
+        }
+        case 'lyfe': return card.strikeCount || 0;
+        case 'marian': return card.beaconDeaths || 0; // ← 专属字段
+        case 'pupu_specular_soul':
+        case 'mauxir_lotus_drive':
+        case 'acacia_chrono_echo':
+            return card.customProgress || 0;
+        default: return 0;
+    }
 };
 
 /** [2026-07-15] 检测巨偶一瞥是否处于觉悟状态（手牌橙色高亮） */

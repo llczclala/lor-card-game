@@ -2,6 +2,14 @@ import { CARD_DB } from '../data/cards';
 import { PERSONALIZATION_ASSETS, getSkinImage } from '../data/imageData';
 import { getGachaItems } from '../data/skinData';
 import type { UserCollection } from '../types';
+// [2026-09-17 T02b] 池子 UI 图改为随池子配置走（原先散在 imageData 的 gacha_icon，
+// 且 UI 层写死三元表达式 —— 加第 4 个池就要再改一处，正是本次要根治的）
+import PGgachaDeskImg from '../image/gacha/PermanentGachaPool/desk.webp';
+import PGgachaBtnImg from '../image/gacha/PermanentGachaPool/button.webp';
+import LgachaDeskImg from '../image/gacha/GachaPool1/desk.webp';
+import LgachaBtnImg from '../image/gacha/GachaPool1/button.webp';
+import ZgachaDeskImg from '../image/gacha/GachaPool2/desk.webp';
+import ZgachaBtnImg from '../image/gacha/GachaPool2/button.webp';
 
 // --- 常量定义 ---
 export const GACHA_COST_SINGLE = 160;
@@ -34,6 +42,13 @@ export type PoolId = 'permanent' | 'lotus' | 'zenith';
 export interface GachaPoolConfig {
     id: PoolId;
     name: string;
+    // [2026-09-17 T02b] 池子 UI 图：大封面 + 侧栏按钮。
+    // ⚠️ 刻意放进配置而不是散在 imageData —— 新增池子只需改这一处，
+    //    UI 层直接遍历 POOLS 渲染，不必再加三元表达式
+    coverImg: string;
+    btnImg: string;
+    // [2026-09-17 T02b] 保底进度条的标题（各池文案不同，如「莲驱保底进度」）
+    pityLabel: string;
     // 稀有池 —— 要包含的英雄 key 列表
     heroKeys: string[];
     // 稀有池 —— 要包含的卡背 registry 索引
@@ -48,7 +63,10 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
     permanent: {
         id: 'permanent',
         name: '常守之誓',
-        // [2026-09-16 1.0.16] 安卡希雅已迁往新池「苍穹回响」(zenith)
+        coverImg: PGgachaDeskImg,
+        btnImg: PGgachaBtnImg,
+        pityLabel: '绝密保底进度',
+        // [2026-09-16 1.0.16] 安卡希雅已迁往新池「自往昔归还」(zenith)
         heroKeys: ['lyfe', 'fenny'],
         cardBackIndices: [1, 2, 3],
         deskIndices: [1, 2, 3, 4],
@@ -65,23 +83,29 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
     lotus: {
         id: 'lotus',
         name: '烬中镜火',
+        coverImg: LgachaDeskImg,
+        btnImg: LgachaBtnImg,
+        pityLabel: '莲驱保底进度',
         heroKeys: ['mauxir_lotus_drive', 'pupu_specular_soul'],
         cardBackIndices: [13, 14, 15],
         deskIndices: [5, 6, 7, 8, 9],
         // 排除 里芙(Lyfe) 和 芬妮(Fenny) 区域的后勤卡，以及蓄意渗透
         includeInCommonPool: (card) => card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
     },
-    // [2026-09-16 1.0.16 茉莉安] 新池「苍穹回响」
-    //   收纳 安卡希雅·时之重奏 + 茉莉安·霄鹰（与「烬中镜火」收纳卜卜/猫汐尔同构）
+    // [2026-09-16 1.0.16 茉莉安] 新池 —— 收纳 安卡希雅·时之重奏 + 茉莉安·霄鹰
+    //   （与「烬中镜火」收纳卜卜/猫汐尔同构）
     //   ⚠️ 安卡希雅已从 permanent 的 heroKeys 迁出
+    // [2026-09-17 程拍板 D1] 池名由暂定的「苍穹回响」正式定为「**自往昔归还**」
     zenith: {
         id: 'zenith',
-        name: '苍穹回响',
+        name: '自往昔归还',
+        coverImg: ZgachaDeskImg,
+        btnImg: ZgachaBtnImg,
+        pityLabel: '霄鹰保底进度',
         heroKeys: ['acacia_chrono_echo', 'marian'],
-        // ⚠️ 卡背 index 1~16 已被 permanent / lotus / 永恒之约 / 英雄任务全部占满，
-        //    本池暂无专属卡背 → 先留空。需程出 3 张（见问题记录 I10）。
-        cardBackIndices: [],
-        deskIndices: [10], // 牌桌 index 10「苍穹回响」（图已就位，本次一并注册）
+        // [2026-09-17] 程补齐专属卡背 ×3（registry 索引 17/18/19，从 16 之后顺延）
+        cardBackIndices: [17, 18, 19],
+        deskIndices: [10, 11, 12, 13, 14], // [2026-09-18] 本批新牌桌 ×5（原误加的专属桌已删除）
         // 与 lotus 同构：排除常驻池两位英雄的阵营卡
         includeInCommonPool: (card) =>
             card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',

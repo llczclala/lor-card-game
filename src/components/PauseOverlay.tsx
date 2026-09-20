@@ -18,7 +18,7 @@ interface PauseOverlayProps {
  */
 export const PauseOverlay: React.FC<PauseOverlayProps> = ({ onResume, onOpenSettings, onQuitGame }) => {
     return (
-        <div className="fixed inset-0 z-[1000] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center">
+        <div className="pause-overlay fixed inset-0 z-[1000] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center">
             {/* 标题 */}
             <h2 className="text-4xl font-black italic tracking-widest text-white mb-16 drop-shadow-[0_0_30px_rgba(255,255,255,0.35)]">
                 游 戏 暂 停

@@ -15,11 +15,11 @@ interface KeywordTrayProps {
     depletedKeywords?: Keyword[]; // [泰坦] 黯淡关键词列表，关键词不再触发但仍计入计数
     titanCount?: number;   // [泰坦] 场上泰坦总数，用于在泰坦图标上预显示脉冲加成
     isOnBoard?: boolean;   // [泰坦] 卡牌是否在场上（备战席/战场），用于泰坦呼吸灯
-
+    side?: 'player' | 'enemy'; // [2026-09-19 侦察修复] 本卡所属阵营 —— 侦察状态按阵营取（缺省 player）
 }
 
 // 内部子组件：拥有独立特效大脑的“智能关键词图标”
-const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animState, isDepleted, titanCount, isOnBoard }: { keyword: Keyword, sizeClass: string, isAttacking?: boolean, isDefending?: boolean, animState?: string, isDepleted?: boolean, titanCount?: number, isOnBoard?: boolean }) => {
+const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animState, isDepleted, titanCount, isOnBoard, side = 'player' }: { keyword: Keyword, sizeClass: string, isAttacking?: boolean, isDefending?: boolean, animState?: string, isDepleted?: boolean, titanCount?: number, isOnBoard?: boolean, side?: 'player' | 'enemy' }) => {
     const config = KEYWORD_DB[keyword];
     if (!config) return null;
 
@@ -27,7 +27,8 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
     const [frostEntryDone, setFrostEntryDone] = useState(false);
 
     // [侦察] 订阅攻击宣言期侦察状态（仅攻击的侦察单位图标响应）
-    const scoutState = useSyncExternalStore(subscribeScoutState, getScoutState);
+    // [2026-09-19 BUG修复] 按本卡阵营取 —— 此前取全局单值，敌方侦察进攻时恒判为「无效」
+    const scoutState = useSyncExternalStore(subscribeScoutState, () => getScoutState(side));
 
     // [能力] 手牌中不显示能力图标
     if (keyword === 'Ability' && !isOnBoard) return null;
@@ -460,6 +461,7 @@ export const KeywordTray: React.FC<KeywordTrayProps> = ({
     depletedKeywords,
     titanCount,
     isOnBoard = false,
+    side = 'player',
 }) => {
     if (!keywords || keywords.length === 0) return null;
 
@@ -483,6 +485,7 @@ export const KeywordTray: React.FC<KeywordTrayProps> = ({
                     isDepleted={depletedKeywords?.includes(k)} // [泰坦] 黯淡关键词 → 图标变灰
                     titanCount={titanCount}
                     isOnBoard={isOnBoard} // [泰坦] 场上模式 → 呼吸灯 + 居中数字
+                    side={side} // [2026-09-19 侦察修复] 侦察状态按阵营取
                 />
             ))}
         </div>

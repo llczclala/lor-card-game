@@ -71,6 +71,10 @@ export const buildRewardPopupData = (title: string, reward: MissionRewardShape):
         popup.amount = reward.amount ?? 1;
     } else if (reward.type === 'analystExp') {
         popup.amount = reward.amount;
+    } else if (reward.type === 'pack') {
+        // [2026-09-20 1.0.16 版本福利] 迷宫卡包：无图片资源，用通用图标 + 名称 + 数量呈现
+        popup.itemName = '悖论迷宫卡包';
+        popup.amount = reward.amount ?? 1;
     }
     return popup;
 };
@@ -156,6 +160,15 @@ export const RewardClaimPopup: React.FC<{ data: RewardPopupData; onClose: () => 
                             )}
                             <span className="text-2xl font-black text-purple-200">{data.itemName}</span>
                             <span className="text-sm text-amber-300 font-mono tracking-widest">已加入武装库 ×{data.amount ?? 1}</span>
+                        </div>
+                    ) : data.type === 'pack' ? (
+                        <div className="flex flex-col items-center gap-4 px-8">
+                            <span className="text-3xl font-black text-yellow-300 tracking-widest drop-shadow-[0_0_15px_rgba(234,179,8,0.5)]">🎁 卡包获取 🎁</span>
+                            <div className="w-20 h-20 rounded-2xl bg-yellow-900/30 flex items-center justify-center border border-yellow-400/40">
+                                <Gift size={40} className="text-yellow-300" />
+                            </div>
+                            <span className="text-2xl font-black text-yellow-200">{data.itemName ?? '悖论迷宫卡包'}</span>
+                            <span className="text-sm text-amber-300 font-mono tracking-widest">已存入待打开 ×{data.amount ?? 1}</span>
                         </div>
                     ) : data.type === 'analystExp' ? (
                         <div className="flex flex-col items-center gap-4 px-8">

@@ -12,8 +12,8 @@
 // 任务类型：每日(次日6点重置) | 每周(周一6点重置) | 永久成就(不重置) | 版本活动(不重置)
 export type MissionCategory = 'daily' | 'weekly' | 'achievement' | 'version';
 
-// 奖励类型：数据金 | 皮肤 | 卡背 | 卡牌 | 分析员经验 | 稀有武装
-export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack' | 'card' | 'analystExp' | 'armament';
+// 奖励类型：数据金 | 皮肤 | 卡背 | 卡牌 | 分析员经验 | 稀有武装 | 迷宫卡包
+export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack' | 'card' | 'analystExp' | 'armament' | 'pack';
 
 // 监听条件类型
 export type MissionConditionType =
@@ -441,12 +441,12 @@ export const MISSIONS: MissionDef[] = [
     // 旧 ID 的存档会自动保留，新 ID 会被视为全新任务，已领取玩家也能再次领取。
     // ==========================================
     {
-        id: 'version_old_friend_20260913',
-        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-09-13）',
+        id: 'version_old_friend_20260920',
+        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-09-20）',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'dataGold', amount: 8000 },
         condition: { type: 'direct_claim' },
-        showCondition: { accountCreatedBefore: '2026-09-13' }
+        showCondition: { accountCreatedBefore: '2026-09-20' }
     },
     {
         id: 'version_new_start',
@@ -460,6 +460,14 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '新版本启航', description: '迎接新版本，获得安卡希雅 时之重奏与圣树小队全员！',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'card', cardKeys: ['acacia_chrono_echo', 'Sacred_Tree_Squad_Lumi', 'Sacred_Tree_Squad_Margaret', 'Sacred_Tree_Squad_Alvina'] },
+        condition: { type: 'direct_claim' }
+    },
+    // [2026-09-20 1.0.16 茉莉安] 版本启航：与上两条同构（天启者本体 + 该阵营小队全员）
+    {
+        id: 'version_marian_start',
+        category: 'version', title: '新版本启航', description: '迎接新版本，获得茉莉安 霄鹰与松露小队全员！',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'card', cardKeys: ['marian', 'Truffle_Squad_Mushroom_Shadows', 'Truffle_Squad_Elm', 'Truffle_Squad_Iris'] },
         condition: { type: 'direct_claim' }
     },
     {
@@ -780,6 +788,16 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '余音共振·福利', description: '版本福利放送：直接领取 6 个「碳原子板」（携带通关经验翻倍）',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'armament', armamentId: 'arm_resonance_crystal', amount: 6 },
+        condition: { type: 'direct_claim' }
+    },
+    // [2026-09-20 1.0.16 程拍板] 版本福利：迷宫卡包 ×10
+    //   ⚠️ ID 带日期 —— 任务进度按 ID 存档，沿用旧 ID 会让领过历次福利的玩家无法再领
+    //   （与「老友福利」每期换 ID 同理，见上方维护提示）
+    {
+        id: 'version_gift_pack_10_20260920',
+        category: 'version', title: '悖论补给·福利', description: '版本福利放送：直接领取 10 个「悖论迷宫卡包」（在推演结算或评估嘉勉中开启，随机获得一个武装）',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'pack', amount: 10 },
         condition: { type: 'direct_claim' }
     },
     {

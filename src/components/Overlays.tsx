@@ -751,7 +751,8 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                  (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 10。' :
                                  (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 3 次' :
                                  (targetCard.name.includes('猫汐尔 莲驱') ? '召唤师和召唤衍生物累计造成30点伤害' :
-                                 (targetCard.name.includes('安卡希雅 时之重奏') ? '我方打出“朔望之期”' :'满足特定条件。'))))}"
+                                 (targetCard.name.includes('安卡希雅 时之重奏') ? '我方打出“朔望之期”' :
+                                 (targetCard.name.includes('茉莉安 霄鹰') ? '我方累计击败两次“獠牙信标”' :'满足特定条件。')))))}"
                             </p>
                         </div>
                     )}

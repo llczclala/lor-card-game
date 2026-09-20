@@ -6,7 +6,7 @@ import { rollOne, GACHA_COST_SINGLE, GACHA_COST_TEN, MAX_PITY, POOLS, type Gacha
 import { GachaAnimation } from './GachaAnimation';
 import { GachaTargetSelector } from './GachaTargetSelector';
 import { GachaPoolViewer } from './GachaPoolViewer';
-import { CURRENCY_ICONS,gacha_icon } from '../data/imageData';
+import { CURRENCY_ICONS } from '../data/imageData';
 import { eventBus, GameEvents } from '../utils/eventBus';
 
 
@@ -127,57 +127,38 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack, in
                 <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-purple-600/10 blur-[100px] rounded-full mix-blend-screen animate-pulse-slow"></div>
             </div>
 
-            {/* 左侧：卡池列表 */}
+            {/* 左侧：卡池列表 —— [2026-09-17 T02b] 改为遍历 POOLS 渲染。
+                新增池子只需在 gachaLogic 的 POOLS 里加一条（含封面图/按钮图），这里一行都不用改 */}
             <div className="absolute top-0 left-0 w-80 h-full z-20 flex flex-col pt-32 px-4 gap-4">
-                {/* 常守之誓 */}
-                <div
-                    onClick={() => handleSwitchPool('permanent')}
-                    className={`w-full h-32 rounded-xl relative cursor-pointer transform hover:scale-105 transition-all shadow-lg border overflow-hidden group ${
-                        activePool === 'permanent'
-                            ? 'border-yellow-400/60 shadow-yellow-400/20'
-                            : 'border-white/20'
-                    }`}
-                >
-                    <img
-                        src={gacha_icon.PGgachaBtnImg}
-                        className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                        alt="常守之誓"
-                    />
-                    <div className="absolute inset-0 flex flex-col justify-end p-3 bg-gradient-to-t from-black/80 to-transparent">
-                        <div className="text-[10px] font-black tracking-widest text-purple-200 mb-0.5">
-                            {activePool === 'permanent' ? '当前选择' : '点击切换'}
+                {Object.values(POOLS).map(pool => {
+                    const isActive = activePool === pool.id;
+                    return (
+                        <div
+                            key={pool.id}
+                            onClick={() => handleSwitchPool(pool.id)}
+                            className={`w-full h-32 rounded-xl relative cursor-pointer transform hover:scale-105 transition-all shadow-lg border overflow-hidden group ${
+                                isActive
+                                    ? 'border-yellow-400/60 shadow-yellow-400/20'
+                                    : 'border-white/20'
+                            }`}
+                        >
+                            <img
+                                src={pool.btnImg}
+                                className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                alt={pool.name}
+                            />
+                            <div className="absolute inset-0 flex flex-col justify-end p-3 bg-gradient-to-t from-black/80 to-transparent">
+                                <div className="text-[10px] font-black tracking-widest text-purple-200 mb-0.5">
+                                    {isActive ? '当前选择' : '点击切换'}
+                                </div>
+                                <div className="font-black text-sm leading-tight text-white drop-shadow-md">{pool.name}</div>
+                            </div>
+                            {isActive && (
+                                <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-400 shadow-[0_0_10px_orange]"></div>
+                            )}
                         </div>
-                        <div className="font-black text-sm leading-tight text-white drop-shadow-md">常守之誓</div>
-                    </div>
-                    {activePool === 'permanent' && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-400 shadow-[0_0_10px_orange]"></div>
-                    )}
-                </div>
-
-                {/* 烬中镜火卡池 */}
-                <div
-                    onClick={() => handleSwitchPool('lotus')}
-                    className={`w-full h-32 rounded-xl relative cursor-pointer transform hover:scale-105 transition-all shadow-lg border overflow-hidden group ${
-                        activePool === 'lotus'
-                            ? 'border-yellow-400/60 shadow-yellow-400/20'
-                            : 'border-white/20'
-                    }`}
-                >
-                    <img
-                        src={gacha_icon.LgachaBtnImg}
-                        className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                        alt="烬中镜火"
-                    />
-                    <div className="absolute inset-0 flex flex-col justify-end p-3 bg-gradient-to-t from-black/80 to-transparent">
-                        <div className="text-[10px] font-black tracking-widest text-purple-200 mb-0.5">
-                            {activePool === 'lotus' ? '当前选择' : '点击切换'}
-                        </div>
-                        <div className="font-black text-sm leading-tight text-white drop-shadow-md">烬中镜火</div>
-                    </div>
-                    {activePool === 'lotus' && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-400 shadow-[0_0_10px_orange]"></div>
-                    )}
-                </div>
+                    );
+                })}
 
                 {/* 池子信息摘要 */}
                 <div className="mt-auto mb-8 px-2 text-[10px] text-gray-500 leading-relaxed">
@@ -198,7 +179,7 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack, in
                     className="absolute right-0 top-0 bottom-0 w-[80%] h-full flex items-center justify-center"
                 >
                     <img
-                        src={activePool === 'lotus' ? gacha_icon.LgachaDeskImg : gacha_icon.PGgachaDeskImg}
+                        src={currentPoolConfig.coverImg}
                         className="w-full h-full object-contain object-right-center p-12 translate-y-[-2.5%]"
                         alt="抽卡封面"
                     />
@@ -271,7 +252,7 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack, in
                     <div className="flex gap-8">
                         <div className="flex flex-col gap-1">
                             <div className="text-[10px] text-yellow-500 font-black tracking-widest uppercase">
-                                {activePool === 'lotus' ? '莲驱保底进度' : '绝密保底进度'}
+                                {currentPoolConfig.pityLabel}
                             </div>
                             <div className="text-4xl font-black italic text-white flex items-baseline gap-1">
                                 <span className="text-yellow-400">{pityCounter}</span>

@@ -207,7 +207,7 @@ const buildDynamicWidthPath = (from: { x: number; y: number }, to: { x: number; 
 };
 
 // [核心魔法] SVG 缩放坐标系逆转换：把真实的物理坐标，转换回不受 ScaleWrapper 影响的 SVG 内部坐标！
-const getLocalPos = (svg: SVGSVGElement | null, clientX: number, clientY: number) => {
+export const getLocalPos = (svg: SVGSVGElement | null, clientX: number, clientY: number) => {
     if (!svg) return { x: clientX, y: clientY };
     const pt = svg.createSVGPoint();
     pt.x = clientX;
@@ -219,7 +219,7 @@ const getLocalPos = (svg: SVGSVGElement | null, clientX: number, clientY: number
 };
 
 // 重构元素中心点获取逻辑，支持传入 DOM 节点或 ID，并挂载逆转换
-const getElementCenter = (elOrId: string | HTMLElement | null, svg: SVGSVGElement | null): { x: number; y: number } | null => {
+export const getElementCenter = (elOrId: string | HTMLElement | null, svg: SVGSVGElement | null): { x: number; y: number } | null => {
     if (!svg || !elOrId) return null;
     const el = typeof elOrId === 'string' ? document.querySelector(`[data-entity-id="${elOrId}"]`) : elOrId;
     if (!el) return null;
@@ -228,7 +228,7 @@ const getElementCenter = (elOrId: string | HTMLElement | null, svg: SVGSVGElemen
 };
 
 // [核心新增] 获取元素的顶部偏下位置（距顶部 15%）。专门作为基座等卡牌的“炮口”，完美避开中心立绘遮挡！
-const getElementTopCenter = (elOrId: string | HTMLElement | null, svg: SVGSVGElement | null): { x: number; y: number } | null => {
+export const getElementTopCenter = (elOrId: string | HTMLElement | null, svg: SVGSVGElement | null): { x: number; y: number } | null => {
     if (!svg || !elOrId) return null;
     const el = typeof elOrId === 'string' ? document.querySelector(`[data-entity-id="${elOrId}"]`) : elOrId;
     if (!el) return null;

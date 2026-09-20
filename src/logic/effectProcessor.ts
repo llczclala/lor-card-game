@@ -1,11 +1,11 @@
 import type { CardData, GameState, Keyword, Race } from '../types'; // [修改] 新增 Keyword 的引入
 import { EFFECT_DB } from '../data/effectRegistry';
 import { createCard, CARD_DB } from '../data/cards';
-import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand, markLeveledUp, unmarkLeveledUp } from '../utils/gameRules'; // [新增] 引入牌库BUFF
+import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand, markLeveledUp, unmarkLeveledUp, assembleBeaconCard } from '../utils/gameRules'; // [新增] 引入牌库BUFF · [2026-09-19] 引入信标落场装配器
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { applyFrostbite, getPower, getHealth, executeTitanPulse, deadlyLethalInject } from './keywords'; // [新增] 引入绝对零度处理器 & 真实攻击力/血量函数 & 泰坦脉冲 & [2026-09-12 莉莉子 剧毒] 擦伤即解构判定
-import { applyStrikeEnhancement, isStrikeTargetAlive } from './rogueBattle'; // [2026-08-30 莉莉子] after_attack/after_attacked 强化（单挑互打也算打击）· [2026-09-15] isStrikeTargetAlive 存活判据
+import { applyStrikeEnhancement, isStrikeTargetAlive, findStrongestUnit } from './rogueBattle'; // [2026-08-30 莉莉子] after_attack/after_attacked 强化（单挑互打也算打击）· [2026-09-15] isStrikeTargetAlive 存活判据 · [2026-09-17 松露小队] findStrongestUnit（通用纯函数，非迷宫专用）
 
 // ==========================================
 // [2026-08-15 莉莉子] 泰坦降临·预算均衡拆分（程重定义设计）
@@ -82,7 +82,11 @@ export interface EffectParams {
     gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
     spreadDamageTotal?: number;       // [2026-09-16 茉莉安] SPREAD_DAMAGE：对己方全体分摊的总伤害量
     summonOnlyIfAbsent?: boolean;     // [2026-09-16 茉莉安] SUMMON：落点已有同名单位则不召唤（信标「最多 1 个」）
-    damageBeaconBy?: number;          // [2026-09-16 茉莉安] 标记射击：对獠牙信标造成 N 点伤害（来源=法术卡本身）
+    entryVoucher?: boolean;           // [2026-09-19 T44 茉莉安] SUMMON：本次入场发放一张「补兵券」（信标被击败时兑现）
+    damageBeaconBy?: number;          // [2026-09-16 茉莉安] 钢羽傍身：对獠牙信标造成 N 点伤害（来源=法术卡本身）
+    damageBeaconSide?: 'both' | 'opponent'; // [2026-09-17 松露小队] 限定只打【对面】的信标（缺省 'both' 保持钢羽傍身的历史行为）
+    damageBeaconBySelfPower?: boolean;  // [2026-09-17 松露小队 · 流萤] 伤害取「施法者自身当前攻击力」，覆盖 damageBeaconBy 的静态值
+    summonCountPerExposedEnemy?: number; // [2026-09-17 松露小队 · 榆] 动态召唤数：每有一个【暴露】的敌人召唤一个，本值 = 上限
     gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
                                       // ⚠️ 本接口与 effectRegistry.ts:80 的同名接口是【两份独立定义】，已分叉。
                                       //    新增字段需【两边同步补】，否则数据侧能写、消费侧 TS 报错。
@@ -196,6 +200,25 @@ export const validateTargets = (effectId: string, targets: any[]): boolean => {
 /**
  * 核心处理函数 (The Engine)
  */
+/**
+ * [2026-09-19 BUG修复] 把效果产出的内部事件转发到游戏总线
+ *
+ * ── 病根：`unit_damage` / `nexus_damage` 是 effectProcessor 塞进 `events` 数组的**内部事件**，
+ *    必须由**调用方**转发上总线（飘字、受击音都靠它）。
+ *    而全项目**只有 spells.ts 一个调用方做了转发** ✗
+ *    ⇒ 非法术来源的伤害（入场效果 / 回合开始 / 打击水晶触发 / 亡语…）**既没飘字也没受击音**。
+ *    （程实测：夜视监察无人机、茉莉安狙击打信标时，信标掉血无声）
+ *
+ * ── 各调用方在处理自己的动画事件之后调一下本函数即可，**不要各抄一遍**。
+ * ⚠️ spells.ts 不用调（它自己转发 + 另有 triggerShake，调了会重复）。
+ */
+export const relayEffectEvents = (events: { type: string; payload?: any }[] | undefined): void => {
+    (events || []).forEach(e => {
+        if (e.type === 'unit_damage') eventBus.emit('unit_damage', e.payload);
+        else if (e.type === 'nexus_damage') eventBus.emit(GameEvents.NEXUS_STRIKED, e.payload);
+    });
+};
+
 export const processEffect = (
     effectId: string,
     targets: any[],
@@ -1288,6 +1311,85 @@ export const processEffect = (
             }
 
             // =====================================
+            // [2026-09-17 1.0.16 茉莉安 · T19 静默行动]
+            // 消除场上所有【暴露】（含我方），每消除一个 → 我方全体永久 +1/+1
+            //
+            // ⚠️ 为什么不复用通用 BUFF 的 removeKeywords：
+            //    ① 它只作用于「被选中的目标」，而本卡口径是「全场全计」
+            //    ② 它的现实现限定 target.type === 'ally'（effectProcessor.ts:1454），
+            //       覆盖不了「我方的暴露也要清」这条
+            //    ③ 它是 37 张 BUFF 卡共用的路径，为一个专属法术改它风险不划算
+            // =====================================
+            if (effect.id === 'effect_marian_silent_action') {
+                const REMOVE_KW: Keyword = 'Exposed';
+                let removedCount = 0;
+
+                // 摘除单个单位的【暴露】；命中则计数 +1
+                const stripExposed = (c: CardData): CardData => {
+                    if (!c.keywords || !c.keywords.includes(REMOVE_KW)) return c;
+                    removedCount++;
+                    return {
+                        ...c,
+                        keywords: c.keywords.filter(k => k !== REMOVE_KW),
+                        // 若该【暴露】是本回合施加的，临时账本里也要清掉，否则回合末清算时会残留
+                        roundKeywords: (c.roundKeywords || []).filter(k => k !== REMOVE_KW),
+                    };
+                };
+
+                // ① 扫双方备战席
+                nextPlayerBench = nextPlayerBench.map(stripExposed);
+                nextEnemyBench = nextEnemyBench.map(stripExposed);
+
+                // ② 扫交战区（攻守两侧都要算）
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        const newFight = { ...fight };
+                        if (newFight.attacker) newFight.attacker = stripExposed(newFight.attacker);
+                        if (newFight.blocker) newFight.blocker = stripExposed(newFight.blocker);
+                        return newFight;
+                    });
+                }
+
+                console.log(`[静默行动] 消除【暴露】×${removedCount}`);
+
+                // ③ 每消除一个 → 我方全体永久 +1/+1
+                if (removedCount > 0) {
+                    const applyReward = (c: CardData): CardData => ({
+                        ...c,
+                        buffs: {
+                            power: (c.buffs?.power || 0) + removedCount,
+                            health: (c.buffs?.health || 0) + removedCount,
+                        },
+                        animState: 'buff' as const,
+                    });
+
+                    const myBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                    const buffedBench = myBench.map(applyReward);
+                    if (context.owner === 'player') nextPlayerBench = buffedBench;
+                    else nextEnemyBench = buffedBench;
+
+                    // 交战区里的己方单位同样吃这份加成
+                    // （fight.owner === 我方 → 我方是 attacker，否则是 blocker，与上方通用扫描仪口径一致）
+                    if (nextCombatField) {
+                        nextCombatField = nextCombatField.map(fight => {
+                            const newFight = { ...fight };
+                            if (fight.owner === context.owner && newFight.attacker) {
+                                newFight.attacker = applyReward(newFight.attacker);
+                            } else if (fight.owner !== context.owner && newFight.blocker) {
+                                newFight.blocker = applyReward(newFight.blocker);
+                            }
+                            return newFight;
+                        });
+                    }
+
+                    events.push({ type: 'sfx_buff', payload: null });
+                    console.log(`[静默行动] 我方全体永久 +${removedCount}/+${removedCount}`);
+                }
+
+                break; // 静默行动处理完毕
+            }
+
+            // =====================================
             // [重构] 战场前置条件通用扫描仪 (数据驱动版)
             // =====================================
             if (params.presenceRequirement && params.presenceRequirement.length > 0) {
@@ -1387,6 +1489,154 @@ export const processEffect = (
             // [SpiritDebug] 斯涅妮卡入场BUFF执行
             if (effect.id === 'effect_spirit_snenika_aura') {
                 console.log(`[SpiritDebug] BUFF执行: finalTargets=${finalTargets.length}个, power=${power}, health=${health}, duration=${duration}`);
+            }
+
+            // =====================================
+            // [2026-09-17 1.0.16 茉莉安 · T18 以饵引狼]
+            // 两个目标都手动选：① 我方单位 → 【暴露】（代价）
+            //                   ② 敌方单位 → 本回合 −4/−0（收益）
+            //
+            // ⚠️ 为什么不走通用 BUFF：通用路径对 finalTargets 全体施加【同一套 params】，
+            //    而本卡两个目标要吃完全不同的效果（一个加关键词、一个减身材）。
+            //    放在 applyStats 定义之后，直接复用它以保证 buffRules 等口径一致。
+            // =====================================
+            if (effect.id === 'effect_marian_faction_bait') {
+                // targetRequirements 的声明顺序即 finalTargets 的顺序：[我方, 敌方]
+                const allyTarget = finalTargets[0];
+                const enemyTarget = finalTargets[1];
+
+                if (!allyTarget?.id || !enemyTarget?.id) {
+                    console.log('[以饵引狼] 目标不足（需各选一个我方与敌方单位），本次不结算');
+                    break;
+                }
+
+                // 与通用 BUFF 同口径：备战席 + 交战区都要覆盖
+                const patchById = (id: string, fn: (c: CardData) => CardData) => {
+                    nextPlayerBench = updateCardInList(nextPlayerBench, id, fn);
+                    nextEnemyBench = updateCardInList(nextEnemyBench, id, fn);
+                    if (nextCombatField) {
+                        nextCombatField = nextCombatField.map(fight => {
+                            const newFight = { ...fight };
+                            if (newFight.attacker?.id === id) newFight.attacker = fn(newFight.attacker);
+                            if (newFight.blocker?.id === id) newFight.blocker = fn(newFight.blocker);
+                            return newFight;
+                        });
+                    }
+                };
+
+                // ① 我方单位 → 贴【暴露】（永久，与钢羽傍身同口径）
+                patchById(allyTarget.id, c => ({
+                    ...c,
+                    keywords: Array.from(new Set([...c.keywords, 'Exposed' as Keyword])),
+                    animState: 'buff' as const,
+                }));
+
+                // ② 敌方单位 → 本回合 −4/−0（写临时账本 roundBuffs，回合末自动清算）
+                patchById(enemyTarget.id, c => applyStats(c, -4, 0));
+
+                events.push({ type: 'sfx_buff', payload: null });
+                console.log(`[以饵引狼] 暴露我方「${allyTarget.name}」→ 敌方「${enemyTarget.name}」本回合 -4/-0`);
+                break;
+            }
+
+            // =====================================
+            // [2026-09-17 1.0.16 茉莉安 · T21 蕈影]
+            // 入场：自动暴露【敌方攻击力最高】的单位 —— 无需玩家选目标
+            // 设计文档 8.1：暴露目标自动执行，优先挑敌方攻击力最高者
+            // =====================================
+            if (effect.id === 'effect_truffle_mushroom_expose') {
+                const oppOwner: 'player' | 'enemy' = context.owner === 'player' ? 'enemy' : 'player';
+                const oppBench = oppOwner === 'player' ? nextPlayerBench : nextEnemyBench;
+
+                // findStrongestUnit 会同时扫备战席与交战区（含格挡侧）
+                // [2026-09-18 BUG修复] 跳过【已被暴露】的单位 ——
+                //   否则多张蕈影每次都挑同一个「攻击力最高」的（如臆莲基座），信标这类低攻目标永远轮不到。
+                const strongest = findStrongestUnit(
+                    oppBench,
+                    nextCombatField || [],
+                    oppOwner,
+                    (c) => !(c.keywords || []).includes('Exposed'),
+                );
+
+                if (!strongest) {
+                    console.log('[蕈影] 敌方场上无存活单位，暴露落空');
+                    break;
+                }
+
+                const applyExposed = (c: CardData): CardData => ({
+                    ...c,
+                    keywords: Array.from(new Set([...c.keywords, 'Exposed' as Keyword])),
+                    animState: 'buff' as const,
+                });
+
+                // 与通用 BUFF 同口径：备战席 + 交战区都要覆盖（最强单位可能在交战区）
+                nextPlayerBench = updateCardInList(nextPlayerBench, strongest.id, applyExposed);
+                nextEnemyBench = updateCardInList(nextEnemyBench, strongest.id, applyExposed);
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        const newFight = { ...fight };
+                        if (newFight.attacker?.id === strongest.id) newFight.attacker = applyExposed(newFight.attacker);
+                        if (newFight.blocker?.id === strongest.id) newFight.blocker = applyExposed(newFight.blocker);
+                        return newFight;
+                    });
+                }
+
+                events.push({ type: 'sfx_buff', payload: null });
+                console.log(`[蕈影] 自动暴露敌方攻击力最高的单位：「${strongest.name}」`);
+                break;
+            }
+
+            // =====================================
+            // [2026-09-17 1.0.16 茉莉安 · T23 虹彩]
+            // 入场：使所有獠牙信标的生命值上限【永久 -10】（含尚未登场的）
+            // ① 场上现存的当场砍
+            // ② 把修正记进 game state → 之后任何来源召唤的信标落场时套用（见 SUMMON 分支）
+            // ⚠️ 是【上限】不是当前值减半（方案 8.1 关键细节）
+            // =====================================
+            if (effect.id === 'effect_truffle_iris_beacon_shrink') {
+                const SHRINK = 3;
+
+                // [2026-09-19 BUG修复] 保底口径改为【按有效血量】计算，且**绝不反向加血**
+                // ── 病根：旧写法 `safeHp = damageTaken + 1` 只算了基础血量，**漏掉 buffs**。
+                //    而卡面/结算读的是有效血量 = health + buffs.health + roundBuffs.health - damageTaken
+                //    ⇒ 信标身上只要挂着生命 BUFF，保底就会算出「有效血量 = 1 + buffs」，
+                //    凭空多出一截血 —— 程实测「敌方残血信标在我方虹彩入场后回了血」就是这个。
+                // ── 旧写法另一个副作用：0 血待判死的信标会被这一刀"救活"到 1 血。
+                // ── 新口径：这一刀后的有效血量 = clamp(≥1) 且【不得超过进入前的有效血量】⇒ 只减不增。
+                const shrinkBeacon = (c: CardData): CardData => {
+                    if (c.key !== 'Marian_Wolf_Tooth_Beacon') return c;
+                    const newMax = Math.max(1, (c.maxHealth || 0) - SHRINK);
+                    const buffH = (c.buffs?.health || 0) + (c.roundBuffs?.health || 0);
+                    const taken = c.damageTaken || 0;
+                    const effBefore = (c.health || 0) + buffH - taken;          // 进入前的有效血量
+                    const rawHp = Math.max(1, (c.health || 0) - SHRINK);         // 这一刀后的基础血量
+                    const rawEff = rawHp + buffH - taken;                        // 这一刀后的有效血量
+                    // 保底 1 点（这一刀不该杀死信标），但绝不高于进入前 —— 原本已 ≤0 的保持原样，交给死亡清算
+                    const targetEff = Math.min(Math.max(1, rawEff), effBefore);
+                    return {
+                        ...c,
+                        maxHealth: newMax,
+                        health: taken + targetEff - buffH, // 反解出基础血量，使有效血量恰好 = targetEff
+                        animState: 'buff' as const,
+                    };
+                };
+
+                nextPlayerBench = nextPlayerBench.map(shrinkBeacon);
+                nextEnemyBench = nextEnemyBench.map(shrinkBeacon);
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        const newFight = { ...fight };
+                        if (newFight.attacker) newFight.attacker = shrinkBeacon(newFight.attacker);
+                        if (newFight.blocker) newFight.blocker = shrinkBeacon(newFight.blocker);
+                        return newFight;
+                    });
+                }
+
+                nextGame.beaconMaxHealthMod = (nextGame.beaconMaxHealthMod || 0) - SHRINK;
+
+                events.push({ type: 'sfx_buff', payload: null });
+                console.log(`[虹彩] 所有獠牙信标生命上限永久 -${SHRINK}（本局累计修正 ${nextGame.beaconMaxHealthMod}）`);
+                break;
             }
 
             let successfullyBuffedCount = 0; // [新增] 记账本：记录本次到底成功 BUFF 了多少个单位
@@ -1583,22 +1833,60 @@ export const processEffect = (
             // [新增] 血魔法反噬：效果执行完毕后，要求施法者支付设定的生命代价
             // =====================================
             // =====================================
-            // [2026-09-16 1.0.16 茉莉安 · T14] 标记射击：对獠牙信标造成 N 点伤害
+            // [2026-09-16 1.0.16 茉莉安 · T14] 钢羽傍身：对獠牙信标造成 N 点伤害
             // ── 伤害【来源于这张法术卡本身】，不归属茉莉安（设计文档 5.2）
             // ── 刻意不规避宿主的受伤类效果 —— 宿主给信标叠 buff 本来就是它的防守手段
             // ── 无信标则伤害落空（可打出性由 UI 层另行拦截）
             // =====================================
-            if (params.damageBeaconBy && params.damageBeaconBy > 0) {
-                const beaconDmg = params.damageBeaconBy;
+            // [2026-09-17 松露小队 · 流萤] damageBeaconBySelfPower：伤害改写为「施法者自身当前攻击力」
+            //   流萤无人机是 2/1【幻象】，亡语结算时 sourceCard 即那具尸体，读它当时的攻击力
+            const beaconDmg = params.damageBeaconBySelfPower && context.sourceCard
+                ? getPower(context.sourceCard)
+                : (params.damageBeaconBy || 0);
+            if (beaconDmg > 0) {
                 const hitBeacon = (c: CardData): CardData => {
                     if (c.key !== 'Marian_Wolf_Tooth_Beacon' || c.isDead || c.animState === 'dying') return c;
-                    events.push({ type: 'unit_damage', payload: { id: c.id, amount: beaconDmg } });
+                    events.push({ type: 'unit_damage', payload: { id: c.id, amount: beaconDmg, key: c.key } }); // key 供音效层路由
                     return { ...c, damageTaken: (c.damageTaken || 0) + beaconDmg, animState: 'hit' as const };
                 };
-                // 信标只会站在【施法者的对面】备战席
-                nextPlayerBench = nextPlayerBench.map(hitBeacon);
-                nextEnemyBench = nextEnemyBench.map(hitBeacon);
-                console.log(`[BeaconDebug] 标记射击：对獠牙信标造成 ${beaconDmg} 点伤害`);
+                // 信标默认只会站在【施法者的对面】备战席。
+                // [2026-09-17 松露小队] 'opponent' 限定只打对面 ——
+                // 夜视监察无人机是「我打水晶时顺带炸对面信标」，
+                // 若敌方茉莉安的信标正落在我方半场，双边都扫会打爆自己的信标（亡语炸自己）。
+                // 钢羽傍身（法术）仍走缺省的 'both'，保持历史行为不变。
+                // [2026-09-18 BUG修复] 信标被【暴露】拉到战场上格挡时，只扫备战席会让它「隐身」——
+                //   夜视监察无人机「打水晶时顺带炸信标」对场上信标完全不结算。
+                //   交战区同样要扫：attacker 属 fight.owner，blocker 属对面。
+                const hitBeaconInField = (side: 'player' | 'enemy') => {
+                    if (!nextCombatField) return;
+                    nextCombatField = nextCombatField.map(fight => {
+                        let nf = fight;
+                        if (fight.attacker && fight.owner === side) {
+                            nf = { ...nf, attacker: hitBeacon(fight.attacker) };
+                        }
+                        const blockerSide: 'player' | 'enemy' = fight.owner === 'player' ? 'enemy' : 'player';
+                        if (fight.blocker && blockerSide === side) {
+                            nf = { ...nf, blocker: hitBeacon(fight.blocker) };
+                        }
+                        return nf;
+                    });
+                };
+
+                if (params.damageBeaconSide === 'opponent') {
+                    if (context.owner === 'player') {
+                        nextEnemyBench = nextEnemyBench.map(hitBeacon);
+                        hitBeaconInField('enemy');
+                    } else {
+                        nextPlayerBench = nextPlayerBench.map(hitBeacon);
+                        hitBeaconInField('player');
+                    }
+                } else {
+                    nextPlayerBench = nextPlayerBench.map(hitBeacon);
+                    nextEnemyBench = nextEnemyBench.map(hitBeacon);
+                    hitBeaconInField('player');
+                    hitBeaconInField('enemy');
+                }
+                console.log(`[BeaconDebug] 对獠牙信标造成 ${beaconDmg} 点伤害（${params.damageBeaconSide === 'opponent' ? '仅对面' : '双边'}）`);
             }
 
             if (params.selfDamage && context.sourceCard) {
@@ -2223,13 +2511,52 @@ export const processEffect = (
 
             const cardKey = params.summonKey || params.relatedCardKey;
             const zone = params.summonZone || 'bench';
-            const count = params.summonCount || 1; // [新增] 提取召唤数量，默认为 1
+            // [新增] 提取召唤数量，默认为 1
+            // [2026-09-17 松露小队 · 榆] summonCountPerExposedEnemy：动态召唤数
+            //   「每有一个【暴露】的敌人，召唤一个」——值为上限（榆 = 5，取自敌方 6 格备战席减去榆自己占的 1 格）
+            let count = params.summonCount || 1;
+            if (params.summonCountPerExposedEnemy) {
+                const oppOwner: 'player' | 'enemy' = context.owner === 'player' ? 'enemy' : 'player';
+                const oppBench = oppOwner === 'player' ? nextPlayerBench : nextEnemyBench;
+                const isExposedAlive = (c: CardData) =>
+                    !c.isDead
+                    && c.animState !== 'dying'
+                    && c.animState !== 'ephemeral_dying'
+                    && (c.keywords || []).includes('Exposed');
+
+                // 备战席 + 交战区（对面那一侧的攻守两侧都要算，与 findStrongestUnit 口径一致）
+                let exposed = oppBench.filter(isExposedAlive).length;
+                if (nextCombatField) {
+                    exposed += nextCombatField
+                        .flatMap(f => {
+                            const list: CardData[] = [];
+                            if (f.owner === oppOwner && f.attacker) list.push(f.attacker);
+                            if (f.owner !== oppOwner && f.blocker) list.push(f.blocker);
+                            return list;
+                        })
+                        .filter(isExposedAlive).length;
+                }
+
+                count = Math.min(exposed, params.summonCountPerExposedEnemy);
+                console.log(`[榆] 敌方【暴露】单位 ${exposed} 个 → 召唤 ${count} 个（上限 ${params.summonCountPerExposedEnemy}）`);
+            }
 
             if (cardKey) {
                 // [新增] 开启循环，支持生成多张卡牌
                 for (let i = 0; i < count; i++) {
                     let newCard = createCard(cardKey);
                     setEliceInitialCharge(newCard);
+
+                    // =====================================
+                    // [2026-09-17 1.0.16 松露小队 · T23 虹彩] 獠牙信标落场时套用「生命上限永久修正」
+                    // 这一步是 E8 的关键：修正记在 game state 上，
+                    // 任何来源召唤的信标（④库效 / 茉莉安本体入场 / 支援技 / 虹彩自身）都吃得到，
+                    // 不需要（也绝不能）去改 CARD_DB —— 那是模块级常量，改它会跨局污染。
+                    // =====================================
+                    // [2026-09-19 莉莉子 收口] 改为调用公共装配器 —— 本处是原先**唯一**套用修正的分支，
+                    //   另两条召唤路径（回合开始④库效 / 对局开始④库效）走 createFullCard 直建、绕过了它。
+                    //   收口后三条路径共用同一道工序，详见 gameRules.assembleBeaconCard 的注释。
+                    newCard = assembleBeaconCard(newCard, nextGame.beaconMaxHealthMod);
 
                     // =====================================
                     // [2026-09-16 茉莉安 · 跨阵营召唤] 解析召唤落点的阵营
@@ -2268,10 +2595,42 @@ export const processEffect = (
 
                     // [2026-09-16 茉莉安 T13] 落点已有同名单位 → 不召唤
                     //   用于信标的「场上最多 1 个」（设计文档 3.6）
-                    if (params.summonOnlyIfAbsent && cardKey && targetBench.some(c => c.key === cardKey)) {
-                        console.log(`[Summon] ${landingOwner} 备战席已有「${cardKey}」，summonOnlyIfAbsent 跳过`);
+                    // =====================================
+                    // [2026-09-19 T44 茉莉安] 入场即发「补兵券」（修正 T39 的语义）
+                    // ── 新语义：她这次入场**占用了**一个信标名额（要么当场召唤、要么因已有而跳过），
+                    //    该名额对应的信标若被击败，就用这张券补回来 ⇒ 入场投入不会白费。
+                    // ── 为什么不再「只在落点已有时才发」：那会让两种情形永久断档 ——
+                    //    ① 落点只有【尸体】时（尸体挡住了召唤，见下方的存活判定）
+                    //    ② 她当场召唤的信标被自己那一记狙击打死时
+                    //    两种情形都是「场上没有活信标 + 手上没有券」⇒ 券永远兑现不了。
+                    // ── 按施法者阵营记账（镜像对局双方各算各的）
+                    // ⚠️ 必须放在【召唤循环之外】：否则 summonCount>1 时会重复发券
+                    // ⚠️ 本效果 timing 为 ON_PLAY，回合开始不会走到这里，故不会每回合白送券
+                    // =====================================
+                    if (params.entryVoucher) {
+                        const voucherSide = context.owner;
+                        const voucherMap = { ...(nextGame.marianBeaconVoucher || {}) };
+                        voucherMap[voucherSide] = (voucherMap[voucherSide] || 0) + 1;
+                        nextGame.marianBeaconVoucher = voucherMap;
+                        console.log(`[Summon] ${voucherSide} 侧茉莉安入场 → 发放「补兵券」（现有 ${voucherMap[voucherSide]} 张）`);
+                    }
+
+                    // [2026-09-19 T44 BUG修复] 「已有」判定必须只认【存活】的 ——
+                    //   信标死后尸体会在数组里留 ~2.5s（等死亡动画），此前只比 key ⇒ 尸体把召唤挡住，
+                    //   又因为改发券而券无处兑现 ⇒ 永久断档。
+                    //   （同一类修复见 useRoundLifecycle 的 scanLibrarySummon，2026-09-18）
+                    const isLiveSameKey = (c: CardData) =>
+                        c.key === cardKey && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+                    if (params.summonOnlyIfAbsent && cardKey && targetBench.some(isLiveSameKey)) {
+                        console.log(`[Summon] ${landingOwner} 备战席已有【存活】的「${cardKey}」，summonOnlyIfAbsent 跳过`);
                         continue;
                     }
+
+                    // [2026-09-19 莉莉子 方向一 · 归属盖章] 落场即定归属，此后查表不推导
+                    // ── 备战席落点 = landingOwner（跨阵营召唤时是对方，如獠牙信标）
+                    // ── 交战区 / 手牌落点不参与 summonSide 重绑（见上注），恒为施法者自己一侧
+                    //    （newCard 是上面刚 new 出来的可变对象，此处盖章不会污染卡牌原型数据）
+                    newCard.unitOwner = zone === 'bench' ? landingOwner : context.owner;
 
                     if (zone === 'hand') {
                         // =====================================
@@ -3573,13 +3932,24 @@ export const processEffect = (
         }
 
         // =====================================
-        // [2026-09-16 1.0.16 茉莉安 · T15] 大招·逐一清除（续击循环）
+        // [2026-09-16 1.0.16 茉莉安 · T15] 大招·最终指令（续击循环）
         // ── ① 玩家瞄准一个敌方单位 → 单向打击（不吃反击），伤害 = 茉莉安攻击力
         // ── ② 若将其【击杀】，自动锁定【当前生命值最低】的敌方单位再打一次，如此反复
         // ── ③ 直到某次未击杀 → 断链；场上无单位 → 转打敌方水晶后结束
         // ── 设计文档 5.1 要求的两道护栏，本实现均已落实：
         //      护栏① 每次续击【重新取实时快照】，不复用上一击的陈旧数据
         //      护栏② 循环次数【兜底上限】MAX_CHAIN，防意外死循环
+        // =====================================
+        // =====================================
+        // [2026-09-19 1.0.16 茉莉安 · 大招逐击改造] 连斩（最终指令）
+        // ── 从「同步 for 循环一次打完」改为「**一击一步**」（程拍板：演出要"挨个打击，打死再下一个"）
+        //    本 case 每次调用只打**一击**，链的进展写进 nextGame.pendingChain；
+        //    驱动器（useGameState 的驱动 effect → chainStrikeStep）看到没完就延时再调一次。
+        // ── 为什么必须这样改：原先一个 tick 全打完 ⇒ 多个目标同帧掉血，
+        //    演出层**根本没有"逐击"可播**（而"数值先落地、动画后补"会更假）
+        //    现在每一击的伤害与它的演出事件在**同一刻**发出 ⇒ 因果天然对齐。
+        // ── 三条原有护栏逐条保留：
+        //    ① 每一击都重取实时快照　② MAX_CHAIN=20 兜底　③ 场上清空 → 转打水晶
         // =====================================
         case 'CHAIN_STRIKE': {
             const csParams = effect.params as EffectParams;
@@ -3593,76 +3963,97 @@ export const processEffect = (
             const isLive = (c: any) =>
                 !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying' && hpOf(c) > 0;
 
-            // 伤害源 = 我方场上的茉莉安攻击力（Lv2 时为 6 → 斩杀线 6）
-            const myAll: CardData[] = [
-                ...(mySide === 'player' ? nextPlayerBench : nextEnemyBench),
-                ...((nextCombatField || [])
-                    .filter(f => f.owner === mySide)
-                    .flatMap(f => [f.attacker, f.blocker].filter(Boolean) as CardData[])),
-            ];
-            const marianUnit = myAll.find(c => c.key === 'marian');
-            const strikeDmg = marianUnit ? powerOf(marianUnit) : (csParams.value || 0);
-            if (strikeDmg <= 0) {
-                console.log('[ChainStrike] 找不到茉莉安或攻击力为 0，链中止');
-                break;
-            }
+            const prev = nextGame.pendingChain;
+            const isResume = !!prev && !prev.done; // true = 续击；false = 首次（本次调用负责初始化）
 
-            const MAX_CHAIN = 20; // 护栏②：循环兜底上限
-            let chain = 0;
-            let nexusHit = false;
-            let curId: string | null = finalTargets[0]?.id ?? null; // 首击目标由玩家指定
-
-            for (let step = 0; step < MAX_CHAIN; step++) {
-                // 护栏①：每一击都重新取实时快照
-                const foeBenchNow: CardData[] = foeSide === 'player' ? nextPlayerBench : nextEnemyBench;
-                const foeFieldNow: CardData[] = (nextCombatField || [])
-                    .filter(f => f.owner === foeSide)
-                    .flatMap(f => [f.attacker, f.blocker].filter(Boolean) as CardData[]);
-                const live = [...foeBenchNow, ...foeFieldNow].filter(isLive);
-
-                if (live.length === 0) { nexusHit = true; break; } // 场上清空 → 转打水晶
-
-                // 首击用玩家指定的目标（若已死则自动改选最低血）；续击一律取最低血
-                const victim: CardData =
-                    (step === 0 && curId ? live.find(c => c.id === curId) : undefined)
-                    ?? live.reduce((a, b) => (hpOf(b) < hpOf(a) ? b : a));
-                const victimId = victim.id;
-
-                const applyHit = (c: CardData): CardData =>
-                    c.id === victimId
-                        ? { ...c, damageTaken: (c.damageTaken || 0) + strikeDmg, animState: 'hit' as const }
-                        : c;
-
-                events.push({ type: 'unit_damage', payload: { id: victimId, amount: strikeDmg } });
-
-                if (foeSide === 'player') nextPlayerBench = nextPlayerBench.map(applyHit);
-                else nextEnemyBench = nextEnemyBench.map(applyHit);
-                if (nextCombatField) {
-                    nextCombatField = nextCombatField.map(f => ({
-                        ...f,
-                        attacker: f.attacker ? applyHit(f.attacker) : f.attacker,
-                        blocker: f.blocker ? applyHit(f.blocker) : f.blocker,
-                    })) as any;
+            // 伤害源只在首击解析一次（我方场上茉莉安当前攻击力；Lv2 = 6 → 斩杀线 6）
+            let strikeDmg = prev?.strikeDmg ?? 0;
+            let step = prev?.step ?? 0;
+            const prevPhase = prev?.prevPhase ?? context.game.phase;
+            if (!isResume) {
+                const myAll: CardData[] = [
+                    ...(mySide === 'player' ? nextPlayerBench : nextEnemyBench),
+                    ...((nextCombatField || [])
+                        .filter(f => f.owner === mySide)
+                        .flatMap(f => [f.attacker, f.blocker].filter(Boolean) as CardData[])),
+                ];
+                const marianUnit = myAll.find(c => c.key === 'marian');
+                strikeDmg = marianUnit ? powerOf(marianUnit) : (csParams.value || 0);
+                if (strikeDmg <= 0) {
+                    console.log('[ChainStrike] 找不到茉莉安或攻击力为 0，链中止');
+                    break;
                 }
-
-                chain++;
-                const remain = hpOf(victim) - strikeDmg;
-                console.log(`[ChainStrike] 第 ${chain} 击 → ${victim.name}（${hpOf(victim)} → ${Math.max(0, remain)}）`);
-
-                if (remain > 0) break; // 未击杀 → 断链
-                curId = null;          // 已击杀 → 续击改为自动锁最低血
             }
 
-            // 场上清空 → 打敌方水晶后结束
-            if (nexusHit) {
+            const MAX_CHAIN = 20; // 护栏②：兜底上限
+            // 护栏①：每一击都重新取实时快照
+            const foeBenchNow: CardData[] = foeSide === 'player' ? nextPlayerBench : nextEnemyBench;
+            const foeFieldNow: CardData[] = (nextCombatField || [])
+                .filter(f => f.owner === foeSide)
+                .flatMap(f => [f.attacker, f.blocker].filter(Boolean) as CardData[]);
+            const live = [...foeBenchNow, ...foeFieldNow].filter(isLive);
+
+            // 护栏③：场上清空 → 转打敌方水晶，这一击即链的收尾
+            if (live.length === 0) {
                 if (foeSide === 'player') {
                     nextGame.playerNexus = Math.max(0, (nextGame.playerNexus || 0) - strikeDmg);
                 } else {
                     nextGame.enemyNexus = Math.max(0, (nextGame.enemyNexus || 0) - strikeDmg);
                 }
+                nextGame.pendingChain = {
+                    casterSide: mySide, strikeDmg, victimId: null,
+                    step: step + 1, done: true, prevPhase,
+                };
+                eventBus.emit(GameEvents.CHAIN_STRIKE_STEP, {
+                    casterSide: mySide, step: step + 1, amount: strikeDmg, nexus: true, done: true,
+                });
                 console.log(`[ChainStrike] 场上清空 → 打击 ${foeSide} 水晶 ${strikeDmg} 点，链结束`);
+                break;
             }
-            console.log(`[ChainStrike] 结算完毕：共 ${chain} 击`);
+
+            // 选目标：首击用玩家指定（若已死则改锁最低血）；续击一律锁最低血
+            const wantedId = isResume ? (prev?.victimId ?? null) : (finalTargets[0]?.id ?? null);
+            const victim: CardData =
+                (wantedId ? live.find(c => c.id === wantedId) : undefined)
+                ?? live.reduce((a, b) => (hpOf(b) < hpOf(a) ? b : a));
+            const victimId = victim.id;
+
+            const applyHit = (c: CardData): CardData =>
+                c.id === victimId
+                    ? { ...c, damageTaken: (c.damageTaken || 0) + strikeDmg, animState: 'hit' as const }
+                    : c;
+
+            events.push({ type: 'unit_damage', payload: { id: victimId, amount: strikeDmg } });
+
+            if (foeSide === 'player') nextPlayerBench = nextPlayerBench.map(applyHit);
+            else nextEnemyBench = nextEnemyBench.map(applyHit);
+            if (nextCombatField) {
+                nextCombatField = nextCombatField.map(f => ({
+                    ...f,
+                    attacker: f.attacker ? applyHit(f.attacker) : f.attacker,
+                    blocker: f.blocker ? applyHit(f.blocker) : f.blocker,
+                })) as any;
+            }
+
+            step += 1;
+            const remain = hpOf(victim) - strikeDmg;
+            const killed = remain <= 0;
+            const chainDone = !killed || step >= MAX_CHAIN; // 未击杀 / 到上限 → 链结束
+            nextGame.pendingChain = {
+                casterSide: mySide,
+                strikeDmg,
+                victimId: killed ? null : victim.id, // 击杀 → 续击自动锁最低血
+                step,
+                done: chainDone,
+                prevPhase,
+            };
+
+            // 逐击广播：演出层照着这一击播（目标 / 是否击杀 / 是否收尾），与伤害**同刻**发出
+            eventBus.emit(GameEvents.CHAIN_STRIKE_STEP, {
+                casterSide: mySide, step, amount: strikeDmg,
+                victimId, victimKey: victim.key, killed, done: chainDone,
+            });
+            console.log(`[ChainStrike] 第 ${step} 击 → ${victim.name}（${hpOf(victim)} → ${Math.max(0, remain)}）${killed ? ' → 击杀，继续' : ' → 未击杀，断链'}`);
             break;
         }
 
@@ -3688,15 +4079,57 @@ export const processEffect = (
             const ownBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
             const targetIds: string[] = ownBench.filter(isLive).map(c => c.id);
             if (nextCombatField) {
+                // [2026-09-18 BUG修复] 交战区归属推导 —— 此前用 `f.owner !== context.owner` 一刀切，
+                //   把「本方发起的 fight」里的 attacker **和** blocker 都当成本方。但 blocker 属【对面】。
+                //   两个方向都错：
+                //     ① 漏：信标被拉上场格挡时，它所在的 fight 是「对面发起的」（f.owner ≠ context.owner），
+                //        整场被 return 跳过 → 战场上的友军（含这一侧的 blocker）全都收不到分摊伤害
+                //     ② 误伤：本方发起的 fight 里，敌方 blocker 反被算进「本方全体」挨炸
+                //   正解：attacker 属 f.owner，blocker 属 f.owner 的对面。
                 nextCombatField.forEach(f => {
-                    if (f.owner !== context.owner) return; // 只算本方
-                    if (isLive(f.attacker)) targetIds.push(f.attacker.id);
-                    if (isLive(f.blocker)) targetIds.push(f.blocker.id);
+                    const attackerSide: 'player' | 'enemy' = f.owner;
+                    const blockerSide: 'player' | 'enemy' = f.owner === 'player' ? 'enemy' : 'player';
+                    if (attackerSide === context.owner && isLive(f.attacker)) targetIds.push(f.attacker.id);
+                    if (blockerSide === context.owner && isLive(f.blocker)) targetIds.push(f.blocker.id);
                 });
             }
             const N = targetIds.length;
             if (N === 0) {
-                console.log('[BeaconDebug] 亡语分摊：本方无存活单位，伤害落空');
+                // =====================================
+                // [2026-09-19 T42 茉莉安 Lv2] 宿主场上无人可分摊 ⇒ 整份伤害转打宿主自家水晶
+                // ── 设计意图（程拍板）：升级不能只加厚清场，必须**推进胜利**。
+                //    这条把现在「伤害落空」的白白浪费变成推进，且**场面越干净 → 水晶越疼**，
+                //    与设计文档 3.4「让宿主吃满，不浪费」同源。
+                // ── 判定口径（程拍板：**实时**要求她活着在场，不采用"信标盖章"）：
+                //    召唤者侧 = 宿主（context.owner）的对面；必须有一个**活着在场**的 Lv2 茉莉安
+                //    （备战席或交战区皆可，判据与补兵规则同款：在场实例 level === 2）。
+                // ── 打的是【宿主自家】水晶：引爆本来就是宿主的代价，场上没人接就砸他自己的水晶。
+                // =====================================
+                const ownSide = context.owner;
+                const summonerSide: 'player' | 'enemy' = ownSide === 'player' ? 'enemy' : 'player';
+                const summonerBench = summonerSide === 'player' ? nextPlayerBench : nextEnemyBench;
+                const isLiveLv2Marian = (c: CardData | null | undefined) =>
+                    !!c && c.key === 'marian' && c.level === 2 && isLive(c);
+                const lv2MarianOnBoard =
+                    summonerBench.some(isLiveLv2Marian)
+                    || (nextCombatField || []).some(f =>
+                        [f.attacker, f.blocker].some(isLiveLv2Marian)
+                    );
+
+                if (lv2MarianOnBoard) {
+                    if (ownSide === 'player') nextGame.playerNexus = Math.max(0, (nextGame.playerNexus || 20) - total);
+                    else nextGame.enemyNexus = Math.max(0, (nextGame.enemyNexus || 20) - total);
+                    eventBus.emit('unit_damage', { id: `nexus_${ownSide}`, amount: total });
+                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: ownSide, amount: total });
+                    // [2026-09-19 视觉层] 空场转打水晶同样要出激光（打水晶的那一束）
+                    eventBus.emit(GameEvents.BEACON_EXPLODE, {
+                        beaconId: context.sourceCard?.id,
+                        targets: [{ id: `nexus_${ownSide}`, amount: total }],
+                    });
+                    console.log(`[BeaconDebug] 亡语分摊：宿主无存活单位 → Lv2 茉莉安在场，整份 ${total} 点转打 ${ownSide} 水晶`);
+                } else {
+                    console.log('[BeaconDebug] 亡语分摊：本方无存活单位，伤害落空');
+                }
                 break;
             }
 
@@ -3736,6 +4169,21 @@ export const processEffect = (
             }
 
             console.log(`[BeaconDebug] 亡语分摊：总量 ${total} → ${N} 个单位（每人 ${base}${remainder > 0 ? ` + 余数 ${remainder} 随机` : ''}）`);
+
+            // =====================================
+            // [2026-09-19 视觉层] 引爆 VFX 广播（纯附加，不影响任何逻辑）
+            // ── 视觉层需要知道：① 信标是谁（定位浮现图）② 每束激光打谁、打多少（决定数量与颜色）
+            // ── 这里的数据是唯一的真相源：分摊的分配结果（amountById）就在手上，无需视觉层再算一遍
+            // =====================================
+            {
+                const vfxTargets = targetIds
+                    .map(id => ({ id, amount: amountById.get(id) || 0 }))
+                    .filter(t => t.amount > 0);
+                eventBus.emit(GameEvents.BEACON_EXPLODE, {
+                    beaconId: context.sourceCard?.id, // 信标本体（亡语源头）
+                    targets: vfxTargets,              // 每束激光的落点 + 该束伤害
+                });
+            }
             break;
         }
 

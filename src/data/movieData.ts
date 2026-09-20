@@ -105,6 +105,13 @@ import acacia_levelup_4k from '../movie/level up/安卡希雅时之重奏_level 
 import acacia_win_1k from '../movie/win/安卡希雅时之重奏_win/1k.webm';
 import acacia_win_2k from '../movie/win/安卡希雅时之重奏_win/2k.webm';
 import acacia_win_4k from '../movie/win/安卡希雅时之重奏_win/4k.webm';
+// 茉莉安霄鹰
+import marian_levelup_1k from '../movie/level up/茉莉安霄鹰_level up/1k.webm';
+import marian_levelup_2k from '../movie/level up/茉莉安霄鹰_level up/2k.webm';
+import marian_levelup_4k from '../movie/level up/茉莉安霄鹰_level up/4k.webm';
+import marian_win_1k from '../movie/win/茉莉安霄鹰_win/1k.webm';
+import marian_win_2k from '../movie/win/茉莉安霄鹰_win/2k.webm';
+import marian_win_4k from '../movie/win/茉莉安霄鹰_win/4k.webm';
 
 // 定义视频类型
 export type MovieType = 'title' | 'levelup' | 'win';
@@ -194,7 +201,8 @@ export const MOVIE_DB = {
         fenny: { '1k': fenny_levelup_1k, '2k': fenny_levelup_2k, '4k': fenny_levelup_4k },
         pupu_specular_soul: { '1k': pupu_levelup_1k, '2k': pupu_levelup_2k, '4k': pupu_levelup_4k },
         mauxir_lotus_drive: { '1k': mauxir_levelup_1k, '2k': mauxir_levelup_2k, '4k': mauxir_levelup_4k },
-        acacia_chrono_echo: { '1k': acacia_levelup_1k, '2k': acacia_levelup_2k, '4k': acacia_levelup_4k }
+        acacia_chrono_echo: { '1k': acacia_levelup_1k, '2k': acacia_levelup_2k, '4k': acacia_levelup_4k },
+        marian: { '1k': marian_levelup_1k, '2k': marian_levelup_2k, '4k': marian_levelup_4k }
     } as Record<string, MovieSource>,
 
     // 胜利动画映射 (升级为多分辨率聚合对象)
@@ -203,7 +211,8 @@ export const MOVIE_DB = {
         fenny: [{ '1k': fenny_win_1k, '2k': fenny_win_2k, '4k': fenny_win_4k }],
         pupu_specular_soul: [{ '1k': pupu_win_1k, '2k': pupu_win_2k, '4k': pupu_win_4k }],
         mauxir_lotus_drive: [{ '1k': mauxir_win_1k, '2k': mauxir_win_2k, '4k': mauxir_win_4k }],
-        acacia_chrono_echo: [{ '1k': acacia_win_1k, '2k': acacia_win_2k, '4k': acacia_win_4k }]
+        acacia_chrono_echo: [{ '1k': acacia_win_1k, '2k': acacia_win_2k, '4k': acacia_win_4k }],
+        marian: [{ '1k': marian_win_1k, '2k': marian_win_2k, '4k': marian_win_4k }]
     } as Record<string, MovieSource[]>
 };
 

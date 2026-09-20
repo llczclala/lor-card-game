@@ -120,7 +120,11 @@ export interface EffectParams {
     gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
     spreadDamageTotal?: number;       // [2026-09-16 茉莉安] SPREAD_DAMAGE：对己方全体分摊的总伤害量
     summonOnlyIfAbsent?: boolean;     // [2026-09-16 茉莉安] SUMMON：落点已有同名单位则不召唤（信标「最多 1 个」）
-    damageBeaconBy?: number;          // [2026-09-16 茉莉安] 标记射击：对獠牙信标造成 N 点伤害（来源=法术卡本身）
+    entryVoucher?: boolean;           // [2026-09-19 T44 茉莉安] SUMMON：本次入场发放一张「补兵券」（信标被击败时兑现）
+    damageBeaconBy?: number;          // [2026-09-16 茉莉安] 钢羽傍身：对獠牙信标造成 N 点伤害（来源=法术卡本身）
+    damageBeaconSide?: 'both' | 'opponent'; // [2026-09-17 松露小队] 限定只打【对面】的信标（缺省 'both' 保持钢羽傍身的历史行为）
+    damageBeaconBySelfPower?: boolean;  // [2026-09-17 松露小队 · 流萤] 伤害取「施法者自身当前攻击力」，覆盖 damageBeaconBy 的静态值
+    summonCountPerExposedEnemy?: number; // [2026-09-17 松露小队 · 榆] 动态召唤数：每有一个【暴露】的敌人召唤一个，本值 = 上限
     gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
     isVolatile?: boolean;        // [安卡希雅] 生成的卡牌带上易逝(Volatile)关键词
     roundEndSelfDamageBuff?: {   // [新增] 回合末鞭策：对我方指定单位造成伤害并强化
@@ -2141,30 +2145,56 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_marian_lv1': {
         id: 'effect_marian_lv1',
         name: '狂轰滥炸',
-        description: '【库效】对局开始时，在敌方备战席召唤一个「獠牙信标」。',
+        description: '【库效】对局开始时：在敌方备战席召唤一个「獠牙信标」。\n入场：若敌方备战席没有「獠牙信标」则召唤一个；若已有，则首次被击败后补上一个。',
         class: 'SUMMON',
-        timing: 'ON_PLAY_AND_ROUND_START', // [T13] 入场 & 回合开始
+        // [2026-09-19 T38] `ON_PLAY_AND_ROUND_START` → **`ON_PLAY`**：回合开始那条要按等级分叉
+        //   （Lv1 不再每回合补），改由 useRoundLifecycle 的 scanLibrarySummon 单独承担并加 Lv2 闸门。
+        //   ⚠️ 若保留 ROUND_START，本效果会在每回合开始绕过闸门再补一次，T38 形同虚设。
+        timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [],
         params: {
-            // 【库效】对局开始（由 useGameState.triggerGameStartGenerate 扫描触发，只管这一条）
+            // 【库效】对局开始（useGameState.triggerGameStartGenerate，换牌后触发）
+            //   [2026-09-18] 每回合开始由 useRoundLifecycle 的 scanLibrarySummon 补扫（手牌+牌库，不在场也生效）
+            //   [2026-09-19 T38] scanLibrarySummon 已加「仅 Lv2」闸门 ⇒ Lv1 只有开局这一个信标
             gameStartSummon: 'Marian_Wolf_Tooth_Beacon',
             gameStartSummonSide: 'opponent',
-            // 入场 & 回合开始：若敌方备战席没有「獠牙信标」则召唤一个
+            // 入场：若敌方备战席没有「獠牙信标」则召唤一个
             //   summonSide:'opponent' 复用 T04 的跨阵营落点；summonOnlyIfAbsent 保证「场上最多 1 个」
-            //   ⚠️ 这两条与【库效】并存、互不取代（设计文档 3.2）
+            //   [2026-09-19 T44] entryVoucher：每次入场都发一张「补兵券」
+            //     （信标被击败时兑现，要求她本人活着在场；见 useGameState 死亡漏斗）
+            //     ⚠️ 语义修正（原 T39 只在"落点已有时"才发）——否则会被尸体/自狙击搞成永久断档
             summonKey: 'Marian_Wolf_Tooth_Beacon',
             summonSide: 'opponent',
             summonCount: 1,
             summonOnlyIfAbsent: true,
+            entryVoucher: true,
         }
     },
 
-    // --- 茉莉安 抉择① 小技能：标记射击（T14）---
+    // --- [2026-09-18] 茉莉安 ②：入场 & 回合开始 → 对敌方备战席的信标打「等同自身攻击力」的伤害 ---
+    //   与 effect_marian_lv1（补信标）成对使用：在 effects 数组里排在它**后面**，保证「先补后打」
+    //   伤害归属茉莉安本体（sourceCard = 茉莉安），故用 SelfPower 变体而非固定数值
+    //   damageBeaconSide:'opponent' 只打对面 —— 避免敌方信标正落在我方半场时反噬自家信标
+    'effect_marian_beacon_snipe': {
+        id: 'effect_marian_beacon_snipe',
+        name: '猎场压制',
+        description: '入场及回合开始时：对敌方备战席的「獠牙信标」造成等同于自己攻击力的伤害。',
+        class: 'BUFF',              // 复用 BUFF：它已完整支持 damageBeaconBy / damageBeaconBySelfPower
+        timing: 'ON_PLAY_AND_ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            damageBeaconBySelfPower: true,  // 伤害 = 施法者（茉莉安）当前攻击力
+            damageBeaconSide: 'opponent',   // 只打对面
+        }
+    },
+
+    // --- 茉莉安 抉择① 小技能：钢羽傍身（T14）---
     'effect_marian_rush': {
         id: 'effect_marian_rush',
-        name: '标记射击',
-        description: '对“獠牙信标”造成 1 点伤害，以暴露两个敌人。',
+        name: '钢羽傍身',
+        description: '对“獠牙信标”造成 3 点伤害，以暴露两个敌人。',
         class: 'BUFF',            // 复用 BUFF：它已完整支持「施加关键词」（含 ROUND / PERMANENT 两形态）
         timing: 'ON_PLAY',
         speed: 'BURST',
@@ -2172,19 +2202,19 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
             { type: 'ENEMY_UNIT', count: 2, label: '选择两个敌方单位，使其暴露' }
         ],
         params: {
-            damageBeaconBy: 1,    // 对信标的伤害（来源=法术卡本身，不归属茉莉安）
+            damageBeaconBy: 3,    // 对信标的伤害（来源=法术卡本身，不归属茉莉安）
             keywords: ['Exposed'],
             duration: 'PERMANENT', // ⚠️ 设计文档 2.2 允许两种形态，本卡先取「永久赋予」；改 ROUND 即单回合
         }
     },
 
-    // --- 茉莉安 抉择② 大招：逐一清除（T15）---
+    // --- 茉莉安 抉择② 大招：最终指令（T15）---
     // ⚠️ 设计文档 5.1 注记：伤害 = 茉莉安攻击力 → **Lv2 斩杀线 6**。
     //    这意味着它本质更像「连斩中血量单位」而非原定的「残血收割机」（原定性基于斩杀线 3）。
     //    设计文档已把「大招定位需复核」列为 🔴 待程定（见待程决策 D2）。
     'effect_marian_ultimate': {
         id: 'effect_marian_ultimate',
-        name: '逐一清除',
+        name: '最终指令',
         description: '打击一个敌方单位，造成等同于“茉莉安 霄鹰”攻击力的伤害。若将其击杀，则自动锁定当前生命值最低的敌方单位再次打击。',
         class: 'CHAIN_STRIKE',
         timing: 'ON_PLAY',
@@ -2195,10 +2225,10 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         params: {}
     },
 
-    // --- 茉莉安 支援技：前哨投送（T16）---
+    // --- 茉莉安 支援技：重器制空（T16）---
     'effect_marian_support': {
         id: 'effect_marian_support',
-        name: '前哨投送',
+        name: '重器制空',
         description: '在敌方备战席召唤一个“獠牙信标”。',
         class: 'SUMMON',
         timing: 'ON_PLAY',
@@ -2219,14 +2249,151 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_marian_beacon_lastbreath': {
         id: 'effect_marian_beacon_lastbreath',
         name: '獠牙引爆',
-        description: '【亡语】阵亡时，对本方全体分摊伤害。',
+        description: '【亡语】阵亡时，对我方全体造成 6 点分摊伤害。',
         class: 'SPREAD_DAMAGE',
         timing: 'LAST_BREATH',
         speed: 'BURST',
         targetRequirements: [],
         params: {
-            spreadDamageTotal: 6, // ⚠️ 待数值复核 —— 设计文档 10.3：信标血量 6→20 后，6 点收益是否还配得上投入
+            spreadDamageTotal: 6, // [2026-09-18 程拍板数值复核] 6 → 8（结掉原「待数值复核」TODO）
         }
+    },
+
+    // ==========================================
+    // [2026-09-17 1.0.16 茉莉安 · Phase 4 阵营法术 ×3]
+    // ⚠️ 定性（设计文档 7.0）：这三张是【阵营法术】，不是茉莉安的专属法术。
+    //    它们不与茉莉安核心机制闭环，断链是设计常态，按独立卡牌平衡。
+    // ==========================================
+
+    // --- 阵营法术二：以饵引狼（T18）---
+    // 逻辑走 effectProcessor.ts BUFF 分支内的专属实现（两个目标吃不同效果）
+    // 程 2026-09-17 拍板：两个目标都手动选（我方当饵 + 敌方被削）
+    'effect_marian_faction_bait': {
+        id: 'effect_marian_faction_bait',
+        name: '以饵引狼',
+        description: '暴露一个我方单位，以使一个敌人本回合 -4/-0。',
+        class: 'BUFF',            // 载体类：真正逻辑在 BUFF 分支内按 effect.id 特判
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            { type: 'ALLY_UNIT',  count: 1, label: '选择我方一个单位使其【暴露】' },
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位，本回合 -4/-0' },
+        ],
+        params: {},               // 具体数值在专属实现里写死（-4/-0）
+    },
+
+    // ==========================================
+    // [2026-09-17 1.0.16 茉莉安 · Phase 5「松露」小队]
+    // 设计原则：三张后勤全围【獠牙信标】转，推进节奏分别是 持续 / 规模 / 一次性
+    // ==========================================
+
+    // --- 蕈影（T21）---
+    // ① 入场自动暴露敌方攻击力最高者（逻辑在 BUFF 分支内按 effect.id 特判，无需玩家选目标）
+    'effect_truffle_mushroom_expose': {
+        id: 'effect_truffle_mushroom_expose',
+        name: '夜视侦察',
+        description: '入场：暴露敌方攻击力最高的未暴露单位。',
+        class: 'BUFF',            // 载体类：自动选最强在 BUFF 分支内特判实现
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {},
+    },
+    // ② 入场召唤夜视监察无人机
+    'effect_truffle_mushroom_summon': {
+        id: 'effect_truffle_mushroom_summon',
+        name: '无人机调度',
+        description: '入场：召唤一个“夜视监察无人机”。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonKey: 'Truffle_Drone_NightVision', summonZone: 'bench' },
+    },
+
+    // --- 夜视监察无人机：每次打击水晶 → 顺带炸对面信标 ---
+    // 复用 BUFF 的 damageBeaconBy；'opponent' 限定只打对面，避免反噬自家信标
+    'effect_truffle_drone_nightvision': {
+        id: 'effect_truffle_drone_nightvision',
+        name: '夜视监察',
+        description: '每次打击敌方水晶时，对“獠牙信标”额外造成 3 点伤害。',
+        class: 'BUFF',            // 载体类：靠 damageBeaconBy 参数生效
+        timing: 'ON_NEXUS_STRIKE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { damageBeaconBy: 3, damageBeaconSide: 'opponent' },
+    },
+
+    // --- 榆（T22）---
+    // 入场：每有一个【暴露】的敌人召唤一个流萤无人机，上限 5
+    // 上限 5 的由来（方案 8.1）：敌方 6 格备战席最多 6 个暴露单位，而我方备战席被榆自己占掉 1 格
+    'effect_truffle_elm_summon': {
+        id: 'effect_truffle_elm_summon',
+        name: '萤火集结',
+        description: '入场：每有一个【暴露】的敌人，召唤一个“流萤无人机”（最多 5 个）。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            summonKey: 'Truffle_Drone_Firefly',
+            summonZone: 'bench',
+            summonCountPerExposedEnemy: 5, // 动态召唤数上限
+        },
+    },
+
+    // --- 流萤无人机：亡语 → 对獠牙信标造成 = 自身攻击力 的伤害 ---
+    // 复用 BUFF 的 damageBeaconBy 通道，用 damageBeaconBySelfPower 把静态数值换成「尸体当时的攻击力」
+    'effect_truffle_drone_firefly_death': {
+        id: 'effect_truffle_drone_firefly_death',
+        name: '萤火自毁',
+        description: '【亡语】阵亡时，对“獠牙信标”造成等同于自身攻击力的伤害。',
+        class: 'BUFF',            // 载体类：靠 damageBeaconBySelfPower 参数生效
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { damageBeaconBySelfPower: true, damageBeaconSide: 'opponent' },
+    },
+
+    // --- 虹彩（T23）---
+    // ① 入场：所有獠牙信标生命上限永久 -10（含尚未登场的）
+    //    逻辑在 BUFF 分支内特判；「尚未登场」靠 GameState.beaconMaxHealthMod 在召唤落场时套用
+    'effect_truffle_iris_beacon_shrink': {
+        id: 'effect_truffle_iris_beacon_shrink',
+        name: '信号压制',
+        description: '入场：使本牌局所有“獠牙信标”的生命值上限永久 -3。',
+        class: 'BUFF',            // 载体类：真正逻辑在 BUFF 分支内按 effect.id 特判
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {},
+    },
+    // ② 入场召唤园丁灌溉无人机
+    'effect_truffle_iris_summon': {
+        id: 'effect_truffle_iris_summon',
+        name: '无人机调度',
+        description: '入场：召唤一个“园丁灌溉无人机”。',
+        class: 'SUMMON',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { summonKey: 'Truffle_Drone_Gardener', summonZone: 'bench' },
+    },
+    // ⚠️ 园丁灌溉无人机【没有】对应的效果条目 ——
+    //    它是个被动监听器，逻辑挂在 useGameState 的 UNIT_DIED 处理里
+    //    （按 card.key === 'Truffle_Drone_Gardener' 识别），不走效果注册表。
+
+    // --- 阵营法术三：静默行动（T19）---
+    // 逻辑走 effectProcessor.ts BUFF 分支内的专属实现（全场全计，通用路径覆盖不了）
+    'effect_marian_silent_action': {
+        id: 'effect_marian_silent_action',
+        name: '静默行动',
+        description: '屏蔽所有信号。消除场上所有的【暴露】，每消除一个，我方全体永久 +1/+1。',
+        class: 'BUFF',            // 载体类：真正逻辑在 BUFF 分支内按 effect.id 特判
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],   // 全场全计，无需选目标（validateTargets 对 count=0 直接放行）
+        params: {},
     },
 };
 

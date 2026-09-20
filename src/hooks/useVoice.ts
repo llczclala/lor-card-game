@@ -19,8 +19,7 @@ const PRIORITY_MAP: Record<VoiceEventType, number> = {
     enemy_spawn: 1,
     kill: 2,
     spell_small: 1,
-    spell_ultimate: 1,
-    spell_support: 1
+    spell_ultimate: 1
 };
 
 export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
@@ -148,11 +147,11 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
         const handleUnitDie = (card: CardData) => playVoice(card, 'die');
         const handleHeroFirstAction = (card: CardData) => playVoice(card, 'attack_block');
         const handleKill = (card: CardData) => playVoice(card, 'kill');
-        const handleSpellChoice = (payload: { hero: CardData, choice: 'small' | 'ultimate' | 'support' }) => {
+        // [2026-09-17] 'support' 分支已移除：SPELL_CHOICE 的唯一发送点
+        // （useSpellSystem.ts）只会发 'small' / 'ultimate'，支援技语音无触发途径
+        const handleSpellChoice = (payload: { hero: CardData, choice: 'small' | 'ultimate' }) => {
             if (payload.choice === 'ultimate') {
                 playVoice(payload.hero, 'spell_ultimate');
-            } else if (payload.choice === 'support') {
-                playVoice(payload.hero, 'spell_support');
             } else {
                 playVoice(payload.hero, 'spell_small');
             }

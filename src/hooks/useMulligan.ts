@@ -7,9 +7,13 @@ interface UseMulliganProps {
     onReplace: (indices: number[]) => Promise<void>; // 真正执行换牌的后端逻辑
     onComplete: () => void; // 换牌彻底结束的回调
     skip?: boolean; // [新增] 完全跳过换牌环节
+    // [2026-09-19 莉莉子 BUG修复] 局内暂停：为 true 时倒计时冻结（既不递减，也不触发超时自动确认）
+    // ── 病根：本 hook 的倒计时此前不认识暂停，而回合倒计时（GameSession 的 timeLeft）有守卫
+    //    → ESC 暂停后换牌倒计时照走，时间一到照常自动换牌，"暂停"形同虚设。
+    paused?: boolean;
 }
 
-export const useMulligan = ({ onReplace, onComplete, skip = false }: UseMulliganProps) => {
+export const useMulligan = ({ onReplace, onComplete, skip = false, paused = false }: UseMulliganProps) => {
     // 状态管理
     const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
     const [isConfirmed, setIsConfirmed] = useState(false);
@@ -17,7 +21,10 @@ export const useMulligan = ({ onReplace, onComplete, skip = false }: UseMulligan
     const [isActive, setIsActive] = useState(!skip); // [修改] 跳过时直接 inactive
 
     // 倒计时逻辑
+    // [2026-09-19 莉莉子] paused 期间整段跳过：不递减、也不判超时自动确认。
+    //   恢复时因为 paused 在依赖里 → effect 重跑 → setTimeout 重新起跳（不会吞掉时间）。
     useEffect(() => {
+        if (paused) return;
         if (isActive && !isConfirmed) {
             if (timeLeft <= 0) {
                 setIsConfirmed(true);
@@ -26,7 +33,7 @@ export const useMulligan = ({ onReplace, onComplete, skip = false }: UseMulligan
             const timer = setTimeout(() => setTimeLeft(p => p - 1), 1000);
             return () => clearTimeout(timer);
         }
-    }, [isActive, isConfirmed, timeLeft]);
+    }, [isActive, isConfirmed, timeLeft, paused]);
 
     // 选中/取消选中
     const toggleIndex = useCallback((index: number) => {

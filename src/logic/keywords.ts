@@ -336,7 +336,13 @@ export const calculateCombatInteraction = (
 
         // [核心修复] 读取防守者的真实血量和攻击力
         const blockerRealHealth = getHealth(blocker);
-        const blockerRealPower = getPower(blocker);
+        let blockerRealPower = getPower(blocker);
+        // [2026-09-18 BUG修复]【无法攻击】同样约束【格挡反击】——
+        //   此前只对 attacker 归零，导致被【暴露】/【挑战者】拉上场格挡的 CantAttack 单位
+        //   照常打出反击伤害（面板攻击力没有归零）。
+        if (blocker.keywords.includes('CantAttack')) {
+            blockerRealPower = 0;
+        }
 
         // --- 1. Overwhelm (贯通/碾压) ---
         // 效果：超出阻挡者生命值的伤害打击水晶

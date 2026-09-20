@@ -60,6 +60,41 @@ export const GameEvents = {
     // [新增] 设置类事件 (解决 TS 报错的核心)
     SET_VOICE_VOLUME: 'set_voice_volume',
 
+    // ==========================================================
+    // [2026-09-19 1.0.16] 法术交互音效事件（程 2026-09-19 定口径）
+    //   · SFX_SPELL_PLAY    打出法术：点击打出 / 拖出松手
+    //   · SFX_SPELL_CONFIRM 确定打出：极速法术紧随打出；快速/慢速在「确定」时
+    //   · SFX_SPELL_DRAG    拖出法术：手牌里拖起一张法术卡
+    //   · SFX_BUFF_APPLY    BUFF 金光：只要金光亮起就响（由 sfx_buff 事件转译，见 useSfx 注释）
+    // ==========================================================
+    SFX_SPELL_PLAY: 'SFX_SPELL_PLAY',
+    SFX_SPELL_CONFIRM: 'SFX_SPELL_CONFIRM',
+    SFX_SPELL_DRAG: 'SFX_SPELL_DRAG',
+    SFX_BUFF_APPLY: 'SFX_BUFF_APPLY',
+    // [2026-09-19] 施法选目标专用事件 —— 与通用「选单位」分开，各响各的音效
+    //   · SFX_SELECT_UNIT（通用选单位/选阻挡者…）→ 选择单位.ogg
+    //   · SFX_SPELL_TARGET（施法时点选目标）      → 法术选择目标.ogg
+    SFX_SPELL_TARGET: 'SFX_SPELL_TARGET',
+    // [2026-09-19] 换牌阶段【开局发牌】：换牌 UI 一出现、发出那 4 张待换卡牌时
+    //   注意与「换牌结束后的补抽 4 张」区分 —— 后者是普通抽卡
+    SFX_MULLIGAN_DEAL: 'SFX_MULLIGAN_DEAL',
+
+    // [2026-09-19 1.0.16 茉莉安] 大招「最终指令」逐击广播（一次一击，演出与结算同源）
+    // Payload: { casterSide, step, amount, victimId?, victimKey?, killed?, nexus? }
+    CHAIN_STRIKE_STEP: 'chain_strike_step',
+
+    // [2026-09-19 1.0.16 茉莉安] 獠牙信标引爆 VFX 广播
+    // Payload: { beaconId?: string, targets: { id: string, amount: number }[] }
+    //   beaconId = 信标本体（定位「浮现图」的位置）；targets = 每束激光的落点与该束伤害
+    BEACON_EXPLODE: 'beacon_explode',
+
+    // [2026-09-19 莉莉子] 局内暂停广播（ESC）
+    // ── 用途：让【不在 GameSession DOM 里】的播放器也能被叫停（BGM 是 App 侧 new Audio()，
+    //    拿不到也不该拿 GameSession 的局部 state；视频/动画走 DOM 就地冻结，不依赖本事件）
+    // ── 约束：只在 GameSession 真正进出暂停时发一次；必须与 GAME_RESUME 成对
+    GAME_PAUSE: 'game_pause',
+    GAME_RESUME: 'game_resume',
+
     UNIT_DIE: 'unit_die',
     UNIT_KILL: 'unit_kill',
     HERO_LEVEL_UP: 'hero_level_up',

@@ -3,7 +3,7 @@ import { motion, AnimatePresence, type Variants, useMotionValue, useVelocity, us
 import { Check, RefreshCw, Crosshair } from 'lucide-react'; // [加回] 图标
 import type { CardData } from '../types';
 import { Card } from './Card';
-import { canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasPoetCaitlinAura, hasForgerTatianaAura } from '../utils/gameRules';
+import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasPoetCaitlinAura, hasForgerTatianaAura } from '../utils/gameRules';
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
 import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
@@ -16,6 +16,7 @@ interface PlayerHandProps {
     game: any; // 传入 game state 以判断出牌条件
     playerBench: CardData[]; // [新增] 需要传入备战席供条件扫描
     combatField: any[];      // [新增] 需要传入交战区供条件扫描
+    enemyBench?: CardData[]; // [2026-09-19] 法术场上条件（支援技/钢羽傍身）需要
     cardBackUrl: string;
     cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL
     skinOverrides?: Record<string, number>; // [核心新增] 接收皮肤配置字典
@@ -36,7 +37,7 @@ const AnimatedHandCard = ({
     translateY, translateX, baseScale, baseRotate, cardZIndex,
     vh,
     onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
-    game, playerBench, combatField, cardBackUrl, cardBackVideoUrl, onViewArt, skinOverrides,
+    game, playerBench, combatField, enemyBench, cardBackUrl, cardBackVideoUrl, onViewArt, skinOverrides,
     animType, onAnimComplete, isCastingForHand, handTargetFilter, // [2026-08-08 莉莉子] 手牌动画支持 + HAND_CARD 高亮
 }: any) => {
     // [2026-07-07 交互修复] 局部动画状态：与 isNew 解耦
@@ -212,6 +213,9 @@ const AnimatedHandCard = ({
                             return true;
                         }
                         if (game.turnOwner !== 'player') return false;
+                        // [2026-09-19 BUG修复] 法术的「场上条件」不满足 → 不亮可用高光
+                        //   （与 GameSession 的点击拦截同源，避免"高光说能打、点了打不出去"）
+                        if (getSpellPlayBlockReason(c, { playerBench, enemyBench, combatField })) return false;
                         if (c.key === 'forced_communication' || c.key === 'temp_spell_12') { // [2026-08-15] 燃尽法术：法力为0时不可打（泰坦降临对齐强行通讯）
                             const burnoutCost = (game.playerMana || 0) + (game.playerSpellMana || 0);
                             if (burnoutCost <= 0) return false;
@@ -233,7 +237,7 @@ const AnimatedHandCard = ({
 
 // 修改后的新的代码片段
 export const PlayerHand: React.FC<PlayerHandProps> = ({
-    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], cardBackUrl, cardBackVideoUrl, skinOverrides, isCastingForHand, handTargetFilter, onAnimComplete // [核心解构]
+    hand, onCardClick, onHover, onViewArt, game, playerBench = [], combatField = [], enemyBench = [], cardBackUrl, cardBackVideoUrl, skinOverrides, isCastingForHand, handTargetFilter, onAnimComplete // [核心解构]
 }) => {
     const validHand = hand.filter(c => c && c.key && c.type);
 
@@ -397,6 +401,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             game={game}
                             playerBench={playerBench} // [核心修复] 把备战席传给物理核组件
                             combatField={combatField} // [核心修复] 把交战区传给物理核组件
+                            enemyBench={enemyBench} // [2026-09-19] 法术场上条件（支援技/钢羽傍身）需要
                             cardBackUrl={cardBackUrl}
                             cardBackVideoUrl={cardBackVideoUrl}
                             onViewArt={onViewArt}
@@ -416,7 +421,11 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             }}
                             onMouseEnter={() => { if (!draggingId) { setHoverIndex(index); onHover(c); } }}
                             onMouseLeave={() => { if (!draggingId) onHover(null); }}
-                            onDragStart={() => { setDraggingId(c.id); setHoverIndex(index); }}
+                            onDragStart={() => {
+                                setDraggingId(c.id); setHoverIndex(index);
+                                // [2026-09-19] 拖出法术音效（仅法术卡）
+                                if (c.type?.includes('spell')) eventBus.emit(GameEvents.SFX_SPELL_DRAG);
+                            }}
                             onDragEnd={(_e: any, info: any) => {
                                 setDraggingId(null);
                                 setHoverIndex(null);

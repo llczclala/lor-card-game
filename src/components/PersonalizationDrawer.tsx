@@ -26,7 +26,8 @@ export const PersonalizationDrawer: React.FC<PersonalizationDrawerProps> = ({
 
     // 获取当前图片资源
     const cardBackImg = PERSONALIZATION_ASSETS.cardBacks[currentCardBackIndex];
-    const deskImg = PERSONALIZATION_ASSETS.desks[currentDeskIndex];
+    // [2026-09-18] 兜底 desks[0]：防止存档残留已失效的牌桌编号
+    const deskImg = PERSONALIZATION_ASSETS.desks[currentDeskIndex] ?? PERSONALIZATION_ASSETS.desks[0];
 
     return (
         <>

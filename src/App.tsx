@@ -182,8 +182,24 @@ export default function App() {
   };
   // ------------------------------------
 
-  const { playBgm, stopBgm, setBgmVolume } = useAudio();
+  const { playBgm, stopBgm, pauseBgm, resumeBgm, setBgmVolume } = useAudio();
   const { setSfxVolume } = useSfx();
+
+  // ==========================================
+  // [2026-09-19 莉莉子] 局内暂停 · BGM 冻结
+  // ── BGM 是 App 侧 new Audio()（不在 GameSession 的 DOM 里），拿不到也不该拿它的局部 isPaused，
+  //    故走事件总线广播：GameSession 进出暂停时发一次，这里执行暂停/续播。
+  // ==========================================
+  useEffect(() => {
+      const onPause = () => pauseBgm();
+      const onResume = () => resumeBgm();
+      eventBus.on(GameEvents.GAME_PAUSE, onPause);
+      eventBus.on(GameEvents.GAME_RESUME, onResume);
+      return () => {
+          eventBus.off(GameEvents.GAME_PAUSE, onPause);
+          eventBus.off(GameEvents.GAME_RESUME, onResume);
+      };
+  }, [pauseBgm, resumeBgm]);
   const {
       currentMovie, isVisible, isLooping,
       playTitleMovie, playLevelUpMovie, playVictoryMovie, stopMovie,isImmediate,

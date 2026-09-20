@@ -472,6 +472,79 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: [],
     isCollectible: false,
   },
+  // ===========================================================
+  // [2026-09-16 1.0.16 茉莉安大版本] 新增内容
+  // ⚠️ 法术名【暂定】：设计文档只定了规格没定名，此处按现有命名风格
+  //    （「猫汐尔的演算」「安卡希雅的剑舞」）提议，程可随时改
+  // ===========================================================
+
+  // --- 天启者：茉莉安 · 霄鹰 ---
+  marian: {
+    key: 'marian', gachaPool: GachaPoolEnum.Zenith, name: '茉莉安 霄鹰', cost: 4, power: 5, health: 5, maxHealth: 5,
+    isChampion: true, level: 1, region: 'Marian',
+    description: '【库效】对局开始时：在敌方备战席召唤一个“獠牙信标”。\n入场：若敌方备战席没有“獠牙信标”则召唤一个；若已有，则首次“獠牙信标”被击败后立刻召唤一个。\n入场及回合开始时：对敌方备战席的“獠牙信标”造成等同于自己攻击力的伤害。\n参战：变化为“茉莉安的猎场”。',
+    type: 'unit', keywords: [],
+    imageUrl: HERO_IMAGES.marian.base,
+    level2ImageUrl: HERO_IMAGES.marian.level2,
+    associatedSpellKey: 'marian_spell',
+    levelUpCondition: '我方召唤的“獠牙信标”被破坏 2 次',
+    levelUpTarget: 2,
+    // [T07] 升级计数；[2026-09-18] 入场&回合开始：先补信标（lv1）→ 再打信标伤害（snipe），顺序不可颠倒
+    effects: ['effect_marian_lv1', 'effect_marian_beacon_snipe'],
+  },
+  marian_spell: {
+    key: 'marian_spell', name: '茉莉安的猎场', cost: 0, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '抉择：“钢羽傍身” 或 “最终指令”\n使用后，在牌库里生成一张“茉莉安 霄鹰”。',
+    type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_spell,
+    associatedChampionKey: 'marian',
+    isLevel2Choice: true,
+    choices: ['marian_rush', 'marian_ultimate'],
+    ai: { pattern: 'CHOICE', priority: 3, config: {} },
+    isCollectible: false,
+  },
+  marian_rush: {
+    key: 'marian_rush', name: '钢羽傍身', cost: 1, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '对“獠牙信标”造成 3 点伤害，以暴露两个敌人。\n场上没有“獠牙信标”时无法打出。',
+    type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_rush,
+    effects: ['effect_marian_rush'], // [T14 完成]
+    isCollectible: false,
+  },
+  marian_ultimate: {
+    key: 'marian_ultimate', name: '最终指令', cost: 5, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '选择并打击一个敌方单位，造成等同于“茉莉安 霄鹰”攻击力的伤害。\n若将其击杀，则自动锁定当前生命值最低的敌方单位再次打击，直到未能击杀、或打击敌方水晶为止。',
+    type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_ultimate,
+    effects: ['effect_marian_ultimate'], // [T15 完成]
+    isCollectible: false,
+  },
+  marian_support: {
+    key: 'marian_support', gachaPool: GachaPoolEnum.Zenith, name: '重器制空', cost: 3, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '在敌方备战席召唤一个“獠牙信标”。\n敌方备战席已有“獠牙信标”或已满时无法打出。',
+    type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_support,
+    associatedChampionKey: 'marian',
+    effects: ['effect_marian_support'], // [T16 完成]
+  },
+  // --- 衍生物：獠牙信标 ---
+  // 站位在【对手】的备战席 —— 由 ④【库效】/ 茉莉安本体入场 / 支援技召唤
+  // ⚠️ 引擎视角它只是「宿主方的普通单位」：可挡刀、可被法术指定、可吃任何 buff（宿主随便养）
+  // ⚠️ 不再自带【暴露】—— 这是 2026-09-14 设计改动的关键一条（原方案作废）
+  'Marian_Wolf_Tooth_Beacon': {
+    key: 'Marian_Wolf_Tooth_Beacon', name: '獠牙信标', cost: 0, power: 0, health: 20, maxHealth: 20,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Last Breath','CantAttack'],
+    // [2026-09-19 T43] 数值 6 → 8 对齐注册表（effect_marian_beacon_lastbreath 于 2026-09-18 已拍板 6→8，
+    //   卡面漏改）；并补上 Lv2 的水晶条款。
+    description: '【亡语】阵亡时，对我方全体造成 8 点分摊伤害。\n敌方每有 1 个单位进攻，本单位 -1 血；若这次进攻拉取了我方暴露单位，则再 -1 血。\nLv2：若引爆时我方场上无可分摊的单位，伤害改为打击我方水晶。',
+    imageUrl: UNIT_IMAGES.wolf_tooth_beacon,
+    effects: ['effect_marian_beacon_lastbreath'], // [T09 已完成] 亡语分摊伤害（SPREAD_DAMAGE 新建类）
+    isCollectible: false,
+  },
   // --- 新增单位：Logistics (后勤) ---
 
   // --- “重叶”小队 (Chongye Squad) ---
@@ -794,6 +867,95 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '快速：回响，飞剑2。', type: 'spell-fast', keywords: ['Echo'],
     effects: ['effect_temp_spell_20_flying'],
     imageUrl: SPELL_IMAGES.temp_spell_20,
+  },
+  // ==========================================
+  // [2026-09-17 1.0.16 茉莉安 · Phase 5「松露」小队]
+  // 设计原则（方案 8.1）：三张全围【獠牙信标】运作，推进节奏刻意错开
+  //   —— 持续小额 / 规模爆发 / 一次性大砍
+  // 卡牌 key 必须与 units glob 推导出的 cardKey 完全一致，否则皮肤/卡面静默拿不到
+  // ==========================================
+
+  // --- 「松露」· 蕈影 + 夜视监察无人机（T21）｜推进方式：持续小额（跟着打水晶走）---
+  Truffle_Squad_Mushroom_Shadows: {
+    key: 'Truffle_Squad_Mushroom_Shadows', gachaPool: GachaPoolEnum.Zenith, name: '“松露”\n蕈影', cost: 1, power: 1, health: 2, maxHealth: 2,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: [], race: ['summoner'],
+    description: '入场：暴露敌方攻击力最高的未暴露单位，并召唤一个“夜视监察无人机”。',
+    imageUrl: UNIT_IMAGES.mushroom_shadows,
+    effects: ['effect_truffle_mushroom_expose', 'effect_truffle_mushroom_summon'], // [T21 完成]
+  },
+  'Truffle_Drone_NightVision': {
+    key: 'Truffle_Drone_NightVision', name: '夜视监察无人机', cost: 1, power: 1, health: 1, maxHealth: 1,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Elusive'], race: ['summon'],
+    description: '【隐秘】\n每次打击敌方水晶时，对“獠牙信标”额外造成 3 点伤害。',
+    imageUrl: UNIT_IMAGES.mushroom_shadows, // 复用后勤原画（T25）
+    effects: ['effect_truffle_drone_nightvision'], // [T21 完成]
+    isCollectible: false,
+  },
+
+  // --- 「松露」· 榆 + 流萤无人机（T22）｜推进方式：规模爆发（暴露数 → 数量 → 打击后齐死）---
+  Truffle_Squad_Elm: {
+    key: 'Truffle_Squad_Elm', gachaPool: GachaPoolEnum.Zenith, name: '“松露”\n榆', cost: 3, power: 1, health: 4, maxHealth: 4,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: [], race: ['summoner'],
+    description: '入场：每有一个【暴露】的敌人，召唤一个“流萤无人机”（最多 5 个）。',
+    imageUrl: UNIT_IMAGES.elm,
+    effects: ['effect_truffle_elm_summon'], // [T22 完成]
+  },
+  'Truffle_Drone_Firefly': {
+    key: 'Truffle_Drone_Firefly', name: '流萤无人机', cost: 1, power: 2, health: 1, maxHealth: 1,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Ephemeral', 'Last Breath'], race: ['summon'],
+    description: '【幻象】【亡语】\n阵亡时，对“獠牙信标”造成等同于自身攻击力的伤害。',
+    imageUrl: UNIT_IMAGES.elm, // 复用后勤原画（T25）
+    effects: ['effect_truffle_drone_firefly_death'], // [T22 完成]
+    isCollectible: false,
+  },
+
+  // --- 「松露」· 虹彩 + 园丁灌溉无人机（T23）｜推进方式：一次性大砍 + 维持暴露链 ---
+  Truffle_Squad_Iris: {
+    key: 'Truffle_Squad_Iris', gachaPool: GachaPoolEnum.Zenith, name: '“松露”\n虹彩', cost: 5, power: 3, health: 5, maxHealth: 5,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: [], race: ['summoner'],
+    description: '光环：“獠牙信标”的生命值上限 -3，入场：召唤一个“园丁灌溉无人机”。',
+    imageUrl: UNIT_IMAGES.iris,
+    effects: ['effect_truffle_iris_beacon_shrink', 'effect_truffle_iris_summon'], // [T23 完成]
+  },
+  'Truffle_Drone_Gardener': {
+    key: 'Truffle_Drone_Gardener', name: '园丁灌溉无人机', cost: 1, power: 1, health: 3, maxHealth: 3,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: [], race: ['summon'],
+    description: '每回合首次有【暴露】的敌人阵亡时，随机暴露另一个敌人。',
+    imageUrl: UNIT_IMAGES.iris, // 复用后勤原画（T25）
+    // ⚠️ 无 effects —— 被动监听器，逻辑在 useGameState 的 UNIT_DIED 处理里按 card.key 识别
+    isCollectible: false,
+  },
+  // ==========================================
+  // [2026-09-17 1.0.16 茉莉安 · Phase 4 阵营法术]
+  // ⚠️ 定性（设计文档 7.0）：这三张是【阵营法术】，不是茉莉安的专属法术。
+  //    归属【Marian】阵营，可进任何使用该阵营的卡组，不与茉莉安核心机制闭环。
+  // ⚠️ 正式卡面待程出图（T29）—— 当前三张均用通用占位图 abc.webp
+  // ==========================================
+
+  // --- 阵营法术二：以饵引狼（T18）---
+  // 用【暴露】我方单位当代价，换一个敌人本回合 -4/-0
+  // 设计定位：纯交易牌，与茉莉安核心引擎无联动（设计文档 7.2）
+  marian_faction_bait: {
+    key: 'marian_faction_bait', gachaPool: GachaPoolEnum.Zenith, name: '以饵引狼', cost: 2, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '暴露一个我方单位，以使一个敌人本回合 -4/-0。',
+    type: 'spell-fast', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_faction_bait,
+    effects: ['effect_marian_faction_bait'], // [T18 完成]
+    // ⚠️ 未配 ai —— AI 打法属 Phase 6（T26），本次不涉及
+  },
+
+  // --- 阵营法术三：静默行动（T19）---
+  // 消除全场【暴露】（含我方）→ 每消除一个，我方全体永久 +1/+1
+  // 设计定位（程原话）：「把【暴露】当成一种资源来看，这张法术只是把资源提现了」
+  marian_faction_silence: {
+    key: 'marian_faction_silence', gachaPool: GachaPoolEnum.Zenith, name: '静默行动', cost: 5, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '屏蔽所有信号。消除场上所有的【暴露】，每消除一个，我方全体永久 +1/+1。',
+    type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_faction_silence,
+    effects: ['effect_marian_silent_action'], // [T19 完成]
+    // ⚠️ 未配 ai —— AI 打法属 Phase 6（T26），本次不涉及
   },
 
   // ==========================================
@@ -1969,78 +2131,6 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '慢速：本回合冻结所有敌人，并对所有敌人造成3点伤害。', type: 'spell-slow', keywords: [],
     effects: ['effect_temp_spell_17'],
     imageUrl: SPELL_IMAGES.temp_spell_17,
-  },
-
-  // ===========================================================
-  // [2026-09-16 1.0.16 茉莉安大版本] 新增内容
-  // ⚠️ 法术名【暂定】：设计文档只定了规格没定名，此处按现有命名风格
-  //    （「猫汐尔的演算」「安卡希雅的剑舞」）提议，程可随时改
-  // ===========================================================
-
-  // --- 天启者：茉莉安 · 霄鹰 ---
-  marian: {
-    key: 'marian', gachaPool: GachaPoolEnum.Zenith, name: '茉莉安 霄鹰', cost: 4, power: 5, health: 5, maxHealth: 5,
-    isChampion: true, level: 1, region: 'Marian',
-    description: '【库效】对局开始时，在敌方备战席召唤一个“獠牙信标”。\n入场及回合开始时：若敌方备战席没有“獠牙信标”，则召唤一个。\n参战：变化为“茉莉安的猎场”。',
-    type: 'unit', keywords: [],
-    imageUrl: HERO_IMAGES.marian.base,
-    level2ImageUrl: HERO_IMAGES.marian.level2,
-    associatedSpellKey: 'marian_spell',
-    levelUpCondition: '我方召唤的“獠牙信标”被破坏 2 次',
-    levelUpTarget: 2,
-    effects: ['effect_marian_lv1'], // [T13 待补] 入场 & 回合开始的召唤；[T07] 升级计数
-  },
-  marian_spell: {
-    key: 'marian_spell', name: '茉莉安的猎场', cost: 0, power: 0, health: 0, maxHealth: 0,
-    isChampion: false, level: 0, region: 'Marian',
-    description: '抉择：“标记射击” 或 “逐一清除”\n使用后，在牌库里生成一张“茉莉安 霄鹰”。',
-    type: 'spell-burst', keywords: [],
-    imageUrl: SPELL_IMAGES.marian_spell,
-    associatedChampionKey: 'marian',
-    isLevel2Choice: true,
-    choices: ['marian_rush', 'marian_ultimate'],
-    ai: { pattern: 'CHOICE', priority: 3, config: {} },
-    isCollectible: false,
-  },
-  marian_rush: {
-    key: 'marian_rush', name: '标记射击', cost: 0, power: 0, health: 0, maxHealth: 0,
-    isChampion: false, level: 0, region: 'Marian',
-    description: '对“獠牙信标”造成 1 点伤害，以暴露两个敌人。\n场上没有“獠牙信标”时无法打出。',
-    type: 'spell-burst', keywords: [],
-    imageUrl: SPELL_IMAGES.marian_rush,
-    effects: ['effect_marian_rush'], // [T14 完成]
-    isCollectible: false,
-  },
-  marian_ultimate: {
-    key: 'marian_ultimate', name: '逐一清除', cost: 5, power: 0, health: 0, maxHealth: 0,
-    isChampion: false, level: 0, region: 'Marian',
-    description: '选择并打击一个敌方单位，造成等同于“茉莉安 霄鹰”攻击力的伤害。\n若将其击杀，则自动锁定当前生命值最低的敌方单位再次打击，直到未能击杀、或打击敌方水晶为止。',
-    type: 'spell-slow', keywords: [],
-    imageUrl: SPELL_IMAGES.marian_ultimate,
-    effects: ['effect_marian_ultimate'], // [T15 完成]
-    isCollectible: false,
-  },
-  marian_support: {
-    key: 'marian_support', gachaPool: GachaPoolEnum.Zenith, name: '前哨投送', cost: 3, power: 0, health: 0, maxHealth: 0,
-    isChampion: false, level: 0, region: 'Marian',
-    description: '在敌方备战席召唤一个“獠牙信标”。\n敌方备战席已满时无法打出。',
-    type: 'spell-burst', keywords: [],
-    imageUrl: SPELL_IMAGES.marian_support,
-    associatedChampionKey: 'marian',
-    effects: ['effect_marian_support'], // [T16 完成]
-  },
-
-  // --- 衍生物：獠牙信标 ---
-  // 站位在【对手】的备战席 —— 由 ④【库效】/ 茉莉安本体入场 / 支援技召唤
-  // ⚠️ 引擎视角它只是「宿主方的普通单位」：可挡刀、可被法术指定、可吃任何 buff（宿主随便养）
-  // ⚠️ 不再自带【暴露】—— 这是 2026-09-14 设计改动的关键一条（原方案作废）
-  'Marian_Wolf_Tooth_Beacon': {
-    key: 'Marian_Wolf_Tooth_Beacon', name: '獠牙信标', cost: 0, power: 0, health: 20, maxHealth: 20,
-    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Last Breath'],
-    description: '【亡语】阵亡时，对本方全体分摊伤害。\n敌方每有 1 个单位进攻，本单位 -1 血；若这次进攻拉取了我方暴露单位挡刀，则再 -1 血。',
-    imageUrl: UNIT_IMAGES.wolf_tooth_beacon,
-    effects: ['effect_marian_beacon_lastbreath'], // [T09 已完成] 亡语分摊伤害（SPREAD_DAMAGE 新建类）
-    isCollectible: false,
   },
 
   // --- 测试专用卡 ---

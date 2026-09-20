@@ -92,9 +92,25 @@ export const useAudio = () => {
         }
     };
 
+    // [2026-09-19 莉莉子] 局内暂停：BGM 暂停/恢复
+    // ── 与 stopBgm 的区别：**不丢弃当前曲目**（currentTrackRef 保留），恢复时从原位置续播。
+    // ── 只有正在播且有曲目时才恢复，避免把"本来就没在播"的状态强行拉起来。
+    const pauseBgm = useCallback(() => {
+        if (bgmRef.current && !bgmRef.current.paused) bgmRef.current.pause();
+    }, []);
+
+    const resumeBgm = useCallback(() => {
+        const audio = bgmRef.current;
+        if (!audio || !currentTrackRef.current) return;
+        const p = audio.play();
+        if (p !== undefined) p.catch(() => { /* 自动播放策略拦截：等用户交互 */ });
+    }, []);
+
     return {
         playBgm,
         stopBgm,
+        pauseBgm,   // [导出] 局内暂停用
+        resumeBgm,  // [导出] 局内恢复用
         setBgmVolume // [导出]
     };
 };

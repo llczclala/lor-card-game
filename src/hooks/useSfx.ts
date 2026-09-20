@@ -3,7 +3,8 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 
 // 直接引入音效文件
 import clickSound from '../music/music/click.ogg';
-import recallSound from '../music/music/recall.ogg';
+import recallSound from '../music/music/recall.ogg'; // [2026-09-19] 通用撤回（撤回单位 / UI 返回）
+import selectUnitSound from '../music/music/选择单位.ogg'; // [2026-09-19] 通用选单位（非施法场合）
 import strikeSound from '../music/music/strike.ogg';
 import startBattleSound from '../music/music/battle_start.ogg';
 import nexusStrikeSound from '../music/music/nexus_strike.ogg';
@@ -24,7 +25,6 @@ import playerPlayUnitSound from '../music/music/我方打出单位.ogg';
 import blockSound from '../music/music/格挡或进攻.ogg';
 import cardHoverSound from '../music/music/卡牌悬停.ogg';
 import shuffleSound from '../music/music/洗牌.ogg';
-import selectUnitSound from '../music/music/选择单位.ogg';
 import summonSound from '../music/music/召唤.ogg';
 import defeatSound from '../music/music/被击败.ogg';
 import pupuUltSound from '../music/music/卜卜 灵鉴/卜卜大招.ogg';
@@ -43,9 +43,28 @@ import acaciaGreatSwordSound from '../music/music/安卡希雅时之重奏/大�
 import acaciaCrossTemporalSound from '../music/music/安卡希雅时之重奏/越时斩.ogg';
 import acaciaSwordTimelineSound from '../music/music/安卡希雅时之重奏/剑痕时空.ogg';
 // ==========================================================
+
+// ================= [2026-09-19 1.0.16 茉莉安·霄鹰] 大招音效 =================
+import marianUltSound from '../music/music/茉莉安 霄鹰/茉莉安大招音效.ogg';
+
+// ================= [2026-09-19 1.0.16] 法术交互音效（程提供） =================
+import spellDragSound from '../music/music/拖出法术.ogg';
+import spellPlaySound from '../music/music/打出法术.ogg';
+import spellConfirmSound from '../music/music/确定打出法术.ogg';
+import spellTargetSound from '../music/music/法术选择目标.ogg';
+import spellRecallSound from '../music/music/撤回法术.ogg';
+import buffApplySound from '../music/music/BUFF音效.ogg';
+import drawCardSound from '../music/music/抽出卡牌.ogg';
+import mulliganDrawSound from '../music/music/换牌阶段开局抽出卡牌.ogg';
+import cardToDeckSound from '../music/music/卡牌入队.ogg';
+import defaultHitSound from '../music/music/默认受击.ogg';
+import beaconHitSound from '../music/music/茉莉安 霄鹰/信标受击.ogg';
+
 export const useSfx = () => {
     // [新增] 全局音效音量 Ref (默认 0.6)
     const globalVolumeRef = useRef(0.6);
+    // [2026-09-19 茉莉安] 大招音效实例（用于「重触发」——见 playMarianUlt 注释）
+    const marianUltAudioRef = useRef<HTMLAudioElement | null>(null);
 
     // [新增] 设置音效音量接口
     const setSfxVolume = useCallback((vol: number) => {
@@ -80,9 +99,93 @@ export const useSfx = () => {
             audio.play().catch(e => console.warn("SFX play failed", e));
         };
 
+        // [2026-09-19 1.0.16 茉莉安] 大招「最终指令」逐击音效 —— **每击完整放一整段**
+        // ── 触发源：逐击广播 CHAIN_STRIKE_STEP（一击一发，与伤害/演出同刻）
+        // ── 程 2026-09-19 拍板：每次打击都把音效**完整播一遍**（后续的尾音正是爆炸的余韵），
+        //    不做重触发、不掐断。逐击间隔已拉长到 1s（见 CHAIN_STRIKE_STEP_MS）。
+        // ── ⚠️ 因此连斩到后面会有**多层音效重叠**（3.5s 音 × 1s 间隔）——这是刻意保留的听感；
+        //    若觉得糊，调低这里的 0.85 即可（或改回"只播首击"）。
+        // ── marianUltAudioRef 仍保留：仅为卸载时能掐掉正在播的那条。
+        const playMarianUlt = () => {
+            const audio = new Audio(marianUltSound);
+            audio.volume = 0.85 * globalVolumeRef.current;
+            marianUltAudioRef.current = audio;
+            audio.play().catch(e => console.warn("SFX play failed", e));
+        };
+
+        // [2026-09-19] 法术交互五件套 + BUFF 金光
+        const playSpellDrag = () => playSound(spellDragSound, 0.7);
+        const playSpellPlay = () => playSound(spellPlaySound, 0.8);
+        const playSpellConfirm = () => playSound(spellConfirmSound, 0.8);
+        // [2026-09-19] 金光同时命中多张卡时会连着响，加 150ms 节流避免糊成一片
+        let lastBuffSfxAt = 0;
+        const playBuffApply = () => {
+            const now = Date.now();
+            if (now - lastBuffSfxAt < 150) return;
+            lastBuffSfxAt = now;
+            playSound(buffApplySound, 0.7);
+        };
+
+        // [2026-09-19] 抽卡 / 入队三件（程：三种抽卡场合都响；敌我也都响）
+        //   · DRAW_START 且 reason==='mulligan' → 换牌阶段开局抽卡（显式标记，不靠 count 猜）
+        //   · 其余 DRAW_START（正常抽 / 亡语抽 / 效果生成入手牌）→ 抽出卡牌
+        //   · CARD_TO_DECK → 卡牌入队（与"飞回牌库"动画同源）
+        const playDraw = () => playSound(drawCardSound, 0.55); // 抽卡频繁，音量压低
+        // 换牌阶段【开局发牌】：由 GameSession 在换牌 UI 出现时广播（与"换牌结束后的补抽"区分开）
+        const playMulliganDeal = () => playSound(mulliganDrawSound, 0.8);
+        const playCardToDeck = () => playSound(cardToDeckSound, 0.7);
+
+        // ==========================================================
+        // [2026-09-19] 受击音（程口径：**只按"受伤的一方"路由**）
+        //   · 战斗里的打击 → 已有专属打击音，事件带 fromCombat ⇒ 这里**跳过**（否则双响）
+        //   · 獠牙信标     → 专属受击音（payload 带 key）
+        //   · 其余一切伤害（法术/技能/亡语/倒计时掉血…）→ 默认受击音
+        //   节流 90ms：多目标法术会同时打到好几张卡，不节流会连成一片
+        // ==========================================================
+        // 两条音效链**各自节流**（共用一个时间戳会互相压掉 ✗）
+        let lastDefaultHitAt = 0;
+        let lastBeaconHitAt = 0;
+        const playDefaultHit = () => {
+            const now = Date.now();
+            if (now - lastDefaultHitAt < 90) return;
+            lastDefaultHitAt = now;
+            playSound(defaultHitSound, 0.65);
+        };
+        const playBeaconHit = () => {
+            const now = Date.now();
+            if (now - lastBeaconHitAt < 90) return;
+            lastBeaconHitAt = now;
+            playSound(beaconHitSound, 0.75);
+        };
+
+        // ── 程口径：**受伤的一方按音效叠层**
+        //    法术/效果打信标 → 默认受击音 ＋ 信标受击音（两个都要）
+        //    战斗中打信标   → 打击音（战斗结算播）＋ 信标受击音（这里补）
+        // 水晶受击：按程口径用「默认受击」；战斗那发带 fromCombat ⇒ 跳过（专属打击音已播）
+        const onNexusStriked = (p?: { target?: string; amount?: number; fromCombat?: boolean }) => {
+            if (p?.fromCombat) return;
+            playDefaultHit();
+        };
+
+        const onUnitDamage = (p?: { id?: string; amount?: number; key?: string; fromCombat?: boolean }) => {
+            if (!p?.id) return;
+            const isBeacon = p.key === 'Marian_Wolf_Tooth_Beacon';
+            if (p.fromCombat) {
+                if (isBeacon) playBeaconHit(); // 打击音已由战斗结算播出，这里只补信标那一下
+                return;
+            }
+            playDefaultHit();                  // 含水晶伪 id（nexus_xxx）
+            if (isBeacon) playBeaconHit();
+        };
+
         // 2. 封装各类音效触发器
         const playClick = () => playSound(clickSound, 0.6);
-        const playRecall = () => playSound(recallSound, 0.6);
+        // [2026-09-19 修正] 「撤回」这个词此前一个播放器服务三个事件，换声会连带污染另外两个。
+        //   拆开：
+        //     · 撤回单位 / UI 返回 → 通用 recall.ogg（保持原样）
+        //     · 取消施法           → 专属「撤回法术」（程的口径）
+        const playRecall = () => playSound(recallSound, 0.6);                 // 撤回单位 / UI 返回
+        const playSpellRecall = () => playSound(spellRecallSound, 0.7);       // 取消施法
         const playBattleStart = () => playSound(startBattleSound, 0.8);
 
         const playGachaRare = () => playSound(gachaRareSound, 0.8);
@@ -105,7 +208,11 @@ export const useSfx = () => {
         const playBlock = () => playSound(blockSound, 0.8);
         const playCardHover = () => playSound(cardHoverSound, 0.3); // 悬停音效较频繁，音量压低
         const playShuffle = () => playSound(shuffleSound, 0.8);
+        // [2026-09-19 重做] 两件事分开，各响各的：
+        //   · 通用选单位（选阻挡者 / 选备战席…）→ 选择单位.ogg
+        //   · 施法时选目标                     → 法术选择目标.ogg（程：专属音效只服务施法场景）
         const playSelectUnit = () => playSound(selectUnitSound, 0.7);
+        const playSpellTarget = () => playSound(spellTargetSound, 0.7);
         const playSummon = () => playSound(summonSound, 0.8);
         const playDefeat = () => playSound(defeatSound, 0.8);
         const playPupuUlt = () => playSound(pupuUltSound, 0.9);
@@ -136,7 +243,7 @@ export const useSfx = () => {
 
         // 2. 所有绑定到“撤回音效”的事件
         eventBus.on(GameEvents.RECALL_UNIT, playRecall);
-        eventBus.on(GameEvents.CANCEL_SPELL, playRecall);
+        eventBus.on(GameEvents.CANCEL_SPELL, playSpellRecall);
         eventBus.on(GameEvents.UI_BACK, playRecall);
 
         // [新增] 绑定战斗音效事件
@@ -171,9 +278,25 @@ export const useSfx = () => {
         eventBus.on(GameEvents.SFX_ACACIA_SWORD, playAcaciaSword);
         eventBus.on(GameEvents.SFX_ACACIA_GREAT_SWORD, playAcaciaGreatSword);
         eventBus.on(GameEvents.SFX_SELECT_UNIT, playSelectUnit);
+        eventBus.on(GameEvents.SFX_SPELL_TARGET, playSpellTarget);
         eventBus.on(GameEvents.SFX_SUMMON, playSummon);
         eventBus.on(GameEvents.UNIT_DIE, playDefeat);
         eventBus.on(GameEvents.SFX_PUPU_ULTIMATE, playPupuUlt);
+        // [2026-09-19 1.0.16 茉莉安] 大招逐击音效：一击一声
+        eventBus.on(GameEvents.CHAIN_STRIKE_STEP, playMarianUlt);
+        // [2026-09-19] 法术交互五件套 + BUFF 金光
+        eventBus.on(GameEvents.SFX_SPELL_DRAG, playSpellDrag);
+        eventBus.on(GameEvents.SFX_SPELL_PLAY, playSpellPlay);
+        eventBus.on(GameEvents.SFX_SPELL_CONFIRM, playSpellConfirm);
+        eventBus.on(GameEvents.SFX_BUFF_APPLY, playBuffApply);
+        eventBus.on(GameEvents.DRAW_START, playDraw);
+        eventBus.on(GameEvents.CARD_TO_DECK, playCardToDeck);
+        eventBus.on(GameEvents.SFX_MULLIGAN_DEAL, playMulliganDeal);
+        eventBus.on('unit_damage', onUnitDamage); // [2026-09-19] 效果伤害的默认受击音
+        // [2026-09-19 修正] 此前误挂在 'nexus_damage' 上 —— **eventBus 上根本没有人发这个事件**
+        //   （它只是效果内部的事件类型，`spells.ts` 转发时会改名为 NEXUS_STRIKED）
+        //   ⇒ 换成真正的水晶受击广播 NEXUS_STRIKED；战斗那发带 fromCombat，跳过（已有专属打击音）
+        eventBus.on(GameEvents.NEXUS_STRIKED, onNexusStriked);
         eventBus.on(GameEvents.SFX_PUPU_SKILL1, playPupuSkill);
         eventBus.on(GameEvents.SFX_PUPU_SKILL1_UPGRADED, playPupuSkillUp);
         // =========================================================
@@ -191,7 +314,7 @@ export const useSfx = () => {
             eventBus.off(GameEvents.ATTACK_DECLARE, playClick);
             eventBus.off(GameEvents.BLOCK_DECLARE, playClick);
             eventBus.off(GameEvents.RECALL_UNIT, playRecall);
-            eventBus.off(GameEvents.CANCEL_SPELL, playRecall);
+            eventBus.off(GameEvents.CANCEL_SPELL, playSpellRecall);
             eventBus.off(GameEvents.GACHA_REVEAL_RARE, playGachaRare);
             eventBus.off(GameEvents.GACHA_REVEAL_COMMON, playGachaCommon);
             eventBus.off(GameEvents.GACHA_START_SINGLE, playGachaSingle);
@@ -215,9 +338,22 @@ export const useSfx = () => {
             eventBus.off(GameEvents.SFX_CARD_HOVER, playCardHover);
             eventBus.off(GameEvents.SFX_SHUFFLE, playShuffle);
             eventBus.off(GameEvents.SFX_SELECT_UNIT, playSelectUnit);
+            eventBus.off(GameEvents.SFX_SPELL_TARGET, playSpellTarget);
             eventBus.off(GameEvents.SFX_SUMMON, playSummon);
             eventBus.off(GameEvents.UNIT_DIE, playDefeat);
             eventBus.off(GameEvents.SFX_PUPU_ULTIMATE, playPupuUlt);
+            // [2026-09-19 1.0.16 茉莉安] 大招逐击音效解除绑定（顺手掐掉正在播的那条）
+            eventBus.off(GameEvents.CHAIN_STRIKE_STEP, playMarianUlt);
+            eventBus.off(GameEvents.SFX_SPELL_DRAG, playSpellDrag);
+            eventBus.off(GameEvents.SFX_SPELL_PLAY, playSpellPlay);
+            eventBus.off(GameEvents.SFX_SPELL_CONFIRM, playSpellConfirm);
+            eventBus.off(GameEvents.SFX_BUFF_APPLY, playBuffApply);
+            eventBus.off(GameEvents.DRAW_START, playDraw);
+            eventBus.off(GameEvents.CARD_TO_DECK, playCardToDeck);
+            eventBus.off(GameEvents.SFX_MULLIGAN_DEAL, playMulliganDeal);
+            eventBus.off('unit_damage', onUnitDamage);
+            eventBus.off(GameEvents.NEXUS_STRIKED, onNexusStriked);
+            try { marianUltAudioRef.current?.pause(); } catch { /* 忽略 */ }
             eventBus.off(GameEvents.SFX_PUPU_SKILL1, playPupuSkill);
             eventBus.off(GameEvents.SFX_PUPU_SKILL1_UPGRADED, playPupuSkillUp);
         };

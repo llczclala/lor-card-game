@@ -53,5 +53,6 @@ export const DeskMedia: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false
     if (video) {
         return <video ref={videoRef} src={video} className={className} style={style} playsInline preload="auto" muted loop />;
     }
-    return <img src={PERSONALIZATION_ASSETS.desks[deskIndex]} className={className} style={style} alt="牌桌" />;
+    // [2026-09-18] 兜底 desks[0]：存档里可能残留已失效的牌桌编号（如 09-18 重编号前的旧值）
+    return <img src={PERSONALIZATION_ASSETS.desks[deskIndex] ?? PERSONALIZATION_ASSETS.desks[0]} className={className} style={style} alt="牌桌" />;
 };

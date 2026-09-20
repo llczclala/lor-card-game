@@ -35,14 +35,21 @@ export const applyPermanentBuff = (card: CardData, power = 0, health = 0): CardD
 });
 
 /** 从某侧（备战席 + 交战区己方单位）找攻击力最高的存活单位；无则 undefined（[2026-08-27] 高级强化用） */
-export const findStrongestUnit = (bench: CardData[], combatField: any[], owner: 'player' | 'enemy'): CardData | undefined => {
+export const findStrongestUnit = (
+    bench: CardData[],
+    combatField: any[],
+    owner: 'player' | 'enemy',
+    // [2026-09-18] 可选过滤器：蕈影用它跳过【已被暴露】的单位，避免多张蕈影反复暴露同一个最强的
+    filter?: (c: CardData) => boolean,
+): CardData | undefined => {
+    const ok = (c: CardData) => !filter || filter(c);
     const units = [
-        ...bench.filter(c => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying'),
+        ...bench.filter(c => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying' && ok(c)),
         // [2026-08-30 莉莉子 修复] 补扫格挡侧：己方单位可能是 blocker（f.owner!==owner 的 f.blocker），此前只扫 attacker 漏了交战区格挡单位
         ...combatField.flatMap((f: any) => {
             const list: CardData[] = [];
-            if (f.owner === owner && f.attacker && !f.attacker.isDead && f.attacker.animState !== 'dying' && f.attacker.animState !== 'ephemeral_dying') list.push(f.attacker);
-            if (f.owner !== owner && f.blocker && !f.blocker.isDead && f.blocker.animState !== 'dying' && f.blocker.animState !== 'ephemeral_dying') list.push(f.blocker);
+            if (f.owner === owner && f.attacker && !f.attacker.isDead && f.attacker.animState !== 'dying' && f.attacker.animState !== 'ephemeral_dying' && ok(f.attacker)) list.push(f.attacker);
+            if (f.owner !== owner && f.blocker && !f.blocker.isDead && f.blocker.animState !== 'dying' && f.blocker.animState !== 'ephemeral_dying' && ok(f.blocker)) list.push(f.blocker);
             return list;
         }),
     ];

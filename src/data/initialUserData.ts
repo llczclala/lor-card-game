@@ -1,6 +1,7 @@
 import type { UserSettings } from '../types'; // [2026-08-16] DEFAULT_SETTINGS 显式注解，根治 useUserSystem 类型债
 import { CARD_DB } from './cards';
 import { SKIN_IMAGES } from './imageData'; // [皮肤] 用于构建全皮肤数据
+import { COSMETIC_REGISTRY } from './skinData'; // [2026-09-18] 全解锁列表改为从注册表推导（不再手写）
 
 /**
  * 初始用户数据模板
@@ -63,10 +64,19 @@ export const FULL_COLLECTION = {
 };
 
 // [皮肤] 全卡档专用设置：解锁所有卡背和棋盘
+// [2026-09-18] 改为从 COSMETIC_REGISTRY **动态推导**。
+//   此前是手写死的数组（卡背 0~16 / 牌桌 0~9），每加一款新资产都要手工同步，
+//   已经漏过两次：新池卡背 17~19、新牌桌 11~15 都没进列表 → 开发者号还得自己抽。
+//   推导后新增资产自动纳入，不会再漏。
+//   注：索引 0 是「默认款」，注册表里没有对应条目，需手动补。
+const collectIndices = (type: 'cardBack' | 'desk'): number[] =>
+    [0, ...COSMETIC_REGISTRY.filter(i => i.type === type && i.index !== undefined).map(i => i.index as number)]
+        .sort((a, b) => a - b);
+
 export const FULL_SETTINGS = {
     ...DEFAULT_SETTINGS,
-    unlockedCardBacks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], // 全部 17 款卡背
-    unlockedDesks: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],  // 全部 10 款棋盘
+    unlockedCardBacks: collectIndices('cardBack'), // 全卡背（含任务/商店款）
+    unlockedDesks: collectIndices('desk'),         // 全牌桌
 };
 
 // 方案 B: 新手初始收藏 (正式上线模式)

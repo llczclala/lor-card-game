@@ -7,7 +7,7 @@ export type Race = 'summoner' | 'summon' | 'titan'; // [新增] 种族：召唤�
 export const GachaPoolEnum = {
     Permanent: 'permanent', // 常守之誓
     Lotus: 'lotus',         // 烬中镜火
-    Zenith: 'zenith',       // [2026-09-16 1.0.16] 苍穹回响 —— 收纳「安卡希雅 + 茉莉安」
+    Zenith: 'zenith',       // [2026-09-16 1.0.16] 自往昔归还 —— 收纳「安卡希雅 + 茉莉安」（2026-09-17 由暂定名「苍穹回响」定名）
 } as const;
 export type GachaPoolId = (typeof GachaPoolEnum)[keyof typeof GachaPoolEnum];
 // 完整的 36 个关键词定义
@@ -62,6 +62,14 @@ export interface CardData {
   //    而茉莉安的升级目标恰好是 2，与 bit2 同值 → 复用会把「降费」误判成「升级达成」。
   //    （猫汐尔目标 30、卜卜目标 3，都天然躲开了这个坑；茉莉安躲不开，所以另开字段）
   beaconDeaths?: number;
+  // [2026-09-19 莉莉子 方向一 · 归属盖章] 单位归属方：召唤落场时一次性写死，此后【查表】而非【推导】。
+  // ── 病根：此前 CardData 无归属字段，谁的人全靠「在哪个数组里 + 交战区进攻方/格挡方推导」现算，
+  //    同一套规则被手抄了 8 处（判死 / 开票 / 打场上信标 / 分摊选人 / 光环 / 记账…），抄错一处就出事
+  //    —— 獠牙信标亡语炸错边就是这么来的。
+  // ── 盖章点：effectProcessor 的 SUMMON 落点（落点阵营 = landingOwner）。
+  // ── ⚠️ 消费方须知：只有【经 SUMMON 落场】的单位带此戳（信标四个生成口全走 SUMMON）。
+  //    手牌打出 / 复活 / 克隆等其他入场路径不带 → 读之前必须 `?? ` 兜底回推导，勿裸读。
+  unitOwner?: 'player' | 'enemy';
   // [新增] 'ephemeral_dying' 用于区分瞬息自然消散与常规受击阵亡
   // [修改] 增加 'delayed_attacking' 以支持防守方的滞后反击动画
   // [新增] 'summoning' 用于召唤入场演出（碎片重组）
@@ -257,6 +265,36 @@ export interface GameState {
   rogueEnhancements?: string[]; // [2026-08-11] 玩家迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
   enemyEnhancements?: string[]; // [2026-08-27] 敌方迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
   rogueFirstSummonDone?: boolean; // [2026-08-11] 暗影双生：本回合是否已触发过首次召唤复制（每回合开始重置）
+  // [2026-09-17 1.0.16 松露小队 · 虹彩] 獠牙信标生命上限的永久修正（负值），局内累计。
+  // 召唤落场时套用 —— 这样【尚未登场】的信标也吃得到（方案 8.1 关键细节）。
+  // ⚠️ 绝不直接改 CARD_DB：那是模块级常量，改它会跨局污染。
+  beaconMaxHealthMod?: number;
+  // [2026-09-17 1.0.16 松露小队 · 园丁] 园丁灌溉无人机上次触发所在的回合号。
+  // 与 game.round 相等即表示「本回合已触发过」——实现「每回合首次」的节流。
+  truffleGardenerRound?: number;
+  // [2026-09-19 1.0.16 茉莉安 Lv2] 「每回合首次信标被击败 → 在敌方备战席补一个」的节流记录（记回合号）。
+  // 与 game.round 相等即表示本回合已补过 —— 与园丁 truffleGardenerRound 同款写法。
+  marianBeaconRespawnRound?: number;
+  // ==========================================
+  // [2026-09-19 1.0.16 茉莉安 · 大招逐击改造] 连斩（CHAIN_STRIKE）的续击状态机
+  // ── 为什么需要它：连斩此前是 effectProcessor 里一个**同步 for 循环**，一次 tick 全打完
+  //    ⇒ 多个目标同帧掉血、没有"挨个打击"的演出空间。
+  //    改为「一击一步」后，链的进展必须有地方记 —— 就是这里。
+  // ── 驱动器：useGameState 的驱动 effect 看到 done=false 就延时再打一击（见 chainStrikeStep）。
+  // ── 清理口径：done=true 的链会被下一次施法当作"无链"重新初始化，无需显式清除。
+  // ==========================================
+  pendingChain?: {
+    casterSide: 'player' | 'enemy';
+    strikeDmg: number;      // 每击伤害（首击时由茉莉安攻击力解析一次，后续沿用）
+    victimId: string | null; // 下一击的目标；null = 自动锁最低血（击杀后即为此态）
+    step: number;           // 已打完的击数
+    done: boolean;
+    prevPhase: string;      // 链开始前的 phase，收尾时还原
+  };
+  // [2026-09-19 1.0.16 茉莉安] 「补兵券」：茉莉安入场时若敌方备战席**已有**信标，不发新的、改发一张欠条。
+  // 信标被击败时兑现（**要求她本人活着在场**，程 2026-09-19 拍板）。按阵营分开记账（镜像对局各算各的）。
+  // 与 marianBeaconRespawnRound 的区别：券是**入场时发的欠条**（可多次入场累积），后者是 Lv2 的每回合节流。
+  marianBeaconVoucher?: { player?: number; enemy?: number };
   enemyNexus: number;
   enemyNexusMax?: number; // [2026-08-30 莉莉子] 敌方水晶回血上限（=敌方水晶初值；肉鸽=难度基础+生命强化，缺省 20）
   enemyNexusBarrier?: number; // [2026-08-27] 敌方水晶屏障（固若金汤：可挡伤害点数，回合末清零）
