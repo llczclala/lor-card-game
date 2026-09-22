@@ -8,6 +8,9 @@
 //   - 效率加成：天启者等级 expRateBonus（阶段2）+ 碳原子板翻倍（阶段1）
 // 总公式：整局 = Σ(节点基础×深度) × 难度倍率 × 时长倍率 × (1+expRateBonus/100) × 共鸣×2
 //  局内逐节点发"原始经验"（含难度倍率）；结算时补差额（时长/效率/共鸣/通关）。
+// [2026-09-22 莉莉子 修复] 时长倍率分母改为「本难度基准时长 PAR」（DIFFICULTY_PAR_MINUTES）：
+//   旧档位为绝对值（10/15/20 分钟），而机密/绝密地图是普通的 2 / 2.7 倍长 → 高难度必然掉到 ×1，
+//   把难度倍率整个吃掉（机密有效 1.5 ＜ 普通有效 2.0，玩家实测"机密经验比普通少"）。现按难度归一。
 // ==========================================
 import { ROGUE_MAPS, computeGraphDepth, type RogueNodeType } from './mapLayout';
 import type { RogueDifficulty } from './difficulties';
@@ -26,13 +29,24 @@ export const DIFFICULTY_EXP_MULT: Record<RogueDifficulty, number> = {
     normal: 1, secret: 1.5, topsecret: 2,
 };
 
-/** 速通时长倍率档位（时间越短越高，最高 3 倍）
+/** [2026-09-22 莉莉子 修复] 各难度「基准时长 PAR」（分钟）= 该难度正常节奏通关一局的典型耗时。
+ *  ⚠️ 根因记录：旧档位（10/15/20 分钟）是**绝对值**，而机密 / 绝密地图分别是普通的 2 倍 / 2.7 倍长，
+ *  高难度必然超时 → 时长倍率恒为 ×1，把难度倍率（1.5 / 2）整个吃掉：
+ *    有效倍率 = 普通 1×2=2.0 ＞ 机密 1.5×1=1.5  →  机密一局经验(1092) 反而**少于**普通(1098)。
+ *  现改为「相对本难度基准」的比值制：三难度正常节奏一律 ×2，打得比基准快才拿 ×3。
+ *  基准值依据：单场战斗 3 分 / 精英 4.5 分 / Boss 6 分 / 非战斗节点 0.5 分的节奏推演
+ *  （普通 3 战 ≈14 分 · 机密 6 战 ≈26 分 · 绝密 8 战 ≈38 分）。改地图长度时需同步复核此表。 */
+export const DIFFICULTY_PAR_MINUTES: Record<RogueDifficulty, number> = {
+    normal: 14, secret: 26, topsecret: 38,
+};
+
+/** 速通时长档位：ratio = 实际时长 / 本难度基准时长（越小越快），最高 3 倍
  *  [2026-09-15 程拍板] 仅整局通关才生效 —— 没通关吃什么速通奖励（败北 / 中途放弃一律 ×1） */
-export const TIME_MULT_TIERS: { maxMinutes: number; mult: number }[] = [
-    { maxMinutes: 10, mult: 3 },
-    { maxMinutes: 15, mult: 2 },
-    { maxMinutes: 20, mult: 1.5 },
-    { maxMinutes: Number.POSITIVE_INFINITY, mult: 1 },
+export const TIME_TIER_FRACS: { frac: number; mult: number }[] = [
+    { frac: 0.8, mult: 3 },
+    { frac: 1.15, mult: 2 },
+    { frac: 1.5, mult: 1.5 },
+    { frac: Number.POSITIVE_INFINITY, mult: 1 },
 ];
 
 /** 通关额外经验（接替原 RUN_EXP.victory） */
@@ -40,11 +54,13 @@ export const CLEAR_EXP: Record<RogueDifficulty, number> = {
     normal: 300, secret: 450, topsecret: 700,
 };
 
-/** 对局时长（ms）→ 速通倍率（越短越高） */
-export const timeExpMult = (elapsedMs: number): number => {
-    const minutes = elapsedMs / 60000;
-    for (const t of TIME_MULT_TIERS) {
-        if (minutes < t.maxMinutes) return t.mult;
+/** 对局时长（ms）+ 难度 → 速通倍率（分母为本难度基准时长 PAR，各难度口径一致） */
+export const timeExpMult = (elapsedMs: number, difficulty: RogueDifficulty = 'normal'): number => {
+    const par = DIFFICULTY_PAR_MINUTES[difficulty] ?? DIFFICULTY_PAR_MINUTES.normal;
+    if (!(par > 0)) return 1;
+    const ratio = elapsedMs / 60000 / par;
+    for (const t of TIME_TIER_FRACS) {
+        if (ratio < t.frac) return t.mult;
     }
     return 1;
 };
@@ -67,7 +83,8 @@ export const computeRunExpTotal = (
     const clear = opts.won ? CLEAR_EXP[opts.difficulty] : 0;
     const base = nodesExp + clear;
     // [2026-09-15 程拍板] 速通倍率只给通关（败北 / 中途放弃一律 ×1）
-    const timeMult = opts.won ? timeExpMult(opts.durationMs) : 1;
+    // [2026-09-22 莉莉子 修复] 传入 difficulty：倍率分母改为本难度基准时长，消除高难度地图长导致的掉档
+    const timeMult = opts.won ? timeExpMult(opts.durationMs, opts.difficulty) : 1;
     const rate = 1 + (opts.expRateBonusPct ?? 0) / 100;
     const reso = opts.resonance ? 2 : 1;
     return Math.round(base * timeMult * rate * reso);
@@ -77,6 +94,7 @@ export const computeRunExpTotal = (
 export interface RogueSettleDetail {
     durationMin: number;   // 对局时长（分钟，一位小数）
     timeMult: number;      // 速通时长倍率（仅通关生效；败北 / 中途放弃恒为 1）
+    timeParMin?: number;   // [2026-09-22] 本难度基准时长（分钟）—— 速通倍率的分母，结算窗展示用
     diffMult: number;      // 难度倍率（普通1/机密1.5/绝密2）
     ratePct: number;       // 天启者经验效率加成（%）
     resonance: boolean;    // 碳原子板是否生效（仅通关 true；败北 / 中途放弃 false）

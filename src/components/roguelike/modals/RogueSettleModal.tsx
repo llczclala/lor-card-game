@@ -51,6 +51,10 @@ export const RogueSettleModal: React.FC<RogueSettleModalProps> = ({ run, expGain
                         <div className="flex justify-between"><span>对局时长</span><span className="text-white font-mono">{detail.durationMin} 分钟</span></div>
                         <div className="flex justify-between"><span>难度倍率</span><span className="text-white font-mono">×{detail.diffMult}</span></div>
                         <div className="flex justify-between"><span>速通倍率</span><span className="text-white font-mono">×{detail.timeMult}</span></div>
+                        {/* [2026-09-22 莉莉子] 展示倍率分母：让玩家看懂"基准时长按难度归一"，不再因地图长而莫名掉档 */}
+                        {detail.timeParMin != null && (
+                            <div className="flex justify-between"><span>本难度基准时长</span><span className="text-gray-500 font-mono">{detail.timeParMin} 分钟</span></div>
+                        )}
                         {detail.ratePct > 0 && <div className="flex justify-between"><span>效率加成</span><span className="text-cyan-300 font-mono">+{detail.ratePct}%</span></div>}
                         {detail.resonance && <div className="flex justify-between"><span>碳原子板</span><span className="text-purple-300 font-mono">×2</span></div>}
                         {detail.clearExp > 0 && <div className="flex justify-between"><span>通关奖励</span><span className="text-amber-300 font-mono">+{detail.clearExp}</span></div>}

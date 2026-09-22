@@ -57,7 +57,7 @@ import { RogueGameWrapper } from './components/roguelike/RogueGameWrapper';
 import { useHeroProgression } from './hooks/useHeroProgression'; // [2026-08-12 天启者养成] 每英雄等级/经验
 import { getHeroLevelBonus } from './data/roguelike/heroProgression'; // [2026-08-12 天启者养成] 等级加成
 import { ACCOUNT_EXP_BY_MODE, ACCOUNT_LEVEL_REWARD_DATA_GOLD } from './data/accountProgression'; // [2026-09-04 账号等级系统]
-import { computeNodeExp, getNodeDepth, computeRunExpTotal, computeResourceExp, timeExpMult, DIFFICULTY_EXP_MULT, CLEAR_EXP, type RogueSettleDetail } from './data/roguelike/rogueExp'; // [2026-08-29] 经验经济（局内渐进/时长/难度/共鸣）· [2026-09-07] 剩余资源折算
+import { computeNodeExp, getNodeDepth, computeRunExpTotal, computeResourceExp, timeExpMult, DIFFICULTY_EXP_MULT, DIFFICULTY_PAR_MINUTES, CLEAR_EXP, type RogueSettleDetail } from './data/roguelike/rogueExp'; // [2026-08-29] 经验经济（局内渐进/时长/难度/共鸣）· [2026-09-07] 剩余资源折算
 import { RogueExpFeed, type ExpFeedItem } from './components/roguelike/RogueExpFeed'; // [2026-08-29] 局内经验横幅
 import { EvaluationPanel } from './components/roguelike/EvaluationPanel'; // [2026-08-29 评估嘉勉] 分析员等级面板
 import { RogueMissionPanel } from './components/roguelike/RogueMissionPanel'; // [2026-08-29] 肉鸽专属任务面板
@@ -583,7 +583,7 @@ export default function App() {
     if (opts.outcome === 'abandon') {
       return {
         bonus: 0,
-        detail: { durationMin: Math.round(durationMs / 6000) / 10, timeMult: 1, diffMult: DIFFICULTY_EXP_MULT[run.difficulty], ratePct: 0, resonance: false, clearExp: 0, abandoned: true },
+        detail: { durationMin: Math.round(durationMs / 6000) / 10, timeMult: 1, timeParMin: DIFFICULTY_PAR_MINUTES[run.difficulty], diffMult: DIFFICULTY_EXP_MULT[run.difficulty], ratePct: 0, resonance: false, clearExp: 0, abandoned: true },
       };
     }
     // [2026-09-15 程拍板] 碳原子板只在通关时发挥（翻倍 + 消耗）：玩家带它是奔着赢去的，败北本就经验少，
@@ -647,10 +647,14 @@ export default function App() {
         events: rogueStatsRef.current.events,
         gold: run.gold,
     });
-    // [2026-08-29 通行证] 对局给分析员经验（完成任意结局 +150，通关额外 +400 共 550）
-    userSystem.grantAnalystExp(won ? 550 : 150);
+    // [2026-09-22 莉莉子 修复] 难度收益系数（普通1/机密1.5/绝密2）：
+    //   此前通行证经验与分析员经验完全不分难度 —— 玩家打机密/绝密在另外两条养成线上零额外回报。
+    const diffRewardMult = DIFFICULTY_EXP_MULT[run.difficulty];
+    // [2026-08-29 通行证] 对局给分析员经验（完成任意结局 +150，通关额外 +400 共 550）· [09-22] 按难度加成
+    userSystem.grantAnalystExp(Math.round((won ? 550 : 150) * diffRewardMult));
     // [2026-09-04 账号等级系统] 迷宫整局 → 账号经验 + 战绩（settleRun 是整局唯一收口：通关/败北/主动结算各一次）
-    const accExp = ACCOUNT_EXP_BY_MODE.rogue[won ? 'win' : 'lose'];
+    // [2026-09-22 莉莉子] 账号经验按难度加成（普通 200/80 · 机密 300/120 · 绝密 400/160）
+    const accExp = Math.round(ACCOUNT_EXP_BY_MODE.rogue[won ? 'win' : 'lose'] * diffRewardMult);
     const accLeveled = userSystem.grantAccountExp(accExp);
     userSystem.recordBattle({ won, mode: 'rogue', heroKeys: [run.heroKey] });
     pushExpFeed(`账号经验 +${accExp}`);
@@ -661,7 +665,8 @@ export default function App() {
     const bonus = Math.max(0, finalTotal - run.expFromNodes) + resourceExp; // 节点差额（通关/时长/效率/共鸣）+ 剩余资源折算
     const detail: RogueSettleDetail = {
       durationMin: Math.round(durationMs / 6000) / 10, // 分钟（一位小数）
-      timeMult: won ? timeExpMult(durationMs) : 1, // [2026-09-15 程拍板] 速通倍率仅通关生效
+      timeMult: won ? timeExpMult(durationMs, run.difficulty) : 1, // [2026-09-15 程拍板] 速通倍率仅通关生效 · [09-22] 分母按难度基准
+      timeParMin: DIFFICULTY_PAR_MINUTES[run.difficulty], // [2026-09-22 莉莉子] 本难度基准时长（结算窗展示）
       diffMult: DIFFICULTY_EXP_MULT[run.difficulty],
       ratePct,
       resonance,

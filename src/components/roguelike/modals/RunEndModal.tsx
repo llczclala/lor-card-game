@@ -291,6 +291,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                                 ))}
                                 <div className="col-span-3 text-center text-[11px] text-gray-500 font-mono mt-1 leading-relaxed">
                                     难度 ×{detail.diffMult} · 速通 ×{detail.timeMult}
+                                    {detail.timeParMin != null && <span className="text-gray-600">（基准 {detail.timeParMin} 分）</span>}
                                     {detail.ratePct > 0 && ` · 效率 +${detail.ratePct}%`}
                                     {detail.resonance && ' · 共鸣 ×2'}
                                     {detail.clearExp > 0 && ` · 通关 +${detail.clearExp}`}
