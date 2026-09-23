@@ -122,6 +122,7 @@ export interface EffectParams {
     targetAllUnits?: boolean;    // 全场单位 AOE（含双方）
     targetAllAllies?: boolean;   // 全体友方
     targetAllEnemies?: boolean;  // 全体敌方
+    enlightenOverwhelm?: boolean; // [2026-09-23 莉莉子] targetAllEnemies 路径的「觉悟·全场碾压」开关；缺省=开（巨偶一瞥原行为），显式 false 关闭
     targetCombatOnly?: boolean;  // 仅交战区
     targetEnemyNexus?: boolean;  // 目标敌方水晶
     targetFilter?: string;       // 目标过滤暗号
@@ -216,6 +217,43 @@ export const relayEffectEvents = (events: { type: string; payload?: any }[] | un
     (events || []).forEach(e => {
         if (e.type === 'unit_damage') eventBus.emit('unit_damage', e.payload);
         else if (e.type === 'nexus_damage') eventBus.emit(GameEvents.NEXUS_STRIKED, e.payload);
+    });
+};
+
+/**
+ * [2026-09-23 莉莉子 · 重器制空重做] 「某半场是否存在【存活】的指定单位」—— 备战席 + 交战区
+ *
+ * ⚠️ 为什么要收成一个函数：信标的存在性判定此前散落三处、口径还不一致 ——
+ *    `gameRules.getSpellPlayBlockReason` 两区都查（正确）、
+ *    SUMMON 分支的 `summonOnlyIfAbsent` 只查备战席（漏交战区）、
+ *    `useGameState` 的补兵落点又是另一套。
+ *    而信标可以被打法①【挑战者】拖到战场上格挡（设计文档 3.9）——
+ *    只查备战席就会把「人在战场上」误判成「场上没有」⇒ **多召唤一个**，
+ *    破坏设计文档 3.6 的「同时最多存在 1 个」。
+ *
+ * 归属约定（与 `hitBeaconInField` 同源）：attacker 属 `fight.owner`，blocker 属其对面。
+ */
+const hasLiveUnitOfSide = (
+    side: 'player' | 'enemy',
+    playerBench: CardData[],
+    enemyBench: CardData[],
+    combatField: any[] | undefined,
+    key: string,
+): boolean => {
+    const isLiveKey = (c?: CardData | null): boolean =>
+        !!c && c.key === key
+        && !c.isDead
+        && c.animState !== 'dying'
+        && c.animState !== 'ephemeral_dying';
+
+    if ((side === 'player' ? playerBench : enemyBench).some(isLiveKey)) return true;
+    if (!combatField) return false;
+
+    return combatField.some(fight => {
+        if (!fight) return false;
+        if (fight.attacker && fight.owner === side && isLiveKey(fight.attacker)) return true;
+        const blockerSide: 'player' | 'enemy' = fight.owner === 'player' ? 'enemy' : 'player';
+        return !!fight.blocker && blockerSide === side && isLiveKey(fight.blocker);
     });
 };
 
@@ -505,10 +543,15 @@ export const processEffect = (
                     });
                 }
                 // 觉醒效果：施法者方全场碾压
+                // [2026-09-23 莉莉子 · 重器制空] 加显式开关 ——
+                //   本段写在**通用**的 `value + targetAllEnemies` 路径里，此前只靠 maxMana 判定，
+                //   任何将来走这条 AOE 的卡都会白捡一次「全场碾压」（本条日志还写着「巨偶一瞥」）。
+                //   缺省（undefined）保持原行为 ⇒ 巨偶一瞥零回归；显式传 false 才关闭。
                 const casterMaxMana = context.owner === 'player'
                     ? context.game?.playerMaxMana
                     : context.game?.enemyMaxMana;
-                if (casterMaxMana !== undefined && casterMaxMana >= 10) {
+                if (casterMaxMana !== undefined && casterMaxMana >= 10
+                    && effect.params.enlightenOverwhelm !== false) {
                     const giveOverwhelm = (c: CardData) => {
                         if (!c.keywords.includes('Overwhelm')) {
                             c.keywords = [...c.keywords, 'Overwhelm'];
@@ -946,7 +989,7 @@ export const processEffect = (
 
                             // 2. [新增] 伴泽而生：条件冻结判定 (原子化拦截)
                             if (effect.params.condition === 'freeze_if_health_equals_1') {
-                                const remainingHealth = (nextCard.health || 0) + (nextCard.buffs?.health || 0) - (nextCard.damageTaken || 0);
+                                const remainingHealth = getHealth(nextCard); // [2026-09-22 修复] 统一口径（原公式漏 roundBuffs.health）
                                 if (remainingHealth === 1) {
                                     // 触发冻结，调用绝对零度处理器
                                     nextCard = applyFrostbite(nextCard);
@@ -2593,6 +2636,52 @@ export const processEffect = (
                     const targetBench = landingOwner === 'player' ? nextPlayerBench : nextEnemyBench;
                     const targetHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
 
+                    // =====================================
+                    // [2026-09-23 莉莉子 · 重器制空重做] 柔性二选一：「有雷就炸雷，没雷就埋雷」
+                    //
+                    // ── 病根（旧版）：本效果只有「召唤」这一条腿，而卡面的打出条件又是
+                    //    「落点没有信标」；可 ④库效 在【对局开始】就放了一个 ⇒
+                    //    整局都打不出去，是一张**结构性死牌**。
+                    // ── 新语义：落点半场已有【存活】的信标 → 改为对其造成 `damageBeaconBy` 点伤害，
+                    //    本次不召唤。存在性判定走 hasLiveUnitOfSide ⇒ **备战席 + 交战区**都算
+                    //    （信标可被【挑战者】拖上场格挡，只查备战席会误判为「没有」而多召唤一个）。
+                    // ── ⚠️ 刻意「短路」：本效果内部二选一，**不会**出现「打掉 5 点、又立刻补一个新的」。
+                    //    这与卡面「有则打、无则召唤」一致。若将来拆成两段独立效果，
+                    //    打死信标后会当场再召唤一个（等同免费重新部署）—— 那是另一种设计，勿混。
+                    // =====================================
+                    const beaconStrike = params.damageBeaconBy || 0;
+                    if (beaconStrike > 0 && cardKey
+                        && hasLiveUnitOfSide(landingOwner, nextPlayerBench, nextEnemyBench, nextCombatField, cardKey)) {
+                        const strikeBeacon = (c: CardData): CardData => {
+                            if (c.key !== cardKey || c.isDead
+                                || c.animState === 'dying' || c.animState === 'ephemeral_dying') return c;
+                            events.push({ type: 'unit_damage', payload: { id: c.id, amount: beaconStrike, key: c.key } });
+                            return { ...c, damageTaken: (c.damageTaken || 0) + beaconStrike, animState: 'hit' as const };
+                        };
+
+                        // 备战席
+                        if (landingOwner === 'player') nextPlayerBench = nextPlayerBench.map(strikeBeacon);
+                        else nextEnemyBench = nextEnemyBench.map(strikeBeacon);
+
+                        // 交战区（与 hitBeaconInField 同源：attacker 属 fight.owner，blocker 属其对面）
+                        if (nextCombatField) {
+                            nextCombatField = nextCombatField.map(fight => {
+                                let nf = fight;
+                                if (fight.attacker && fight.owner === landingOwner) {
+                                    nf = { ...nf, attacker: strikeBeacon(fight.attacker) };
+                                }
+                                const blockerSide: 'player' | 'enemy' = fight.owner === 'player' ? 'enemy' : 'player';
+                                if (fight.blocker && blockerSide === landingOwner) {
+                                    nf = { ...nf, blocker: strikeBeacon(fight.blocker) };
+                                }
+                                return nf;
+                            });
+                        }
+
+                        console.log(`[重器制空] ${landingOwner} 半场已有存活「${cardKey}」→ 造成 ${beaconStrike} 点伤害（本次不召唤）`);
+                        continue;
+                    }
+
                     // [2026-09-16 茉莉安 T13] 落点已有同名单位 → 不召唤
                     //   用于信标的「场上最多 1 个」（设计文档 3.6）
                     // =====================================
@@ -2619,10 +2708,13 @@ export const processEffect = (
                     //   信标死后尸体会在数组里留 ~2.5s（等死亡动画），此前只比 key ⇒ 尸体把召唤挡住，
                     //   又因为改发券而券无处兑现 ⇒ 永久断档。
                     //   （同一类修复见 useRoundLifecycle 的 scanLibrarySummon，2026-09-18）
-                    const isLiveSameKey = (c: CardData) =>
-                        c.key === cardKey && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
-                    if (params.summonOnlyIfAbsent && cardKey && targetBench.some(isLiveSameKey)) {
-                        console.log(`[Summon] ${landingOwner} 备战席已有【存活】的「${cardKey}」，summonOnlyIfAbsent 跳过`);
+                    // [2026-09-23 莉莉子 · 重器制空重做] 顺带收口到 hasLiveUnitOfSide：
+                    //   原实现只扫 `targetBench`（备战席）⇒ 信标被【挑战者】拖到战场上格挡时，
+                    //   这里会判成「场上没有」而**再召唤一个**，破坏设计文档 3.6 的「同时最多 1 个」。
+                    //   本参数目前唯二的使用者（茉莉安本体入场 / 支援技）都是信标召唤，改动对二者一致。
+                    if (params.summonOnlyIfAbsent && cardKey
+                        && hasLiveUnitOfSide(landingOwner, nextPlayerBench, nextEnemyBench, nextCombatField, cardKey)) {
+                        console.log(`[Summon] ${landingOwner} 半场已有【存活】的「${cardKey}」，summonOnlyIfAbsent 跳过`);
                         continue;
                     }
 
@@ -4257,7 +4349,7 @@ export const processEffect = (
                 continue;
             }
 
-            const currentHp = unit.health + (unit.buffs?.health || 0) - (unit.damageTaken || 0);
+            const currentHp = getHealth(unit); // [2026-09-22 修复] 统一口径（原公式漏 roundBuffs.health）
             console.log(`[OnDamageSurviveCheck] ${unit.name}(${unit.key}) 找到于${foundIn}，HP=${currentHp}，damageTaken=${unit.damageTaken}，effects=${unit.effects.join(',')}`);
 
             if (currentHp <= 0) {

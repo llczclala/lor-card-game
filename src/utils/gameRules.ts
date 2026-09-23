@@ -580,9 +580,8 @@ export const hasEnlightenment = (maxMana: number): boolean => {
  *
  * 返回 `null` = 可以打；返回字符串 = 不能打，且该字符串就是要弹给玩家的提示。
  *
- * ⚠️ 为什么要有这个函数：茉莉安的两张法术（支援技「重器制空」/ 小技能「钢羽傍身」）
- *    卡面写着"XXX 时无法打出"，但**条件从未实装** ⇒ 卡面亮着可用高光、点下去也照打，
- *    只是效果被 `summonOnlyIfAbsent` 静默跳过 —— 白花 3 费。
+ * ⚠️ 为什么要有这个函数：卡面写着"XXX 时无法打出"，但**条件从未实装** ⇒
+ *    卡面亮着可用高光、点下去也照打，只是效果被静默跳过 —— 白花法力。
  *    两处判断（手牌高亮 / 点击拦截）必须同源，否则又会出现"高光说能打、点了打不出去"。
  */
 export const getSpellPlayBlockReason = (
@@ -595,13 +594,10 @@ export const getSpellPlayBlockReason = (
     const benchHasLiveBeacon = (bench?: CardData[]) =>
         (bench || []).some(c => c.key === BEACON_KEY && isLive(c));
 
-    // 支援技「重器制空」：在敌方备战席召唤信标 —— 已有存活信标 / 备战席满 都无法打出
-    if (card.key === 'marian_support') {
-        const enemyBench = ctx.enemyBench || [];
-        if (benchHasLiveBeacon(enemyBench)) return '敌方备战席已有「獠牙信标」';
-        if (enemyBench.length >= 6) return '敌方备战席已满';
-        return null;
-    }
+    // [2026-09-23 莉莉子 · 重器制空重做] 已**移除**支援技「重器制空」的拦截。
+    //   旧拦截是「敌方备战席已有存活信标 / 备战席满 → 无法打出」，
+    //   但它与 ④库效 的开局信标互斥 ⇒ 这张牌整局打不出去（结构性死牌）。
+    //   重做后该牌**永远可以打出**（有雷就炸雷、没雷就埋雷），故不再需要任何打出条件。
 
     // 小技能「钢羽傍身」：对信标造成伤害 —— 场上（敌我备战席 + 交战区）没有信标则无法打出
     if (card.key === 'marian_rush') {

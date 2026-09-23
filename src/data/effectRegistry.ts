@@ -155,6 +155,7 @@ export interface EffectParams {
     targetAllUnits?: boolean;    // 全场单位 AOE（含双方）
     targetAllAllies?: boolean;   // 全体友方
     targetAllEnemies?: boolean;  // 全体敌方
+    enlightenOverwhelm?: boolean; // [2026-09-23 莉莉子] targetAllEnemies 路径的「觉悟·全场碾压」开关；缺省=开（巨偶一瞥原行为），显式 false 关闭
     targetCombatOnly?: boolean;  // 仅交战区
     targetEnemyNexus?: boolean;  // 目标敌方水晶
     targetFilter?: string;       // 目标过滤暗号
@@ -2225,21 +2226,54 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         params: {}
     },
 
-    // --- 茉莉安 支援技：重器制空（T16）---
+    // --- 茉莉安 支援技：重器制空（T16 → 2026-09-23 重做）---
+    // 🎯 重做动机（程 2026-09-23 拍板）：
+    //    旧版只有「召唤信标」一条腿，而卡面的打出条件又是「落点没有信标」；
+    //    可 ④库效 在【对局开始】就放了一个 ⇒ 整局都打不出去，是一张**结构性死牌**。
+    //    且名字叫「重器制空」却干着后勤的活，名实不符。
+    // 🔧 新语义 —— 柔性二选一 + 覆盖轰炸：
+    //    ① 敌方半场（备战席 + 交战区）已有【存活】的信标 → 对其造成 5 点伤害
+    //    ② 没有 → 在敌方备战席召唤一个
+    //    ③ 之后（独立的第二效果）→ 对敌方备战席 + 交战区全体造成 1 点伤害
+    //    ⇒ 「有雷就炸雷，没雷就埋雷」，永远打得出；单发对信标净计 5 + 1 = 6 点。
+    // ⚠️ 伤害来源 = 本卡，**不归属茉莉安**（对齐钢羽傍身 / 设计文档 5.2）。
+    // ⚠️ 二选一的「短路」逻辑实现在 effectProcessor 的 SUMMON 分支内（见那里的长注释）。
     'effect_marian_support': {
         id: 'effect_marian_support',
         name: '重器制空',
-        description: '在敌方备战席召唤一个“獠牙信标”。',
+        description: '对敌方半场的“獠牙信标”造成 5 点伤害；若场上没有“獠牙信标”，则在敌方备战席召唤一个。',
         class: 'SUMMON',
         timing: 'ON_PLAY',
-        speed: 'BURST',
+        speed: 'FAST',
         targetRequirements: [],
         params: {
             summonKey: 'Marian_Wolf_Tooth_Beacon',
             summonSide: 'opponent',   // 跨阵营落点（T04）
             summonCount: 1,
-            summonOnlyIfAbsent: true, // 场上最多 1 个信标
+            summonOnlyIfAbsent: true, // 场上最多 1 个信标（判定含交战区）
+            damageBeaconBy: 5,        // [2026-09-23] 柔性二选一的「炸雷」分支
+            // ⚠️ 这里**刻意不写** damageBeaconSide —— 那个参数只有 BUFF 分支读（钢羽 / 夜视监察）。
+            //    本效果走 SUMMON 分支，打击侧直接由 summonSide 推导出的 landingOwner 决定
+            //    （'opponent' ⇒ 打敌方半场），写一个没人读的参数只会误导后人。
         }
+    },
+
+    // --- 茉莉安 支援技 · 第二段：制空覆盖（2026-09-23 新增）---
+    // 作为独立的第二个 effect 挂在同一张卡上（`effects: [...]` 按序结算），
+    // ⇒ 直接复用通用的 `value + targetAllEnemies` AOE 原语，**逻辑层零新增代码**。
+    // ⚠️ 该原语自带一段硬编码的「觉悟·全场碾压」（maxMana ≥ 10 触发，本是巨偶一瞥的彩蛋），
+    //    此处必须用 enlightenOverwhelm:false 关掉，否则白送一次全场碾压。
+    // ⚠️ 打的是「备战席 + 交战区」双区，且**包括信标自己**（它就是落点半场的单位）——
+    //    这是程明确要的：自己的炮火也会掀动自己的引信。
+    'effect_marian_support_aoe': {
+        id: 'effect_marian_support_aoe',
+        name: '制空覆盖',
+        description: '对敌方备战席与战场的所有单位造成 1 点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [],
+        params: { value: 1, targetAllEnemies: true, enlightenOverwhelm: false }
     },
 
     // --- 獠牙信标 亡语：对宿主方全体分摊伤害 ---

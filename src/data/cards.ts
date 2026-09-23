@@ -525,11 +525,15 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   marian_support: {
     key: 'marian_support', gachaPool: GachaPoolEnum.Zenith, name: '重器制空', cost: 3, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Marian',
-    description: '在敌方备战席召唤一个“獠牙信标”。\n敌方备战席已有“獠牙信标”或已满时无法打出。',
-    type: 'spell-burst', keywords: [],
+    // [2026-09-23 重做] 旧文案是「在敌方备战席召唤一个信标 / 已有或已满时无法打出」——
+    //   与 ④库效 的开局信标互斥，导致这张牌整局打不出去（结构性死牌）。
+    description: '对敌方半场的“獠牙信标”造成 5 点伤害；若场上没有“獠牙信标”，则在敌方备战席召唤一个。\n之后，对敌方备战席与战场的所有单位造成 1 点伤害。',
+    type: 'spell-fast', keywords: [],
     imageUrl: SPELL_IMAGES.marian_support,
     associatedChampionKey: 'marian',
-    effects: ['effect_marian_support'], // [T16 完成]
+    // [2026-09-23 重做] 极速 → 快速（可被对手响应）；两段效果按序结算：
+    //   ① 柔性二选一（炸雷 / 埋雷）  ② 制空覆盖 AOE
+    effects: ['effect_marian_support', 'effect_marian_support_aoe'],
   },
   // --- 衍生物：獠牙信标 ---
   // 站位在【对手】的备战席 —— 由 ④【库效】/ 茉莉安本体入场 / 支援技召唤
