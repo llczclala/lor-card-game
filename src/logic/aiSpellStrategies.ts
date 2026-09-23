@@ -14,6 +14,7 @@
 import type { CardData, GameState, AIConfig } from '../types';
 import { CARD_DB } from '../data/cards';
 import { evaluateChoiceCondition } from '../utils/gameRules';
+import { getHealth, getPower } from './keywords'; // [2026-09-22 修复] 收口到统一攻血口径
 
 // ==========================================
 // 工具函数
@@ -21,12 +22,12 @@ import { evaluateChoiceCondition } from '../utils/gameRules';
 
 /** 计算单位的有效生命值 */
 function getHp(unit: CardData): number {
-  return unit.health + (unit.buffs?.health || 0) - (unit.damageTaken || 0);
+  return getHealth(unit); // [2026-09-22 修复] 原公式漏 roundBuffs.health
 }
 
 /** 计算单位的有效攻击力 */
 function getPow(unit: CardData): number {
-  return unit.power + (unit.buffs?.power || 0);
+  return getPower(unit); // [2026-09-22 修复] 原公式漏 roundBuffs.power
 }
 
 /** 筛选可用的单位（未死亡、非动画中） */

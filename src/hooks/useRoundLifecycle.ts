@@ -768,7 +768,23 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                 }
             }
 
+            // ==========================================
+            // [2026-09-22 莉莉子 BUG修复] 临时生命到期前，先冲销「已经被伤害吃掉」的那部分欠条
+            // 病根：伤害统一记在 damageTaken 欠条上，有效血量 = health + buffs.health + roundBuffs.health − damageTaken。
+            //   这里原本直接清零 roundBuffs.health、却不减 damageTaken ⇒ 本回合加的血一旦到期，
+            //   同一笔伤害会「二次」落到基础血上：
+            //     3/2 单位吃「迂回防守」+0/+3 → 3/5，单挑挨 3 伤 → 有效 2（= 3/2，本就正确）；
+            //     回合开始清掉 +3 临时血 → 有效 = 2 + 0 − 3 = −1 ⇒ 单位凭空死亡。
+            // 冲销量取 min(临时血, 已受伤)：临时血被吃光 → 伤害全额冲销；没吃光 → 剩余临时血正常到期消失。
+            // ⚠️ 任何伤害来源（普通战斗 / 法术 / 单挑）都走同一套 damageTaken 记账，故此缺陷与伤害类型无关，
+            //    并非「单挑」独有 —— 只是程这次恰好用单挑触发。
+            // ==========================================
             if (nextCard.roundBuffs) {
+                const roundHealth = nextCard.roundBuffs.health || 0;
+                const taken = nextCard.damageTaken || 0;
+                if (roundHealth > 0 && taken > 0) {
+                    nextCard.damageTaken = Math.max(0, taken - Math.min(roundHealth, taken));
+                }
                 nextCard.roundBuffs = { power: 0, health: 0 };
             }
 

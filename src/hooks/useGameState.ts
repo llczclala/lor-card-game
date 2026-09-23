@@ -12,7 +12,7 @@ import { canAfford } from '../logic/core';
 import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { applyChannelOnSummon, applyEchoOnPlay, getPower } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
+import { applyChannelOnSummon, applyEchoOnPlay, getPower, getHealth } from '../logic/keywords'; // [2026-09-22 修复] getHealth 统一有效血量口径 // [2026-08-06 莉莉子] Echo 回响
 import { checkCardLevelUp, accumulateMauxirDamage, bumpBeaconDeaths, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide, assembleBeaconCard } from '../utils/gameRules';
 import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
 import { bumpAnimProgress, animGuard, ANIM_STALL_MS } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
@@ -813,7 +813,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const deadUnitsToBroadcast: CardData[] = [];
 
             const newBench = bench.map(unit => {
-                const currentHealth = (unit.health) + (unit.buffs?.health || 0) - (unit.damageTaken || 0);
+                const currentHealth = getHealth(unit); // [2026-09-22 莉莉子 BUG修复] 原公式漏 roundBuffs.health → 带临时血的单位被误判死亡
 
                 // [核心修正] 防重复触发必须同时放过 dying 和 ephemeral_dying，绝不能用普通死亡覆盖瞬息死亡！
                 if (currentHealth <= 0 && unit.animState !== 'dying' && unit.animState !== 'ephemeral_dying') {
@@ -896,7 +896,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             ...fight,
             attacker: (() => {
                 if (!fight.attacker) return fight.attacker;
-                const hp = (fight.attacker.health || 0) + (fight.attacker.buffs?.health || 0) - (fight.attacker.damageTaken || 0);
+                const hp = getHealth(fight.attacker); // [2026-09-22 莉莉子 BUG修复] 原公式漏 roundBuffs.health
                 if (hp <= 0 && fight.attacker.animState !== 'dying' && fight.attacker.animState !== 'ephemeral_dying') {
                     combatDeath = true;
                     return { ...fight.attacker, animState: 'dying' as const };
@@ -905,7 +905,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             })(),
             blocker: (() => {
                 if (!fight.blocker) return fight.blocker;
-                const hp = (fight.blocker.health || 0) + (fight.blocker.buffs?.health || 0) - (fight.blocker.damageTaken || 0);
+                const hp = getHealth(fight.blocker); // [2026-09-22 莉莉子 BUG修复] 原公式漏 roundBuffs.health
                 if (hp <= 0 && fight.blocker.animState !== 'dying' && fight.blocker.animState !== 'ephemeral_dying') {
                     combatDeath = true;
                     return { ...fight.blocker, animState: 'dying' as const };
@@ -2649,8 +2649,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         setGame(prev => ({ ...prev, phase: 'animating' }));
         const totalFights = stateRef.current.combatField.length;
         console.log(`[CombatDebug] resolveCombatAnimation 开始 — totalFights=${totalFights}`, stateRef.current.combatField.map((f: any) =>
-            `A:${f.attacker?.key}(HP=${(f.attacker?.health||0)+(f.attacker?.buffs?.health||0)-(f.attacker?.damageTaken||0)} alive=!${f.attacker?.isDead&&'D'||f.attacker?.animState})` +
-            ` vs B:${f.blocker?.key||'无'}(HP=${f.blocker?((f.blocker?.health||0)+(f.blocker?.buffs?.health||0)-(f.blocker?.damageTaken||0)):'—'} alive=!${f.blocker?.isDead&&'D'||f.blocker?.animState||'—'})`
+            `A:${f.attacker?.key}(HP=${f.attacker ? getHealth(f.attacker) : '—'} alive=!${f.attacker?.isDead&&'D'||f.attacker?.animState})` +
+            ` vs B:${f.blocker?.key||'无'}(HP=${f.blocker ? getHealth(f.blocker) : '—'} alive=!${f.blocker?.isDead&&'D'||f.blocker?.animState||'—'})`
         ));
         const ralliedOwners = new Set<'player' | 'enemy'>(); // [核心新增] 收集在战斗中触发备战的阵营
         for (let i = 0; i < totalFights; i++) {
@@ -2950,8 +2950,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     setCombatField(prev => prev.map(f => f.blocker?.id === blkId ? { ...f, blocker: buffed } : f));
                 });
             }
-            console.log(`[CombatDebug] 第${i+1}/${totalFights}路战斗结束: A=${result.updatedFight.attacker?.key}(HP=${(result.updatedFight.attacker?.health||0)+(result.updatedFight.attacker?.buffs?.health||0)-(result.updatedFight.attacker?.damageTaken||0)} state=${result.updatedFight.attacker?.animState})` +
-                ` B=${result.updatedFight.blocker?.key||'无'}(HP=${result.updatedFight.blocker?((result.updatedFight.blocker?.health||0)+(result.updatedFight.blocker?.buffs?.health||0)-(result.updatedFight.blocker?.damageTaken||0)):'—'} state=${result.updatedFight.blocker?.animState||'—'})` +
+            console.log(`[CombatDebug] 第${i+1}/${totalFights}路战斗结束: A=${result.updatedFight.attacker?.key}(HP=${result.updatedFight.attacker ? getHealth(result.updatedFight.attacker) : '—'} state=${result.updatedFight.attacker?.animState})` +
+                ` B=${result.updatedFight.blocker?.key||'无'}(HP=${result.updatedFight.blocker ? getHealth(result.updatedFight.blocker) : '—'} state=${result.updatedFight.blocker?.animState||'—'})` +
                 ` nexusDmg=${result.nexusDamage?.amount||0} killed=${result.killedUnits.map(u=>u.key).join(',')}`);
 
             // [关键修正] 战果已经排入 React 队列，现在安全发起广播！
@@ -4801,7 +4801,10 @@ setPlayerBench(prev => [...prev, blockerCard]);
 
         // 4. 触发 ON_PLAY 效果（战吼）
         if (newUnit.effects && newUnit.effects.length > 0) {
-            let tempGame = { ...stateRef.current.game, playerBench: newBench };
+            // [2026-09-22 莉莉子] 纯 GameState 快照：原写法额外塞了 playerBench，而 processEffect
+            // 全程不读 context.game.playerBench（bench 走 ctx.playerBench 单独传），
+            // 保留该冗余字段会让下面写回时把脏字段带进 GameState。
+            let tempGame = { ...stateRef.current.game };
             let tempPlayerBench = [...newBench];
             let tempEnemyBench = [...stateRef.current.enemyBench];
             let tempCombatField = [...stateRef.current.combatField];
@@ -4830,9 +4833,24 @@ setPlayerBench(prev => [...prev, blockerCard]);
                     if (res.enemyDeck) setEnemyDeckState(res.enemyDeck);
                     if (res.playerHand) setPlayerHand(res.playerHand);
                     if (res.enemyHand) setEnemyHand(res.enemyHand);
-                    setPlayerBench(tempPlayerBench);
                 }
             });
+
+            // ==========================================
+            // [2026-09-22 莉莉子 BUG修复] 补齐入场（战吼）效果的写回
+            // 原实现只把 res.playerDeck / playerHand / enemyHand 写回 React，
+            // 而下面这些变更全部只落在局部变量上、随函数结束被静默丢弃：
+            //   · res.game      → 安·校准（calibratePending）、茉莉安入场「补兵券」（marianBeaconVoucher）、
+            //                     全局光环账本（everywhereBuffs）、入场获得的法力（GRANT_MANA）等
+            //   · enemyBench    → 入场效果对敌方备战席的改动（如装备3·备战爆破）
+            //   · combatField   → 入场召唤直送交战区的单位（如飞剑）
+            // 症状即粉丝反馈的「场面已满替换打出时，安的入场校准不触发」。
+            // 口径对齐 playCard 正常上场路径（setPlayerBench / setEnemyBench / setCombatField + setGame(tempGame)）。
+            // ==========================================
+            setPlayerBench(tempPlayerBench);
+            setEnemyBench(tempEnemyBench);
+            setCombatField(tempCombatField);
+            setGame(prev => ({ ...prev, ...tempGame, activeCard: null, spellCasting: null }));
         }
 
         // [2026-08-12 装备系统] 替换打出同样触发装备打出效果（对敌方备战席造成伤害）
