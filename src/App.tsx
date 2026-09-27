@@ -50,8 +50,8 @@ import { RogueLeaveModal } from './components/roguelike/modals/RogueLeaveModal';
 import { RogueSettleModal } from './components/roguelike/modals/RogueSettleModal'; // [2026-08-28 对局记录] 中途结算窗
 import { generateRewardOptions, buildHeroRecruitOptions, type RewardCardOption, type HeroRecruitOption } from './data/roguelike/rewards'; // [2026-08-25] 胜利奖励生成；[2026-09-04] 首战天启者招募
 import { pickRandomEnhancements } from './data/roguelike/enhancements'; // [2026-08-28 事件] 随机强化
-import { generateCardOffers } from './data/roguelike/shop'; // [2026-08-28 事件] 带装备卡
-import { EQUIPMENT_DEFS, getEquipPoolForCard, getEquipmentById } from './data/equipment'; // [2026-08-28 事件] 随机装备 · [2026-08-29] 按卡筛装备池 · 探路回归提示
+import { generateCardOffers, getEquipmentPrice } from './data/roguelike/shop'; // [2026-08-28 事件] 带装备卡 · [2026-09-25] 装备单价（按实际生效件数计价）
+import { getEquipPoolForCard, getEquipmentById } from './data/equipment'; // [2026-08-29] 按卡筛装备池 · 探路回归提示
 import { ROGUE_EVENT_BY_ID, type RogueEventEffect } from './data/roguelike/events'; // [2026-08-28 事件系统]
 import { RogueGameWrapper } from './components/roguelike/RogueGameWrapper';
 import { useHeroProgression } from './hooks/useHeroProgression'; // [2026-08-12 天启者养成] 每英雄等级/经验
@@ -490,7 +490,8 @@ export default function App() {
     // [2026-08-29] 开局重置本局任务统计
     rogueStatsRef.current = { elites: 0, enhancements: 0, events: 0 };
     // [2026-08-29 经验重构] 本局武装快照（碳原子板"通关经验翻倍"，未通关不消耗不翻倍）
-    const armForHero = armamentConfig.getArmament(rogueHeroKey, heroLevel).filter((v): v is string => !!v);
+    // [2026-09-25 莉莉子 武装不叠加] 本局武装快照按同日启者去重（老存档可能残留重复槽）
+    const armForHero = Array.from(new Set(armamentConfig.getArmament(rogueHeroKey, heroLevel).filter((v): v is string => !!v)));
     rogue.startRun(rogueHeroKey, getConfiguredStarterDeck(userSystem.decks, rogueHeroKey), difficulty, {
       maxHp: bonus.maxHpBonus,
       gold: bonus.goldBonus,
@@ -710,6 +711,7 @@ export default function App() {
 
   const handleRogueBattle = (nodeType: RogueNodeType, archetypeId?: string, nodeId?: string, enemyBuffs?: string[]) => {
     if (!rogue.run) return;
+    rogue.resetBattleFlags(); // [2026-09-25 莉莉子 武装线] 凯旋之匣：本场"天启者是否阵亡"标记复位
     // [2026-08-10] 用节点预分配的敌人流派（保证地图头像与实际对手一致）
     // [2026-08-16 莉莉子] nodeType 断言收窄：buildRoguelikeEncounter 仅支持 battle/elite/boss（其余节点不会进战斗）
     // [2026-08-27 莉莉子] 断链修复：把节点预分配的迷宫强化（roll 子集）传给战斗，与地图预览一致
@@ -734,6 +736,18 @@ export default function App() {
     setAppState('loading');
   };
 
+  /**
+   * [2026-09-25 莉莉子 装备不叠加] 从"本局主英雄还能挂"的新装备里随机抽一件（排除英雄卡上已有的）。
+   *  全部装完则返回 undefined → 调用方跳过发放，不再塞重复件（重复挂会被 attachEquipment 静默忽略 = 白给）。
+   */
+  const pickNewEquipForHero = (): string | undefined => {
+    const heroKey = rogue.run?.heroKey;
+    const cardDef = heroKey ? CARD_DB[heroKey] : undefined;
+    if (!cardDef) return undefined;
+    const pool = getEquipPoolForCard(cardDef, rogue.run?.equippedCards?.[heroKey!]);
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)].id : undefined;
+  };
+
   const handleRogueVictory = (playerNexus?: number, ovType?: RogueNodeType, ovNodeId?: string) => {
     if (!rogue.run) return;
     // [2026-08-29] 一键胜利（节点详情）时用 override 的节点类型/id；否则用当前战斗状态
@@ -742,15 +756,21 @@ export default function App() {
     // [2026-08-28 事件] 战斗胜利投资回报（播种希望）：任何战斗胜利都结算
     const goldInvs = rogue.consumeInvestments('battleWinGold');
     if (goldInvs.length) for (const g of goldInvs) rogue.addGold(g.value ?? 0);
+    // [2026-09-25 莉莉子 武装线/强化线] 战斗结束结算（凯旋之匣：天启者存活 +金币 / 拾荒：水晶达标 +金币）。
+    //   放在事件战斗早返回之前，两条路径都能吃到；playerNexus 是战斗结束时的剩余水晶
+    rogue.settleArmamentBattleEnd(playerNexus);
 
     // [2026-08-28 事件] 事件战斗胜利 → 事件奖励（不结算节点）
     if (rogueEventBattle) {
-      const enh = pickRandomEnhancements(1, undefined, { rare: 0, epic: 60, legendary: 40 }, rogue.run.passUnlockedEnhancements)[0]; // [2026-08-29 通行证]
+      // [2026-09-25 莉莉子 不叠加] 强化排除已拥有；装备改从"英雄卡还能挂的新装备"里抽
+      const enh = pickRandomEnhancements(1, undefined, { rare: 0, epic: 60, legendary: 40 }, rogue.run.passUnlockedEnhancements, rogue.run.enhancements)[0]; // [2026-08-29 通行证]
       if (enh) { rogue.applyEnhancement(enh.id); recordCodexUnlock('enhancement', enh.id); }
       if (rogueEventBattle.reward === 'choose2') {
-        const equip = EQUIPMENT_DEFS[Math.floor(Math.random() * EQUIPMENT_DEFS.length)];
-        rogue.addEquippedCard(rogue.run.heroKey, equip.id);
-        recordCodexUnlock('equipment', equip.id);
+        const equipId = pickNewEquipForHero();
+        if (equipId) {
+          rogue.addEquippedCard(rogue.run.heroKey, equipId);
+          recordCodexUnlock('equipment', equipId);
+        }
       }
       rogue.setHp(playerNexus ?? rogue.run.hp);
       setRogueEventBattle(null);
@@ -809,13 +829,15 @@ export default function App() {
           : rogue.run.difficulty === 'secret'
             ? '机密推演 · 候选天启者自带 绿/蓝 装备'
             : '绝密推演 · 候选天启者自带 蓝/紫 装备';
-        setRogueHeroRecruit({ options: buildHeroRecruitOptions(rogue.run.heroKey, rogue.run.difficulty), subNote: note });
+        // [2026-09-25 莉莉子 装备不叠加] 候选英雄自带的装备排除其卡上已有的
+        setRogueHeroRecruit({ options: buildHeroRecruitOptions(rogue.run.heroKey, rogue.run.difficulty, rogue.run.equippedCards), subNote: note });
       } else {
         // 普通/精英胜利 → 卡牌三选一奖励（[2026-08-25] 候选卡随机佩戴装备，品质随 act 渐进；首战之后恢复正常）
         const options = generateRewardOptions(rogue.run.act, 3, {
           difficulty: rogue.run.difficulty,              // [2026-08-29] 难度品质上限
           equipRarityBonus: rogue.run.equipRarityBonus ?? 0, // [2026-08-29] 等级装备稀有度加成
           forceEquip: battleType === 'elite',       // [2026-08-29] 精英必带装备
+          equippedCards: rogue.run.equippedCards,   // [2026-09-25 莉莉子 装备不叠加] 候选卡不再佩戴其已有装备
         });
         // [2026-08-29 程拍板] 普通/精英战斗不再送卡包（仅最终 Boss 通关给）；三选一由玩家选择
         setRogueReward({ gold, options });
@@ -933,6 +955,7 @@ export default function App() {
       difficulty: rogue.run.difficulty,
       equipRarityBonus: rogue.run.equipRarityBonus ?? 0,
       forceEquip: rogueBattleType === 'elite',
+      equippedCards: rogue.run.equippedCards, // [2026-09-25 莉莉子 装备不叠加] 候选卡不再佩戴其已有装备
     });
     setRogueReward(prev => prev ? { ...prev, options } : prev);
   };
@@ -989,11 +1012,15 @@ export default function App() {
     return true;
   };
   // [2026-09-10 莉莉子] 装备页签改批量：先选天启者、再多选装备，点购买一次性扣总价并全部挂到该英雄身上（不受武装槽位限制）
-  const handleRogueBuyEquipment = (heroKey: string, equipmentIds: string[], totalPrice: number) => {
+  // [2026-09-25 莉莉子 装备不叠加] 兜底：已在英雄身上的装备不再重复挂、也不重复收费（按"实际生效件数"计价；UI 已置灰为「已装」）
+  const handleRogueBuyEquipment = (heroKey: string, equipmentIds: string[], _totalPrice: number) => {
     if (!rogue.run) return false;
-    if (equipmentIds.length === 0) return false;
-    if (!rogue.spendGold(totalPrice)) return false;
-    for (const equipmentId of equipmentIds) {
+    const owned = new Set(rogue.run.equippedCards?.[heroKey] ?? []);
+    const applicable = equipmentIds.filter(id => !owned.has(id));
+    if (applicable.length === 0) return false;
+    const price = applicable.reduce((sum, id) => sum + getEquipmentPrice(getEquipmentById(id)?.rarity ?? 'common'), 0);
+    if (!rogue.spendGold(price)) return false;
+    for (const equipmentId of applicable) {
       rogue.addEquippedCard(heroKey, equipmentId); // 装备挂到所选天启者卡
       recordCodexUnlock('equipment', equipmentId); // [2026-08-26] 图鉴解锁
     }
@@ -1073,21 +1100,23 @@ export default function App() {
     if (ef.refresh) rogue.addRefresh(ef.refresh);
     if (ef.addRandomCard) { const k = randomCollectibleCard(); if (k) rogue.addCard(k); }
     if (ef.addEquippedCard) {
-      const offer = generateCardOffers(1)[0];
+      // [2026-09-25 莉莉子 装备不叠加] 带装备卡：装备候选排除该卡已有装备
+      const offer = generateCardOffers(1, rogue.run.equippedCards)[0];
       rogue.addCard(offer.cardKey);
       if (offer.equipId) { rogue.addEquippedCard(offer.cardKey, offer.equipId); recordCodexUnlock('equipment', offer.equipId); }
     }
     if (ef.polluteDeck) { const k = randomJunkCard(); if (k) rogue.addCard(k); }
     if (ef.upgradeCard) {
       const nonHero = rogue.run.deck.filter(k => !CARD_DB[k]?.isChampion);
-      if (nonHero.length) {
-        const cardKey = nonHero[Math.floor(Math.random() * nonHero.length)];
-        const equipPool = getEquipPoolForCard(CARD_DB[cardKey]); // [2026-08-29] 按卡筛：法术只配减费装备
-        if (equipPool.length) {
-          const equip = equipPool[Math.floor(Math.random() * equipPool.length)];
-          rogue.addEquippedCard(cardKey, equip.id);
-          recordCodexUnlock('equipment', equip.id);
-        }
+      // [2026-09-25 莉莉子 装备不叠加] 只挑"还能挂上新装备"的卡（排除各卡已有装备）；全挂满就作罢，不再发无效升级
+      const eqMap = rogue.run.equippedCards ?? {};
+      const upgradable = nonHero.filter(k => getEquipPoolForCard(CARD_DB[k], eqMap[k]).length > 0);
+      if (upgradable.length) {
+        const cardKey = upgradable[Math.floor(Math.random() * upgradable.length)];
+        const equipPool = getEquipPoolForCard(CARD_DB[cardKey], eqMap[cardKey]); // [2026-08-29] 按卡筛：法术只配减费装备
+        const equip = equipPool[Math.floor(Math.random() * equipPool.length)];
+        rogue.addEquippedCard(cardKey, equip.id);
+        recordCodexUnlock('equipment', equip.id);
       }
     }
     if (ef.removeCards) {
@@ -1098,13 +1127,17 @@ export default function App() {
       }
     }
     if (ef.addEnhancement) {
-      const enh = pickRandomEnhancements(1, undefined, rogue.run.rarityBonus, rogue.run.passUnlockedEnhancements)[0]; // [2026-08-29 通行证]
+      // [2026-09-25 莉莉子 强化不叠加] 排除本局已拥有
+      const enh = pickRandomEnhancements(1, undefined, rogue.run.rarityBonus, rogue.run.passUnlockedEnhancements, rogue.run.enhancements)[0]; // [2026-08-29 通行证]
       if (enh) { rogue.applyEnhancement(enh.id); recordCodexUnlock('enhancement', enh.id); }
     }
     if (ef.addEquipment) {
-      const equip = EQUIPMENT_DEFS[Math.floor(Math.random() * EQUIPMENT_DEFS.length)];
-      rogue.addEquippedCard(rogue.run.heroKey, equip.id);
-      recordCodexUnlock('equipment', equip.id);
+      // [2026-09-25 莉莉子 装备不叠加] 改从"英雄卡还能挂的新装备"里抽（原为全库随机，会抽到已挂的）
+      const equipId = pickNewEquipForHero();
+      if (equipId) {
+        rogue.addEquippedCard(rogue.run.heroKey, equipId);
+        recordCodexUnlock('equipment', equipId);
+      }
     }
     if (ef.removeEquipment) rogue.removeRandomEquipment();
     if (ef.gamble) {
@@ -1191,6 +1224,55 @@ export default function App() {
     setGameId(id => id + 1); // [重挂] key={rogue_${gameId}} 变化 → RogueGameWrapper/GameSession 重新初始化
     setAppState('loading'); // 走加载界面重进战斗
   };
+
+  // ══════════════════════════════════════════════════════════
+  // [2026-09-25 莉莉子 投降] ESC 暂停层的「投降」与「我遇到了BUG需要重开」
+  //   背景：原第三按钮是 window.close() 直接关游戏，与设置里的 QUIT GAME 完全重合，
+  //   也不符合直觉（玩家点它多半是"这把打不了了"）。现改为投降 + 三选项二级确认。
+  // ══════════════════════════════════════════════════════════
+  const [surrenderSignal, setSurrenderSignal] = useState(0); // 递增 → GameSession 把本场以战败收场
+
+  /** 投降（认输）：肉鸽消耗一次复活；标准 / 地下清理按失败流程结算 */
+  const handleSurrender = () => {
+    eventBus.emit(GameEvents.UI_CLICK);
+    if (appState === 'rogue_game') {
+      // 肉鸽：投降 = 死亡一次
+      if (rogue.consumeRevive()) {
+        // 还有复活次数 → HP 回滚到战前、回地图、**仍停在这个节点**可重复挑战（不标记击败）
+        if (preBattleHpSnapshot !== null) rogue.setHp(preBattleHpSnapshot);
+        setPreBattleHpSnapshot(null);
+        setRogueBattleType(null);
+        setRogueBattleNodeId(null);
+        setRogueEncounter(null);
+        setRogueEventBattle(null);
+        playBgm('deck_builder');
+        setAppState('rogue_map');
+        return;
+      }
+      // 复活次数已耗尽 → 按肉鸽失败结算
+      handleRogueDefeat();
+      return;
+    }
+    // 标准 / 地下清理：请求本场以战败收场（GameSession 收到后清零水晶 → 走既有失败结算）
+    setSurrenderSignal(n => n + 1);
+  };
+
+  /** 我遇到了BUG需要重开：重新开始本场战斗，**不消耗任何内容** */
+  const handleRestartBattle = () => {
+    eventBus.emit(GameEvents.UI_CLICK);
+    if (appState === 'rogue_game') {
+      handleRogueRestartBattle(); // 复用既有的肉鸽重开（HP 回滚 + 同节点同流派重建，不消耗复活）
+      return;
+    }
+    // 标准 / 地下清理：直接重挂战斗（gameId 递增 → GameSession 重新初始化），牌组与遭遇不变
+    setGameId(prev => prev + 1);
+    setAppState('loading');
+  };
+
+  /** 投降确认窗里的后果说明（按模式给出，玩家一眼知道会发生什么） */
+  const surrenderNote = appState === 'rogue_game'
+    ? `· 本场视作死亡一次，消耗 1 次复活（当前剩余 ${rogue.run?.reviveCount ?? 0} 次）\n· 还有复活次数：返回悖论迷宫地图，仍停在这个节点，可重复挑战本关\n· 复活次数耗尽：本局按失败结算`
+    : '· 本场视作认输，按「战败」流程结算（战绩与经验均按失败计）\n· 该操作不可撤销';
 
   // 背景视频切换
   const handleSwitchLobbyVideo = () => {
@@ -1565,12 +1647,13 @@ export default function App() {
                 deskIndex={tutorialStageId ? 0 : (userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex)}
                 deskDynamic={(userSystem.settings as any)?.deskDynamic || false} // [2026-08-13] 动态牌桌
                 heroDynamic={(userSystem.settings as any)?.heroDynamic || false} // [2026-08-16] 动态卡面
+                spellDynamic={(userSystem.settings as any)?.spellDynamic || false} // [2026-09-26] 动态法术/单位卡面
                 cardBackIndex={tutorialStageId ? 0 : (userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex)}
                 missionSystem={missionSystem} // [核心挂载] 注入军功大脑供结算画面使用
                 firstAttacker={firstAttacker} // ★ PVE 随机先手
                 aiDifficulty={standardDifficulty} // [2026-08-06] 标准对战 AI 难度
                 onOpenSettings={() => setIsSettingsOpen(true)} // [2026-08-30 莉莉子] 暂停层齿轮 → 设置面板
-                onQuitGame={handleQuitGame} // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏
+                onQuitGame={handleQuitGame} onSurrender={handleSurrender} onRestartBattle={handleRestartBattle} surrenderNote={surrenderNote} surrenderSignal={surrenderSignal}
                 isSettingsOpen={isSettingsOpen} // [2026-08-30 莉莉子] 暂停 ESC 协调
                 onAccountSettle={handleRealMatchSettled} // [2026-09-04 账号等级/战绩]
             />
@@ -1595,9 +1678,10 @@ export default function App() {
                 cardBackIndex={0}
                 deskDynamic={(userSystem.settings as any)?.deskDynamic || false} // [2026-08-13] 动态牌桌
                 heroDynamic={(userSystem.settings as any)?.heroDynamic || false} // [2026-08-16] 动态卡面
+                spellDynamic={(userSystem.settings as any)?.spellDynamic || false} // [2026-09-26] 动态法术/单位卡面
                 missionSystem={missionSystem} // [核心挂载] 注入军功大脑供结算画面使用
                 onOpenSettings={() => setIsSettingsOpen(true)} // [2026-08-30 莉莉子] 暂停层齿轮 → 设置面板
-                onQuitGame={handleQuitGame} // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏
+                onQuitGame={handleQuitGame} // [2026-09-25 莉莉子] 教程模式不接投降（投降对教程无意义），保留原退出
                 isSettingsOpen={isSettingsOpen} // [2026-08-30 莉莉子] 暂停 ESC 协调
                 onAccountSettle={handleRealMatchSettled} // [2026-09-04 账号等级/战绩]
             />
@@ -1706,10 +1790,11 @@ export default function App() {
               cardBackIndex={userSystem.decks.find((d: any) => d.id === `rogue_starter_${rogue.run!.heroKey}`)?.cardBackIndex ?? (userSystem.settings.customization?.currentCardBackIndex ?? 0)}
               deskDynamic={(userSystem.settings as any)?.deskDynamic || false} // [2026-08-13] 动态牌桌
               heroDynamic={(userSystem.settings as any)?.heroDynamic || false} // [2026-08-16] 动态卡面
+              spellDynamic={(userSystem.settings as any)?.spellDynamic || false} // [2026-09-26] 动态法术/单位卡面
               missionSystem={missionSystem}
               firstAttacker={Math.random() > 0.5 ? 'player' : 'enemy'}
               onOpenSettings={() => setIsSettingsOpen(true)} // [2026-08-30 莉莉子] 暂停层齿轮 → 设置面板
-              onQuitGame={handleQuitGame} // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏
+              onQuitGame={handleQuitGame} onSurrender={handleSurrender} onRestartBattle={handleRestartBattle} surrenderNote={surrenderNote} surrenderSignal={surrenderSignal}
               isSettingsOpen={isSettingsOpen} // [2026-08-30 莉莉子] 暂停 ESC 协调
               onAccountSettle={handleRealMatchSettled} // [2026-09-04 账号等级/战绩]（rogue 逐节点在 GameOverScreen 被跳过，整局走 settleRun）
           />
@@ -1735,6 +1820,8 @@ export default function App() {
               onToggleHeroDynamic={() => userSystem.updateSettings({ heroDynamic: !(userSystem.settings as any)?.heroDynamic } as any)}
               cardBackDynamic={(userSystem.settings as any)?.cardBackDynamic || false} // [2026-08-23] 动态卡背开关
               onToggleCardBackDynamic={() => userSystem.updateSettings({ cardBackDynamic: !(userSystem.settings as any)?.cardBackDynamic } as any)}
+              spellDynamic={(userSystem.settings as any)?.spellDynamic || false} // [2026-09-26] 动态法术/单位卡面开关
+              onToggleSpellDynamic={() => userSystem.updateSettings({ spellDynamic: !(userSystem.settings as any)?.spellDynamic } as any)}
               onResetSettings={() => userSystem.resetSettings()} // [2026-08-16] 恢复默认设置
               onRestartMatch={() => { setIsSettingsOpen(false); (userSystem.userId === 'dev_full_admin' && appState === 'rogue_game') ? handleRogueRestartBattle() : handleStartGame(); }}
               onReturnToLobby={() => { setIsSettingsOpen(false); handleBackToLobby(); }}

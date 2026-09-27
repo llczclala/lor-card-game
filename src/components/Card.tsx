@@ -17,10 +17,14 @@ import { KeywordTray } from './KeywordTray';
 import { getChampionUpgradeProgress } from '../utils/gameRules'; // [2026-09-19] 升级进度唯一口径
 // [新增] 引入事件总线用于触发音效
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { getPower } from '../logic/keywords'; // [2026-09-26 莉莉子] 攻击力唯一口径（0 下限 + maxPower 上限）
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于兜底替换{value}
 import { getEquipmentDefs } from '../data/equipment'; // [2026-08-12 装备系统] 手牌右侧装备方块
 import { bindArmamentGaze } from './roguelike/ArmamentPreview'; // [2026-08-26 莉莉子] 手牌卡武装/装备 pips 悬停浮现大卡
 import { getHeroVideo } from '../data/heroVideos'; // [2026-08-16 动态卡面] 天启者动态卡面视频
+import { getSpellVideo } from '../data/spellVideos'; // [2026-09-26 动态法术卡牌] 法术动态卡面视频
+import { getUnitVideo } from '../data/unitVideos'; // [2026-09-26 动态法术卡牌] 单位动态卡面视频
+import { CardFaceVideo } from './CardFaceVideo'; // [2026-09-26] 卡面视频播放器（英雄/法术/单位共用，见该文件注释）
 
 // [核心新增] 模块级卡牌位置记忆库 (突破 React 销毁重绘的失忆限制)
 const cardLocationMemory = new Map<string, string>();
@@ -139,29 +143,14 @@ HitCrackOverlay.displayName = 'HitCrackOverlay';
 export const HeroCardMediaContext = React.createContext<boolean>(false);
 export const useHeroDynamic = () => React.useContext(HeroCardMediaContext);
 
-// ==========================================
-// [2026-08-16 莉莉子] 动态卡面播放器
-// 对齐 DeskMedia 播放方案：浏览器 autoplay 策略下 HTML autoPlay 属性不可靠，
-// 必须 ref + video.play() 显式触发，loop/muted 用属性同步保证无限循环
-// ==========================================
-const HeroCardVideo: React.FC<{ src: string; className?: string; style?: React.CSSProperties }> = ({ src, className, style }) => {
-    const videoRef = useRef<HTMLVideoElement>(null);
+// [2026-09-26 莉莉子] 动态法术/单位卡面上下文（与 HeroCardMediaContext 平行）
+// GameSession 提供 spellDynamic 开关；无 Provider（图鉴/卡池/大厅等非对局场景）默认静态
+export const SpellCardMediaContext = React.createContext<boolean>(false);
+export const useSpellDynamic = () => React.useContext(SpellCardMediaContext);
 
-    useEffect(() => {
-        const el = videoRef.current;
-        if (!el) return;
-        el.loop = true;
-        el.muted = true;
-        if (el.src !== src && el.src !== window.location.origin + src) {
-            el.src = src;
-            el.load();
-        }
-        const p = el.play();
-        if (p !== undefined) p.catch(() => {});
-    }, [src]);
-
-    return <video ref={videoRef} src={src} className={className} style={style} playsInline preload="auto" muted loop />;
-};
+// [2026-09-26 莉莉子] 卡面视频播放器已抽为独立组件 ./CardFaceVideo
+//   （法术卡渲染路径有三条：手牌走 SpellCard / 打出后走 GameSession 法术圆盘 / 战场位走本文件，
+//    播放逻辑必须只有一份，否则三处必然各自漂移）
 
 // [2026-08-23 莉莉子] 动态卡背视频（对齐 HeroCardVideo：显式 play() + 无限循环 + muted）
 export const CardBackVideo: React.FC<{ src: string; className?: string; style?: React.CSSProperties }> = ({ src, className, style }) => {
@@ -227,6 +216,7 @@ interface CardProps {
   damageColor?: 'boosted' | 'reduced' | null; // 法术伤害数字颜色（绿/红/白）
   isCostReduced?: boolean; // [2026-07-14] 蕾西亚减费标记（绿色费用数字）
   heroDynamic?: boolean; // [2026-08-16] 动态卡面显式覆盖（portal 悬停大图等场景 Context 无法穿透时用 prop 强制）
+  spellDynamic?: boolean; // [2026-09-26] 动态法术/单位卡面显式覆盖（如对局记录面板一次渲染几十张卡，需强制关掉）
   // [切除] 删掉这行重复的 skinId，因为接口最上面已经声明过一遍了
 }
 // [皮肤] 智能裁剪钩子：增加 skinId 参数，支持双键索引结构
@@ -350,6 +340,7 @@ const EQUIPMENT_RARITY_COLOR: Record<string, string> = {
 export const Card: React.FC<CardProps> = ({
     data: realData, location, skinId = 0, // [新增] 解构 skinId 并默认赋予 0 默认皮肤
     heroDynamic: heroDynamicProp, // [2026-08-16] 动态卡面显式覆盖（悬停大图等 portal 场景，Context 无法穿透）
+    spellDynamic: spellDynamicProp, // [2026-09-26] 动态法术/单位卡面显式覆盖
     onClick, isBlocker, isSelected, highlightTarget, onViewArt, isEnemyCombatant, attackType = 'clash',
     isSpeaking, isPlayable,
     onChallengerClick, isChallengerActive, isChallengedTarget, canBeChallenged, isAttackDeclare, isFacingQuickAttack,
@@ -442,6 +433,19 @@ export const Card: React.FC<CardProps> = ({
     const heroVideoSrc = (heroDynamic && isHeroBattleLocation && !(skinId && skinId > 0))
         ? getHeroVideo(data.key, data.level)
         : undefined;
+
+    // [2026-09-26 莉莉子] 动态法术/单位卡面：启用决策完全对齐动态卡面（heroDynamic）
+    //   同一批对局核心位置 + 开开关 + 该卡有动态视频 → 用视频，否则静态图兜底
+    //   spellDynamic 同样由 GameSession Provider 提供，故图鉴/卡池/选择界面自动保持静态（防几十张卡同时播视频卡爆）
+    //   法术卡与单位卡共用同一开关：二者本质都是「非英雄卡牌的插画动起来」
+    const spellDynamicContext = useSpellDynamic();
+    const spellDynamic = spellDynamicProp ?? spellDynamicContext; // [2026-09-26] prop 优先（记录面板等需强制关闭的场景）
+    const spellVideoSrc = (spellDynamic && isHeroBattleLocation)
+        ? (getSpellVideo(data.key) ?? getUnitVideo(data.key))
+        : undefined;
+
+    // 战斗区动态卡面统一入口（一张卡只可能是英雄/法术/单位其一，故取首个非空值）
+    const cardFaceVideoSrc = heroVideoSrc ?? spellVideoSrc;
 
     // [2026-07-14 锻造者] 兜底计算 displayParams：从效果定义读取参数替换 {value} {paramName}
     // 当 prop displayParams 传入时，优先用 prop（支持缇坦妮娅的+1增益覆盖）
@@ -679,13 +683,15 @@ export const Card: React.FC<CardProps> = ({
     // [2026-07-10 修复] roundBuffs 是 ROUND 类 Buff 的唯一账本（不 double-write 进 buffs），
     // 所以生命值和攻击力都需要加 roundBuffs 才能正确显示临时增益
     const currentFinalHealth = (data.health || 0) + (data.buffs?.health || 0) + (data.roundBuffs?.health || 0) - (data.damageTaken || 0);
-    const currentFinalPower = (data.power || 0) + (data.buffs?.power || 0) + (data.roundBuffs?.power || 0);
-    // [maxPower] 攻击力上限 clamp（底座专用）
-    const clampedPower = data.maxPower !== undefined ? Math.min(currentFinalPower, data.maxPower) : currentFinalPower;
+    // [2026-09-26 莉莉子 BUG修复] 攻击力显示改走 `getPower()`（唯一口径）——
+    //   它同时含【下限 0】与【上限 maxPower（底座专用）】两重 clamp。
+    //   此前这里内联求和**只 clamp 了上限**，从没做过 0 下限
+    //   ⇒ 被 -4 削过的单位会在卡面显示负数（战斗逻辑一直走 getPower，所以是"显示与实际不一致"）。
+    const currentFinalPower = getPower(data);
 
     // [核心重构] 拦截器状态：用于在闪光结束后再更新底部的数字
     const [targetHealth, setTargetHealth] = useState(currentFinalHealth);
-    const [targetPower, setTargetPower] = useState(clampedPower);
+    const [targetPower, setTargetPower] = useState(currentFinalPower);
 
     // 使用 Ref 记录上一帧的数值
     const prevHealthRef = useRef(currentFinalHealth);
@@ -705,7 +711,7 @@ export const Card: React.FC<CardProps> = ({
     if (cardJustSwapped) {
         setNumCardIdState(data.id);
         setTargetHealth(currentFinalHealth);
-        setTargetPower(clampedPower);
+        setTargetPower(currentFinalPower);
     }
 
     // [2026-08-31 莉莉子 修复] 受击飘字分步（纯视觉层，不动逻辑结算）：
@@ -816,7 +822,7 @@ export const Card: React.FC<CardProps> = ({
                 // 扣攻/虚弱：无视动画锁，立刻触发基础本地飘字与震荡
                 setLocalShake(true);
                 setPowerDelta(diff);
-                setTargetPower(clampedPower);
+                setTargetPower(currentFinalPower);
                 setTimeout(() => { setPowerDelta(null); setLocalShake(false); }, 1000);
             } else if (diff > 0) {
                 // [泰坦] 泰坦脉冲的特效由 KeywordEffects 的 animState:'buff' 独立处理，不触发通用的金色高光
@@ -827,7 +833,7 @@ export const Card: React.FC<CardProps> = ({
                 setTimeout(() => {
                     setLocalFlash(false);
                     setPowerDelta(diff);
-                    setTargetPower(clampedPower);
+                    setTargetPower(currentFinalPower);
                     setTimeout(() => setPowerDelta(null), 1500);
                 }, 1000);
             }
@@ -905,7 +911,7 @@ export const Card: React.FC<CardProps> = ({
         data.id // [2026-09-08 莉莉子] 换卡首帧直接以新卡面板值对齐，不滚动
     );
     // [重构] 将攻击力的跳动时间从 1000ms 大幅缩短至 400ms，配合飘字演出爆发感
-    const [displayPower] = useNumberTicker(cardJustSwapped ? clampedPower : safePower, 400, data.id);
+    const [displayPower] = useNumberTicker(cardJustSwapped ? currentFinalPower : safePower, 400, data.id);
 
     // [召唤入场] 覆盖显示：召唤动画期间用生长数值代替真实值
     // [V2·三段时序] 阶段A/阶段B 期间数值显示生长值（未生成时显示 0），演出结束回真实值
@@ -1131,7 +1137,7 @@ export const Card: React.FC<CardProps> = ({
                     // [修复] 强制置于 z-10，确保它永远盖在 z-0 的龟裂贴花上面！
                     className="absolute top-0 left-0 bg-transparent overflow-hidden rounded-2xl z-10"
                 >
-                    <SpellCard data={data} burnoutValue={burnoutValue} displayParams={resolvedDisplayParams} damageColor={damageColor} isCostReduced={isCostReduced} />
+                    <SpellCard data={data} burnoutValue={burnoutValue} displayParams={resolvedDisplayParams} damageColor={damageColor} isCostReduced={isCostReduced} spellVideoSrc={spellVideoSrc} />
                     {!isPreview && isSelected && (
                         <div className="absolute inset-0 border-4 border-blue-400 rounded-2xl z-50 pointer-events-none animate-pulse shadow-[0_0_20px_#3b82f6]"></div>
                     )}
@@ -1260,13 +1266,14 @@ export const Card: React.FC<CardProps> = ({
                                 : data.region === 'Analyst' ? 'from-black/60 via-gray-950/30 to-black/5' // [2026-08-08 莉莉子] 分析员黑色卡面
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
-                        {heroVideoSrc ? (
-                                <HeroCardVideo
-                                    src={heroVideoSrc}
+                        {cardFaceVideoSrc ? (
+                                <CardFaceVideo
+                                    src={cardFaceVideoSrc}
                                     className="max-w-none opacity-90 block"
                                     style={{
-                                        width: '100%',
-                                        height: 'auto',
+                                        // [2026-09-26 莉莉子] 尺寸规则与下方静态 <img> 完全一致，保证视频/静态切换不跳动
+                                        width: data.type && data.type.includes('spell') ? 'auto' : '100%',
+                                        height: data.type && data.type.includes('spell') ? '100%' : 'auto',
                                         transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
                                     }}
                                 />
@@ -1546,13 +1553,14 @@ export const Card: React.FC<CardProps> = ({
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
                         )}
-                        {heroVideoSrc ? (
-                                <HeroCardVideo
-                                    src={heroVideoSrc}
-                                    className="max-w-none block"
-                                    style={{
-                                        width: '100%',
-                                        height: 'auto',
+                        {cardFaceVideoSrc ? (
+                                <CardFaceVideo
+                                    src={cardFaceVideoSrc}
+                                    className={location === 'deck-panel' ? 'w-full h-full object-cover block' : 'max-w-none block'}
+                                    style={location === 'deck-panel' ? undefined : {
+                                        // [2026-09-26 莉莉子] 尺寸规则与下方静态 <img> 完全一致，保证视频/静态切换不跳动
+                                        width: data.type && data.type.includes('spell') ? 'auto' : '100%',
+                                        height: data.type && data.type.includes('spell') ? '100%' : 'auto',
                                         transform: `translate(${crop.offsetX}%, ${crop.offsetY}%) scale(${crop.scale})`
                                     }}
                                 />

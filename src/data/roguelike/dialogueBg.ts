@@ -3,14 +3,14 @@
 // [2026-08-27 莉莉子] 节点进入方形面板共用 dialogue 横版背景；
 //   编辑器可给节点指定 key（dialogueBg），未指定时打开面板随机赋予。
 // ==========================================
-import d1 from '../../image/dialogue/1.png';
-import d2 from '../../image/dialogue/2.png';
-import d3 from '../../image/dialogue/3.png';
-import d4 from '../../image/dialogue/4.png';
-import d5 from '../../image/dialogue/5.png';
-import d6 from '../../image/dialogue/6.png';
-import d7 from '../../image/dialogue/7.png';
-import d8 from '../../image/dialogue/8.png';
+import d1 from '../../image/dialogue/1.webp';
+import d2 from '../../image/dialogue/2.webp';
+import d3 from '../../image/dialogue/3.webp';
+import d4 from '../../image/dialogue/4.webp';
+import d5 from '../../image/dialogue/5.webp';
+import d6 from '../../image/dialogue/6.webp';
+import d7 from '../../image/dialogue/7.webp';
+import d8 from '../../image/dialogue/8.webp';
 
 export const DIALOGUE_BG_IMAGES: string[] = [d1, d2, d3, d4, d5, d6, d7, d8];
 

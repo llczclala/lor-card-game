@@ -191,6 +191,7 @@ const RecordCard: React.FC<{
                     isFaceUp={true}
                     skinId={0}
                     onViewArt={onViewArt}
+                    spellDynamic={false} // [2026-09-26 莉莉子] 对局记录一次渲染整局几十张卡 —— 强制静态，避免几十个视频同时解码
                 />
 
                 {/* 阵亡蒙层 */}

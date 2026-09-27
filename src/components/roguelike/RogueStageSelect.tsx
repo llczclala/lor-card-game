@@ -3,13 +3,14 @@
 // 左侧关卡列表（左上角，缩略图老电视轮播）+ 右侧地图背景（难度视觉压迫层）+ 右下难度三选一
 // [2026-08-07] 难度只影响地图/敌人/迷宫BUFF，不影响AI
 // ==========================================
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Lock } from 'lucide-react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { ROGUE_DIFFICULTIES } from '../../data/roguelike/difficulties';
 import type { RogueDifficulty } from '../../data/roguelike/difficulties';
 import mapZero from '../../image/map/map_zero.webp';
+import mapZeroVideo from '../../movie/map/map_zero.webm'; // [2026-09-26 莉莉子] 动态地图背景（MiniMax H3 生成）
 import type { useUserSystem } from '../../hooks/useUserSystem';
 
 // 缩略图切片：map_zero/1.png ~ 8.png（1 秒轮播）
@@ -41,6 +42,19 @@ export const RogueStageSelect: React.FC<RogueStageSelectProps> = ({ onBack, onSt
     const [difficulty, setDifficulty] = useState<RogueDifficulty>('normal');
     const [sliceIndex, setSliceIndex] = useState(0);
     const [noise, setNoise] = useState(false); // 老电视切换噪声闪屏
+
+    // [2026-09-26 莉莉子] 动态地图背景：显式 play()（对齐 DeskMedia / CardFaceVideo 的 autoplay 方案）
+    //   加载失败自动回退静态图 map_zero.webp
+    const mapVideoRef = useRef<HTMLVideoElement>(null);
+    const [mapVideoFailed, setMapVideoFailed] = useState(false);
+    useEffect(() => {
+        const el = mapVideoRef.current;
+        if (!el) return;
+        el.loop = true;
+        el.muted = true;
+        const p = el.play();
+        if (p !== undefined) p.catch(() => {});
+    }, []);
 
     // 轮播缩略图：先亮噪声 0.45s → 切下一张 → 噪声熄灭（老电视开机切换）
     useEffect(() => {
@@ -74,14 +88,28 @@ export const RogueStageSelect: React.FC<RogueStageSelectProps> = ({ onBack, onSt
             exit={{ opacity: 0 }}
             className="w-full h-full relative overflow-hidden text-white font-sans select-none"
         >
-            {/* 右侧地图背景（随难度滤镜） */}
-            <img
-                src={mapZero}
-                style={{ filter: rightFilter }}
-                className={`absolute inset-0 w-full h-full object-cover ${isSecret ? 'animate-[rogue-shake_5s_ease-in-out_infinite]' : ''} ${isTopSecret ? 'animate-[rogue-shake-mid_3s_ease-in-out_infinite]' : ''}`}
-                alt="关卡地图"
-                draggable={false}
-            />
+            {/* 右侧地图背景（随难度滤镜）· [2026-09-26 莉莉子] 动态视频版，加载失败自动回退静态图 */}
+            {!mapVideoFailed ? (
+                <video
+                    ref={mapVideoRef}
+                    src={mapZeroVideo}
+                    onError={() => setMapVideoFailed(true)}
+                    style={{ filter: rightFilter }}
+                    className={`absolute inset-0 w-full h-full object-cover ${isSecret ? 'animate-[rogue-shake_5s_ease-in-out_infinite]' : ''} ${isTopSecret ? 'animate-[rogue-shake-mid_3s_ease-in-out_infinite]' : ''}`}
+                    playsInline
+                    preload="auto"
+                    muted
+                    loop
+                />
+            ) : (
+                <img
+                    src={mapZero}
+                    style={{ filter: rightFilter }}
+                    className={`absolute inset-0 w-full h-full object-cover ${isSecret ? 'animate-[rogue-shake_5s_ease-in-out_infinite]' : ''} ${isTopSecret ? 'animate-[rogue-shake-mid_3s_ease-in-out_infinite]' : ''}`}
+                    alt="关卡地图"
+                    draggable={false}
+                />
+            )}
 
             {/* ===== 难度视觉压迫层（仅已解锁的非普通难度） ===== */}
             {currentUnlocked && difficulty !== 'normal' && (

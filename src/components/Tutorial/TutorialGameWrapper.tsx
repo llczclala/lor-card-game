@@ -45,6 +45,7 @@ interface TutorialGameWrapperProps {
     cardBackIndex?: number;
     deskDynamic?: boolean; // [2026-08-13] 动态牌桌透传
     heroDynamic?: boolean; // [2026-08-16] 动态卡面透传
+    spellDynamic?: boolean; // [2026-09-26] 动态法术/单位卡面透传
     missionSystem?: any; // [核心挂载] 军功大脑透传结算
     onOpenSettings?: () => void; // [2026-08-30 莉莉子] 暂停层齿轮 → 打开设置面板
     onQuitGame?: () => void; // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏

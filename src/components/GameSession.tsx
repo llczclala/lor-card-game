@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef,useMemo } from 'react';
-import { Clock, Home } from 'lucide-react';
+import { Clock } from 'lucide-react'; // [2026-09-25 莉莉子] 移除左上退出按钮后 Home 不再使用
 import type { CardData, SpellStackItem } from '../types';
-import { Card, HeroCardMediaContext } from './Card';
+import { Card, HeroCardMediaContext, SpellCardMediaContext } from './Card';
+import { CardFaceVideo } from './CardFaceVideo'; // [2026-09-26 莉莉子] 法术圆盘动态卡面播放器
+import { getSpellVideo } from '../data/spellVideos'; // [2026-09-26 莉莉子] 法术动态卡面视频
 import { SmartNexus, Deck } from './GameUI';
 import { RogueBuffFlash } from './roguelike/RogueBuffFlash'; // [2026-08-11] 迷宫强化触发水晶闪烁
 import { RogueEnhancementPanel } from './roguelike/RogueEnhancementPanel'; // [2026-08-28] 战斗内敌我强化总览
@@ -124,6 +126,7 @@ interface GameSessionProps {
     enemyCardBackIndex?: number;
     deskDynamic?: boolean; // [2026-08-13] 动态牌桌（开启且有对应视频时用 video 替代静态图）
     heroDynamic?: boolean; // [2026-08-16] 动态卡面（开启时对局内手牌/场上英雄卡用视频替代静态立绘）
+    spellDynamic?: boolean; // [2026-09-26] 动态法术/单位卡面（开启时对局内手牌/场上法术卡、单位卡用视频替代静态插画）
     enemyDeck: string[];
     enemyHeroConfig?: EnemyHeroConfig;
     onVictory?: (playerNexus?: number) => void; // [2026-08-11] 带剩余水晶（肉鸽全局 HP 衔接）
@@ -136,6 +139,11 @@ interface GameSessionProps {
     enemyEquipments?: Record<string, string[]>; // [2026-08-30 程拍板] 敌方单位卡随机装备（难度分级，战斗构建挂载）
     rogueEquipments?: Record<string, string[]>; // [2026-08-12 天启者养成] 卡 key → 装备 id 列表（开局挂载，等级解锁）
     isRogueMode?: boolean; // [2026-08-29 莉莉子] 肉鸽模式标记：GameOverScreen 底部按钮改「返回地图」（PVE 保持「返回大厅」）
+    // [2026-09-25 莉莉子 投降] ESC 暂停层第三按钮：投降（认输）与「我遇到了BUG需要重开」
+    onSurrender?: () => void;        // 投降：由 App 按模式处理（肉鸽消耗复活回地图 / 标准与地下清理按失败结算）
+    onRestartBattle?: () => void;    // 我遇到了BUG需要重开：重开本场战斗，不消耗任何内容
+    surrenderNote?: string;          // 二级确认窗里的后果说明（由 App 按模式给出）
+    surrenderSignal?: number;        // [标准/地下清理专用] 递增值 = 请求本场以战败收场（走既有结算）
     disableMulligan?: boolean; // [新增] 教程模式跳过换牌
     disableAI?: boolean; // [2026-08-06 莉莉子] 关闭 AI 出牌（教程用）
     aiPersonality?: 'aggressive' | 'control' | 'balanced'; // [2026-08-06] AI 流派性格
@@ -160,6 +168,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     enemyCardBackIndex = 0,
     deskDynamic = false, // [2026-08-13] 动态牌桌
     heroDynamic = false, // [2026-08-16] 动态卡面
+    spellDynamic = false, // [2026-09-26] 动态法术/单位卡面
     enemyDeck,
     enemyHeroConfig: _enemyHeroConfig,
     onVictory,
@@ -173,6 +182,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     enemyEquipments, // [2026-08-30] 敌方单位卡随机装备注入
     rogueEquipments, // [2026-08-12 天启者养成] 玩家开局装备注入（肉鸽，卡 key → 装备列表）
     isRogueMode = false, // [2026-08-29 莉莉子] 肉鸽模式标记（胜利结算按钮改「返回地图」）
+    onSurrender, onRestartBattle, surrenderNote, surrenderSignal, // [2026-09-25 莉莉子 投降]
     disableMulligan = false, // [新增] 教程模式跳过换牌
     tutorialInit, // ★ 教程初始战场
     firstAttacker = 'player', // ★ 第一回合先手方
@@ -203,6 +213,27 @@ export const GameSession: React.FC<GameSessionProps> = ({
         enemyInitialDeckInfo,
         onHandAnimComplete
     } = useGameState(deck, enemyDeck, false, disableMulligan, tutorialInit, firstAttacker, initialPlayerNexus, playerNexusMax, rogueEnhancements, rogueEquipments, enemyEnhancements, initialEnemyNexus, enemyEquipments);
+
+    // [2026-09-25 莉莉子 投降] 标准 / 地下清理模式：App 递增 surrenderSignal = 请求本场以战败收场。
+    //   实现只需把玩家水晶清零 → 命中既有的 playerNexus <= 0 战败判定（useGameState 1105 行）→
+    //   结算 / 战绩 / 账号经验全部走"正常失败"那条路，**不需要改任何结算代码**。
+    //   ⚠️ 两道判断是程 2026-09-25 实测踩坑后补的，务必保留：
+    //     ① 信号是**累加值**：不记录"已处理到哪"，新战斗一挂载就会把上一局残留的信号当成本场请求 →
+    //        肉鸽里表现为"一进战斗节点、还没换牌就判负"，且绕过 App 的复活逻辑直接迷宫崩塌
+    //     ② 肉鸽**不走信号**（投降由 App 直接处理：消耗复活回地图 / 复活耗尽走失败结算）
+    const handledSurrenderRef = useRef(surrenderSignal ?? 0);
+    useEffect(() => {
+        const sig = surrenderSignal ?? 0;
+        if (isRogueMode) return;
+        if (sig <= handledSurrenderRef.current) return;
+        handledSurrenderRef.current = sig;
+        // ⚠️ 必须先关暂停层：isPaused 会给对局根容器加 .game-paused（冻结内部一切动效），
+        //    而结算界面就挂在根容器内 → 入场动画被冻在初始态（opacity 0）
+        //    →「看不到结算内容、但按钮仍然可点」正是这个现象
+        setIsPaused(false);
+        actions.surrenderGame?.();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [surrenderSignal, isRogueMode]);
 
     // ==========================================
     // [2026-08-30 莉莉子] 局内暂停系统
@@ -2216,6 +2247,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     return (
         <HeroCardMediaContext.Provider value={heroDynamic}>
+        <SpellCardMediaContext.Provider value={spellDynamic}>
         <div ref={gameRootRef} className={`w-full h-full bg-black text-white overflow-hidden relative font-sans select-none${isPaused ? ' game-paused' : ''}`}>
 
             {/* 1. 背景层（[2026-08-13] 动态牌桌：DeskMedia 统一处理，无视频自动兜底静态图） */}
@@ -2260,20 +2292,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
             {/* ========================================================== */}
 
 
-            {/* 2. 退出按钮 */}
-            <div className="absolute top-4 left-4 z-[100]">
-                 <button onClick={() => {
-                     eventBus.emit(GameEvents.UI_BACK);
-                     // [2026-08-11 肉鸽 HP 衔接] 已判定胜负 → 走正常结算（带回滚守卫）；未判定 → 中途退出
-                     if (game.gameResult === 'victory' || game.gameResult === 'defeat') {
-                         settleExit();
-                     } else {
-                         onExit();
-                     }
-                 }} className="p-2 bg-slate-800/80 rounded-full hover:bg-slate-700 text-gray-400 hover:text-white transition-colors">
-                    <Home size={20} />
-                </button>
-            </div>
+            {/* [2026-09-25 莉莉子] 移除左上角「退出/返回」按钮（早期方便操作用的）——
+                局内退出现在统一走 ESC 暂停层的「投降」（认输，按失败结算）或「我遇到了BUG需要重开」。
+                对局结束后的返回按钮不受影响（GameOverScreen 自带「返回大厅 / 返回地图」）。
+                注意：settleExit / onExit 仍在别处使用（结算兜底 2211/2213、GameOverScreen 2332），不可删。 */}
 
             {/* [新增] 信息播报层 */}
             <GameAnnouncement data={announcement} />
@@ -2367,6 +2389,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     onResume={() => setIsPaused(false)}
                     onOpenSettings={onOpenSettings}
                     onQuitGame={onQuitGame}
+                    onSurrender={onSurrender}
+                    onRestartBattle={onRestartBattle}
+                    surrenderNote={surrenderNote}
                 />
             )}
 
@@ -2553,6 +2578,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         const isStackTargetable = mode === 'stack' && spellSystem.isCasting && spellSystem.currentRequirement?.type === 'SPELL_ON_STACK' && spellSystem.checkIsTargetable(card, owner as 'player' | 'enemy');
                         // 智能皮肤读取
                         const currentImageUrl = skinOverrides[card.key] ? getSkinImage(card.key, skinOverrides[card.key]) || card.imageUrl : card.imageUrl;
+                        // [2026-09-26 莉莉子] 动态法术卡面：画面中间的法术圆盘（施法中/待确认/堆叠）同样播动态视频
+                        //   程实测指出——法术卡只有「手牌」与「打出到画面中间的圆盘」两个状态，
+                        //   不走单位卡那样的备战席/战场位，所以动态必须在这两条路径上分别接入
+                        const spellStackVideoSrc = spellDynamic ? getSpellVideo(card.key) : undefined;
 
                         // 动态计算目标位置与缩放（交给 Framer Motion 自动补间飞行路线）
                         // [2026-07-07] 无目标阶段放大圆盘（AI 施法悬念期）
@@ -2659,7 +2688,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
                                     {/* 物理锚点：使用 data-entity-id 供特效层绝对追踪 */}
                                     <div ref={isCasting ? spellCenterRef : undefined} data-entity-id={card.id} className={`relative w-[110px] h-[110px] rounded-full overflow-hidden z-10 bg-black ${isStackTargetable ? 'ring-4 ring-red-400/80 animate-pulse' : ''}`}>
+                                        {/* [2026-09-26 莉莉子] 动态法术卡面：有视频播视频，否则静态插画兜底 */}
+                                        {spellStackVideoSrc ? (
+                                            <CardFaceVideo src={spellStackVideoSrc} className="w-full h-full object-cover animate-pulse-slow opacity-90 mix-blend-screen" />
+                                        ) : (
                                         <img src={currentImageUrl} className="w-full h-full object-cover animate-pulse-slow opacity-90 mix-blend-screen" draggable={false} />
+                                        )}
                                         {!isEnemy && (isCasting || isPending) && (
                                             <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                                                 <span className="text-red-300 font-black tracking-widest text-xs">点击以</span>
@@ -3238,6 +3272,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
             <DeckInsertOverlay playerCardBackUrl={currentCardBack} enemyCardBackUrl={enemyCardBack} playerCardBackVideoUrl={currentCardBackVideo} enemyCardBackVideoUrl={enemyCardBackVideo} skinOverrides={skinOverrides} />
             <HandAnimOverlay />
         </div>
+        </SpellCardMediaContext.Provider>
         </HeroCardMediaContext.Provider>
     );
 }

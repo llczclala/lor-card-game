@@ -3,6 +3,7 @@ import type { CardData } from '../types';
 import { Zap, Clock } from 'lucide-react';
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14] 读取效果参数替换{value}
 import { KeywordTray } from './KeywordTray'; // [2026-08-08 莉莉子] 法术卡关键词图标位
+import { CardFaceVideo } from './CardFaceVideo'; // [2026-09-26 莉莉子] 动态法术卡面播放器
 interface SpellCardProps {
     data: CardData;
     className?: string;
@@ -10,6 +11,7 @@ interface SpellCardProps {
     displayParams?: Record<string, number>; // [2026-07-14] 外部传入的显示参数（缇坦妮娅增益覆盖）
     damageColor?: 'boosted' | 'reduced' | null; // [2026-07-14] 伤害数字颜色
     isCostReduced?: boolean; // [2026-07-28] 减费绿色标记
+    spellVideoSrc?: string; // [2026-09-26 莉莉子] 动态法术卡面视频（手牌/选择模式下由 Card 计算后传入；有则圆形原画播视频）
 }
 
 /**
@@ -17,7 +19,7 @@ interface SpellCardProps {
  * 设计基准尺寸: 288px x 448px (与 Unit Card 一致)
  * 所有内部元素尺寸均以此为基准，外部通过 transform: scale() 进行缩放
  */
-export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burnoutValue, displayParams: externalDisplayParams, damageColor, isCostReduced }) => {
+export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burnoutValue, displayParams: externalDisplayParams, damageColor, isCostReduced, spellVideoSrc }) => {
 
     // [2026-07-14] 兜底计算 displayParams：从效果定义读取参数替换{value}
     const resolvedDisplayParams = useMemo<Record<string, number> | undefined>(() => {
@@ -125,11 +127,19 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
                 <div className="absolute inset-[-6px] rounded-full border-[3px] border-[#c8aa6d]/60 shadow-[0_0_25px_rgba(200,170,109,0.4)] z-20 pointer-events-none"></div>
 
                 <div className="w-full h-full rounded-full overflow-hidden bg-black relative shadow-inner border-2 border-black">
+                    {/* [2026-09-26 莉莉子] 动态法术卡面：有视频则播视频，否则静态插画兜底 */}
+                    {spellVideoSrc ? (
+                        <CardFaceVideo
+                            src={spellVideoSrc}
+                            className="w-full h-full object-cover scale-110 group-hover:scale-125 transition-transform duration-700"
+                        />
+                    ) : (
                     <img
                         src={data.imageUrl}
                         alt={data.name}
                         className="w-full h-full object-cover scale-110 group-hover:scale-125 transition-transform duration-700"
                     />
+                    )}
                     <div className="absolute inset-0 rounded-full shadow-[inset_0_0_30px_rgba(0,0,0,0.8)] pointer-events-none"></div>
                 </div>
             </div>

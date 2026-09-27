@@ -5,7 +5,7 @@ import { UI_IMAGES } from '../data/imageData';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AccountSelectionModal } from './AccountSelectionModal';
 import type { useUserSystem } from '../hooks/useUserSystem';
-import chengAvatar from '../image/icon/CQWRSZDSA432.jpg'; // [哨兵] 程的头像
+import chengAvatar from '../image/icon/CQWRSZDSA432.webp'; // [哨兵] 程的头像
 
 interface User {
     uid: string;

@@ -8,33 +8,34 @@
 // ==========================================
 
 import type { CardData, Keyword } from '../types';
+import type { EquipmentQuestReward, QuestSpec } from './questTypes'; // [2026-09-25 莉莉子] 三线任务化框架：任务声明与兑现
 import abc_spell from '../image/spells/abc.webp';
-import equipment_resonance from '../image/equipment/equipment00.jpg'; // [2026-09-09] 碳原子板专属图（程提供）
-import equipment_retrain from '../image/equipment/equipment01.jpg'; // [2026-09-09] 重修申请专属图（程提供）
+import equipment_resonance from '../image/equipment/equipment00.webp'; // [2026-09-09] 碳原子板专属图（程提供）
+import equipment_retrain from '../image/equipment/equipment01.webp'; // [2026-09-09] 重修申请专属图（程提供）
 // ── [2026-09-11 程拍板 · 第一批后勤干员图标] 20 位后勤干员的招牌物件（均取自各自原画上的元素）──
 //    命名规则：eq_{干员英文}_{物件英文}；「一张图 = 一位干员 = 一件装备/武装」，
 //    图标语义 → 干员身份/性格 → 决定它挂在哪个效果上（效果与数值保持原样不动）。
-import eq_peaches_medkit from '../image/equipment/equipment02.jpg';      // 御守·桃子 —— 手里的医疗箱
-import eq_cattail_bot from '../image/equipment/equipment03.jpg';         // 御守·香蒲 —— 肩上的小机器人
-import eq_scorching_guitar from '../image/equipment/equipment04.jpg';    // 御守·灼 —— 背着的吉他盒
-import eq_arrowhead_cannon from '../image/equipment/equipment05.jpg';    // 阿尔戈·箭头 —— 手臂上的手炮
-import eq_musician_case from '../image/equipment/equipment06.jpg';       // 阿尔戈·乐手 —— 小提琴琴箱
-import eq_pigeon_patch from '../image/equipment/equipment07.jpg';        // 阿尔戈·鸽子 —— 眼罩
-import eq_mabel_hat from '../image/equipment/equipment08.jpg';           // 重叶·梅贝尔 —— 帽子
-import eq_elice_shears from '../image/equipment/equipment09.jpg';        // 重叶·伊莉斯 —— 手里的园丁剪
-import eq_golia_staff from '../image/equipment/equipment10.jpg';         // 重叶·歌莉娅 —— 手里的法杖
-import eq_maeve_drink from '../image/equipment/equipment11.jpg';         // 阿尔斯特·梅芙 —— 手里的饮料
-import eq_koni_device from '../image/equipment/equipment12.jpg';         // 阿尔斯特·科尼 —— 便携信号装置
-import eq_flamme_case from '../image/equipment/equipment13.jpg';         // 阿尔斯特·弗拉梅 —— 随身拉着的箱子
-import eq_613_headset from '../image/equipment/equipment14.jpg';         // 堤丰·613 —— 头戴式耳机
-import eq_dornier_apple from '../image/equipment/equipment15.jpg';       // 堤丰·多尼尔 —— 戴着的帽子（含金苹果）
-import eq_flameheart_exo from '../image/equipment/equipment16.jpg';      // 堤丰·焰心 —— 携带的装置（外骨骼）
-import eq_an_uniform from '../image/equipment/equipment17.jpg';
+import eq_peaches_medkit from '../image/equipment/equipment02.webp';      // 御守·桃子 —— 手里的医疗箱
+import eq_cattail_bot from '../image/equipment/equipment03.webp';         // 御守·香蒲 —— 肩上的小机器人
+import eq_scorching_guitar from '../image/equipment/equipment04.webp';    // 御守·灼 —— 背着的吉他盒
+import eq_arrowhead_cannon from '../image/equipment/equipment05.webp';    // 阿尔戈·箭头 —— 手臂上的手炮
+import eq_musician_case from '../image/equipment/equipment06.webp';       // 阿尔戈·乐手 —— 小提琴琴箱
+import eq_pigeon_patch from '../image/equipment/equipment07.webp';        // 阿尔戈·鸽子 —— 眼罩
+import eq_mabel_hat from '../image/equipment/equipment08.webp';           // 重叶·梅贝尔 —— 帽子
+import eq_elice_shears from '../image/equipment/equipment09.webp';        // 重叶·伊莉斯 —— 手里的园丁剪
+import eq_golia_staff from '../image/equipment/equipment10.webp';         // 重叶·歌莉娅 —— 手里的法杖
+import eq_maeve_drink from '../image/equipment/equipment11.webp';         // 阿尔斯特·梅芙 —— 手里的饮料
+import eq_koni_device from '../image/equipment/equipment12.webp';         // 阿尔斯特·科尼 —— 便携信号装置
+import eq_flamme_case from '../image/equipment/equipment13.webp';         // 阿尔斯特·弗拉梅 —— 随身拉着的箱子
+import eq_613_headset from '../image/equipment/equipment14.webp';         // 堤丰·613 —— 头戴式耳机
+import eq_dornier_apple from '../image/equipment/equipment15.webp';       // 堤丰·多尼尔 —— 戴着的帽子（含金苹果）
+import eq_flameheart_exo from '../image/equipment/equipment16.webp';      // 堤丰·焰心 —— 携带的装置（外骨骼）
+import eq_an_uniform from '../image/equipment/equipment17.webp';
    // 鸦眼·安 —— 衣服（制服）
-import eq_hiki_book from '../image/equipment/equipment18.jpg';           // 鸦眼·海基 —— 手里拿的书
-import eq_valerie_kit from '../image/equipment/equipment19.jpg';         // 布里吉·瓦莱莉 —— 随身工具箱（PNG 原格式）
-import eq_feier_camera from '../image/equipment/equipment20.jpg';        // 布里吉·菲儿 —— 胸口挂着的相机（PNG 原格式）
-import eq_chinchilla_glasses from '../image/equipment/equipment21.jpg';  // 布里吉·金吉拉 —— 戴着的眼镜（PNG 原格式）
+import eq_hiki_book from '../image/equipment/equipment18.webp';           // 鸦眼·海基 —— 手里拿的书
+import eq_valerie_kit from '../image/equipment/equipment19.webp';         // 布里吉·瓦莱莉 —— 随身工具箱（PNG 原格式）
+import eq_feier_camera from '../image/equipment/equipment20.webp';        // 布里吉·菲儿 —— 胸口挂着的相机（PNG 原格式）
+import eq_chinchilla_glasses from '../image/equipment/equipment21.webp';  // 布里吉·金吉拉 —— 戴着的眼镜（PNG 原格式）
 
 // [2026-08-27 莉莉子] 六档品质：白 common / 绿 uncommon / 蓝 rare / 紫 epic / 金 legendary / 红 mythic
 export type EquipmentRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic';
@@ -74,6 +75,25 @@ export interface EquipmentDef {
     onRoundStart?: EquipmentRoundStart; // [2026-08-14 武装] 回合开始效果（武装C）
     onTrigger?: EquipmentTrigger; // [2026-08-20 成长型装备] 触发式成长（事件+目标+数值）
     runBonus?: { doubleRunExp?: boolean; retrainUpgrade?: boolean }; // [2026-08-29] 局外带入的整局性效果标记（碳原子板：通关经验翻倍）；[2026-09-07] 重修申请：通关后所在武装槽位品质上限 +1 级
+    // ── [2026-09-25 莉莉子 三线任务化框架 v3] 任务型装备 / 武装 ──
+    //   与 onTrigger 的区别：onTrigger 是「每次事件都 +N」（无终点）；quest 是「跨过阈值兑一次质变」（有终点、有记忆点）
+    quest?: QuestSpec;                   // 任务声明（记在装备自己身上）
+    questReward?: EquipmentQuestReward | EquipmentQuestReward[]; // 兑现（跨过阈值时一次性改写卡牌；支持多条叠加，如「+0/+4 与【坚韧】」）
+    // [2026-09-25 莉莉子 三线任务化框架 · 武装线] 任务完成后的【战斗内效果】载体：
+    //   指向 MAZE_BUFFS 里一条 playerEligible:false 的条目 → 由 RogueGameWrapper 注入本场 rogueEnhancements，
+    //   借用迷宫强化的分发管线（trigger + handler + 面板展示）在战斗内生效，不为武装另开执行器。
+    grantBattleEffectIds?: string[];
+    // ── [2026-09-25 莉莉子 三线任务化框架] 「新机制」与「常驻代价」两条声明 ──
+    /** 新机制：持有者阵亡时触发（遗嘱 = 把身上装备转给随机友军） */
+    onOwnerDie?: { class: 'TRANSFER_EQUIPMENT' };
+    /** 常驻代价（Pact）：无法被治疗 —— attachEquipment 写入卡牌，治疗结算处直接跳过 */
+    pactNoHeal?: boolean;
+    /** 常驻代价（Pact）：每场战斗开局我方水晶 −N（王权之证）—— 在战斗水晶初值处直接扣，不走效果类 */
+    pactNexusCost?: number;
+    /** [2026-09-25 莉莉子 武装线] 每场战斗结束时若天启者存活 → +N 金币（凯旋之匣）；run 层结算，不走战斗内管线 */
+    runBattleEndGold?: number;
+    /** [2026-09-25 莉莉子 武装线] 每场战斗首次阵亡时以 1 点生命存活（不屈之证）；要求在死亡清算处拦截 */
+    reviveOncePerBattle?: boolean;
 }
 
 export const EQUIPMENT_DEFS: EquipmentDef[] = [
@@ -377,7 +397,185 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         rarity: 'rare', icon: eq_elice_shears, // [2026-09-11] 重叶·伊莉斯的园丁剪（修剪促进生长 → 受创后反而更强）· 原名「愈战愈勇」；⚠️ 与迷宫强化「愈战愈勇」重名，本次改名顺带解开撞车
         onTrigger: { event: 'after_attacked', target: 'self', power: 1, health: 1 },
     },
+    // ── [2026-09-25 莉莉子 任务化装备批 v3 · 试点] 《设计-肉鸽三线任务化框架》7.2 ──
+    //   任务型 = 跨过阈值兑一次质变（对照上方成长型：每次事件都 +1/+1、没有终点）
+    {
+        id: 'equip_calibration',
+        name: '校准刻度',
+        description: '本场战斗中，此卡攻击 2 次后，永久获得 +2/+1。',
+        rarity: 'common', icon: abc_spell,
+        quest: { event: 'unit_attack', threshold: 2, scope: 'battle' },
+        questReward: { class: 'STATS', power: 2, health: 1 },
+    },
+    {
+        id: 'equip_oath_shield',
+        name: '誓约之盾',
+        description: '本场战斗中，此卡格挡 2 次进攻后，永久获得 +0/+4 与【坚韧】。',
+        rarity: 'uncommon', icon: abc_spell,
+        quest: { event: 'card_block', threshold: 2, scope: 'battle' },
+        questReward: [{ class: 'STATS', health: 4 }, { class: 'KEYWORDS', keywords: ['Tough'] }],
+    },
+    {
+        id: 'equip_gate_key',
+        name: '闸门之钥',
+        description: '本场战斗中，此卡击杀 2 个单位后，攻击力翻倍。',
+        rarity: 'rare', icon: abc_spell,
+        quest: { event: 'unit_kill', threshold: 2, scope: 'battle' },
+        questReward: { class: 'DOUBLE_POWER' },
+    },
+    {
+        id: 'equip_crown_weight',
+        name: '王冠之重',
+        description: '本场战斗中，此卡击杀 4 个单位后，永久获得 +5/+5 与【吸血】。',
+        rarity: 'legendary', icon: abc_spell,
+        quest: { event: 'unit_kill', threshold: 4, scope: 'battle' },
+        questReward: [{ class: 'STATS', power: 5, health: 5 }, { class: 'KEYWORDS', keywords: ['Lifesteal'] }],
+    },
+    {
+        id: 'equip_desperate_blade',
+        name: '背水之刃',
+        description: '我方水晶跌至三成以下的瞬间，此卡永久获得 +2/+2。',
+        rarity: 'common', icon: abc_spell,
+        // 苛刻型：不计数，条件满足的那一次水晶受击即达成（threshold 1）
+        quest: { event: 'nexus_damaged', threshold: 1, scope: 'battle', when: { nexusPctLte: 30 } },
+        questReward: { class: 'STATS', power: 2, health: 2 },
+    },
+    {
+        id: 'equip_resonance_circuit',
+        name: '共鸣回路',
+        description: '本场战斗中，我方施放 3 个法术后，此卡永久获得 +2/+2 与【充能】。',
+        rarity: 'uncommon', icon: abc_spell,
+        quest: { event: 'cast_spell', threshold: 3, scope: 'battle' },
+        questReward: [{ class: 'STATS', power: 2, health: 2 }, { class: 'KEYWORDS', keywords: ['Channel'] }],
+    },
+    {
+        id: 'equip_blood_ledger',
+        name: '血债账簿',
+        description: '本场战斗中，我方水晶累计受到 8 点伤害后，此卡费用降为 0。',
+        rarity: 'epic', icon: abc_spell,
+        // 按【伤害量】累计（不是次数）：故调用方给 nexus_damaged 传 amount
+        quest: { event: 'nexus_damaged', threshold: 8, scope: 'battle' },
+        questReward: { class: 'COST_SET', value: 0 },
+    },
+    {
+        id: 'equip_hunt_list',
+        name: '猎杀名单',
+        description: '本场战斗中，我方累计打出 6 个单位后，此卡永久获得 +4/+4 与【挑战者】。',
+        rarity: 'epic', icon: abc_spell,
+        quest: { event: 'play_unit', threshold: 6, scope: 'battle' },
+        questReward: [{ class: 'STATS', power: 4, health: 4 }, { class: 'KEYWORDS', keywords: ['Challenger'] }],
+    },
+    {
+        id: 'equip_will',
+        name: '遗嘱',
+        description: '此卡阵亡时，把它身上的其他装备全部转移给随机一个存活友军。',
+        rarity: 'rare', icon: abc_spell,
+        // 新机制：没有任务也没有数值，纯粹"死得有价值"（装备传承）
+        onOwnerDie: { class: 'TRANSFER_EQUIPMENT' },
+    },
+    {
+        id: 'equip_final_contract',
+        name: '终焉契约',
+        description: '使卡牌获得 +6/+6 与【先攻】【碾压】；代价：此卡无法被治疗。',
+        rarity: 'mythic', icon: abc_spell,
+        powerMod: 6, healthMod: 6, keywords: ['QuickAttack', 'Overwhelm'],
+        pactNoHeal: true, // Pact 常驻代价：放弃续航换爆发
+    },
     // ── 武装（[2026-08-14] 特殊装备：局外带入、局内不可获取，进入游戏前配置到武装槽）──
+    // ── [2026-09-25 莉莉子 任务化武装批 v3 · 试点] 《设计-肉鸽三线任务化框架》7.1 ──
+    //   武装的任务是【整局作用域】（跨战斗累积）；完成后由 grantBattleEffectId 指向的战斗内效果持续生效
+    {
+        id: 'arm_echo_box',
+        name: '余响之匣',
+        description: '本局累计用天启者打击 2 次后：此后每场战斗开局，额外抽 2 张牌。',
+        rarity: 'common', icon: abc_spell,
+        isArmament: true,
+        quest: { event: 'hero_attack', threshold: 2, scope: 'run' },
+        grantBattleEffectIds: ['armfx_echo_box'],
+    },
+    {
+        id: 'arm_heavy_bracer',
+        name: '负重护腕',
+        description: '天启者费用 +1，但获得 +2/+3。',
+        rarity: 'common', icon: abc_spell,
+        isArmament: true,
+        costMod: 1, powerMod: 2, healthMod: 3, // Pact 代价型：以费换身材（最直白的一种，玩家一眼能算账）
+    },
+    {
+        id: 'arm_hunter_horn',
+        name: '猎手的号角',
+        description: '天启者费用 +1，但获得【挑战者】与 +2/+2。',
+        rarity: 'uncommon', icon: abc_spell,
+        isArmament: true,
+        costMod: 1, powerMod: 2, healthMod: 2, keywords: ['Challenger'],
+    },
+    {
+        id: 'arm_devour_box',
+        name: '噬牌之匣',
+        description: '每回合开始时，弃掉你手牌中费用最低的一张，天启者永久 +1/+1。',
+        rarity: 'rare', icon: abc_spell,
+        isArmament: true,
+        // Novel 新机制：没有任务也没有静态数值 —— 把"废牌"变成英雄成长，手牌管理成为资源
+        grantBattleEffectIds: ['armfx_devour_box'],
+    },
+    {
+        id: 'arm_royal_warrant',
+        name: '王权之证',
+        description: '天启者获得 +2/+2，且必定出现在你的起手牌中；代价：每场战斗开始时我方水晶 -3。',
+        rarity: 'mythic', icon: abc_spell,
+        isArmament: true,
+        powerMod: 2, healthMod: 2,
+        grantBattleEffectIds: ['armfx_royal_warrant'],
+        pactNexusCost: 3, // Pact 代价：用生命换稳定性（解决「抽不到英雄」这个核心痛点）
+    },
+    {
+        id: 'arm_break_dawn',
+        name: '破晓号令',
+        description: '本局累计用天启者打击敌方水晶 2 次后：此后每场战斗，敌方手牌中随机 3 张单位卡费用 +2（每场一次）。',
+        rarity: 'uncommon', icon: abc_spell,
+        isArmament: true,
+        quest: { event: 'hero_hit_nexus', threshold: 2, scope: 'run' },
+        grantBattleEffectIds: ['armfx_break_dawn'],
+    },
+    {
+        // ⚠️ [2026-09-25 莉莉子 修复] id 原为 arm_resonance_crystal —— 与既有武装「碳原子板」**撞号**，
+        //   导致 getEquipmentById / 武装库存按 id 索引时全部解析到碳原子板（悬停大图与数量都错）。
+        //   改名 arm_attune_crystal（名字仍是「共鸣水晶」）；新增条目务必跑一次全库 id 唯一性检查。
+        id: 'arm_attune_crystal',
+        name: '共鸣水晶',
+        description: '本局累计用天启者打击 3 次后：随机赋予天启者一个关键词，此后其关键词同时赋予在场友军。',
+        rarity: 'rare', icon: abc_spell,
+        isArmament: true,
+        quest: { event: 'hero_attack', threshold: 3, scope: 'run' },
+        grantBattleEffectIds: ['armfx_attune_crystal'],
+    },
+    {
+        id: 'arm_whisper_dead',
+        name: '亡者低语',
+        description: '本局累计阵亡 5 个单位后：此后每次召唤，新单位获得最后阵亡单位的攻血。',
+        rarity: 'epic', icon: abc_spell,
+        isArmament: true,
+        quest: { event: 'unit_die', threshold: 5, scope: 'run' },
+        grantBattleEffectIds: ['armfx_whisper_dead'],
+    },
+    {
+        id: 'arm_triumph_box',
+        name: '凯旋之匣',
+        description: '每场战斗结束时，若天启者仍然存活，获得 30 金币。',
+        rarity: 'epic', icon: abc_spell,
+        isArmament: true,
+        // Novel：打通"战斗表现"与"局内经济"（保护英雄 = 更多资源）；结算在 run 层，不走战斗内管线
+        runBattleEndGold: 30,
+    },
+    {
+        id: 'arm_unyielding',
+        name: '不屈之证',
+        description: '每场战斗中，当天启者已升级时，它首次阵亡会以 1 点生命存活（每场一次）。',
+        rarity: 'legendary', icon: abc_spell,
+        isArmament: true,
+        // Condition 型：门槛是"天启者已升级"，在死亡清算处判定并拦截（每场一次，账本用 questProgress 的 used: 键）
+        reviveOncePerBattle: true,
+    },
     {
         id: 'arm_power_health',
         name: '香蒲的白兔应援',
@@ -532,24 +730,51 @@ export const getEquipmentDefs = (equipment?: string[]): EquipmentDef[] =>
         .filter((e): e is EquipmentDef => !!e);
 
 // ── 武装（[2026-08-14] 特殊装备）──
+// [2026-09-25 莉莉子 防回归守卫] id 唯一性自检 —— 撞号会让 getEquipmentById / 武装库存**全部解析到错的那条**
+//   （当日真实事故：新武装「共鸣水晶」id 与既有「碳原子板」撞号 → 悬停大图与库存数量全错，且不报任何错）
+if (import.meta.env?.DEV) {
+    const seen = new Set<string>();
+    for (const e of EQUIPMENT_DEFS) {
+        if (seen.has(e.id)) console.error(`[equipment] 装备/武装 id 撞号：${e.id} —— 会被抢先匹配、库存也会串号`);
+        seen.add(e.id);
+    }
+}
+
 /** 全部武装定义（isArmament 过滤；武装界面列表用） */
 export const getArmamentDefs = (): EquipmentDef[] => EQUIPMENT_DEFS.filter(e => e.isArmament);
+
+/**
+ * [2026-09-25 莉莉子 武装线] 这批装备/武装带来的「开局水晶代价」合计（Pact 常驻代价的一部分）。
+ * 在 **战斗水晶初值处直接扣** —— 不走效果类：game_start 站点不提交 game 级变更（只提交 bench/hand/deck/field），
+ * 用效果类写的扣血会被静默丢弃。
+ */
+export const getArmamentNexusCost = (equips?: Record<string, string[]>): number => {
+    let sum = 0;
+    for (const list of Object.values(equips ?? {})) {
+        for (const id of list ?? []) sum += EQUIPMENT_BY_ID[id]?.pactNexusCost ?? 0;
+    }
+    return sum;
+};
 
 /**
  * [2026-08-29 莉莉子] 某张卡可佩戴的随机装备池（奖励/商店/宝箱/事件带装备卡共用）：
  *   单位卡 → 全部非武装装备；
  *   法术卡 → 仅纯减费装备（costMod<0 且无任何其他修饰），杜绝数值/关键词/特效等对法术无效的装备（程拍板）。
+ * [2026-09-25 莉莉子 装备不叠加] 第 2 参 excludeIds：排除"已挂在这张卡上"的装备。
+ *   attachEquipment 对同一 id 是硬去重（重复挂 = 静默忽略），所以发奖时若还发已有的那件，等于纯加价/白给。
  */
-export const getEquipPoolForCard = (card: { type: string }): EquipmentDef[] => {
+export const getEquipPoolForCard = (card: { type: string }, excludeIds?: string[]): EquipmentDef[] => {
     if (!card) return [];
+    const exclude = excludeIds?.length ? new Set(excludeIds) : null;
     if (card.type.startsWith('spell')) {
         return EQUIPMENT_DEFS.filter(e =>
             !e.isArmament && (e.costMod ?? 0) < 0
             && !e.powerMod && !e.healthMod
             && !e.keywords?.length && !e.onPlay && !e.onTrigger && !e.onRoundStart
+            && !exclude?.has(e.id)
         );
     }
-    return EQUIPMENT_DEFS.filter(e => !e.isArmament);
+    return EQUIPMENT_DEFS.filter(e => !e.isArmament && !exclude?.has(e.id));
 };
 
 /**
@@ -583,5 +808,7 @@ export const attachEquipment = (card: CardData, equipId: string): CardData => {
         }
         next.buffs = buffs;
     }
+    // [2026-09-25 莉莉子 三线任务化框架 · Pact 常驻代价] 无法被治疗：写入卡牌标记，治疗结算处直接跳过
+    if (def.pactNoHeal) next.cantBeHealed = true;
     return next;
 };

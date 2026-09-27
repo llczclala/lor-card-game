@@ -125,9 +125,9 @@ import mauxir_lotus_spell_02 from '../image/spells/mauxir_lotus_spell02.webp';  
 import mauxir_lotus_spell_03 from '../image/spells/mauxir_lotus_spell03.webp';   // 伴泽而生
 
 // [2026-08-23 莉莉子] 猫汐尔阵营法术正式卡面（程绘制）
-import mauxir_zhishui_img from '../image/spells/44.jpg';   // 止水凝形
-import mauxir_yiying_img from '../image/spells/45.jpg';    // 忆影拓印
-import mauxir_ouduan_img from '../image/spells/46.jpg';    // 藕断丝长
+import mauxir_zhishui_img from '../image/spells/44.webp';   // 止水凝形
+import mauxir_yiying_img from '../image/spells/45.webp';    // 忆影拓印
+import mauxir_ouduan_img from '../image/spells/46.webp';    // 藕断丝长
 
 // [新增] 安卡希雅 时之重奏专属法术
 import acacia_chrono_echo_spell_base from '../image/spells/Acacia_Chrono Echo_spell.webp';     // 安卡希雅的编曲
@@ -146,6 +146,11 @@ import marian_spell_base from '../image/spells/marian_spell.webp';     // 茉莉
 import marian_spell_01 from '../image/spells/marian_spell01.webp';     // 抉择① 小技能
 import marian_spell_02 from '../image/spells/marian_spell02.webp';     // 抉择② 大招
 import marian_spell_03 from '../image/spells/marian_spell03.webp';     // 支援技
+
+// [2026-09-26 莉莉子] 茉莉安阵营法术正式卡面（T29 出图）：按 T17→T18→T19 对应 47→48→49
+import marian_faction_mark_img from '../image/spells/47.webp';    // 阵营法术一：猎影标记（T17）
+import marian_faction_bait_img from '../image/spells/48.webp';    // 阵营法术二：以饵引狼（T18）
+import marian_faction_silence_img from '../image/spells/49.webp'; // 阵营法术三：静默行动（T19）
 
 // [新增] 占位法术图片（用于衍生法术暂无专图）
 import abc_spell from '../image/spells/abc.webp';
@@ -604,10 +609,10 @@ export const SPELL_IMAGES = {
     marian_support: marian_spell_03,
 
     // [2026-09-17 1.0.16 茉莉安 · T17~T19 阵营法术]
-    // ⚠️ 正式卡面待程出图（T29），暂用通用占位图 abc.webp
-    marian_faction_mark: abc_spell,
-    marian_faction_bait: abc_spell,
-    marian_faction_silence: abc_spell,
+    // [2026-09-26 莉莉子] T29 正式卡面已出图（47/48/49 → webp），替换原 abc 通用占位图
+    marian_faction_mark: marian_faction_mark_img,       // 猎影标记（T17）
+    marian_faction_bait: marian_faction_bait_img,       // 以饵引狼（T18）
+    marian_faction_silence: marian_faction_silence_img, // 静默行动（T19）
 
     // [2026-08-23 莉莉子] 猫汐尔阵营法术（正式卡面）
     mauxir_zhishui_ningxing: mauxir_zhishui_img,

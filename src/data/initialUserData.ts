@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
     deskDynamic: false,                // [2026-08-13] 默认静态牌桌
     heroDynamic: false,                // [2026-08-16] 默认静态卡面（对局内英雄卡动态视频需玩家手动开启）
     cardBackDynamic: false,            // [2026-08-23] 默认静态卡背（动态卡背视频需玩家手动开启）
+    spellDynamic: false,               // [2026-09-26] 默认静态法术/单位卡面（动态视频需玩家手动开启）
 };
 
 // --- 2. 卡牌收藏定义 ---

@@ -35,6 +35,9 @@ interface SettingsModalProps {
     // [2026-08-23] 动态卡背开关
     cardBackDynamic?: boolean;
     onToggleCardBackDynamic?: () => void;
+    // [2026-09-26] 动态法术/单位卡面开关
+    spellDynamic?: boolean;
+    onToggleSpellDynamic?: () => void;
     // [2026-08-16] 恢复默认设置（系统标签页入口）
     onResetSettings?: () => void;
     // [新增] 对局操作
@@ -124,7 +127,7 @@ const ToggleRow = ({ title, desc, enabled, onToggle }: { title: string; desc: st
     </div>
 );
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, deskDynamic = false, onToggleDeskDynamic, heroDynamic = false, onToggleHeroDynamic, cardBackDynamic = false, onToggleCardBackDynamic, onResetSettings, isInGame = false, isRogueDevRestart = false, onRestartMatch, onReturnToLobby }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, deskDynamic = false, onToggleDeskDynamic, heroDynamic = false, onToggleHeroDynamic, cardBackDynamic = false, onToggleCardBackDynamic, spellDynamic = false, onToggleSpellDynamic, onResetSettings, isInGame = false, isRogueDevRestart = false, onRestartMatch, onReturnToLobby }) => {
 
     // [2026-08-16] 当前激活的标签页
     const [activeTab, setActiveTab] = useState<SettingsTab>('audio');
@@ -252,9 +255,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                                 )}
                                                 <div className="space-y-4 pt-2">
                                                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">动态特效</h3>
-                                                    <ToggleRow title="动态牌桌" desc="使用动态视频牌桌（10 张牌桌全部支持）" enabled={deskDynamic} onToggle={onToggleDeskDynamic} />
-                                                    <ToggleRow title="动态卡面" desc="对局内英雄卡面使用动态视频（5 位天启者全部支持）" enabled={heroDynamic} onToggle={onToggleHeroDynamic} />
-                                                    <ToggleRow title="动态卡背" desc="对局内/选择预览/牌组预览的卡背使用动态视频（16 张卡背支持）" enabled={cardBackDynamic} onToggle={onToggleCardBackDynamic} />
+                                                    <ToggleRow title="动态牌桌" desc="使用动态视频牌桌（15 张牌桌全部支持）" enabled={deskDynamic} onToggle={onToggleDeskDynamic} />
+                                                    <ToggleRow title="动态卡面" desc="对局内英雄卡面使用动态视频（6 位天启者全部支持）" enabled={heroDynamic} onToggle={onToggleHeroDynamic} />
+                                                    <ToggleRow title="动态法术卡牌" desc="对局内法术/单位卡面使用动态视频（71 张法术全部支持）" enabled={spellDynamic} onToggle={onToggleSpellDynamic} />
+                                                    <ToggleRow title="动态卡背" desc="对局内/选择预览/牌组预览的卡背使用动态视频（19 张卡背支持）" enabled={cardBackDynamic} onToggle={onToggleCardBackDynamic} />
                                                 </div>
                                             </>
                                         )}
@@ -316,16 +320,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                 )}
                             </div>
 
-                            <button
-                                onClick={handleExitGame}
-                                className="flex items-center gap-2 px-6 py-2 bg-red-900/30 hover:bg-red-600 border border-red-800 hover:border-red-500 text-red-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
-                            >
-                                <Power size={16} className="group-hover:scale-110 transition-transform" />
-                                QUIT GAME
-                            </button>
+                            <QuitGameButton onConfirm={handleExitGame} />
                         </div>
                 </motion.div>
             )}
         </AnimatePresence>
+    );
+};
+
+/**
+ * [2026-09-25 莉莉子] QUIT GAME 二次确认（是 / 否）。
+ * 做成自带确认态的小组件 —— 父组件不必为它新增 state，也不影响既有布局。
+ * 退出游戏是不可逆操作，原来一点就走，容易误触。
+ */
+const QuitGameButton: React.FC<{ onConfirm: () => void }> = ({ onConfirm }) => {
+    const [confirming, setConfirming] = useState(false);
+    if (!confirming) {
+        return (
+            <button
+                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setConfirming(true); }}
+                className="flex items-center gap-2 px-6 py-2 bg-red-900/30 hover:bg-red-600 border border-red-800 hover:border-red-500 text-red-200 hover:text-white rounded-full transition-all text-sm font-bold tracking-wider group"
+            >
+                <Power size={16} className="group-hover:scale-110 transition-transform" />
+                QUIT GAME
+            </button>
+        );
+    }
+    return (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-950/40 border border-red-800/60">
+            <span className="text-sm font-bold text-red-200 tracking-wider">确认退出游戏？</span>
+            <button
+                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onConfirm(); }}
+                className="px-4 py-1 rounded-full bg-red-600 hover:bg-red-500 text-white text-sm font-black transition-colors"
+            >是</button>
+            <button
+                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setConfirming(false); }}
+                className="px-4 py-1 rounded-full bg-white/10 hover:bg-white/20 text-gray-200 text-sm font-bold border border-white/20 transition-colors"
+            >否</button>
+        </div>
     );
 };
