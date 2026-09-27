@@ -54,8 +54,35 @@ const loadQualityTiers = (): ArmamentQualityConfig => {
     return migrated;
 };
 
+/**
+ * [2026-09-25 莉莉子 武装不叠加] 清理同一天启者槽位内的重复武装：每个 id 只保留最先出现的那一槽，其余置空。
+ *   重复槽本来就是不生效的（战斗构建对同名武装硬去重），清掉后库存占用同步释放，物品本身不丢失。
+ */
+const dedupeArmamentSlots = (cfg: ArmamentConfig): { next: ArmamentConfig; changed: boolean } => {
+    let changed = false;
+    const next: ArmamentConfig = {};
+    for (const [hk, slots] of Object.entries(cfg ?? {})) {
+        const seen = new Set<string>();
+        next[hk] = (slots ?? []).map(s => {
+            if (!s) return null;
+            if (seen.has(s)) { changed = true; return null; }
+            seen.add(s);
+            return s;
+        });
+    }
+    return { next, changed };
+};
+
+/** [2026-09-25] 读取武装配置并做一次重复清理（有改动才写回，纯迁移不覆盖玩家数据） */
+const loadArmamentConfig = (): ArmamentConfig => {
+    const raw = StorageUtils.load<ArmamentConfig>(getStorageKey(), {});
+    const { next, changed } = dedupeArmamentSlots(raw);
+    if (changed) StorageUtils.save(getStorageKey(), next);
+    return next;
+};
+
 // ── [2026-09-07] 模块级共享 store（对齐 useHeroProgression）──
-let sharedConfig: ArmamentConfig = StorageUtils.load<ArmamentConfig>(getStorageKey(), {});
+let sharedConfig: ArmamentConfig = loadArmamentConfig();
 let sharedQuality: ArmamentQualityConfig = loadQualityTiers();
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach(fn => fn());
@@ -74,7 +101,7 @@ const persistQuality = () => {
  * 只按模块加载时 USER_ID 读一次；切号不刷新页面 → 需按新 USER_ID 重读并广播）。
  */
 export const reloadArmamentCache = (): void => {
-    sharedConfig = StorageUtils.load<ArmamentConfig>(getStorageKey(), {});
+    sharedConfig = loadArmamentConfig(); // [2026-09-25] 顺带做同日启者重复武装清理
     sharedQuality = loadQualityTiers(); // 空档新账号会按等级做一次迁移（无档则跳过）
     emit();
 };

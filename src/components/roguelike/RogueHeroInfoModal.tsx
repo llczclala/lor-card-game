@@ -6,7 +6,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; // [2026-08-26 莉莉子] 拖拽跟手图标 Portal 到 body，逃出 ScaleWrapper 缩放容器保证 1:1 跟手
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Sword, Shield, Zap, Ghost, Bird, X, RefreshCw, ChevronsRight, ChevronsLeft, Minus, Lock, type LucideIcon } from 'lucide-react';
+import { Sparkles, Sword, Shield, Zap, Ghost, Bird, X, RefreshCw, ChevronsRight, ChevronsLeft, Minus, Lock, Search, Filter, ChevronDown, ArrowUpNarrowWide, ArrowDownWideNarrow, RotateCcw, type LucideIcon } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { LORE_DB } from '../../data/loreData'; // [2026-08-13] 总览背景故事
 import type { CardData } from '../../types';
@@ -559,6 +559,19 @@ const RARITY_LABEL: Record<string, string> = {
 };
 // 稀有度等级（武装品质解锁判断：未解锁品质不可装备）
 const RARITY_RANK: Record<string, number> = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 };
+// [2026-09-26 莉莉子] 武装库筛选 + 排序
+//   形态参考 HeroSelectModal（工具条：搜索 + 排序下拉 + 方向 + 筛选开合 + 清空），筛选面板参考 DeckBuilder 的多选 tag。
+//   ⚠️ 武装 ≠ 卡牌：它带「此刻能不能装进这个槽」的强状态（品质上限按槽独立 + 库存份数 + 同英雄不叠加），
+//   所以把「可用优先」设为默认排序，并配「只看能装入此槽」开关（槽位智能默认 = 开）。
+type ArmSortMode = 'usable' | 'rarity' | 'stock' | 'name' | 'order';
+const ARM_SORT_LABELS: Record<ArmSortMode, string> = {
+    usable: '可用优先',
+    rarity: '品质高低',
+    stock: '剩余数量',
+    name: '名称',
+    order: '原始顺序',
+};
+const ARM_RARITY_ORDER = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'] as const;
 // 武装/装备持有数量上限（每个最多 3 个；开发者持有所有武装和装备各 3）
 const ARMAMENT_MAX_STOCK = 3;
 // [2026-09-07 程拍板] 品质上限空槽 = 斜向渐变（左上品质色 → 右下渐透），通透不艳、无文字
@@ -668,6 +681,14 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
     const isDev = userSystem?.userId === 'dev_full_admin'; // [2026-08-14] 开发者账号独有：全装备可装
     const [activeSlot, setActiveSlot] = useState<number | null>(null); // 正在更换的槽（null=收起抽屉）
     const [dragOverSlot, setDragOverSlot] = useState<number | null>(null); // [2026-08-14] 正在拖入的槽（白框反馈）
+    // [2026-09-26 莉莉子] 武装库筛选 + 排序状态
+    const [armSearch, setArmSearch] = useState('');
+    const [armSortMode, setArmSortMode] = useState<ArmSortMode>('usable');
+    const [armSortDir, setArmSortDir] = useState<'asc' | 'desc'>('asc');
+    const [isArmSortOpen, setIsArmSortOpen] = useState(false);
+    const [isArmFilterOpen, setIsArmFilterOpen] = useState(false);
+    const [onlyEquippable, setOnlyEquippable] = useState(true); // 槽位智能默认：只看能装进当前槽的
+    const [armRarities, setArmRarities] = useState<string[]>([]);
     // [2026-08-14 武装] 槽位数量随等级解锁；[2026-09-07] 可装备品质改为每槽独立上限（等级基础 ≤稀有 + 重修额外档）
     const heroProgression = useHeroProgression();
     const heroBonus = getHeroLevelBonus(heroProgression.getHeroLevel(heroKey));
@@ -758,17 +779,19 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
         return getArmamentDefs().filter(def => (armStockMap[def.id] ?? 0) > 0);
     }, [isDev, armStockMap]);
 
-    // [2026-09-07 数量库存] 可用数量 = 库存份数 − 全局已占用槽位份数（库存共享：同一天启者可三槽各放 1 个、也可跨英雄分装）
+    // [2026-09-07 数量库存] 可用数量 = 库存份数 − 全局已占用槽位份数（库存共享：可跨英雄分装）
     const stockOf = (def: EquipmentDef) => {
         if (!def.isArmament && !isDev) return 0;
+        // [2026-09-25 莉莉子 武装不叠加] 同一天启者内不允许重复武装：已在本英雄任一槽 → 不可再装。
+        //   原「同一天启者可三槽各放 1 个相同武装」作废（战斗构建对同名武装硬去重，多装纯浪费库存）；
+        //   不同天启者之间仍可各带一份（一局只上一个英雄，不存在叠加问题）。原碳原子板特判并入本规则。
+        if ((activeSlots ?? []).includes(def.id)) return 0;
         // [2026-09-08 修复] 占用跨全英雄统计；消耗品/普通都尊重真实库存——
         //  开发者普通武装库存为 0 时给 3 份便于白嫖测试；但消耗品一律看真实库存（福利领 6 就该显示 ×6，不被开发者上限盖掉）
         let occupied = 0;
         for (const arr of Object.values(config ?? {})) for (const id of arr ?? []) if (id === def.id) occupied++;
         const have = armStockMap[def.id] ?? 0;
         const base = isDev && !def.consumable && have === 0 ? 3 : have;
-        // [2026-09-08] 碳原子板=整局型单次效果：同一天启者限装 1 份（多槽各装一份会重复浪费）
-        if (def.id === 'arm_resonance_crystal' && (activeSlots ?? []).includes(def.id)) return 0;
         return Math.max(0, base - occupied);
     };
     // [2026-08-26 莉莉子] 可装备判断：某武装能否装进第 slotIdx 个槽（[2026-09-07] 品质上限按槽独立 + 数量）
@@ -776,6 +799,47 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
         if (slotIdx < 0 || slotIdx >= unlockSlots) return false;
         if (RARITY_RANK[def.rarity] > RARITY_RANK[slotCap(slotIdx)]) return false; // 目标槽品质上限不足
         return stockOf(def) > 0;
+    };
+
+    // =====================================
+    // [2026-09-26 莉莉子] 武装库可见列表：筛选（搜索 / 可用性 / 品质）+ 排序
+    //   规模只有 20~30 项，重算成本可忽略；故不为此维护 isEquippable / stockOf 的 useCallback 依赖链
+    // =====================================
+    const armTargetSlot = activeSlot ?? 0;
+    const armVisible = useMemo(() => {
+        const kw = armSearch.trim().toLowerCase();
+        const list = options.filter(def => {
+            if (kw && !`${def.name} ${def.description}`.toLowerCase().includes(kw)) return false;
+            if (onlyEquippable && !isEquippable(def, armTargetSlot)) return false; // 槽位智能默认
+            if (armRarities.length > 0 && !armRarities.includes(def.rarity)) return false;
+            return true;
+        });
+        const usableRank = (def: EquipmentDef) => (isEquippable(def, armTargetSlot) ? 0 : 1);
+        return [...list].sort((a, b) => {
+            let cmp = 0;
+            switch (armSortMode) {
+                // 可用优先：先按「能不能装」，同档内再按品质从高到低 —— 省掉玩家自己挑的功夫
+                case 'usable': cmp = usableRank(a) - usableRank(b) || RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity]; break;
+                case 'rarity': cmp = RARITY_RANK[a.rarity] - RARITY_RANK[b.rarity]; break;
+                case 'stock': cmp = stockOf(a) - stockOf(b); break;
+                case 'name': cmp = a.name.localeCompare(b.name, 'zh'); break;
+                default: cmp = options.indexOf(a) - options.indexOf(b); break;
+            }
+            return armSortDir === 'desc' ? -cmp : cmp;
+        });
+    }, [options, armSearch, onlyEquippable, armRarities, armSortMode, armSortDir, armTargetSlot, isEquippable, stockOf]);
+
+    // 当前槽「能装」的数量（头部计数标签用）
+    const armUsableCount = useMemo(
+        () => options.filter(def => isEquippable(def, armTargetSlot)).length,
+        [options, armTargetSlot, isEquippable],
+    );
+    // 只有用户主动加的条件才算「筛选激活」（onlyEquippable 是默认态，不计入）
+    const isArmFilterActive = armSearch !== '' || armRarities.length > 0;
+    const resetArmFilters = () => {
+        setArmSearch('');
+        setArmRarities([]);
+        setOnlyEquippable(true); // 回到槽位智能默认
     };
 
     const handleChoose = (id: string) => {
@@ -882,18 +946,167 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                         className="fixed right-0 top-0 bottom-0 z-[610] overflow-hidden flex flex-col"
                     >
                         <div className="w-[420px] h-full flex flex-col bg-slate-900/95 border-l border-white/10">
-                            {/* 头部（开合由抽屉外侧常驻按钮控制） */}
-                            <div className="p-4 border-b border-white/10 shrink-0">
-                                <h3 className="font-black text-white tracking-widest">{isDev ? '武装库 · 全部装备/武装' : '武装库'}</h3>
+                            {/* 头部（开合由抽屉外侧常驻按钮控制）+ [2026-09-26 莉莉子] 筛选排序工具条 */}
+                            <div className="p-4 pb-3 border-b border-white/10 shrink-0 space-y-3">
+                                <div className="flex items-baseline justify-between gap-2">
+                                    <h3 className="font-black text-white tracking-widest">{isDev ? '武装库 · 全部装备/武装' : '武装库'}</h3>
+                                    {/* 计数标签：一眼看清「这个槽现在能装几个」 */}
+                                    <span className="text-xs font-mono text-gray-400 shrink-0">
+                                        可装 <span className="text-emerald-400 font-black">{armUsableCount}</span>/{options.length}
+                                    </span>
+                                </div>
+
+                                {/* 工具条：搜索 + 筛选 + 排序 + 方向 + 清空（抽屉仅 420px 宽 → 图标化压缩） */}
+                                <div className="flex items-center gap-1.5">
+                                    <div className="relative flex-1 min-w-0">
+                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
+                                        <input
+                                            type="text"
+                                            placeholder="搜索武装..."
+                                            value={armSearch}
+                                            onChange={e => setArmSearch(e.target.value)}
+                                            className="w-full bg-slate-800/80 rounded-md py-2 pl-8 pr-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-purple-500 transition-all"
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsArmFilterOpen(o => !o); }}
+                                        title="筛选"
+                                        className={`p-2 rounded-md transition-colors shrink-0 ${isArmFilterOpen ? 'bg-purple-600 text-white' : isArmFilterActive ? 'bg-purple-600/40 text-purple-200 hover:bg-purple-600/60' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                    >
+                                        <Filter size={15} />
+                                    </button>
+                                    <div className="relative shrink-0">
+                                        <button
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsArmSortOpen(o => !o); }}
+                                            title={`排序：${ARM_SORT_LABELS[armSortMode]}`}
+                                            className={`p-2 rounded-md transition-colors ${isArmSortOpen ? 'bg-purple-600 text-white' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                        >
+                                            <ChevronDown size={15} className={isArmSortOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                                        </button>
+                                        <AnimatePresence>
+                                            {isArmSortOpen && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+                                                    className="absolute right-0 top-full mt-1 w-32 rounded-md bg-slate-800 border border-white/10 shadow-xl z-30 overflow-hidden"
+                                                >
+                                                    {(Object.keys(ARM_SORT_LABELS) as ArmSortMode[]).map(m => (
+                                                        <button
+                                                            key={m}
+                                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setArmSortMode(m); setIsArmSortOpen(false); }}
+                                                            className={`w-full text-left px-3 py-2 text-xs font-bold transition-colors ${armSortMode === m ? 'bg-purple-600/40 text-white' : 'text-gray-300 hover:bg-white/5'}`}
+                                                        >
+                                                            {ARM_SORT_LABELS[m]}
+                                                        </button>
+                                                    ))}
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setArmSortDir(d => (d === 'asc' ? 'desc' : 'asc')); }}
+                                        title={armSortDir === 'asc' ? '当前顺序排列，点击切换倒序' : '当前倒序排列，点击切换顺序'}
+                                        className={`p-2 rounded-md transition-colors shrink-0 ${armSortDir === 'desc' ? 'bg-purple-600/40 text-white' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                    >
+                                        {armSortDir === 'asc' ? <ArrowUpNarrowWide size={15} /> : <ArrowDownWideNarrow size={15} />}
+                                    </button>
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); resetArmFilters(); }}
+                                        disabled={!isArmFilterActive}
+                                        title="清空筛选"
+                                        className={`p-2 rounded-md transition-colors shrink-0 ${isArmFilterActive ? 'bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
+                                    >
+                                        <RotateCcw size={15} />
+                                    </button>
+                                </div>
+
+                                {/* 筛选面板（折叠）：可用性 + 品质多选 */}
+                                <AnimatePresence>
+                                    {isArmFilterOpen && (
+                                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                                            <div className="space-y-3 pt-1">
+                                                <div>
+                                                    <span className="text-[10px] text-gray-500 font-bold tracking-widest block mb-1.5">可用性</span>
+                                                    <button
+                                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setOnlyEquippable(v => !v); }}
+                                                        className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${onlyEquippable ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.4)]' : 'bg-slate-800 text-gray-400 hover:bg-slate-700'}`}
+                                                    >
+                                                        只看能装入此槽
+                                                    </button>
+                                                </div>
+                                                <div>
+                                                    <span className="text-[10px] text-gray-500 font-bold tracking-widest block mb-1.5">品质</span>
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                        {ARM_RARITY_ORDER.map(r => {
+                                                            const on = armRarities.includes(r);
+                                                            const c = EQUIP_RARITY_COLOR[r];
+                                                            return (
+                                                                <button
+                                                                    key={r}
+                                                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setArmRarities(p => on ? p.filter(x => x !== r) : [...p, r]); }}
+                                                                    style={on ? { background: c, borderColor: c, color: '#0f172a' } : { color: c, borderColor: 'transparent' }}
+                                                                    className={`px-2.5 py-1 rounded text-xs font-bold border transition-all ${on ? '' : 'bg-slate-800 hover:bg-slate-700'}`}
+                                                                >
+                                                                    {RARITY_LABEL[r]}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+
+                                {/* [2026-09-26 莉莉子] 槽位智能默认的常驻提示
+                                    筛选面板默认折叠，若不提示，玩家会以为「武装不见了」而不知道是哪个开关在过滤 */}
+                                {onlyEquippable && (
+                                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                                        <span className="text-emerald-400/80 font-bold">仅显示可装入此槽</span>
+                                        <button
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setOnlyEquippable(false); }}
+                                            className="text-gray-400 hover:text-white underline underline-offset-2 transition-colors"
+                                        >
+                                            显示全部
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                             {/* 列表（六边形图标 + X数量 + 名称描述 + 品质描述） */}
                             <div className="flex-1 overflow-y-auto p-4 space-y-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                                {options.map(def => {
+                                {armVisible.length === 0 ? (
+                                    // [2026-09-26 莉莉子] 空状态：筛选后无结果时给出路（design-guide checklist 要求）
+                                    <div className="flex flex-col items-center justify-center py-14 text-center">
+                                        <Search size={28} className="text-gray-600 mb-3" />
+                                        <p className="text-sm text-gray-300 font-bold mb-1">没有符合条件的武装</p>
+                                        <p className="text-xs text-gray-500 mb-4">试试放宽筛选条件</p>
+                                        {/* 一键放开所有条件（含「只看能装入此槽」）—— 槽位上限/库存导致的空列表也能立刻看到东西 */}
+                                        <button
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); resetArmFilters(); setOnlyEquippable(false); }}
+                                            className="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-xs font-bold text-gray-200 transition-colors"
+                                        >
+                                            显示全部武装
+                                        </button>
+                                    </div>
+                                ) : armVisible.map((def, idx) => {
                                     const stock = stockOf(def);
                                     // [2026-08-26 莉莉子] disabled=目标槽上限不足或无库存；数量仍按 stockOf 正常显示
                                     // [2026-09-07 重修申请] 品质上限按槽独立：以「当前选中槽」判断（抽屉由选槽打开时 activeSlot 恒有值）
                                     const disabled = !isEquippable(def, activeSlot ?? 0);
+                                    // [2026-09-26 莉莉子] 「可用优先」排序下，在能装/装不下交界插一条分隔带
+                                    const prevDef = idx > 0 ? armVisible[idx - 1] : null;
+                                    const showUsableDivider = armSortMode === 'usable' && prevDef
+                                        && isEquippable(prevDef, activeSlot ?? 0) !== isEquippable(def, activeSlot ?? 0);
                                     return (
+                                        <React.Fragment key={def.id}>
+                                        {showUsableDivider && (
+                                            <div className="flex items-center gap-2 pt-1 pb-0.5">
+                                                <div className="h-px flex-1 bg-white/10" />
+                                                <span className="text-[10px] font-bold tracking-widest text-gray-500">
+                                                    {disabled ? '以下：装不下 / 无库存' : '以下：可装入此槽'}
+                                                </span>
+                                                <div className="h-px flex-1 bg-white/10" />
+                                            </div>
+                                        )}
                                         <button
                                             key={def.id}
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleChoose(def.id); }}
@@ -931,6 +1144,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                                 {RARITY_LABEL[def.rarity]}{def.isArmament ? '武装' : '装备'}
                                             </span>
                                         </button>
+                                        </React.Fragment>
                                     );
                                 })}
                             </div>
