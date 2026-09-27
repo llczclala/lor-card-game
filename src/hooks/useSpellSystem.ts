@@ -12,7 +12,7 @@ import { CARD_DB } from '../data/cards';
 import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck, getLeveledUpCard } from '../utils/gameRules';
 import { StrikeEvents } from '../utils/eventBus'; // [新增] 引入全新的打击信号总线
 import { getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
-import { getFlyingSwordOwner, getDefensiveSide } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具
+import { getFlyingSwordOwner, getDefensiveSide, getExtraAttackOwner } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具 · [2026-09-26 T17] 额外攻击判定
 import { applyPermanentBuff, getEquipTriggers } from '../logic/rogueBattle'; // [2026-08-19] 迷宫强化分发（分发已收编 rogueTrigger）
 import { runRogueTrigger, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
 import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
@@ -1263,12 +1263,16 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             const nextPhase = originalPhase === 'react_to_block' ? 'react_to_block' : 'main';
             // [2026-08-24 莉莉子 飞剑竞态根治] 结算后若交战区有飞剑，同步进入格挡阶段，
             // 不依赖异步守卫 effect 切换。react_to_block 情形（快速飞剑响应汇入战斗）不得强制拉回格挡。
+            // [2026-09-26 T17 猎影标记] 同构扩展：交战线带 `isExtraAttack` 时同样强制进入格挡阶段
+            //   （该战线的 blocker 已由 effectProcessor 预指定并标了 isChallenged，等防守方确认即可）。
+            //   ⚠️ 飞剑优先短路 —— 飞剑分支行为完全不变。
             const fsOwner = getFlyingSwordOwner(stateRef.current.combatField);
-            const forceBlock = nextPhase === 'main' && !!fsOwner;
+            const blockOwner = fsOwner ?? getExtraAttackOwner(stateRef.current.combatField);
+            const forceBlock = nextPhase === 'main' && !!blockOwner;
             setGame(prev => ({
                 ...prev,
                 phase: forceBlock ? ('block_declare' as const) : nextPhase,
-                turnOwner: forceBlock ? getDefensiveSide(fsOwner) : prev.turnOwner,
+                turnOwner: forceBlock ? getDefensiveSide(blockOwner) : prev.turnOwner,
                 spellStack: [],
                 // 【机制修复】如果是从防守响应阶段结算的法术，将让过次数设为 1
                 // 这样接力调用的 passTurn 看到 >=1 就会立刻无缝触发 resolveCombatAnimation()！

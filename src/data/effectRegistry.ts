@@ -2299,6 +2299,22 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     //    它们不与茉莉安核心机制闭环，断链是设计常态，按独立卡牌平衡。
     // ==========================================
 
+    // --- 阵营法术一：猎影标记（T17 · 2026-09-26 实装）---
+    // 逻辑走 effectProcessor.ts BUFF 分支内的专属实现（按目标是否已【暴露】二选一）
+    // [2026-09-26 程定] 慢速 —— 慢速只能在主阶段打出 ⇒ 交战区必为空 ⇒ 强制战斗永远装配得起来
+    'effect_marian_faction_mark': {
+        id: 'effect_marian_faction_mark',
+        name: '猎影标记',
+        description: '暴露一个敌人；若其已处于【暴露】，则我方攻击力最高的单位对其发起一次额外攻击。',
+        class: 'BUFF',            // 载体类：真正逻辑在 BUFF 分支内按 effect.id 特判
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' },
+        ],
+        params: {},
+    },
+
     // --- 阵营法术二：以饵引狼（T18）---
     // 逻辑走 effectProcessor.ts BUFF 分支内的专属实现（两个目标吃不同效果）
     // 程 2026-09-17 拍板：两个目标都手动选（我方当饵 + 敌方被削）

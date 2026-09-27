@@ -1471,7 +1471,12 @@ export const processEffect = (
             }
 
             // [新增] 机器 A：专属“数值改造机”
-            const applyStats = (c: CardData, p: number, h: number): CardData => {
+            // [2026-09-26 莉莉子 BUG修复] 新增 durationOverride 参数
+            //   —— 当一个 effect 的两个部分生命周期**相反**时，effect 级的单一 duration 无法同时表达：
+            //      以饵引狼 = ① 贴【暴露】永久 ＋ ② −4/−0 本回合
+            //   故允许调用点显式覆盖时长。**不传第 4 参时行为与原先完全一致**（其余 8 个调用点均不传）。
+            const applyStats = (c: CardData, p: number, h: number, durationOverride?: 'ROUND' | 'PERMANENT'): CardData => {
+                const effDuration = durationOverride ?? duration;
                 let actualP = p;
                 // [2026-06-27 buffTag] 如果目标有 buffRules，过滤不匹配的攻 Buff
                 if ((c as any).buffRules?.power?.allowedTags) {
@@ -1495,17 +1500,32 @@ export const processEffect = (
                     return c;
                 }
 
+                // =====================================
+                // [2026-09-26 莉莉子 BUG修复] 负向攻击力对齐【冻结】语义
+                // ── 冻结（keywords.ts applyFrostbite）是拿 getPower 做**等额对冲**：
+                //      offset = currentPower > 0 ? -currentPower : 0  ⇒ 刚好归零，**永不推成负数**。
+                // ── 而这里是**无条件累加**：1 攻单位吃 -4 会往 roundBuffs 存进 -4，坏在两处：
+                //      ① 数据里真出现负值 → 被 cloneUnitState 固化成【永久基础攻击力】（回合末清不掉）
+                //      ② 同回合后续的 +2 被负值吞掉（真实值 1-4+2 = -1 → 显示 0；
+                //         按冻结语义应为 1→0 再 +2 = 2）
+                // ── 故负向增量同样只对冲「当前真实攻击力里还剩的正值部分」，超出的部分直接丢弃。
+                // ⚠️ getPower 已含 maxPower 上限（底座），与冻结口径完全一致。
+                // =====================================
+                if (actualP < 0) {
+                    actualP = -Math.min(-actualP, getPower(c));
+                }
+
                 return {
                     ...c,
                     customProgress: nextProgress, // 记录触发状态
                     // [核心重构] 彻底实现表里分离！永久归永久，临时归临时！
                     buffs: {
-                        power: (c.buffs?.power || 0) + (duration === 'PERMANENT' ? actualP : 0),
-                        health: (c.buffs?.health || 0) + (duration === 'PERMANENT' ? h : 0)
+                        power: (c.buffs?.power || 0) + (effDuration === 'PERMANENT' ? actualP : 0),
+                        health: (c.buffs?.health || 0) + (effDuration === 'PERMANENT' ? h : 0)
                     },
                     roundBuffs: {
-                        power: (c.roundBuffs?.power || 0) + (duration === 'ROUND' ? actualP : 0),
-                        health: (c.roundBuffs?.health || 0) + (duration === 'ROUND' ? h : 0)
+                        power: (c.roundBuffs?.power || 0) + (effDuration === 'ROUND' ? actualP : 0),
+                        health: (c.roundBuffs?.health || 0) + (effDuration === 'ROUND' ? h : 0)
                     }
                 };
             };
@@ -1535,6 +1555,25 @@ export const processEffect = (
             }
 
             // =====================================
+            // [2026-09-26 1.0.16 茉莉安] 阵营法术共用工具
+            // 按 id 在「双方备战席 + 交战区攻守两侧」就地改写单张卡
+            // （与通用 BUFF 同口径：备战席 + 交战区都要覆盖）
+            // ⚠️ 原先内嵌在「以饵引狼」分支里；T17 猎影标记也要用 ⇒ 上提为两者共用，行为不变
+            // =====================================
+            const patchById = (id: string, fn: (c: CardData) => CardData) => {
+                nextPlayerBench = updateCardInList(nextPlayerBench, id, fn);
+                nextEnemyBench = updateCardInList(nextEnemyBench, id, fn);
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        const newFight = { ...fight };
+                        if (newFight.attacker?.id === id) newFight.attacker = fn(newFight.attacker);
+                        if (newFight.blocker?.id === id) newFight.blocker = fn(newFight.blocker);
+                        return newFight;
+                    });
+                }
+            };
+
+            // =====================================
             // [2026-09-17 1.0.16 茉莉安 · T18 以饵引狼]
             // 两个目标都手动选：① 我方单位 → 【暴露】（代价）
             //                   ② 敌方单位 → 本回合 −4/−0（收益）
@@ -1553,20 +1592,6 @@ export const processEffect = (
                     break;
                 }
 
-                // 与通用 BUFF 同口径：备战席 + 交战区都要覆盖
-                const patchById = (id: string, fn: (c: CardData) => CardData) => {
-                    nextPlayerBench = updateCardInList(nextPlayerBench, id, fn);
-                    nextEnemyBench = updateCardInList(nextEnemyBench, id, fn);
-                    if (nextCombatField) {
-                        nextCombatField = nextCombatField.map(fight => {
-                            const newFight = { ...fight };
-                            if (newFight.attacker?.id === id) newFight.attacker = fn(newFight.attacker);
-                            if (newFight.blocker?.id === id) newFight.blocker = fn(newFight.blocker);
-                            return newFight;
-                        });
-                    }
-                };
-
                 // ① 我方单位 → 贴【暴露】（永久，与钢羽傍身同口径）
                 patchById(allyTarget.id, c => ({
                     ...c,
@@ -1575,10 +1600,123 @@ export const processEffect = (
                 }));
 
                 // ② 敌方单位 → 本回合 −4/−0（写临时账本 roundBuffs，回合末自动清算）
-                patchById(enemyTarget.id, c => applyStats(c, -4, 0));
+                // [2026-09-26 莉莉子 BUG修复] 必须显式传 'ROUND'：
+                //   本 effect 的 params 是 {}（未配 duration）⇒ 原先落到默认 'PERMANENT'，
+                //   −4 被写进永久账本 buffs.power；而回合末 clearRoundBuffsAndBarrier 只清 roundBuffs
+                //   ⇒ 减益永久留存（程实测：下回合没加回来）。注释与实现原先不符，此处对齐。
+                patchById(enemyTarget.id, c => applyStats(c, -4, 0, 'ROUND'));
 
                 events.push({ type: 'sfx_buff', payload: null });
                 console.log(`[以饵引狼] 暴露我方「${allyTarget.name}」→ 敌方「${enemyTarget.name}」本回合 -4/-0`);
+                break;
+            }
+
+            // =====================================
+            // [2026-09-26 1.0.16 茉莉安 · T17 猎影标记]
+            // 柔性二选一（设计文档 7.1）：
+            //   ① 目标未带【暴露】→ 贴上（永久，与以饵引狼 / 钢羽傍身同口径）
+            //   ② 目标已带【暴露】→ 我方最强单位发起一次「额外攻击」挑战它
+            //
+            // 「额外攻击」的落地方式 —— 对齐**飞剑先例**，不新建通道：
+            //   · 直接装配到交战区：{ attacker, blocker: 目标, owner, isChallenged, isExtraAttack }
+            //     写法对齐 useGameState.ts「直送交战区（带预选挑战目标）」那条 AI 路径
+            //   · isChallenged: true ⇒ useAI 的格挡逻辑会**跳过**该战位（useAI.ts:101），
+            //     预指定的 blocker 不会被 AI 重新分配顶掉
+            //   · isExtraAttack: true ⇒ useSpellSystem.settleStack / useGameState.passTurn 强制进入
+            //     格挡阶段；战斗归位时**不消耗进攻标识**（与飞剑同一处例外）
+            //
+            // ⚠️ 为什么只从**备战席**挑发起者：本卡是慢速，只能在主阶段打出，
+            //    而主阶段交战区必为空（每场战斗末尾 setCombatField([]) 与 phase:'main' 同批提交）
+            //    ⇒「已在交战区的单位无法再发起攻击」这条天然成立，不必额外判断。
+            //
+            // ⚠️ 为什么排除 CantAttack：它本就无法进攻、攻击力只是面板数字，
+            //    不排除的话「攻击力最高」会选中一个打不出伤害的单位，白白浪费这张牌。
+            // =====================================
+            if (effect.id === 'effect_marian_faction_mark') {
+                const target = finalTargets[0];
+                if (!target?.id) {
+                    console.log('[猎影标记] 未选到目标，本次不结算');
+                    break;
+                }
+
+                const isPlayerCaster = context.owner === 'player';
+                const casterLabel = isPlayerCaster ? '我方' : '敌方';
+                const foeLabel = isPlayerCaster ? '敌方' : '我方';
+                const casterBench = isPlayerCaster ? nextPlayerBench : nextEnemyBench;
+
+                // finalTargets 是入栈快照，须从最新战场按 id 找实时实例（防对手在栈上响应改过局面）
+                const liveTarget = [
+                    ...nextPlayerBench,
+                    ...nextEnemyBench,
+                    ...(nextCombatField ? nextCombatField.flatMap(f => [f.attacker, f.blocker]) : []),
+                ].find(c => c && c.id === target.id);
+
+                if (!liveTarget || liveTarget.isDead
+                    || liveTarget.animState === 'dying' || liveTarget.animState === 'ephemeral_dying') {
+                    console.log(`[猎影标记] 目标「${target.name}」已不在场，本次不结算`);
+                    break;
+                }
+
+                const alreadyExposed = (liveTarget.keywords || []).includes('Exposed');
+
+                // --- ① 未暴露 → 只贴【暴露】 ---
+                if (!alreadyExposed) {
+                    patchById(liveTarget.id, c => ({
+                        ...c,
+                        keywords: Array.from(new Set([...c.keywords, 'Exposed' as Keyword])),
+                        animState: 'buff' as const,
+                    }));
+                    events.push({ type: 'sfx_buff', payload: null });
+                    console.log(`[猎影标记] ${foeLabel}「${liveTarget.name}」未暴露 → 贴上【暴露】`);
+                    break;
+                }
+
+                // --- ② 已暴露 → 我方最强（可进攻）单位发起一次额外攻击 ---
+                const attacker = findStrongestUnit(
+                    casterBench,
+                    [], // 只从备战席挑：慢速⇒主阶段⇒交战区必为空
+                    context.owner,
+                    c => !(c.keywords || []).includes('CantAttack'),
+                );
+                const fieldCount = nextCombatField ? nextCombatField.length : 0;
+
+                // [防御性守卫] 实测正常不可达（已暴露的目标必有来源单位在场）——
+                //   真触发就退化为「只贴暴露」，绝不静默吞掉整张牌
+                if (!attacker || fieldCount >= 6) {
+                    console.warn(`[猎影标记] 无法发起额外攻击（${!attacker ? `${casterLabel}无可用单位` : '交战区已满 6'}）`
+                        + ` → 退化为仅贴【暴露】`);
+                    patchById(liveTarget.id, c => ({
+                        ...c,
+                        keywords: Array.from(new Set([...c.keywords, 'Exposed' as Keyword])),
+                        animState: 'buff' as const,
+                    }));
+                    events.push({ type: 'sfx_buff', payload: null });
+                    break;
+                }
+
+                // 发起者出备战席（对齐 toggleAttacker 的上场语义）
+                if (isPlayerCaster) nextPlayerBench = nextPlayerBench.filter(c => c.id !== attacker.id);
+                else nextEnemyBench = nextEnemyBench.filter(c => c.id !== attacker.id);
+
+                // 目标从其备战席移除（对齐 challengeEnemy 的「拉取」语义）
+                if (isPlayerCaster) nextEnemyBench = nextEnemyBench.filter(c => c.id !== liveTarget.id);
+                else nextPlayerBench = nextPlayerBench.filter(c => c.id !== liveTarget.id);
+
+                // 装配交战线：预指定 blocker + 被挑战标记 + 额外攻击标记
+                nextCombatField = [
+                    ...(nextCombatField || []),
+                    {
+                        attacker,
+                        blocker: liveTarget,
+                        owner: context.owner,
+                        isChallenged: true,   // ⇒ useAI 格挡逻辑跳过该战位，预指定 blocker 不被顶掉
+                        isExtraAttack: true,  // ⇒ 强制进入格挡阶段；归位时不消耗进攻标识
+                    },
+                ];
+
+                events.push({ type: 'sfx_block', payload: null });
+                console.log(`[猎影标记] ${casterLabel}「${attacker.name}」额外攻击 ${foeLabel}「${liveTarget.name}」`
+                    + `（已暴露 → 强制挑战，不消耗进攻标识）`);
                 break;
             }
 
@@ -2879,6 +3017,8 @@ export const processEffect = (
                 if (!target.id) return; // 只能治疗单位
 
                 const applyHeal = (c: CardData): CardData => {
+                    // [2026-09-25 莉莉子 三线任务化框架 · Pact 常驻代价] 终焉契约：此卡无法被治疗 —— 直接原样返回
+                    if (c.cantBeHealed) return c;
                     const currentDamage = c.damageTaken || 0;
                     const actualHeal = Math.min(currentDamage, amount);
 

@@ -45,6 +45,20 @@ export const getFlyingSwordOwner = (field: any[]): 'player' | 'enemy' | undefine
 export const getDefensiveSide = (owner?: 'player' | 'enemy'): 'player' | 'enemy' =>
     owner === 'player' ? 'enemy' : 'player';
 
+// =====================================
+// [2026-09-26 1.0.16 茉莉安 · T17 猎影标记] 共享「额外攻击」判定工具
+// 与飞剑同构：法术结算期间装配的额外攻击，归位时同样**不消耗进攻标识**，
+// 且生命周期内不得被「回合结束判定」截胡。供 settleStack / passTurn 守卫复用。
+// 标记位：交战线上的 `isExtraAttack: true`（由 effectProcessor 装配时写入）
+// =====================================
+export const isExtraAttackFight = (f: any): boolean => !!f?.isExtraAttack;
+
+export const combatHasExtraAttack = (field: any[]): boolean =>
+    (field || []).some(isExtraAttackFight);
+
+export const getExtraAttackOwner = (field: any[]): 'player' | 'enemy' | undefined =>
+    (field || []).find(isExtraAttackFight)?.owner as 'player' | 'enemy' | undefined;
+
 // [新增] 计算单个槽位的战斗结果
 export const resolveSingleCombat = (
     // [核心补全] 接收来自 effectProcessor 的空气墙标记 isGhostBlocked

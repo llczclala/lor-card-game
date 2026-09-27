@@ -36,6 +36,8 @@ export interface CardData {
   keywords: Keyword[];
   effects?: string[];
   equipment?: string[]; // [2026-08-12 装备系统] 挂载的装备 id 列表（attachEquipment 写入；视觉方块 + 打出效果用）
+  // [2026-09-25 莉莉子 三线任务化框架 · Pact 常驻代价] 无法被治疗（终焉契约）：治疗结算处直接跳过该单位
+  cantBeHealed?: boolean;
   imageUrl: string;
   level2ImageUrl?: string;
   type: CardType;
@@ -109,6 +111,19 @@ export interface CardData {
 // [新增] AI 策略配置类型
 // ==========================================
 export type AIPattern = 'DAMAGE' | 'BUFF' | 'RALLY' | 'DUEL' | 'HEAL' | 'DRAW' | 'KEYWORD_TRANSFER' | 'SUMMON' | 'SACRIFICE' | 'FROST' | 'CHOICE' | 'STRIKE' | 'CALIBRATE' | 'RECALL_AND_REPLACE' | 'SET_STATS' | 'CLONE_TO_HAND'
+  // [2026-09-26 莉莉子] 扩充敌方卡组前置：新增 4 种决策模式
+  //   此前这些机制无法被 AI 表达 ⇒ 对应法术没配 ai ⇒ AI 视为死牌（evaluate 直接 shouldPlay:false）
+  | 'NEGATE'        // 反制：无效化法术堆叠中的敌方法术（抵抗/抗拒/拒绝）
+  | 'AOE_DAMAGE'    // 全场伤害：无需选目标（月震星陨/芬格尼尔之冬）
+  | 'BOARD_CLEAR'   // 清场：双方全灭，需判断「谁更亏」（降临事件）
+  | 'RESURRECT'     // 复活：墓地回场（瓦尔哈拉的呼唤）
+  // [2026-09-27 莉莉子 第二批 ai] 茉莉安【暴露】体系 + 飞剑补给 + 天启者群体增益
+  //   这批卡机制各自独有，无法用既有 pattern 表达 —— 不补就只能当死牌（红名单剩 6 张）
+  | 'EXPOSE_MARK'      // 猎影标记：给敌人贴【暴露】／对已暴露目标发起额外攻击
+  | 'EXPOSE_DEBUFF'    // 以饵引狼：暴露我方单位换敌方本回合 -4/-0
+  | 'EXPOSE_CASHOUT'   // 静默行动：消除全场【暴露】，每个换我方全体永久 +1/+1
+  | 'FLYING_SWORD'     // 飞剑补给：召唤 N 柄飞剑（剑鸣回响）
+  | 'CHAMPION_BUFF';   // 天启者群体增益：指定 N 个天启者加身材（神格共鸣）
 
 export interface AIConfig {
   pattern: AIPattern
@@ -140,6 +155,7 @@ export type CombatFieldItem = {
     blocker: CardData | null;
     owner: 'player' | 'enemy';
     isChallenged?: boolean; // 可选属性：标记是否是挑战导致的格挡
+    isExtraAttack?: boolean; // [2026-09-26 T17 猎影标记] 可选属性：法术装配的「额外攻击」战线（不消耗进攻标识）
 };
 
 export interface SpellStackItem {
@@ -264,6 +280,12 @@ export interface GameState {
   playerNexusTough?: boolean; // [2026-08-30 莉莉子] 玩家水晶坚韧（固若金汤：受击伤害永久 -1）
   rogueEnhancements?: string[]; // [2026-08-11] 玩家迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
   enemyEnhancements?: string[]; // [2026-08-27] 敌方迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
+  // [2026-09-25 莉莉子 三线任务化框架] 单场任务进度表：key → 已累计次数。
+  //   命名空间见 logic/questTracker 的 questKey：强化线 enh:<id> / 装备线 gear:<卡实例 id>:<装备 id>。
+  //   单场作用域（每场重置）；整局作用域存 run.questProgress —— 两者互不干扰。
+  questProgress?: Record<string, number>;
+  /** [2026-09-25 莉莉子 强化线] 悬赏标记的单位 id（BOUNTY_CYCLE 用；目标离场即视为已击杀） */
+  bountyId?: string;
   rogueFirstSummonDone?: boolean; // [2026-08-11] 暗影双生：本回合是否已触发过首次召唤复制（每回合开始重置）
   // [2026-09-17 1.0.16 松露小队 · 虹彩] 獠牙信标生命上限的永久修正（负值），局内累计。
   // 召唤落场时套用 —— 这样【尚未登场】的信标也吃得到（方案 8.1 关键细节）。
@@ -436,6 +458,7 @@ export interface UserSettings {
   deskDynamic?: boolean;               // [2026-08-13] 牌桌动态/静态切换（开启=用动态视频牌桌）
   heroDynamic?: boolean;               // [2026-08-16] 天启者动态卡面（开启=对局内手牌/场上英雄卡用动态视频）
   cardBackDynamic?: boolean;           // [2026-08-23] 动态卡背（开启=对局内/选择预览/牌组预览用动态视频卡背）
+  spellDynamic?: boolean;              // [2026-09-26] 动态法术/单位卡面（开启=对局内手牌/场上法术卡、单位卡用动态视频）
 }
 
 export interface UserResources {

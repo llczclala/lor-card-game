@@ -7,7 +7,7 @@ import type { CardData, GameState, GameRecordCategory, SpellStackItem, RecordEnt
 import { createCard, CARD_DB } from '../data/cards';
 import {  calculateNewMana, getLeveledUpCard, getEffectiveSpellCost, upgradeAcaciaHand } from '../utils/gameRules';
 import { resolveSingleCombat, resolveDoubleStrikeCombat, type DoubleStrikeCombatResult } from '../logic/combat'; // [新增] 引入真实血量探针
-import { combatHasFlyingSword, getFlyingSwordOwner, getDefensiveSide } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具
+import { combatHasFlyingSword, getFlyingSwordOwner, getDefensiveSide, getExtraAttackOwner, combatHasExtraAttack } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具 · [2026-09-26 T17] 额外攻击判定
 import { canAfford } from '../logic/core';
 import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
@@ -21,7 +21,11 @@ import { useRoundLifecycle } from './useRoundLifecycle'; // [核心新增] 引�
 import { getRogueDefs, flashRogueBuff, applyPermanentBuff, applyStatBalance, getEquipTriggers, isStrikeTargetAlive } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发（分发已收编 rogueTrigger）· [2026-09-15] isStrikeTargetAlive 打击成长的存活判据
 import { runRogueTrigger, commitSlicePatch, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
 import { executeEquipmentOnPlay } from '../logic/equipment'; // [2026-08-12] 装备系统：打出时效果执行
-import { attachEquipment } from '../data/equipment'; // [2026-08-12 天启者养成] 开局装备挂载
+import { attachEquipment, getArmamentNexusCost, getEquipmentById } from '../data/equipment'; // [2026-08-12] 装备挂载 · [2026-09-25] 遗嘱转移 / Pact 水晶代价
+// [2026-09-25 莉莉子 三线任务化框架] 任务进度中枢：推进 / 判定 / 兑现查询
+import { advanceEnhQuests, advanceSpellManaGrowth, applyGearQuestReward, gearQuestState, questCount, questKey, runGearQuestStep } from '../logic/questTracker';
+import { getBuffById } from '../data/roguelike/buffs'; // [2026-09-25 莉莉子] 进度 UI：任务版强化的名字
+import type { QuestEvent } from '../data/questTypes'; // [2026-09-25] 任务事件类型（装备线统一入口签名用）
 
 // [修复 A] 显式断言类型，并确保 createCard 返回的是 Partial CardData 或正确的基类
 const createFullCard = (key: string): CardData => {
@@ -83,12 +87,15 @@ export interface TutorialInitState {
 // 1. 接收 initialDeck 参数，默认为空数组
 export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false, disableMulligan: boolean = false, tutorialInit?: TutorialInitState, firstAttacker: 'player' | 'enemy' = 'player', initialPlayerNexus?: number, playerNexusMax?: number, rogueEnhancements: string[] = [], rogueEquipments: Record<string, string[]> = {}, enemyEnhancements: string[] = [], initialEnemyNexus?: number, enemyEquipments: Record<string, string[]> = {}) => {
     // --- 1. 状态定义 ---
-    const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean}[]>([]);
+    // [2026-09-26 T17 猎影标记] 补 `isExtraAttack` —— 法术装配的「额外攻击」战线标记
+    //   （归位时不消耗进攻标识 / 强制进入格挡阶段，见 passTurn 守卫与 runResolveCombatAnimation）
+    const [combatField, setCombatField] = useState<{attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy', isChallenged?: boolean, isExtraAttack?: boolean}[]>([]);
 
     const [game, setGame] = useState<GameState>({
         playerMana: 0, playerMaxMana: 0, playerSpellMana: 0,
         enemyMana: 0, enemyMaxMana: 0, enemySpellMana: 0,
-        playerNexus: initialPlayerNexus ?? 20, // [2026-08-11] 肉鸽真衔接：初值=run.hp
+        // [2026-09-25 莉莉子 武装线] Pact 开局代价（王权之证等）：水晶初值直接扣，下限 1（防开局即败）
+        playerNexus: Math.max(1, (initialPlayerNexus ?? 20) - getArmamentNexusCost(rogueEquipments)), // [2026-08-11] 肉鸽真衔接：初值=run.hp
         playerNexusMax: playerNexusMax ?? 20, // [2026-08-11] 玩家水晶回血上限（肉鸽=run.maxHp）
         playerNexusBarrier: 0, // [2026-08-27] 玩家水晶屏障（固若金汤累积，受击先挡）
         rogueEnhancements: rogueEnhancements || [], // [2026-08-11] 玩家迷宫强化 id（战斗内 battleEffect 分发）
@@ -177,6 +184,92 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const enemyUnitsPlayedRef = useRef(0);
     // [新增] State Ref: 用于在异步循环中获取最新状态 (加入 Deck 状态)
     const stateRef = useRef({ game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck: enemyDeckState });
+
+    // ═══ [2026-09-25 莉莉子 三线任务化框架 · 装备线] 统一入口 ═══
+    //   装备任务的事件语义分两类：
+    //     · 按卡实例（unit_attack / card_block / unit_kill）→ 调用方显式传当事人那一张卡
+    //     · 我方全局（cast_spell / play_unit / nexus_damaged / unit_die）→ 不传卡则推进所有【在场】己方卡
+    //   推进与兑现都收口在这里，各站点一行即可；无匹配任务时直接 return（一步 setState 都不触发）。
+    const runGearQuest = useCallback((
+        events: QuestEvent | QuestEvent[],
+        cards?: (CardData | undefined)[],
+        opts?: { amount?: number; when?: { nexusPct?: number } }, // amount=按量累计（血债账簿）；when=常驻条件上下文（背水之刃）
+    ) => {
+        const evs = Array.isArray(events) ? events : [events];
+        const list = cards ?? [
+            ...stateRef.current.playerBench,
+            ...stateRef.current.combatField.filter(f => f.owner === 'player').map(f => f.attacker),
+        ];
+        // ⚠️ 多个事件必须在本函数内**串行累加同一份进度表**再一次性写回：
+        //    setGame 是异步的，分成两次调用会各自基于同一份旧 stateRef 计算 → 后一次覆盖前一次。
+        let progress = stateRef.current.game.questProgress;
+        const hits: { cardId: string; reward: Parameters<typeof applyGearQuestReward>[1] }[] = [];
+        for (const ev of evs) {
+            const step = runGearQuestStep(progress, list, ev, opts);
+            if (!step.changed) continue;
+            progress = step.progress;
+            hits.push(...step.hits);
+        }
+        if (progress === stateRef.current.game.questProgress) return; // 无匹配任务 → 一步 setState 都不触发
+        setGame(prev => ({ ...prev, questProgress: progress! }));
+        if (!hits.length) return;
+        // 兑现：按 cardId 在备战席 / 交战区两处就地改写（同一张卡只可能在其中一处）
+        const byId = new Map(hits.map(h => [h.cardId, h.reward]));
+        const applyTo = (c: CardData) => { const r = byId.get(c.id); return r ? applyGearQuestReward(c, r) : c; };
+        setPlayerBench(prev => prev.map(applyTo));
+        setCombatField(prev => prev.map(f => {
+            let n = f;
+            if (n.attacker) { const a = applyTo(n.attacker); if (a !== n.attacker) n = { ...n, attacker: a }; }
+            if (n.blocker) { const b = applyTo(n.blocker); if (b !== n.blocker) n = { ...n, blocker: b }; }
+            return n;
+        }));
+    }, []);
+
+    /**
+     * [2026-09-25 莉莉子 三线任务化框架] 提交触发引擎 ctx 的 **game 级变更**。
+     *   ⚠️ 必须"逐键对比播种快照、只写回真正变了的字段"：
+     *     · 直接 setGame(ctx.game) 会把整个 game 换成陈旧副本，洗掉同期别的字段
+     *     · game_start / unit_die 两个站点原本**完全没有** game 级提交，效果会被静默丢弃（已分别补上）
+     */
+    const commitDirtyGame = useCallback((ctxGame: GameState, seeded: GameState) => {
+        setGame(prev => {
+            const next: GameState = { ...prev };
+            const mutable = next as unknown as Record<string, unknown>;
+            for (const k of Object.keys(ctxGame) as (keyof GameState)[]) {
+                if (ctxGame[k] !== seeded[k]) mutable[k as string] = ctxGame[k];
+            }
+            return next;
+        });
+    }, []);
+
+    // ═══ [2026-09-25 莉莉子 三线任务化框架 · 进度可见性] 单场任务进度 → 广播给 UI ═══
+    //   一处收口（只监听 questProgress 变化），自动覆盖所有推进站点（打击 / 格挡 / 施法 / 水晶受伤 / 亡语…）。
+    //   设计依据：炉石任务牌的坑 #1「进度必须公开可见」—— 没有进度显示，"任务引导玩家"就无从谈起。
+    useEffect(() => {
+        const prog = game.questProgress;
+        const rows: { key: string; name: string; sub?: string; current: number; threshold: number; done: boolean }[] = [];
+        // ① 任务版迷宫强化（如铁誓）
+        for (const id of game.rogueEnhancements ?? []) {
+            const b = getBuffById(id);
+            const q = b?.quest;
+            if (!b || !q) continue;
+            const cur = Math.min(questCount(prog, questKey.enh(id)), q.threshold);
+            rows.push({ key: `enh:${id}`, name: b.name, sub: '迷宫强化', current: cur, threshold: q.threshold, done: cur >= q.threshold });
+        }
+        // ② 在场卡身上的任务型装备（用 stateRef 读卡，避免把 bench/field 放进依赖导致高频广播）
+        const cards = [
+            ...stateRef.current.playerBench,
+            ...stateRef.current.combatField.filter(f => f.owner === 'player').map(f => f.attacker),
+        ].filter(Boolean) as CardData[];
+        for (const c of cards) {
+            for (const eid of c.equipment ?? []) {
+                const st = gearQuestState(prog, c.id, eid);
+                if (!st) continue;
+                rows.push({ key: `gear:${c.id}:${eid}`, name: getEquipmentById(eid)?.name ?? eid, sub: c.name, current: st.current, threshold: st.threshold, done: st.done });
+            }
+        }
+        eventBus.emit(GameEvents.ROGUE_QUEST_UI, { scope: 'battle', rows });
+    }, [game.questProgress, game.rogueEnhancements]);
     // 👇 [新增] 微队列缓冲区 (Micro-Queue Buffer)
     const pendingActionsRef = useRef<{ type: string; payload?: any }[]>([]);
     // 👇 [CantAttack] 保存各单位进入战场前的原始攻击力，用于撤回时恢复（含 buffs/roundBuffs）
@@ -614,6 +707,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             runRogueTrigger(ctx, stateRef.current.game.rogueEnhancements, 'game_start');
             ctx.owner = 'enemy';
             runRogueTrigger(ctx, stateRef.current.game.enemyEnhancements, 'game_start');
+            // ── [2026-09-25 莉莉子 强化线] game_start 的 game 级变更提交（悬赏标记 / 终焉回响的水晶代价）──
+            //   本站点以前只提交 bench/hand/deck/field —— game 级效果会被静默丢弃（与 unit_die 同款问题）
+            if (ctx.dirty.game) commitDirtyGame(ctx.game, stateRef.current.game);
 
             // =====================================
             // [2026-09-16 1.0.16 茉莉安] ④【库效】对局开始召唤（可指定对方半场）
@@ -817,6 +913,18 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
                 // [核心修正] 防重复触发必须同时放过 dying 和 ephemeral_dying，绝不能用普通死亡覆盖瞬息死亡！
                 if (currentHealth <= 0 && unit.animState !== 'dying' && unit.animState !== 'ephemeral_dying') {
+                    // ── [2026-09-25 莉莉子 武装线] 不屈之证：天启者已升级时，每场战斗首次阵亡以 1 点生命存活 ──
+                    //   拦截点选在"死刑判定处"：既不推入 deadUnitsToBroadcast、也不写 dying，直接改写成 1 血
+                    //   每场一次：账本用 questProgress 的 used:<武装 id> 键（与本框架 oncePerBattle 同款口径）
+                    const reviver = bench === playerBench && unit.isChampion && (unit.level ?? 1) >= 2
+                        ? (unit.equipment ?? []).find(id => getEquipmentById(id)?.reviveOncePerBattle)
+                        : undefined;
+                    if (reviver && !(stateRef.current.game.questProgress ?? {})[`used:${reviver}`]) {
+                        setGame(prev => ({ ...prev, questProgress: { ...(prev.questProgress ?? {}), [`used:${reviver}`]: 1 } }));
+                        const totalHp = (unit.health || 0) + (unit.buffs?.health || 0) + (unit.roundBuffs?.health || 0);
+                        needsUpdate = true; // 触发 setBench，把改写后的活体写回
+                        return { ...unit, damageTaken: Math.max(0, totalHp - 1), animState: 'buff' as const };
+                    }
                     // [视觉解耦] 不再需要暂缓死刑等待 hit 状态，死亡碎裂动画与独立受击特效完美兼容，直接处决！
                     needsUpdate = true;
                     deadUnitsToBroadcast.push(unit);
@@ -856,6 +964,26 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     console.log(`[DeathCheck] ${u.name} died in bench. Initiating shatter VFX.`);
                     eventBus.emit(GameEvents.UNIT_DIE, u);
 
+                    // ── [2026-09-25 莉莉子 三线任务化框架 · 装备线·新机制] 遗嘱：阵亡时把身上其他装备转给随机存活友军 ──
+                    //   ① 遗嘱自身不参与传递（否则链式无限传承）；② attachEquipment 自带去重，友军已有的装备自然跳过
+                    if (dieSide === 'player' && (u.equipment ?? []).some(id => getEquipmentById(id)?.onOwnerDie?.class === 'TRANSFER_EQUIPMENT')) {
+                        const inherits = (u.equipment ?? []).filter(id => getEquipmentById(id)?.onOwnerDie?.class !== 'TRANSFER_EQUIPMENT');
+                        const heirs = newBench.filter(c => c.id !== u.id && c.animState !== 'dying' && c.animState !== 'ephemeral_dying' && getHealth(c) > 0);
+                        if (inherits.length > 0 && heirs.length > 0) {
+                            const heir = heirs[Math.floor(Math.random() * heirs.length)];
+                            let upgraded: CardData = { ...heir };
+                            for (const id of inherits) upgraded = attachEquipment(upgraded, id);
+                            setPlayerBench(prev => prev.map(c => c.id === heir.id ? upgraded : c));
+                        }
+                    }
+
+                    // ── [2026-09-25 莉莉子 任务化框架 · 武装线] 我方单位阵亡 → 广播给 run 层记账 ──
+                    //   ① unit_die：亡者低语等整局任务计数 ② ROGUE_HERO_DIED：凯旋之匣判定"英雄是否活到最后"
+                    if (dieSide === 'player') {
+                        eventBus.emit(GameEvents.ROGUE_QUEST_EVENT, { event: 'unit_die' });
+                        if (u.isChampion) eventBus.emit(GameEvents.ROGUE_HERO_DIED, { key: u.key });
+                    }
+
                     // 迷宫强化 unit_die：同一份工作快照上串行触发（死亡侧强化；非全复活强化仅救本批首个）
                     unitCtx.info.deadUnit = u;
                     runRogueTrigger(unitCtx, dieEnh, 'unit_die');
@@ -866,6 +994,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     if (unitCtx.dirty.hand.has('enemy')) setEnemyHand(unitCtx.enemyHand);
                     if (unitCtx.dirty.deck.has('player')) setPlayerDeck(unitCtx.playerDeck);
                     if (unitCtx.dirty.deck.has('enemy')) setEnemyDeckState(unitCtx.enemyDeck);
+                    // ── [2026-09-25 莉莉子 强化线] game 级变更（余烬的敌方水晶伤害等）：差异合并提交 ──
+                    if (unitCtx.dirty.game) commitDirtyGame(unitCtx.game, stateRef.current.game);
 
                     // [重构] 剥离硬编码！把亡语触发权移交给微队列的中央处理器！
                     // 把这具尸体当作包裹，扔进微队列缓冲区
@@ -1978,6 +2108,38 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         return newFight;
                     });
                 }
+                // ── [2026-09-25 莉莉子 任务化框架 · 强化线] 我方水晶受伤 → 推进「水晶受伤」类强化任务进度 ──
+                //   例：铁誓（本场累计受伤 3 次）→ 达成后由 rogueTrigger 的解锁门放行其 battleEffect
+                if (struckSide === 'player') {
+                    nextGame.questProgress = advanceEnhQuests(nextGame.questProgress, nextGame.rogueEnhancements, 'nexus_damaged');
+                }
+                // ── [2026-09-25 莉莉子 任务化框架 · 装备线] 我方水晶受伤 → 推进装备线同事件（按【伤害量】累计）──
+                //   ⚠️ 本 action 在批次末尾用 setGame(nextGame) 整体提交，故**不能**调用 runGearQuest
+                //      （它内部的 setGame 会被末尾的直接值覆盖掉）→ 必须就地写进三份工作快照。
+                if (struckSide === 'player') {
+                    const gCards = [...nextPlayerBench, ...nextCombatField.filter(f => f.owner === 'player').map(f => f.attacker)];
+                    const nexusMax = stateRef.current.game.playerNexusMax ?? 20;
+                    // 水晶余量取两份快照的较小值：本批是否已扣血取决于 action 先后，取小即可覆盖两种时序
+                    const nexusNow = Math.min(stateRef.current.game.playerNexus ?? nexusMax, nextGame.playerNexus ?? nexusMax);
+                    const gStep = runGearQuestStep(nextGame.questProgress, gCards, 'nexus_damaged', {
+                        amount: action.payload.amount ?? 1,
+                        when: { nexusPct: nexusMax > 0 ? (nexusNow / nexusMax) * 100 : 100 },
+                    });
+                    if (gStep.changed) {
+                        nextGame = { ...nextGame, questProgress: gStep.progress };
+                        if (gStep.hits.length) {
+                            const gById = new Map(gStep.hits.map(h => [h.cardId, h.reward]));
+                            const gApply = (c: CardData) => { const r = gById.get(c.id); return r ? applyGearQuestReward(c, r) : c; };
+                            nextPlayerBench = nextPlayerBench.map(gApply);
+                            nextCombatField = nextCombatField.map(f => {
+                                let n = f;
+                                if (n.attacker) { const a = gApply(n.attacker); if (a !== n.attacker) n = { ...n, attacker: a }; }
+                                if (n.blocker) { const b = gApply(n.blocker); if (b !== n.blocker) n = { ...n, blocker: b }; }
+                                return n;
+                            });
+                        }
+                    }
+                }
 
                 // ==========================================
                 // [2026-08-19 莉莉子] 迷宫强化 on_nexus_strike：水晶受伤害
@@ -2940,6 +3102,20 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     const buffed = applyPermanentBuff(result.updatedFight.attacker, t.power, t.health);
                     setCombatField(prev => prev.map(f => f.attacker?.id === atkId ? { ...f, attacker: buffed } : f));
                 });
+                // ── [2026-09-25 莉莉子 任务化框架 · 装备线] 此卡打击后推进任务进度；跨过阈值即当场兑现 ──
+                //   ① unit_attack＝本次打击本身 ② unit_kill＝本次打击击杀了单位（result.killedUnits 非空）
+                if (atkAlive) {
+                    runGearQuest(result.killedUnits.length > 0 ? ['unit_attack', 'unit_kill'] : 'unit_attack', [result.updatedFight.attacker]);
+                }
+                // ── [2026-09-25 莉莉子 任务化框架 · 武装线] 天启者打击 → 广播给 run 层记账 ──
+                //   整局任务要跨战斗累积；useGameState 拿不到 useRoguelikeRun 的 state → 走事件总线单向广播
+                if (result.updatedFight.attacker?.isChampion) {
+                    eventBus.emit(GameEvents.ROGUE_QUEST_EVENT, { event: 'hero_attack' });
+                    // 天启者把伤害打到敌方水晶 → 破晓号令的任务事件（两件事独立计数，故分两次广播）
+                    if (result.nexusDamage && result.nexusDamage.target === 'enemy') {
+                        eventBus.emit(GameEvents.ROGUE_QUEST_EVENT, { event: 'hero_hit_nexus' });
+                    }
+                }
             }
             if (currentFight.owner === 'enemy' && currentFight.blocker && result.updatedFight.blocker) {
                 const blkId = currentFight.blocker.id;
@@ -2949,6 +3125,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     const buffed = applyPermanentBuff(result.updatedFight.blocker, t.power, t.health);
                     setCombatField(prev => prev.map(f => f.blocker?.id === blkId ? { ...f, blocker: buffed } : f));
                 });
+                // [2026-09-25 莉莉子 任务化框架 · 装备线] 我方 blocker 挡下一次进攻 → 推进 card_block 任务（誓约之盾）
+                //   语义：能站住接这一击 = 成功格挡一次（被打死的不算）
+                if (blkAlive) runGearQuest('card_block', [result.updatedFight.blocker]);
             }
             console.log(`[CombatDebug] 第${i+1}/${totalFights}路战斗结束: A=${result.updatedFight.attacker?.key}(HP=${result.updatedFight.attacker ? getHealth(result.updatedFight.attacker) : '—'} state=${result.updatedFight.attacker?.animState})` +
                 ` B=${result.updatedFight.blocker?.key||'无'}(HP=${result.updatedFight.blocker ? getHealth(result.updatedFight.blocker) : '—'} state=${result.updatedFight.blocker?.animState||'—'})` +
@@ -3546,17 +3725,22 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const attackerOwner = currentFights.length > 0 ? currentFights[0].owner : null;
 
             const nextAttackToken = { ...prev.attackToken };
-            // [2026-08-19 莉莉子 BUG修复] 飞剑额外攻击标记：不消耗进攻权 → 回合不翻转
-            let flyingSwordAttack = false;
+            // [2026-08-19 莉莉子 BUG修复] 「额外攻击」标记：不消耗进攻权 → 回合不翻转
+            // [2026-09-26 T17 猎影标记] 例外从「全是飞剑」扩大为「全是额外攻击」：
+            //   飞剑（如常）或交战线带 `isExtraAttack`（法术装配的额外攻击）。
+            //   ⚠️ `every` 的语义正是「本次结算**没有**任何常规进攻」—— 混合场景（本回合的常规进攻
+            //      与额外攻击落进同一场结算）会照常消耗标识，这才是对的。
+            //   ⚠️ 标识原本为 null 时不「恢复」⇒ 不会凭空白送一个进攻权。
+            let keepAttackInitiative = false;
             if (attackerOwner) {
-                // [2026-07-27 飞剑] 飞剑是额外攻击，不消耗进攻标识
-                const allFlyingSwords = currentFights.every(f =>
+                const allExtraAttacks = currentFights.every(f =>
                     f.attacker?.key === 'Acacia_Flying_Sword' || f.attacker?.key === 'Acacia_Great_Sword'
+                    || !!f.isExtraAttack
                 );
-                if (allFlyingSwords) {
-                    flyingSwordAttack = true; // [修复] 飞剑是额外攻击：保留进攻权 → 攻击方继续行动
-                    // 飞剑攻击：保留进攻标识不变
-                    console.log(`[飞剑] 飞剑攻击结束，保留进攻标识 ${nextAttackToken[attackerOwner]}`);
+                if (allExtraAttacks) {
+                    keepAttackInitiative = true; // [修复] 额外攻击：保留进攻权 → 攻击方继续行动
+                    // 额外攻击：保留进攻标识不变
+                    console.log(`[额外攻击] 本次结算全为额外攻击（飞剑/猎影标记），保留进攻标识 ${nextAttackToken[attackerOwner]}`);
                 } else {
                     // 正常战斗：消耗进攻标识
                     const allScout = currentFights.every(f => f.attacker?.keywords?.includes('Scout'));
@@ -3586,7 +3770,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 turnOwner: (() => {
                     if (!attackerOwner) return prev.attackToken.player ? 'enemy' : 'player'; // 空场兜底沿用旧式
                     const otherSide = attackerOwner === 'player' ? 'enemy' : 'player';
-                    if (flyingSwordAttack) return attackerOwner === 'player' ? 'player' : 'enemy'; // 飞剑不耗剑→攻击方继续
+                    if (keepAttackInitiative) return attackerOwner === 'player' ? 'player' : 'enemy'; // 额外攻击不耗剑→攻击方继续
                     if (nextAttackToken[attackerOwner]) return attackerOwner === 'player' ? 'player' : 'enemy'; // 攻击方仍持剑→连攻
                     return otherSide; // 对方仍持剑→对方；双方无剑→常规让渡进攻方对手
                 })(),
@@ -4003,6 +4187,20 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             };
         });
 
+        // ── [2026-09-25 莉莉子 任务化框架 · 装备线] 打出卡牌 → 推进「施法 / 打出单位」类装备任务 ──
+        //   分类口径与上方 stats 完全一致：天启者 / 单位为「打出单位」，其余为「施法」
+        if (owner === 'player') {
+            const isSpellPlay = !card.isChampion && !card.type.includes('unit');
+            runGearQuest(isSpellPlay ? 'cast_spell' : 'play_unit');
+            // [2026-09-25 莉莉子 强化线] 共鸣涌流：每施放 N 个法术 → 本场法术法力上限 +1（计数在这里，生效在回合边界）
+            if (isSpellPlay) {
+                setGame(prev => {
+                    const next = advanceSpellManaGrowth(prev.questProgress, prev.rogueEnhancements);
+                    return next === prev.questProgress ? prev : { ...prev, questProgress: next };
+                });
+            }
+        }
+
         setTimeout(() => {
             setGame(prev => ({ ...prev, activeCard: null }));
             if (isUnit) {
@@ -4291,29 +4489,35 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         console.log(`[passTurn] 被调用 — spellStack=${g.spellStack.length} consecutivePasses=${g.consecutivePasses} phase=${g.phase} turnOwner=${g.turnOwner}`);
         // [2026-08-24 莉莉子 飞剑竞态根治] 交战区仍有飞剑时，passTurn 绝不推进回合/翻转优先权/结束回合。
         // 飞剑是"额外攻击"，其生命周期（召唤→格挡→打击→归位）内回合结束检测不得介入。
+        // [2026-09-26 T17 猎影标记] 同构扩展：法术装配的额外攻击（战线上 `isExtraAttack`）走同一条守卫 ——
+        //   两者共同点是「额外攻击 ⇒ 归位前不消耗进攻标识、不得触发回合结束」，判定与处置完全一致。
+        //   ⚠️ 飞剑优先短路，飞剑分支的行为一分未改。
         const swordField = stateRef.current.combatField;
-        const hasFlyingSword = combatHasFlyingSword(swordField);
-        if (hasFlyingSword) {
+        const swordOwner = getFlyingSwordOwner(swordField);
+        const hasFlyingSword = !!swordOwner;
+        const extraAttackOwner = swordOwner ?? getExtraAttackOwner(swordField);
+        if (extraAttackOwner) {
             if (g.phase === 'block_declare') {
                 // 格挡阶段：防守方应走 confirmBlock，passTurn 在此无效
-                console.log(`[passTurn][飞剑守卫] 交战区有飞剑且已在格挡阶段，passTurn 无效`);
+                console.log(`[passTurn][额外攻击守卫] 交战区有额外攻击(飞剑=${hasFlyingSword})且已在格挡阶段，passTurn 无效`);
                 return;
             }
             if (g.phase === 'main' || g.phase === 'animating') {
-                // 飞剑刚入场、尚未进入格挡（守卫 effect 未及时介入）：强行拉回格挡阶段
-                const swordOwner = getFlyingSwordOwner(swordField);
+                // 刚入场、尚未进入格挡（守卫 effect 未及时介入）：强行拉回格挡阶段
                 setGame(prev => ({
                     ...prev,
                     phase: 'block_declare' as const,
-                    turnOwner: getDefensiveSide(swordOwner),
+                    turnOwner: getDefensiveSide(extraAttackOwner),
                     consecutivePasses: 0,
                     lastActionTimestamp: Date.now(),
                 }));
-                setMessage(swordOwner === 'player' ? '我方飞剑来袭，请敌方格挡' : '敌方飞剑来袭，请分配格挡！');
-                console.log(`[passTurn][飞剑守卫] 交战区有飞剑且 phase=${g.phase} → 强制进入格挡阶段`);
+                setMessage(extraAttackOwner === 'player'
+                    ? (hasFlyingSword ? '我方飞剑来袭，请敌方格挡' : '我方额外攻击已发动，请敌方格挡')
+                    : (hasFlyingSword ? '敌方飞剑来袭，请分配格挡！' : '敌方额外攻击已发动，请分配格挡！'));
+                console.log(`[passTurn][额外攻击守卫] 交战区有额外攻击且 phase=${g.phase} → 强制进入格挡阶段`);
                 return;
             }
-            // phase === 'react_to_block'：格挡已确认、飞剑汇入战斗，放行走正常分支B → resolveCombatAnimation
+            // phase === 'react_to_block'：格挡已确认、额外攻击汇入战斗，放行走正常分支B → resolveCombatAnimation
         }
         if (g.spellStack.length > 0 && g.consecutivePasses === 0) {
              console.log(`[passTurn] 📚 分支A：堆叠非空，resolveStack`);
@@ -5103,6 +5307,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
     //      一律不碰；这几个阶段即便异常也由玩家"取消进攻/确认进攻"和自动推进引擎兜住，不是死锁。
     //   2) 排除飞剑 —— 飞剑有专属守卫 effect 负责拉回 block_declare（见文件上方飞剑守卫），
     //      两处若同时动手会抢节奏，故此处让位。
+    //      [2026-09-26 T17 猎影标记] 同理排除「额外攻击战线」：settleStack 把 phase 切到 block_declare
+    //      之前，交战区会先带着该战线短暂停留在 main —— 而 settleStack 排在 resolveStack 的**升级等待
+    //      循环之后**（最长 20s），一旦超 1200ms，本守卫会把强制战斗**静默收回备战席**。
     //   3) 稳定窗口 —— 先挂起再复核：正常路径 setGame(phase:'main') 与 setCombatField([])
     //      是同一批次提交的，绝不会被这个窗口误判；只有"矛盾态真的持续"才动手。
     // 应急归位本身幂等（已在备战席的按 id 跳过），与其它三道保险可共存、无重复入席风险。
@@ -5115,12 +5322,14 @@ setPlayerBench(prev => [...prev, blockerCard]);
         if (game.phase !== 'main') return;              // 战斗/结算阶段合法持人
         if (combatField.length === 0) return;
         if (combatHasFlyingSword(combatField)) return;  // 飞剑让位给专属守卫
+        if (combatHasExtraAttack(combatField)) return;  // [2026-09-26 T17] 额外攻击战线同样让位（待 settleStack 切格挡）
         const timer = setTimeout(() => {
             const ref = stateRef.current;
             // 复核实时状态：期间若已回到战斗阶段 / 交战区已清空 / 飞剑现身 / 对局结束，都视作正常，放行
             if (ref.game.gameResult || ref.game.phase !== 'main') return;
             if (ref.combatField.length === 0) return;
             if (combatHasFlyingSword(ref.combatField)) return;
+            if (combatHasExtraAttack(ref.combatField)) return; // [2026-09-26 T17] 同上：额外攻击战线让位
             console.warn('[CombatOrphanGuard] ⚠️ main 阶段交战区仍有单位滞留，执行应急归位', {
                 round: ref.game.round, turnOwner: ref.game.turnOwner, consecutivePasses: ref.game.consecutivePasses,
                 combatFieldLen: ref.combatField.length,
@@ -5230,6 +5439,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
             // [2026-09-13 莉莉子 L2-A] 沙盒守卫开关：打开后沙盒里的真机守卫照常执行
             setSandboxGuard: setSandboxGuardEnabled,
             sandboxGuardEnabled,
+            // [2026-09-25 莉莉子 投降] 把玩家水晶清零 → 命中既有的战败判定（1106 行 finalResult='defeat'），
+            //   于是结算/战绩/账号经验全部走"正常失败"那条路，**不需要改任何结算代码**
+            surrenderGame: () => setGame(prev => ({ ...prev, playerNexus: 0 })),
         }
     };
 };

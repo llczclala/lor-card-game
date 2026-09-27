@@ -67,6 +67,63 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
             if (g.spellCasting?.step === 'choose_mode') return;       // [2026-07-20] 二次守卫：AI 命运抉择中
             if (g.calibratePending?.owner === 'enemy') return;         // [2026-07-20] 二次守卫：AI 校准中
 
+            // ============================================================
+            // [2026-09-27 莉莉子] AI 反制响应（NEGATE）—— 程授权「最小侵入」档
+            //
+            // 背景：改动前 AI 在任何「法术栈非空」的时刻一律让过（下方两处硬编码 passTurn），
+            //   于是 cards.ts 里三张反制牌（抵抗/抗拒/拒绝）的 ai 配置**永远不会被评估**
+            //   —— 配了等于没配（死配置）。
+            //
+            // 口径（刻意收窄）：**只在**手牌里确实有 NEGATE 法术、且 evaluate 判定值得打时才出手。
+            //   其余一切情形与改动前逐字一致（原样落到后面的让过分支），不改变任何既有 AI 行为。
+            //   反制目标由 aiSpellStrategies 的 evaluateNEGATE 给出（栈上法术，含速度/费用白名单）。
+            //
+            // ⚠️ 调用点仅两处：格挡后响应阶段、主阶段「栈上有待结算法术」——正是改动前让过的两处。
+            // ============================================================
+            const tryRespondWithNegate = (): boolean => {
+                const negates = hand.filter(c =>
+                    c && c.type && c.type.includes('spell')
+                    && c.ai?.pattern === 'NEGATE'
+                    && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench));
+                if (negates.length === 0) return false; // 没带反制牌 ⇒ 完全不介入
+
+                const scored = negates
+                    .map(spell => {
+                        try {
+                            const { playerBench: pBench } = stateRef.current;
+                            const result = evaluate(spell, g, bench, pBench, hand, {
+                                conservation: aiConfigRef.current.conservation,
+                                mistakeRate: aiConfigRef.current.mistakeRate,
+                                planningDepth: aiConfigRef.current.planningDepth,
+                            });
+                            return {
+                                spell,
+                                result,
+                                score: result.shouldPlay ? result.score + (spell.ai?.priority ?? 0) * 5 : 0,
+                            };
+                        } catch (err) {
+                            console.error(`[AI-NEGATE] ❌ ${spell.key} evaluate 抛出异常:`, err);
+                            return { spell, result: { shouldPlay: false, score: 0, debug: `异常: ${err}` }, score: 0 };
+                        }
+                    })
+                    .filter(e => e.result.shouldPlay)
+                    .sort((a, b) => b.score - a.score);
+
+                if (scored.length === 0) return false;
+
+                const best = scored[0];
+                console.log(`[AI-NEGATE] ⚡ 响应法术栈：${best.spell.key}(${best.spell.name}) targets=`, best.result.targets, `debug="${best.result.debug}"`);
+                setMessage(`敌方反制：${best.spell.name}`);
+                try {
+                    actions.playCard(best.spell, 'enemy', best.result.targets);
+                    spellCooldownRef.current = true; // 与主阶段施法同款冷却：跳过下一轮，等 commitSpell 结算完
+                } catch (err) {
+                    console.error('[AI-NEGATE] ❌ playCard 抛出异常:', err);
+                    return false; // 出牌失败 ⇒ 退回原行为（让过）
+                }
+                return true;
+            };
+
             // --- 阶段 A: 防守/格挡阶段 (Block Phase) ---
             if (g.phase === 'block_declare') {
                 console.log(`[AI] 🛡️ 进入格挡阶段 — field=${field.length} bench=${bench.length}`);
@@ -234,6 +291,8 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
             }
             // --- 阶段 A.5: 格挡后响应阶段 (React to Block Phase) ---
             if (g.phase === 'react_to_block') {
+                // [2026-09-27 莉莉子] 先看手牌里有没有反制牌值得打；没有则与改动前完全一致地让过
+                if (tryRespondWithNegate()) return;
                 console.log(`[AI] ⏭️ 格挡后响应阶段，不响应 (手牌中法术将在主阶段打出)`);
                 setMessage("敌方让过（不响应格挡）。");
                 // 因为目前 AI 还没有被教导如何在战斗中打出法术，所以直接交还优先权/确认物理结算
@@ -253,6 +312,8 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 console.log(`[AI] ==== AI 主阶段开始 ==== round=${g.round} mana=${g.enemyMana}/${g.enemySpellMana} bench=${bench.length}/${g.enemyNexus}hp hand=${hand.length} tok=${g.attackToken.enemy}`);
                 // 1. 处理法术堆叠 (目前逻辑：如果有法术，直接让过/结算)
                 if (g.spellStack.length > 0) {
+                    // [2026-09-27 莉莉子] 响应窗口：先评估反制牌；没有可打的仍按原逻辑让过
+                    if (tryRespondWithNegate()) return;
                     console.log(`[AI] 📚 法术堆叠有 ${g.spellStack.length} 个待结算 — 让过`);
                     setMessage("敌方让过（结算法术）。");
                     actions.passTurn();

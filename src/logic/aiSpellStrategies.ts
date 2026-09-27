@@ -36,12 +36,54 @@ function filterAlive(units: CardData[]): CardData[] {
 }
 
 // ==========================================
+// [2026-09-27 莉莉子 第二批 ai] 【暴露】体系共用工具
+// ==========================================
+
+/**
+ * 收拢某一方所有在场单位（备战席 + 交战区，按 id 去重）。
+ * 为什么不能只看备战席：【暴露】可能贴在交战区的单位上，只扫备战席会漏计，
+ * 导致「静默行动」低估提现收益、「猎影标记」看不见已暴露的目标。
+ * 归属口径与 useSpellSystem 的 findAITargetsForEffect 一致：
+ *   attacker 随 f.owner；blocker 属于非进攻方（f.owner !== side）。
+ *
+ * ⚠️ side 用的是 **GameState 的敌我命名**（'enemy' = AI 自己、'player' = 人类玩家），
+ *    与 Handler 参数的命名**相反** —— Handler 里 playerBench=己方(AI)、enemyBench=敌方(玩家)。
+ *    这个反差是本文件最大的坑，凡是用到 collectSideUnits 的地方都要照这行注释核对一遍。
+ */
+function collectSideUnits(state: GameState, side: 'player' | 'enemy'): CardData[] {
+  const out: CardData[] = [...((side === 'player' ? state.playerBench : state.enemyBench) || [])];
+  for (const f of state.combatField || []) {
+    if (f.owner === side && f.attacker) out.push(f.attacker);
+    if (f.blocker && f.owner !== side) out.push(f.blocker);
+  }
+  const seen = new Set<string>();
+  return out.filter(u => !!u && !seen.has(u.id) && (seen.add(u.id), true));
+}
+
+/** 收拢「对方（人类玩家）」的在场单位 —— 语义化包装，避免每次都要回想 side 命名反差 */
+function collectFoes(state: GameState): CardData[] {
+  return collectSideUnits(state, 'player');
+}
+
+/** 收拢「我方（AI）」的在场单位 */
+function collectMine(state: GameState): CardData[] {
+  return collectSideUnits(state, 'enemy');
+}
+
+/** 是否带【暴露】—— 关键字真源与 effectProcessor 的判定同口径 */
+function isExposedUnit(u: CardData): boolean {
+  return (u.keywords || []).includes('Exposed');
+}
+
+// ==========================================
 // 返回类型
 // ==========================================
 
 export interface AIEvaluation {
   shouldPlay: boolean;
-  targets?: { type: string; id?: string }[];
+  // [2026-09-26 莉莉子] 补 spellId：反制类（NEGATE）的目标是「栈上的法术」，
+  //   结算侧按 finalTargets[0].spellId 定位（见 effectProcessor 的 NEGATE 分支）
+  targets?: { type: string; id?: string; spellId?: string }[];
   score: number;       // 价值评分，用于多张法术竞争时择优
   debug?: string;      // 日志用：说明为什么打出/不打出
 }
@@ -1006,6 +1048,381 @@ function evaluateCLONE_TO_HAND(
 }
 
 // ==========================================
+// Pattern: NEGATE — 反制（无效化法术堆叠中的敌方法术）
+// ==========================================
+// 配置参数:
+//   maxCost?: number        — 可反制的目标费用上限（默认不限）
+//   speedFilter?: string[]  — 可反制的目标法术速度白名单（如 ['spell-fast']；默认不限）
+//   requireAtLeast?: number — 栈上至少几个敌方法术才值得打（默认 1；「拒绝」这类 AOE 反制宜设 2）
+// 说明：法术6/7 需要选「栈上法术」为目标，targets 必须对齐 useSpellSystem 的构建方式
+//       ⇒ { type: 'spell_on_stack', spellId, id }；法术8 是 negateAllEnemies，会忽略 targets 自行全清。
+//
+// [2026-09-27 莉莉子] 两处收口（配置必须与结算口径一致，否则会出现「打出去没效果」的空放）：
+//   ① 只统计 **已在 spellStack 上** 的敌方法术 —— effectProcessor 的 NEGATE 分支只在
+//      nextGame.spellStack 里按 spellId 找目标；pendingSpell 尚未入栈，指向它必然空放。
+//   ② 新增 speedFilter —— 「抵抗」只能反制≤3费**快速**法术、「抗拒」只能反制快速/慢速，
+//      与 effectRegistry 里 targetRequirements 的 stackSpeedFilter 逐字对齐。
+// ==========================================
+
+function evaluateNEGATE(
+  _spell: CardData,
+  state: GameState,
+  _enemyBench: CardData[],
+  _playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const maxCost: number = config.maxCost ?? Number.POSITIVE_INFINITY;
+  const requireAtLeast: number = config.requireAtLeast ?? 1;
+  const speedFilter: string[] | undefined = config.speedFilter;
+
+  // 已在栈上的「对方法术」才可反制（详见上方 ① ②）
+  const candidates = (state.spellStack || [])
+    .filter(s => s.owner === 'player')
+    .filter(s => (s.card.cost ?? 0) <= maxCost)
+    .filter(s => !speedFilter || speedFilter.includes(s.card.type));
+
+  if (candidates.length < requireAtLeast) {
+    return { shouldPlay: false, score: 0, debug: `可反制目标不足（${candidates.length}/${requireAtLeast}）` };
+  }
+
+  // 反制价值：对手投入的费用越高越值得
+  const invested = candidates.reduce((sum, s) => sum + (s.card.cost ?? 0), 0);
+  const head = candidates[0];
+  return {
+    shouldPlay: true,
+    // 只指向一个（count:1）；negateAllEnemies 类会忽略 targets 自行全清
+    targets: [{ type: 'spell_on_stack', spellId: head.card.id, id: head.card.id }],
+    score: 25 + invested * 3,
+    debug: `反制 ${candidates.length} 个敌方法术（合计 ${invested} 费）`,
+  };
+}
+
+// ==========================================
+// Pattern: AOE_DAMAGE — 全场伤害（无需选目标）
+// ==========================================
+// 配置参数:
+//   minTargets?: number — 敌方单位数达到多少才值得打（默认 1）
+// ==========================================
+
+function evaluateAOE_DAMAGE(
+  _spell: CardData,
+  _state: GameState,
+  enemyBench: CardData[],
+  _playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const enemies = filterAlive(enemyBench);
+  const minTargets: number = config.minTargets ?? 1;
+  if (enemies.length < minTargets) {
+    return { shouldPlay: false, score: 0, debug: `AOE 目标不足（${enemies.length}/${minTargets}）` };
+  }
+  return {
+    shouldPlay: true,
+    targets: [],
+    score: 8 + enemies.length * 4,
+    debug: `AOE 覆盖 ${enemies.length} 个敌方单位`,
+  };
+}
+
+// ==========================================
+// Pattern: BOARD_CLEAR — 清场（双方全灭）
+// ==========================================
+// 配置参数:
+//   minEnemyUnits?: number — 敌方至少几个单位才考虑（默认 2）
+//   valueRatio?: number    — 敌方场面价值需达到我方的多少倍才划算（默认 1.2）
+// 说明：清场是「双方一起空」，所以只有对手场面价值明显更高时才值得。
+// ==========================================
+
+function evaluateBOARD_CLEAR(
+  _spell: CardData,
+  _state: GameState,
+  enemyBench: CardData[],
+  playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const enemies = filterAlive(enemyBench);
+  const mine = filterAlive(playerBench);
+  const minEnemyUnits: number = config.minEnemyUnits ?? 2;
+  if (enemies.length < minEnemyUnits) {
+    return { shouldPlay: false, score: 0, debug: `敌方单位不足（${enemies.length}/${minEnemyUnits}）` };
+  }
+  const value = (u: CardData) => getPow(u) + getHp(u);
+  const enemyValue = enemies.reduce((s, u) => s + value(u), 0);
+  const myValue = mine.reduce((s, u) => s + value(u), 0);
+  const ratio: number = config.valueRatio ?? 1.2;
+  if (enemyValue <= myValue * ratio) {
+    return { shouldPlay: false, score: 0, debug: `清场不划算（敌方 ${enemyValue} vs 我方 ${myValue}，需 >${ratio}×）` };
+  }
+  return {
+    shouldPlay: true,
+    targets: [],
+    score: 12 + enemies.length * 3,
+    debug: `清场划算：敌方 ${enemyValue} vs 我方 ${myValue}`,
+  };
+}
+
+// ==========================================
+// Pattern: RESURRECT — 复活（墓地单位回场）
+// ==========================================
+// 配置参数:
+//   maxOwnUnits?: number — 我方场上单位少于此数才值得复活（默认 3）
+// 说明：GameState 未暴露墓地，故以「我方场面是否空缺」作启发式判断。
+// ==========================================
+
+function evaluateRESURRECT(
+  _spell: CardData,
+  _state: GameState,
+  _enemyBench: CardData[],
+  playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const mine = filterAlive(playerBench);
+  const maxOwnUnits: number = config.maxOwnUnits ?? 3;
+  if (mine.length >= maxOwnUnits) {
+    return { shouldPlay: false, score: 0, debug: `我方场面已足（${mine.length}/${maxOwnUnits}），无需复活` };
+  }
+  return {
+    shouldPlay: true,
+    targets: [],
+    score: 14 + (maxOwnUnits - mine.length) * 3,
+    debug: `场面空缺 ${mine.length}/${maxOwnUnits}，值得复活`,
+  };
+}
+
+// ==========================================
+// [2026-09-27 莉莉子 第二批 ai] 以下 5 个 Pattern 为「红名单剩 6 张」而建
+// 背景：这批卡机制各自独有，既有 20 个 pattern 一个都套不上 ⇒ 没配 ai ⇒
+//   aiSpellStrategies.evaluate 直接 shouldPlay:false（AI 抽到即死牌）。
+// 设计原则：每个 Handler 都 **严格对齐 effectProcessor 里的实装口径**，
+//   不做「看起来差不多」的近似 —— 近似会让 AI 打出一张实际没效果的空放牌。
+// ==========================================
+
+// ==========================================
+// Pattern: EXPOSE_MARK — 猎影标记
+// 配置参数: 无
+// 实装口径（effectProcessor「猎影标记」分支）：
+//   ① 目标未带【暴露】→ 只贴【暴露】
+//   ② 目标已带【暴露】→ 我方「**备战席上**、且可进攻」的最强单位发起一次额外攻击
+//      （交战区满 6 时该分支会退化为「仅贴暴露」）
+// ==========================================
+
+function evaluateEXPOSE_MARK(
+  _spell: CardData,
+  state: GameState,
+  _enemyBench: CardData[],
+  playerBench: CardData[],
+  _config: Record<string, any>,
+): AIEvaluation {
+  const foes = collectFoes(state);
+  if (foes.length === 0) {
+    return { shouldPlay: false, score: 0, debug: '敌方场上无单位，标记无处可贴' };
+  }
+
+  // 与实装的 findStrongestUnit 同口径：只从备战席挑，排除 CantAttack
+  const attacker = filterAlive(playerBench)
+    .filter(u => !(u.keywords || []).includes('CantAttack'))
+    .sort((a, b) => getPow(b) - getPow(a))[0];
+
+  const exposedFoes = foes.filter(isExposedUnit);
+  const fieldFull = (state.combatField || []).length >= 6;
+
+  // —— ② 已暴露 → 额外攻击（这张牌真正的价值点；交战区满则走不下去，退到贴标记） ——
+  if (exposedFoes.length > 0 && attacker && !fieldFull) {
+    const killable = exposedFoes.filter(t => getPow(attacker) >= getHp(t));
+    const pool = killable.length > 0 ? killable : exposedFoes;
+    const target = [...pool].sort((a, b) =>
+      ((b.isChampion ? 10 : 0) + getPow(b) + b.cost) - ((a.isChampion ? 10 : 0) + getPow(a) + a.cost),
+    )[0];
+    const score = (killable.length > 0 ? 22 : 14) + getPow(attacker) + (target.isChampion ? 10 : 0);
+    return {
+      shouldPlay: true,
+      targets: [{ type: 'enemy', id: target.id }],
+      score,
+      debug: `${attacker.name}(${getPow(attacker)}攻)额外攻击已暴露的 ${target.name}`
+        + `${killable.length > 0 ? ' [可击杀]' : ''}，评分 ${score}`,
+    };
+  }
+
+  // —— ① 贴【暴露】：优先挑「尚未暴露、最具威胁」的敌方单位（已暴露的再贴是纯浪费） ——
+  const unexposed = foes.filter(u => !isExposedUnit(u));
+  const pool = unexposed.length > 0 ? unexposed : foes;
+  const best = [...pool].sort((a, b) =>
+    ((b.isChampion ? 8 : 0) + getPow(b) + b.cost) - ((a.isChampion ? 8 : 0) + getPow(a) + a.cost),
+  )[0];
+  const score = 10 + getPow(best) + (best.isChampion ? 8 : 0);
+  return {
+    shouldPlay: true,
+    targets: [{ type: 'enemy', id: best.id }],
+    score,
+    debug: `贴【暴露】于 ${best.name}（${getPow(best)}攻），评分 ${score}`,
+  };
+}
+
+// ==========================================
+// Pattern: EXPOSE_DEBUFF — 以饵引狼
+// 配置参数:
+//   debuff?: number         — 削减的攻击力（默认 4，与实装写死的 -4/-0 对齐）
+//   minEnemyPower?: number  — 目标攻击力下限（默认 3，低于此值削了也不痛）
+// ⚠️ 目标顺序必须与 targetRequirements 一致：[我方饵, 敌方目标]
+// 说明：代价是「把我方一个单位暴露出去」（对手可以拉它上场格挡）⇒ 拿最不值钱的去换。
+// ==========================================
+
+function evaluateEXPOSE_DEBUFF(
+  _spell: CardData,
+  _state: GameState,
+  enemyBench: CardData[],
+  playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const debuff = config.debuff ?? 4;
+  const minEnemyPower = config.minEnemyPower ?? 3;
+
+  const myUnits = filterAlive(playerBench);
+  if (myUnits.length === 0) {
+    return { shouldPlay: false, score: 0, debug: '我方无单位可当饵（目标需求无法满足）' };
+  }
+
+  const foes = filterAlive(enemyBench).filter(u => getPow(u) >= minEnemyPower);
+  if (foes.length === 0) {
+    return { shouldPlay: false, score: 0, debug: `敌方无攻击力 ≥ ${minEnemyPower} 的单位，-${debuff} 不值` };
+  }
+
+  // 饵：最不值钱者（天启者绝不送 —— +100 权重垫底；其次按 费用+攻+血 升序）
+  const bait = [...myUnits].sort((a, b) =>
+    ((a.isChampion ? 100 : 0) + a.cost + getPow(a) + getHp(a))
+    - ((b.isChampion ? 100 : 0) + b.cost + getPow(b) + getHp(b)),
+  )[0];
+
+  // 被削目标：攻击力最高的威胁（攻击力本就 ≤ debuff 时等于直接打瘫）
+  const target = [...foes].sort((a, b) =>
+    ((b.isChampion ? 15 : 0) + getPow(b) + b.cost) - ((a.isChampion ? 15 : 0) + getPow(a) + a.cost),
+  )[0];
+
+  const effective = Math.min(debuff, getPow(target));
+  const score = 8 + effective * 3 + (target.isChampion ? 15 : 0) - bait.cost;
+  return {
+    shouldPlay: true,
+    targets: [
+      { type: 'ally', id: bait.id },
+      { type: 'enemy', id: target.id },
+    ],
+    score,
+    debug: `以 ${bait.name} 为饵，削 ${target.name} -${debuff}/-0（有效 -${effective}），评分 ${score}`,
+  };
+}
+
+// ==========================================
+// Pattern: EXPOSE_CASHOUT — 静默行动
+// 配置参数:
+//   minExposed?: number — 场上【暴露】至少几个才值得提现（默认 2）
+// 说明：这是茉莉安体系的「资源提现」——把【暴露】换成我方全体永久 +1/+1。
+//   【暴露】敌我通用（含我方为了以饵引狼自己贴的那些），故按全场计数。
+// ==========================================
+
+function evaluateEXPOSE_CASHOUT(
+  _spell: CardData,
+  state: GameState,
+  _enemyBench: CardData[],
+  playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const minExposed = config.minExposed ?? 2;
+
+  const mine = collectMine(state);
+  const exposed = [...collectFoes(state), ...mine].filter(isExposedUnit);
+
+  if (exposed.length < minExposed) {
+    return { shouldPlay: false, score: 0, debug: `场上【暴露】仅 ${exposed.length} 个（< ${minExposed}），提现不值` };
+  }
+
+  const allyCount = filterAlive(playerBench).length;
+  if (allyCount === 0) {
+    return { shouldPlay: false, score: 0, debug: '我方无单位承接 +1/+1，提现无收益' };
+  }
+
+  const score = 10 + exposed.length * 4 + allyCount * 2;
+  return {
+    shouldPlay: true,
+    targets: [],
+    score,
+    debug: `消除 ${exposed.length} 个【暴露】 → 我方 ${allyCount} 个单位永久 +1/+1，评分 ${score}`,
+  };
+}
+
+// ==========================================
+// Pattern: FLYING_SWORD — 飞剑补给（剑鸣回响）
+// 配置参数:
+//   minAttackers?: number — 至少多少可进攻单位才打（默认 1）
+// 说明：飞剑是「额外出击次数」类资源，只在有单位能借它出击时才有价值；
+//   场上没有可进攻单位时纯属白扔法力，且已囤积越多越不急（分数递减）。
+// ==========================================
+
+function evaluateFLYING_SWORD(
+  _spell: CardData,
+  state: GameState,
+  _enemyBench: CardData[],
+  playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const minAttackers = config.minAttackers ?? 1;
+
+  const attackers = filterAlive(playerBench)
+    .filter(u => getPow(u) > 0 && !(u.keywords || []).includes('CantAttack'));
+
+  if (attackers.length < minAttackers) {
+    return { shouldPlay: false, score: 0, debug: `可进攻单位 ${attackers.length} < ${minAttackers}，飞剑无用武之地` };
+  }
+
+  const held = state.enemyFlyingSwordsTotal || 0;
+  const score = 10 + attackers.length * 3 - held * 2;
+  return {
+    shouldPlay: true,
+    targets: [],
+    score,
+    debug: `飞剑补给：可进攻单位 ${attackers.length}（已囤 ${held} 柄），评分 ${score}`,
+  };
+}
+
+// ==========================================
+// Pattern: CHAMPION_BUFF — 天启者群体增益（神格共鸣）
+// 配置参数:
+//   targetCount?: number — 需要几个天启者（默认 3）
+//   power? / health?     — 增益数值（默认 +2/+2）
+// 说明：效果声明的目标需求是「3 × ALLY_CHAMPION」⇒ **必须由这里把 3 个目标选齐**。
+//   若像普通群体 BUFF 那样返回空 targets，AI 施法会因「合法目标不足」被取消，
+//   表现为「这张牌 AI 永远打不出来」。
+// ==========================================
+
+function evaluateCHAMPION_BUFF(
+  _spell: CardData,
+  _state: GameState,
+  _enemyBench: CardData[],
+  playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const need = config.targetCount ?? 3;
+
+  const champs = filterAlive(playerBench).filter(u => u.isChampion);
+  if (champs.length < need) {
+    return { shouldPlay: false, score: 0, debug: `场上天启者 ${champs.length} < ${need}，目标需求无法满足` };
+  }
+
+  const picked = [...champs]
+    .sort((a, b) => (getPow(b) + getHp(b)) - (getPow(a) + getHp(a)))
+    .slice(0, need);
+
+  const p = config.power ?? 2;
+  const h = config.health ?? 2;
+  const score = 10 + need * (p + h) * 2;
+  return {
+    shouldPlay: true,
+    targets: picked.map(u => ({ type: 'ally', id: u.id })),
+    score,
+    debug: `赋 ${need} 个天启者 +${p}/+${h}，评分 ${score}`,
+  };
+}
+
+// ==========================================
 // Pattern → Handler 映射表
 // ==========================================
 
@@ -1033,6 +1450,17 @@ const HANDLERS: Record<string, (
   CHOICE: evaluateCHOICE,
   SET_STATS: evaluateSET_STATS,
   CLONE_TO_HAND: evaluateCLONE_TO_HAND,
+  // [2026-09-26 莉莉子] 新增 4 种模式（为「扩充敌方卡组」打通新卡可用性）
+  NEGATE: evaluateNEGATE,
+  AOE_DAMAGE: evaluateAOE_DAMAGE,
+  BOARD_CLEAR: evaluateBOARD_CLEAR,
+  RESURRECT: evaluateRESURRECT,
+  // [2026-09-27 莉莉子 第二批 ai] 红名单剩 6 张的专属模式
+  EXPOSE_MARK: evaluateEXPOSE_MARK,
+  EXPOSE_DEBUFF: evaluateEXPOSE_DEBUFF,
+  EXPOSE_CASHOUT: evaluateEXPOSE_CASHOUT,
+  FLYING_SWORD: evaluateFLYING_SWORD,
+  CHAMPION_BUFF: evaluateCHAMPION_BUFF,
 };
 
 // ==========================================

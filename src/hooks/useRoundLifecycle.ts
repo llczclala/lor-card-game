@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { MutableRefObject } from 'react';
 import type { CardData, GameState, GameRecordCategory, RecordEntity } from '../types';
-import { calculateRoundStart } from '../logic/core';
+import { calculateRoundStart, spellManaCapOf } from '../logic/core';
 import { getCurrentHP } from '../logic/combat';
 import { processEffect, relayEffectEvents } from '../logic/effectProcessor';
 import type { EffectContext } from '../logic/effectProcessor';
@@ -833,7 +833,9 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             ...currentGameState,
             ...nextRoundBase,
             phase: nextRoundBase.phase as GameState['phase'], // [2026-08-27] 标注 GameState 后 nextRoundBase.phase 推断为 string，显式收窄
-            playerSpellMana: armamentManaRestore ? 3 : Math.min(3, (nextRoundBase.playerSpellMana || 0) + channelManaPlayer), // [2026-08-14 武装] 秘法回响：回合开始恢复全部法术法力
+            // [2026-08-14 武装] 秘法回响：回合开始恢复全部法术法力
+            // [2026-09-25 莉莉子 强化线] 上限不再写死 3 —— 交给 spellManaCapOf（共鸣涌流成长 / 囤积提额）
+            playerSpellMana: armamentManaRestore ? 3 : Math.min(spellManaCapOf(currentGameState), (nextRoundBase.playerSpellMana || 0) + channelManaPlayer),
             enemySpellMana: Math.min(3, (nextRoundBase.enemySpellMana || 0) + channelManaEnemy),
             playerRoundFlyingSwords: 0, // [2026-07-31] 新回合清零本回合飞剑计数
             enemyRoundFlyingSwords: 0,

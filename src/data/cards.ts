@@ -389,6 +389,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '极速 [支援技]：对所有本回合进攻或格挡过的敌人造成1点伤害。',
     type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.acacia_chrono_echo_support,
+    ai: { pattern: 'AOE_DAMAGE', priority: 3, config: { minTargets: 1 } }, // [2026-09-26 莉莉子] 补 ai：对进攻/格挡过的敌人 1 伤
     effects: ['effect_acacia_chrono_echo_support'],
     associatedChampionKey: 'acacia_chrono_echo',
   },
@@ -534,6 +535,9 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     // [2026-09-23 重做] 极速 → 快速（可被对手响应）；两段效果按序结算：
     //   ① 柔性二选一（炸雷 / 埋雷）  ② 制空覆盖 AOE
     effects: ['effect_marian_support', 'effect_marian_support_aoe'],
+    // [2026-09-27 莉莉子 第二批 ai] ②段是「敌方备战席 + 战场全体 1 伤」⇒ 按 AOE 覆盖数评分即可；
+    //   ①段的炸信标（可连锁引爆分摊 8 伤）/ 无信标则埋雷属额外收益，不参与出牌门槛
+    ai: { pattern: 'AOE_DAMAGE', priority: 3, config: { minTargets: 1 } },
   },
   // --- 衍生物：獠牙信标 ---
   // 站位在【对手】的备战席 —— 由 ④【库效】/ 茉莉安本体入场 / 支援技召唤
@@ -859,18 +863,22 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '快速：撤回一个我方单位（返回手牌），并且飞剑1。', type: 'spell-fast', keywords: [],
     effects: ['effect_temp_spell_09', 'effect_temp_spell_09_flying'],
     imageUrl: SPELL_IMAGES.temp_spell_09,
+    ai: { pattern: 'RECALL_AND_REPLACE', priority: 2, config: {} }, // [2026-09-26 莉莉子] 补 ai
   },
   temp_spell_19: {
     key: 'temp_spell_19', name: '破军', cost: 5, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
     description: '慢速：对一个敌方单位造成3点伤害。若本回合至少飞剑4，则本回合该法术费用-2。', type: 'spell-slow', keywords: [],
     effects: ['effect_temp_spell_19_strike'],
     imageUrl: SPELL_IMAGES.temp_spell_19,
+    ai: { pattern: 'DAMAGE', priority: 3, config: { targetType: 'unit', damageValue: 3 } }, // [2026-09-26 莉莉子] 补 ai
   },
   temp_spell_20: {
     key: 'temp_spell_20', name: '剑鸣回响', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
     description: '快速：回响，飞剑2。', type: 'spell-fast', keywords: ['Echo'],
     effects: ['effect_temp_spell_20_flying'],
     imageUrl: SPELL_IMAGES.temp_spell_20,
+    // [2026-09-27 莉莉子 第二批 ai] 飞剑是「额外出击次数」类资源 —— 场上没有可进攻单位时纯属白扔
+    ai: { pattern: 'FLYING_SWORD', priority: 2, config: { minAttackers: 1 } },
   },
   // ==========================================
   // [2026-09-17 1.0.16 茉莉安 · Phase 5「松露」小队]
@@ -936,6 +944,22 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // ⚠️ 正式卡面待程出图（T29）—— 当前三张均用通用占位图 abc.webp
   // ==========================================
 
+  // --- 阵营法术一：猎影标记（T17 · 2026-09-26 实装）---
+  // 柔性二选一：没暴露就贴暴露；已暴露就让「我方攻击力最高的单位」免费打一次
+  // 设计定位（设计文档 7.1）：三张里最巧的一张 —— 同一张卡在两种局面下做两件事，不会卡手
+  // [2026-09-26 程定] 速度 快速 → **慢速**：慢速只能在主阶段打出，而主阶段交战区必为空
+  //   ⇒「目标已在交战区 / 交战区已满」这两类"开不了战斗"的情况从根上不存在，无需兜底分支
+  marian_faction_mark: {
+    key: 'marian_faction_mark', gachaPool: GachaPoolEnum.Zenith, name: '猎影标记', cost: 2, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'Marian',
+    description: '暴露一个敌人；若其已处于【暴露】，则我方攻击力最高的单位对其发起一次额外攻击（不消耗进攻标识）。',
+    type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.marian_faction_mark,
+    effects: ['effect_marian_faction_mark'], // [T17 完成]
+    // [2026-09-27 莉莉子 第二批 ai] 已暴露 → 额外攻击是真正的价值点；未暴露则只贴标记
+    ai: { pattern: 'EXPOSE_MARK', priority: 3, config: {} },
+  },
+
   // --- 阵营法术二：以饵引狼（T18）---
   // 用【暴露】我方单位当代价，换一个敌人本回合 -4/-0
   // 设计定位：纯交易牌，与茉莉安核心引擎无联动（设计文档 7.2）
@@ -946,7 +970,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     type: 'spell-fast', keywords: [],
     imageUrl: SPELL_IMAGES.marian_faction_bait,
     effects: ['effect_marian_faction_bait'], // [T18 完成]
-    // ⚠️ 未配 ai —— AI 打法属 Phase 6（T26），本次不涉及
+    // [2026-09-27 莉莉子 第二批 ai] 拿最不值钱的单位当饵（天启者绝不送），削敌方攻击力最高的威胁
+    ai: { pattern: 'EXPOSE_DEBUFF', priority: 2, config: { debuff: 4, minEnemyPower: 3 } },
   },
 
   // --- 阵营法术三：静默行动（T19）---
@@ -959,7 +984,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.marian_faction_silence,
     effects: ['effect_marian_silent_action'], // [T19 完成]
-    // ⚠️ 未配 ai —— AI 打法属 Phase 6（T26），本次不涉及
+    // [2026-09-27 莉莉子 第二批 ai] 资源提现：全场【暴露】≥2 个才值得（敌我通用，含自己贴的那些）
+    ai: { pattern: 'EXPOSE_CASHOUT', priority: 3, config: { minExposed: 2 } },
   },
 
   // ==========================================
@@ -1089,42 +1115,49 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '慢速：击杀场上的所有单位。', type: 'spell-slow', keywords: [],
     effects: ['effect_temp_spell_01'],
     imageUrl: SPELL_IMAGES.temp_spell_01,
+    ai: { pattern: 'BOARD_CLEAR', priority: 3, config: { minEnemyUnits: 2, valueRatio: 1.2 } }, // [2026-09-26 莉莉子] 补 ai：击杀全场，需判断谁更亏
   },
   temp_spell_02: {
     key: 'temp_spell_02', name: '瓦尔哈拉的呼唤', cost: 10, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
     description: '慢速：复活我方本牌局死亡的最强的6个单位，且全员带[幻象]。', type: 'spell-slow', keywords: [],
     effects: ['effect_temp_spell_02'],
     imageUrl: SPELL_IMAGES.temp_spell_02,
+    ai: { pattern: 'RESURRECT', priority: 2, config: { maxOwnUnits: 3 } }, // [2026-09-26 莉莉子] 补 ai：场面空缺时复活
   },
   temp_spell_05: {
     key: 'temp_spell_05', name: '单刀直入', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst', // [费用待定]
     description: '快速：对任意一个目标造成2点伤害。', type: 'spell-fast', keywords: [],
     effects: ['effect_temp_spell_05'],
     imageUrl: SPELL_IMAGES.temp_spell_05,
+    ai: { pattern: 'DAMAGE', priority: 2, config: { targetType: 'any', damageValue: 2, lethalPriority: true } }, // [2026-09-26 莉莉子] 补 ai：此前 AI 视为死牌
   },
   temp_spell_06: {
     key: 'temp_spell_06', name: '抵抗', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
     description: '极速：无效化一个费用小于等于3的快速法术。', type: 'spell-burst', keywords: [],
     effects: ['effect_temp_spell_06'],
     imageUrl: SPELL_IMAGES.temp_spell_06,
+    ai: { pattern: 'NEGATE', priority: 4, config: { maxCost: 3, speedFilter: ['spell-fast'] } }, // [2026-09-27] 与 stackSpeedFilter 对齐：只能反制快速法术
   },
   temp_spell_07: {
     key: 'temp_spell_07', name: '抗拒', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
     description: '快速：无效化一个快速或者慢速法术。', type: 'spell-fast', keywords: [],
     effects: ['effect_temp_spell_07'],
     imageUrl: SPELL_IMAGES.temp_spell_07,
+    ai: { pattern: 'NEGATE', priority: 4, config: { speedFilter: ['spell-fast', 'spell-slow'] } }, // [2026-09-27] 与 stackSpeedFilter 对齐：快速/慢速可反制，极速不可
   },
   temp_spell_08: {
     key: 'temp_spell_08', name: '拒绝', cost: 7, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
     description: '快速：无效化当前法术堆叠中的所有敌方法术。', type: 'spell-fast', keywords: [],
     effects: ['effect_temp_spell_08'],
     imageUrl: SPELL_IMAGES.temp_spell_08,
+    ai: { pattern: 'NEGATE', priority: 4, config: { requireAtLeast: 2 } }, // [2026-09-26 莉莉子] 补 ai：栈上多个敌方目标才值得全清
   },
   temp_spell_10: {
     key: 'temp_spell_10', name: '战术回撤', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
     description: '快速：从战场上撤回一个友方单位，生成一张瞬逝的“战术闪击”。', type: 'spell-fast', keywords: [],
     effects: ['effect_temp_spell_10', 'effect_temp_spell_10_generate'],
     imageUrl: SPELL_IMAGES.temp_spell_10,
+    ai: { pattern: 'RECALL_AND_REPLACE', priority: 2, config: {} }, // [2026-09-26 莉莉子] 补 ai
   },
   temp_spell_11: {
     key: 'temp_spell_11', name: '战术闪击', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
@@ -1139,6 +1172,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     choices: ['temp_spell_14', 'temp_spell_15'],
     effects: ['effect_temp_spell_13'],
     imageUrl: SPELL_IMAGES.temp_spell_13,
+    ai: { pattern: 'CHOICE', priority: 3, config: {} }, // [2026-09-26 莉莉子] 补 ai
   },
   temp_spell_14: {
     key: 'temp_spell_14', name: '正面突破', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Analyst',
@@ -1159,6 +1193,9 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '极速：必须选择三个天启者，之后赋予她们+2/+2。', type: 'spell-burst', keywords: [],
     effects: ['effect_temp_spell_16'],
     imageUrl: SPELL_IMAGES.temp_spell_16,
+    // [2026-09-27 莉莉子 第二批 ai] 目标需求是「3 × ALLY_CHAMPION」⇒ 必须由 Handler 把 3 个目标选齐，
+    //   否则 AI 施法会因「合法目标不足」被取消（表现为这张牌 AI 永远打不出来）
+    ai: { pattern: 'CHAMPION_BUFF', priority: 2, config: { targetCount: 3, power: 2, health: 2 } },
   },
 
 
@@ -2024,6 +2061,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '极速：冻结一个敌人。', type: 'spell-burst', keywords: [],
     effects: ['effect_temp_spell_18'],
     imageUrl: SPELL_IMAGES.temp_spell_18,
+    ai: { pattern: 'FROST', priority: 2, config: { maxPower: 99 } }, // [2026-09-26 莉莉子] 补 ai：冻结不限攻击力，故 maxPower 放宽
   },
   // ==========================================
   // 泰坦生态系 (Titan Units)
@@ -2128,6 +2166,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '慢速：燃尽，根据消耗的费用召唤对应的随机数量随机费用的泰坦单位。', type: 'spell-slow', keywords: [],
     effects: ['effect_temp_spell_12'],
     imageUrl: SPELL_IMAGES.temp_spell_12,
+    ai: { pattern: 'SUMMON', priority: 2, config: { minBoardSpace: 1, summonCount: 1 } }, // [2026-09-26 莉莉子] 补 ai（燃尽召唤，按最低保障配）
   },
 
   temp_spell_17: {
@@ -2135,6 +2174,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     description: '慢速：本回合冻结所有敌人，并对所有敌人造成3点伤害。', type: 'spell-slow', keywords: [],
     effects: ['effect_temp_spell_17'],
     imageUrl: SPELL_IMAGES.temp_spell_17,
+    ai: { pattern: 'AOE_DAMAGE', priority: 3, config: { minTargets: 2 } }, // [2026-09-26 莉莉子] 补 ai：全场冻结+3伤，至少 2 个目标才划算
   },
 
   // --- 测试专用卡 ---

@@ -1,6 +1,7 @@
 import type { CardData, GameState } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry'; // [新增] 引入效果字典以读取前置条件
 import { createCard } from '../data/cards'; // [2026-07-31] 安卡升级手牌替换
+import { getPower } from '../logic/keywords'; // [2026-09-26 莉莉子] 攻击力唯一口径（0 下限 + maxPower 上限）
 
 /** [2026-07-10 诗人] 检测凯特琳减费光环是否在场 */
 export const hasPoetCaitlinAura = (bench: CardData[]): boolean => {
@@ -389,7 +390,10 @@ export const evaluateChoiceCondition = (
 // ==========================================
 export const cloneUnitState = (sourceCard: CardData, targetTemplate: CardData): CardData => {
     // 1. 计算源卡牌此时此刻的”真实身材” (包含永久 buffs、回合 buffs 和受到的伤害)
-    const currentPower = sourceCard.power + (sourceCard.buffs?.power || 0) + (sourceCard.roundBuffs?.power || 0);
+    // [2026-09-26 莉莉子 BUG修复] 攻击力改走 `getPower()`（0 下限 + maxPower 上限的唯一口径）——
+    //   此前内联求和会把负值**原样写进克隆体的基础攻击力**，而下方又把 buffs/roundBuffs 清零
+    //   ⇒ 负值被固化成永久身材，回合末的临时账本清算再也清不掉。
+    const currentPower = getPower(sourceCard);
     const currentHealth = sourceCard.health + (sourceCard.buffs?.health || 0) + (sourceCard.roundBuffs?.health || 0) - (sourceCard.damageTaken || 0);
 
     // 2. 合并关键词：保留模板自带的词条（如'Ephemeral'），并加上源卡牌此刻的词条，最后去重
