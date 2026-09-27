@@ -47,6 +47,14 @@ export const HERO_ARCHETYPES: HeroArchetypeInfo[] = [
         difficulty: 5,
         difficultyDesc: '飞剑的生成、格挡与减费环环相扣，双形态切换的时机稍有偏差就会全面崩盘。',
     },
+    // [2026-09-26 莉莉子] 茉莉安·霄鹰（难度 3 档，同卜卜）
+    {
+        heroKey: 'marian',
+        factionName: '信标猎场',
+        factionDesc: '中速控场流。在敌方阵中埋下獠牙信标，用【暴露】把敌人逐个点亮，再引爆炸信把他们拖垮——最后把满场的【暴露】提现成实打实的属性。',
+        difficulty: 3,
+        difficultyDesc: '引爆时机是命门：埋早了白费，埋晚了敌人已经打穿你。更棘手的是【暴露】既是资源也是破绽——点亮敌人的同时，也把自己架在了火上。',
+    },
 ];
 
 export const getHeroArchetype = (heroKey: string): HeroArchetypeInfo | undefined =>

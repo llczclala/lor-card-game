@@ -6,14 +6,17 @@
 //   - 战斗胜利 → 推进
 //   - 全局 HP 仅作展示（战斗内水晶 HP 衔接是细节，后续完善）
 // ==========================================
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ROGUE_MAPS, generateMapLayout, type RogueAct } from '../data/roguelike/mapLayout'; // [2026-08-28] 三张难度图按难度取 · [2026-09-01] 预分配地图（含敌人）存 run 防放弃战斗刷新
 import { MAZE_ENHANCEMENTS } from '../data/roguelike/enhancements';
-import { PLAYER_ENHANCEMENTS } from '../data/roguelike/buffs'; // [2026-08-31 莉莉子 开发者] 全量玩家强化池（含通行证锁定，开发者任意选测试用）
+import { PLAYER_ENHANCEMENTS, MAZE_BUFF_BY_ID } from '../data/roguelike/buffs'; // [2026-08-31 莉莉子 开发者] 全量玩家强化池（含通行证锁定）· [2026-09-25] 拾荒的 run 层结算
 import type { RogueDifficulty } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统]
 import type { RogueInvestment } from '../data/roguelike/events'; // [2026-08-28] 事件投资标记
 import { CARD_DB } from '../data/cards';
-import { getEquipPoolForCard } from '../data/equipment'; // [2026-08-29 休整·探路] 回归随机装备
+import { getEquipPoolForCard, getEquipmentById } from '../data/equipment'; // [2026-08-29 休整·探路] 回归随机装备 · [2026-09-25] 武装任务查询
+import { advanceQuest, questCount, questKey } from '../logic/questTracker'; // [2026-09-25 莉莉子 武装线] 整局任务进度推进
+import type { QuestEvent } from '../data/questTypes'; // [2026-09-25] 任务事件类型
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-09-25 莉莉子 武装线] 战斗内任务事件订阅
 import { StorageUtils, STORAGE_KEYS } from '../utils/storageUtils'; // [2026-08-28 对局持久化] 未结算对局暂离存档
 
 export type RoguelikeRunStatus = 'active' | 'won' | 'dead';
@@ -45,6 +48,9 @@ export interface RoguelikeRunState {
     expFromNodes: number;         // 本局已发放的节点经验累计（结算时补差额）
     expGrantedNodes: string[];    // 已发过经验的节点 id（按节点去重）
     armaments?: string[];         // 本局开局武装快照（碳原子板"通关经验翻倍"判断）
+    // [2026-09-25 莉莉子 三线任务化框架 · 武装线] 整局任务进度表：key → 累计次数（键 = questKey.arm(id)）
+    //   跨战斗累积；战斗内广播 ROGUE_QUEST_EVENT → 本 hook 订阅并推进
+    questProgress?: Record<string, number>;
     expRateBonus?: number;        // 天启者等级经验效率加成（%）
     passUnlockedEnhancements?: string[]; // [2026-08-29 通行证] 本局已解锁的通行证专属强化 id（强化抽选加入池）
     equipRarityBonus?: number; // [2026-08-29 程拍板] 天启者等级装备稀有度加成（%，战斗奖励抽选紫金加权）
@@ -52,6 +58,8 @@ export interface RoguelikeRunState {
     devEnemyEnhancements?: string[]; // [2026-08-31 莉莉子 开发者] 开发者账号在本局任意强化节点选的敌方强化，注入下一场战斗（便于地毯式测试敌方强化）
     layout: RogueAct[]; // [2026-09-01 莉莉子] 本局预分配地图（含节点敌人/强化/BUFF）：startRun 生成一次存 run，放弃战斗返回地图不再重随（此前 RogueMapScreen 每次挂载重新 generateMapLayout 随机敌人）
     heroRecruitDone?: boolean; // [2026-09-04 首战英雄招募] 首战天启者三选一已结算过（pick/skip 后置 true，防重复触发）
+    // [2026-09-25 莉莉子 武装线] 本场战斗天启者是否阵亡（凯旋之匣结算用）：战斗开始时复位、战斗结束时消费
+    heroDiedThisBattle?: boolean;
 }
 
 // [2026-08-12 天启者养成] startRun 可选的等级加成（由 useHeroProgression.getHeroLevelBonus 提供，数值为"加成量"）
@@ -113,8 +121,9 @@ export const useRoguelikeRun = () => {
 
         // [2026-08-29 程拍板] 开局装备挂载：extraEquipments → 起始英雄卡；
         //   grantedSpellEquips → 随机一张初始牌组法术卡；grantedUnitEquips → 随机一个初始牌组非英雄单位（牌组无此类卡则跳过容错）
+        // [2026-09-25 莉莉子 装备不叠加] 各来源统一去重：同一件装备不重复挂（重复挂会被 attachEquipment 静默忽略 = 白给）
         const equippedCards: Record<string, string[]> = {};
-        if ((bonus?.extraEquipments?.length ?? 0) > 0) equippedCards[heroKey] = [...bonus!.extraEquipments!];
+        if ((bonus?.extraEquipments?.length ?? 0) > 0) equippedCards[heroKey] = Array.from(new Set(bonus!.extraEquipments!));
         const grantCardEquips = (list: string[] | undefined, isSpell: boolean) => {
             if (!list?.length) return;
             const pool = deck.filter(k => {
@@ -125,7 +134,9 @@ export const useRoguelikeRun = () => {
             if (!pool.length) return;
             for (const eq of list) {
                 const pick = pool[Math.floor(Math.random() * pool.length)];
-                equippedCards[pick] = [...(equippedCards[pick] ?? []), eq];
+                const cur = equippedCards[pick] ?? [];
+                if (cur.includes(eq)) continue; // [2026-09-25] 不叠加：同一件不重复挂
+                equippedCards[pick] = [...cur, eq];
             }
         };
         grantCardEquips(bonus?.grantedSpellEquips, true);
@@ -162,6 +173,7 @@ export const useRoguelikeRun = () => {
             expFromNodes: 0,       // [2026-08-29] 节点经验累计
             expGrantedNodes: [],   // [2026-08-29] 已发经验节点去重
             armaments: bonus?.armaments,       // [2026-08-29] 开局武装快照
+            questProgress: {},                 // [2026-09-25 莉莉子 武装线] 整局任务进度归零
             expRateBonus: bonus?.expRateBonus, // [2026-08-29] 经验效率加成
             passUnlockedEnhancements: bonus?.passUnlockedEnhancements, // [2026-08-29 通行证] 已解锁强化
             equipRarityBonus: bonus?.equipRarityBonus, // [2026-08-29] 装备稀有度加成
@@ -187,8 +199,9 @@ export const useRoguelikeRun = () => {
             return null;
         }
         // 回归：随机佩戴一件装备 + 卡回牌组
+        // [2026-09-25 莉莉子 装备不叠加] 排除该卡已挂装备（没有新的可挂 → 空手而归，不再发重复件）
         const cardDef = CARD_DB[sc.cardKey];
-        const pool = cardDef ? getEquipPoolForCard(cardDef) : [];
+        const pool = cardDef ? getEquipPoolForCard(cardDef, run?.equippedCards?.[sc.cardKey]) : [];
         const equipId = pool.length ? pool[Math.floor(Math.random() * pool.length)].id : undefined;
         setRun(prev => {
             if (!prev) return prev;
@@ -407,6 +420,91 @@ export const useRoguelikeRun = () => {
         StorageUtils.remove(getPendingKey());
     }, []);
 
+    // ═══ [2026-09-25 莉莉子 三线任务化框架 · 武装线] 整局任务进度 ═══
+    //   战斗内发生的事（天启者打击…）由 useGameState 走事件总线广播出来 —— 那边拿不到本 hook 的 state。
+    //   这里只推进【整局作用域】的任务（武装），单场作用域（强化/装备）在战斗内自己记账。
+    useEffect(() => {
+        const onQuestEvent = (payload?: { event?: QuestEvent }) => {
+            const ev = payload?.event;
+            if (!ev) return;
+            setRun(prev => {
+                if (!prev?.armaments?.length) return prev;
+                let next = prev.questProgress ?? {};
+                let changed = false;
+                for (const id of prev.armaments) {
+                    const q = getEquipmentById(id)?.quest;
+                    if (!q || (q.scope ?? 'battle') !== 'run' || q.event !== ev) continue;
+                    next = advanceQuest(next, questKey.arm(id), 1);
+                    changed = true;
+                }
+                return changed ? { ...prev, questProgress: next } : prev;
+            });
+        };
+        eventBus.on(GameEvents.ROGUE_QUEST_EVENT, onQuestEvent);
+        // [2026-09-25 莉莉子 武装线] 天启者阵亡 → 记本场标记（凯旋之匣："英雄活到最后才给金币"）
+        const onHeroDied = () => setRun(prev => (prev ? { ...prev, heroDiedThisBattle: true } : prev));
+        eventBus.on(GameEvents.ROGUE_HERO_DIED, onHeroDied);
+        // [2026-09-25 莉莉子 强化线] 战斗内发放 run 层金币（悬赏等）
+        const onGoldGrant = (payload?: { amount?: number }) => {
+            const amt = payload?.amount ?? 0;
+            if (amt > 0) setRun(prev => (prev ? { ...prev, gold: prev.gold + amt } : prev));
+        };
+        eventBus.on(GameEvents.ROGUE_GOLD_GRANT, onGoldGrant);
+        return () => {
+            eventBus.off(GameEvents.ROGUE_QUEST_EVENT, onQuestEvent);
+            eventBus.off(GameEvents.ROGUE_HERO_DIED, onHeroDied);
+            eventBus.off(GameEvents.ROGUE_GOLD_GRANT, onGoldGrant);
+        };
+    }, []);
+
+    /** [2026-09-25 莉莉子 武装线] 战斗开始：复位本场标记（凯旋之匣的"英雄存活"判定基于单场） */
+    const resetBattleFlags = useCallback(() => {
+        setRun(prev => (prev ? { ...prev, heroDiedThisBattle: false } : prev));
+    }, []);
+
+    /**
+     * [2026-09-25 莉莉子 武装线/强化线] 战斗结束结算 run 层经济联动，并复位本场标记。
+     *   ① 武装（凯旋之匣 `runBattleEndGold`）：天启者存活 → +N
+     *   ② 强化（拾荒 `runBattleEndGold` + `runBattleEndMinNexus`）：我方水晶不低于阈值 → +N
+     * 全部数据驱动 —— 这里不硬编码任何条目 id。
+     */
+    const settleArmamentBattleEnd = useCallback((playerNexus?: number) => {
+        setRun(prev => {
+            if (!prev) return prev;
+            let gain = 0;
+            if (!prev.heroDiedThisBattle) {
+                gain += (prev.armaments ?? []).reduce((s, id) => s + (getEquipmentById(id)?.runBattleEndGold ?? 0), 0);
+            }
+            gain += (prev.enhancements ?? []).reduce((s, id) => {
+                const b = MAZE_BUFF_BY_ID[id];
+                if (!b?.runBattleEndGold) return s;
+                return (playerNexus ?? 0) >= (b.runBattleEndMinNexus ?? 0) ? s + b.runBattleEndGold : s;
+            }, 0);
+            return { ...prev, heroDiedThisBattle: false, gold: prev.gold + gain };
+        });
+    }, []);
+
+    /** [2026-09-25 莉莉子 投降] 消耗一次复活。返回是否成功 —— false 表示没有复活次数了（调用方应走肉鸽失败结算） */
+    const consumeRevive = useCallback((): boolean => {
+        const cur = runRef.current;
+        if (!cur || (cur.reviveCount ?? 0) <= 0) return false;
+        setRun(prev => (prev && (prev.reviveCount ?? 0) > 0 ? { ...prev, reviveCount: prev.reviveCount - 1 } : prev));
+        return true;
+    }, []);
+
+    // [2026-09-25 莉莉子 三线任务化框架 · 进度可见性] 整局任务进度 → 广播给 UI ═══
+    //   设计依据：炉石任务牌的坑 #1「进度必须公开可见」—— 没有进度显示，"任务引导玩家"就无从谈起
+    useEffect(() => {
+        const rows = (run?.armaments ?? []).flatMap(id => {
+            const def = getEquipmentById(id);
+            const q = def?.quest;
+            if (!q || !def) return [];
+            const cur = Math.min(questCount(run?.questProgress, questKey.arm(id)), q.threshold);
+            return [{ key: `arm:${id}`, name: def.name, sub: '武装', current: cur, threshold: q.threshold, done: cur >= q.threshold }];
+        });
+        eventBus.emit(GameEvents.ROGUE_QUEST_UI, { scope: 'run', rows });
+    }, [run?.questProgress, run?.armaments]);
+
     // ═══ [2026-08-28 事件] 跨节点投资 / 未来敌人强化 ═══
 
     /** 追加投资标记（播种希望 / 托付遗物 / 牺牲祝福） */
@@ -478,5 +576,5 @@ export const useRoguelikeRun = () => {
         setRun(prev => prev ? { ...prev, startedAt: Date.now() } : prev);
     }, []);
 
-    return { run, startRun, moveTo, completeBattle, heal, setHp, addGold, addCard, markHeroRecruited, applyEnhancement, applyDevEnhancements, setDevEnemyEnhancements, advanceAct, endRun, resetRun, markDefeated, spendGold, useRefresh, addEquippedCard, removeCard, addRevive, addRefresh, adjustMaxHp, addInvestment, consumeInvestments, addFightDebuff, consumeFightDebuff, removeRandomEquipment, grantNodeExp, resetStartedAt, startScout, advanceScout, savePendingRun, loadPendingRun, clearPendingRun };
+    return { run, startRun, moveTo, completeBattle, heal, setHp, addGold, addCard, markHeroRecruited, applyEnhancement, applyDevEnhancements, setDevEnemyEnhancements, advanceAct, endRun, resetRun, markDefeated, spendGold, useRefresh, addEquippedCard, removeCard, addRevive, addRefresh, adjustMaxHp, addInvestment, consumeInvestments, addFightDebuff, consumeFightDebuff, removeRandomEquipment, grantNodeExp, resetStartedAt, startScout, advanceScout, savePendingRun, loadPendingRun, clearPendingRun, resetBattleFlags, settleArmamentBattleEnd, consumeRevive };
 };

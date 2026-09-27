@@ -17,6 +17,7 @@ export const HERO_DIVINITY_LEVEL: Record<string, number> = {
     pupu_specular_soul: 0,
     mauxir_lotus_drive: 0,
     acacia_chrono_echo: 0,
+    marian: 0, // [2026-09-26 莉莉子] 第 6 位天启者（神格神经系统仍占位）
 };
 
 /** 获取某天启者神格神经等级（星级，无记录 → 0） */

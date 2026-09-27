@@ -12,6 +12,7 @@
 import abc_spell from '../../image/spells/abc.webp';
 import { SPELL_IMAGES, UNIT_IMAGES } from '../imageData';
 import { type RogueDifficulty } from './difficulties'; // [2026-08-28] 敌人强化按难度分层
+import type { QuestSpec } from '../questTypes'; // [2026-09-25 莉莉子] 三线任务化框架：任务声明
 
 export type EnhancementEffectType = 'max_hp' | 'heal' | 'gold' | 'add_card' | 'passive';
 // [2026-08-27 莉莉子] 六档品质：白 common / 绿 uncommon / 蓝 rare / 紫 epic / 金 legendary / 红 mythic
@@ -53,13 +54,36 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     | 'SPELL_DOUBLE'          // 全局：我方法术与技能伤害翻倍（常驻，伤害结算处查询）
     | 'KEYWORD_POWER'         // 全局：我方单位每有 1 个关键词 +1/+1（常驻，属性计算处查询）
     | 'NEXUS_HP_BOOST'        // [2026-08-28] 敌方水晶生命强化：构建期折算进敌方水晶初值（中后段敌人+B10 / Boss+20）
-    | 'CHAMPION_TO_HAND';     // [2026-09-01 莉莉子] 天启共鸣：开局从牌库随机抽一张天启者到手牌（提高上手率，天启者等级奖励专属）
+    | 'CHAMPION_TO_HAND'      // [2026-09-01 莉莉子] 天启共鸣：开局从牌库随机抽一张天启者到手牌（提高上手率，天启者等级奖励专属）
+    | 'DRAW_CARDS'            // [2026-09-25 莉莉子 三线任务化框架] 开局抽 N 张（params.value）：牌库顶 N 张进手牌；武装任务兑现与后续条目共用
+    | 'DISCARD_LOWEST_BUFF_CHAMPION' // [2026-09-25 莉莉子 武装线] 噬牌之匣：回合开始弃掉手牌中费用最低的一张 → 天启者永久 +1/+1
+    // [2026-09-25 莉莉子 武装线] 武装专用效果类（载体为 armfx_* 条目）
+    | 'SUMMON_INHERIT_LAST_DEAD'    // 亡者低语：此后每次召唤，新单位获得"最后阵亡单位"的攻血
+    | 'SPREAD_CHAMPION_KEYWORDS'    // 共鸣水晶：随机赋予天启者一个关键词 → 其关键词同时赋予在场友军
+    | 'TAX_ENEMY_HAND'             // 破晓号令：敌方手牌中随机 count 张单位卡费用 +value
+    // [2026-09-25 莉莉子 强化线 · 新效果批] 亡语系 + 经济联动
+    | 'DEATH_NEXUS_DAMAGE'          // 余烬：我方单位阵亡时，敌方水晶受到 N 点伤害（死亡即伤害）
+    | 'DEATH_STRIKE_RANDOM_ENEMY'   // 献祭回响：我方单位阵亡时，对敌方随机单位造成等于其攻击力的伤害
+    | 'DEATH_GIFT_KEYWORD'          // 返祖：我方单位阵亡时，随机一个友军获得它的一个关键词
+    // [2026-09-25 莉莉子 强化线 · 新效果批（第二组）]
+    //   ⚠️ 这两个类需要 game 级提交（悬赏写标记、终焉回响扣水晶）—— game_start 站点本轮已补上差异合并提交
+    | 'OPENING_ZERO_COST'           // 终焉回响：开局随机 2 张手牌费用变 0；代价：每场开局我方水晶 −2
+    | 'BOUNTY_CYCLE'                // 悬赏：标记敌方最强的单位 → 它被击杀后抽 2 张牌 + 50 金币（自循环：结算后下回合重标记）
+    | 'LONE_GUARD_BUFF';            // 孤军：我方场上恰好 1 个单位时，该单位 +4/+4 并获得【屏障】
 export interface BattleEffectDef {
     trigger: BattleTrigger;
     effectClass: BattleEffectClass;
     priority?: number; // [2026-09-09 莉莉子] 同 trigger 串行触发顺序（小先大后，回落=获取序）。同一 trigger 内多个 targeting 效果靠它定先后。
     params?: Record<string, unknown>; // 执行参数，逻辑层按类读取
+    oncePerBattle?: boolean; // [2026-09-25 莉莉子 三线任务化框架] 本场战斗只生效一次（破晓号令等）；账本借用 questProgress 的 used:<id> 键
+    requireOnlyOneUnit?: boolean; // [2026-09-25 莉莉子 强化线] 苛刻条件：我方场上恰好 1 个单位才分发（孤军）；判定在"每场一次"记账之前，不会白白消耗掉那一次
 }
+
+/** [2026-09-25 莉莉子 武装线] 共鸣水晶的「随机关键词」候选池（只从中挑一个赠予天启者，再扩散给友军） */
+export const CHAMPION_GIFT_KEYWORDS = [
+    'QuickAttack', 'Tough', 'Thorns', 'Overwhelm', 'Regeneration',
+    'Lifesteal', 'Elusive', 'Barrier', 'Challenger', 'Fearsome',
+] as const;
 
 export interface EnhancementEffect {
     type: EnhancementEffectType;
@@ -75,6 +99,17 @@ export interface MazeBuff {
     icon: string;
     effect?: EnhancementEffect; // 玩家强化必填（即时生效）；敌方 BUFF 情报占位可为空（战斗暂不生效）
     battleEffect?: BattleEffectDef; // [2026-08-11] 战斗内被动强化声明（触发时机 + 效果类）；玩家战斗型强化专用
+    quest?: QuestSpec; // [2026-09-25 莉莉子 三线任务化框架] 任务版强化：达成阈值后 battleEffect 才开始分发（quest 是解锁门，兑现复用 battleEffect）
+    /** [2026-09-25 莉莉子 强化线] 战斗结束时的 run 层经济联动：我方水晶 ≥ runBattleEndMinNexus 时 +N 金币（拾荒） */
+    runBattleEndGold?: number;
+    runBattleEndMinNexus?: number;
+    /**
+     * [2026-09-25 莉莉子 强化线] 资源规则类 · 共鸣涌流：每施放 every 个法术，本场法术法力上限 +1（封顶 max）
+     *   不走触发引擎 —— 计数在 playCard 站点累加，实际生效在回合边界的法力计算（logic/core.ts）
+     */
+    spellManaGrowth?: { every: number; max?: number };
+    /** [2026-09-25 莉莉子 强化线] 资源规则类 · 囤积：把未使用法力溢出到法术池的上限抬高 N 点 */
+    hoardSpellMana?: number;
     playerEligible: boolean;    // [接口开关] 玩家能否刷取到
     enemyEligible: boolean;     // [接口开关] 敌方卡组编辑器能否配置
 }
@@ -171,6 +206,77 @@ export const MAZE_BUFFS: MazeBuff[] = [
         id: 'enhance_nexus_ally_buff', name: '水晶共鸣', description: '敌方水晶每受到 1 次伤害，随机赋予我方单位 +1/+1。',
         rarity: 'epic', icon: abc_spell, effect: { type: 'passive' }, // [2026-09-05] 原 rare（与牌库灌注品质互换）
         battleEffect: { trigger: 'on_nexus_strike', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
+        playerEligible: true, enemyEligible: false,
+    },
+
+    // ── [2026-09-25 莉莉子 任务化强化批 v3 · 试点] 《设计-肉鸽三线任务化框架》7.3 ──
+    //   任务版：quest 是【解锁门】—— 达成阈值后 battleEffect 才开始逐回合生效。
+    //   与现有强化【并列存在】（不替换、不改造）；⚠️ v1 只对玩家侧开放（敌方尚无任务进度推进管线）
+    {
+        id: 'enhance_iron_oath', name: '铁誓', description: '本场我方水晶累计受伤 3 次后：此后每回合开始，我方全体单位获得 +1/+1。',
+        rarity: 'uncommon', icon: abc_spell, effect: { type: 'passive' },
+        quest: { event: 'nexus_damaged', threshold: 3, scope: 'battle' },
+        battleEffect: { trigger: 'round_start', effectClass: 'ALL_BUFF', params: { power: 1, health: 1 } },
+        playerEligible: true, enemyEligible: false,
+    },
+
+    // ── [2026-09-25 莉莉子 强化线 · 新效果批 v3 §7.3] 全部为**新效果**，与现有强化并列存在 ──
+    //   注意：白档（common）此前在玩家池里**一个都没有**（权重 70 却空着），本批补上 2 个
+    {
+        id: 'enhance_ember', name: '余烬', description: '我方单位阵亡时，敌方水晶受到 1 点伤害。',
+        rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'unit_die', effectClass: 'DEATH_NEXUS_DAMAGE', params: { value: 1 } },
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_scavenge', name: '拾荒', description: '每场战斗结束时，若我方水晶不低于 10 点，获得 20 金币。',
+        rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
+        runBattleEndGold: 20, runBattleEndMinNexus: 10, // run 层结算（与凯旋之匣同一处），不走战斗内管线
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_atavism', name: '返祖', description: '我方单位阵亡时，随机一个友军获得它的一个关键词。',
+        rarity: 'uncommon', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'unit_die', effectClass: 'DEATH_GIFT_KEYWORD' },
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_sacrifice_echo', name: '献祭回响', description: '我方单位阵亡时，对敌方随机单位造成等于其攻击力的伤害。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'unit_die', effectClass: 'DEATH_STRIKE_RANDOM_ENEMY' },
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_bounty', name: '悬赏', description: '每回合开始时标记敌方攻击力最高的单位为悬赏；它被击杀后你抽 2 张牌并获得 50 金币，然后重新标记。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'round_start', effectClass: 'BOUNTY_CYCLE' }, // 自循环：标记 → 目标消失 → 结算 → 下回合重标记
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_last_stand', name: '孤军', description: '我方场上恰好只有 1 个单位时，该单位永久获得 +4/+4 与【屏障】（每场一次）。',
+        rarity: 'legendary', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: {
+            trigger: 'round_start', effectClass: 'LONE_GUARD_BUFF', params: { power: 4, health: 4 },
+            oncePerBattle: true, requireOnlyOneUnit: true, // 苛刻条件 + 极限单卡流（苛刻判定在分发前，不浪费"每场一次"）
+        },
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_final_echo', name: '终焉回响', description: '每场战斗开局，随机 2 张手牌费用变为 0；代价：每场战斗开始时我方水晶 -2。',
+        rarity: 'mythic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'OPENING_ZERO_COST', params: { count: 2, nexusCost: 2 } },
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_mana_surge', name: '共鸣涌流', description: '本场战斗中，我方每施放 3 个法术，法术法力上限 +1（最多 +3）。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        spellManaGrowth: { every: 3, max: 3 }, // 资源规则类：计数在 playCard，生效在回合边界的法力计算
+        playerEligible: true, enemyEligible: false,
+    },
+    {
+        id: 'enhance_hoard', name: '囤积', description: '回合结束时，未使用的法力最多可有 3 点溢出进法术法力池（突破常规 3 点上限）—— 攒一波大招。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        hoardSpellMana: 3,
         playerEligible: true, enemyEligible: false,
     },
 
@@ -385,7 +491,57 @@ export const MAZE_BUFFS: MazeBuff[] = [
         battleEffect: { trigger: 'game_start', effectClass: 'CHAMPION_TO_HAND' },
         playerEligible: false, enemyEligible: false,
     },
+
+    // ── [2026-09-25 莉莉子 三线任务化框架 · 武装线] 武装的【战斗内效果载体】（不进任何抽选池）──
+    //   武装完成整局任务后，RogueGameWrapper 把这里的 id 注入本场 rogueEnhancements，
+    //   从而复用迷宫强化既有的分发管线（trigger → handler，以及强化面板的展示）。
+    {
+        id: 'armfx_echo_box', name: '余响之匣', description: '开局额外抽 2 张牌。',
+        rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'DRAW_CARDS', params: { value: 2 } },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'armfx_devour_box', name: '噬牌之匣', description: '每回合开始：弃掉手牌中费用最低的一张，天启者永久 +1/+1。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'round_start', effectClass: 'DISCARD_LOWEST_BUFF_CHAMPION' },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'armfx_royal_warrant', name: '王权之证', description: '开局：天启者必定入手（水晶代价在战斗初值处已扣）。',
+        rarity: 'mythic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'CHAMPION_TO_HAND' },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'armfx_break_dawn', name: '破晓号令', description: '每场战斗一次：敌方手牌中随机 3 张单位卡费用 +2。',
+        rarity: 'uncommon', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'round_start', effectClass: 'TAX_ENEMY_HAND', params: { value: 2, count: 3 }, oncePerBattle: true },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'armfx_attune_crystal', name: '共鸣水晶', description: '随机赋予天启者一个关键词，其关键词同时赋予在场友军。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'round_start', effectClass: 'SPREAD_CHAMPION_KEYWORDS' },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'armfx_whisper_dead', name: '亡者低语', description: '此后每次召唤，新单位获得最后阵亡单位的攻血。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'on_summon', effectClass: 'SUMMON_INHERIT_LAST_DEAD' },
+        playerEligible: false, enemyEligible: false,
+    },
 ];
+
+// [2026-09-25 莉莉子 防回归守卫] id 唯一性自检 —— 撞号会让 getBuffById / 解锁门 / 进度键全部串号
+//   （2026-09-25 装备侧真实发生过一次撞号事故，强化侧同款风险，故一并加上）
+if (import.meta.env?.DEV) {
+    const seen = new Set<string>();
+    for (const b of MAZE_BUFFS) {
+        if (seen.has(b.id)) console.error(`[buffs] 迷宫强化 id 撞号：${b.id} —— 会被抢先匹配、进度键也会串号`);
+        seen.add(b.id);
+    }
+}
 
 // ── 派生视图 ──
 export const PLAYER_ENHANCEMENTS = MAZE_BUFFS.filter(b => b.playerEligible);

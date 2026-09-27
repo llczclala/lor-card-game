@@ -173,7 +173,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
     const handleRefresh = () => {
         if (onRefresh()) {
-            setStock(generateShopStock(run.rarityBonus, run.passUnlockedEnhancements)); // [2026-08-29 通行证]
+            setStock(generateShopStock(run.rarityBonus, run.passUnlockedEnhancements, { equippedCards: run.equippedCards, ownedEnhancements: run.enhancements })); // [2026-08-29 通行证] [2026-09-25] 不叠加：不发已拥有强化/该卡已有装备
             setPurchased(new Set());
             setRemovePick(null);
             setEquipPicks(new Set()); // [2026-09-10] 换货后清空已选装备
@@ -303,7 +303,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                             // [2026-09-10] 英雄候选 = 牌组里所有天启者卡（本局主英雄 + 首战招募来的英雄，去重）
                             const champions = Array.from(new Set(run.deck.filter(k => CARD_DB[k]?.isChampion)));
                             // 已选且未售出的装备（售出的可能被留在 state 里，实时过滤掉）
-                            const picks = stock.equipments.filter(it => equipPicks.has(it.equipmentId) && !purchased.has(`eq_${it.equipmentId}`));
+                            // [2026-09-25 莉莉子 装备不叠加] 已挂在所选天启者身上的装备不再计入（不重复挂 / 不重复收费）
+                            const onHero = (equipmentId: string) => !!equipHeroPick && (run.equippedCards?.[equipHeroPick] ?? []).includes(equipmentId);
+                            const picks = stock.equipments.filter(it => equipPicks.has(it.equipmentId) && !purchased.has(`eq_${it.equipmentId}`) && !onHero(it.equipmentId));
                             const total = picks.reduce((s, it) => s + it.price, 0);
                             // 三选一条件全满足才可买：选了英雄 + 选了装备 + 金币够
                             const canBuy = !!equipHeroPick && picks.length > 0 && run.gold >= total;
@@ -369,13 +371,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                                 const def = getEquipmentById(item.equipmentId);
                                                 if (!def) return null;
                                                 const sold = purchased.has(`eq_${item.equipmentId}`);
-                                                const sel = !sold && equipPicks.has(item.equipmentId);
+                                                const dup = onHero(item.equipmentId); // [2026-09-25 莉莉子 装备不叠加] 已装在该天启者身上 → 不可再选
+                                                const sel = !sold && !dup && equipPicks.has(item.equipmentId);
                                                 const color = RARITY_COLOR[def.rarity] || '#9ca3af';
                                                 return (
                                                     <button
                                                         key={item.equipmentId}
                                                         type="button"
-                                                        disabled={sold}
+                                                        disabled={sold || dup}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             eventBus.emit(GameEvents.UI_CLICK);
@@ -386,7 +389,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                                             });
                                                         }}
                                                         className={`relative text-left rounded-xl p-3 flex items-center gap-3 border transition-all ${
-                                                            sold ? 'bg-white/[0.02] border-white/5 opacity-45 cursor-default'
+                                                            (sold || dup) ? 'bg-white/[0.02] border-white/5 opacity-45 cursor-default'
                                                                 : sel ? 'bg-emerald-500/15 border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.35)]'
                                                                 : 'bg-white/5 border-white/10 cursor-pointer hover:bg-white/10 hover:border-white/25 hover:-translate-y-0.5'
                                                         }`}
@@ -401,8 +404,8 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                                                 </span>
                                                             </div>
                                                             <p className="text-xs text-gray-400 mb-1.5 line-clamp-2">{def.description}</p>
-                                                            <span className={`text-xs font-black ${sold ? 'text-gray-500' : affordable(item.price) ? 'text-amber-300' : 'text-red-400'}`}>
-                                                                {sold ? '已购' : `🪙${item.price}`}
+                                                            <span className={`text-xs font-black ${(sold || dup) ? 'text-gray-500' : affordable(item.price) ? 'text-amber-300' : 'text-red-400'}`}>
+                                                                {sold ? '已购' : dup ? '已装' : `🪙${item.price}`}
                                                             </span>
                                                         </div>
                                                         {sel && (

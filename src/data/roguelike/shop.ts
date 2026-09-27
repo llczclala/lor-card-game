@@ -65,37 +65,46 @@ const randomCardKey = (exclude: Set<string>): string => {
     return pool.length ? pool[Math.floor(Math.random() * pool.length)].key : 'lyfe';
 };
 
-const randomEquipId = (card: { type: string }): string | undefined => {
-    const pool = getEquipPoolForCard(card); // [2026-08-29] 按卡筛：单位→全装备，法术→纯减费
+const randomEquipId = (card: { type: string }, excludeIds?: string[]): string | undefined => {
+    const pool = getEquipPoolForCard(card, excludeIds); // [2026-08-29] 按卡筛：单位→全装备，法术→纯减费
     return pool.length ? pool[Math.floor(Math.random() * pool.length)].id : undefined;
 };
 
 /**
  * 生成 count 张不同卡（60% 带随机装备）——商店买卡区 / 卡牌宝箱共用。
  * [2026-08-29] 法术卡只配纯减费装备（getEquipPoolForCard 过滤），杜绝数值/关键词等无效装备。
+ * [2026-09-25 莉莉子 装备不叠加] 传 equippedCards 后，候选卡不再佩戴"这张卡已经挂着"的装备：
+ *   装备按卡 key 生效（新副本本来就继承那件），再发一件同样的只是白加价。
  */
-export const generateCardOffers = (count: number): ShopCardItem[] => {
+export const generateCardOffers = (count: number, equippedCards?: Record<string, string[]>): ShopCardItem[] => {
     const cards: ShopCardItem[] = [];
     const used = new Set<string>();
     for (let i = 0; i < count; i++) {
         const key = randomCardKey(used);
         used.add(key);
         const withEquip = Math.random() < 0.6;
-        const equipId = withEquip ? randomEquipId(CARD_DB[key]) : undefined;
+        const equipId = withEquip ? randomEquipId(CARD_DB[key], equippedCards?.[key]) : undefined;
         cards.push({ cardKey: key, equipId, price: getCardPrice(key, equipId) });
     }
     return cards;
 };
 
+/** [2026-09-25 莉莉子 不叠加] 商店生成上下文：本局卡→装备映射 + 已拥有强化（两者都用于"不发无效商品"） */
+export interface ShopStockContext {
+    equippedCards?: Record<string, string[]>;
+    ownedEnhancements?: string[];
+}
+
 /**
  * 生成一商店的商品：3 张卡（60% 带随机装备）+ 1 个迷宫强化 + 2 个装备。
  * @param rarityBonus 英雄等级的稀有度加成（影响强化/装备抽选权重）
  */
-export const generateShopStock = (rarityBonus?: RarityBonusInput, unlockedPass?: string[]): ShopStock => {
-    const cards = generateCardOffers(3);
+export const generateShopStock = (rarityBonus?: RarityBonusInput, unlockedPass?: string[], ctx?: ShopStockContext): ShopStock => {
+    const cards = generateCardOffers(3, ctx?.equippedCards);
 
     // 买迷宫强化：从玩家强化池抽 1 个（含稀有度权重；[2026-08-29 通行证] 已解锁通行证强化也入池）
-    const enh = pickRandomEnhancements(1, undefined, rarityBonus, unlockedPass)[0];
+    // [2026-09-25 莉莉子 强化不叠加] 排除本局已拥有 → 池空则不卖强化（enhancement = null）
+    const enh = pickRandomEnhancements(1, undefined, rarityBonus, unlockedPass, ctx?.ownedEnhancements)[0];
     const enhancement: ShopEnhancementItem | null = enh
         ? { enhancementId: enh.id, price: getEnhancementPrice(enh.rarity) }
         : null;

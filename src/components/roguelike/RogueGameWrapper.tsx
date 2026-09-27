@@ -9,6 +9,8 @@ import { Home } from 'lucide-react';
 import type { RoguelikeRunState } from '../../hooks/useRoguelikeRun';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { useArmamentConfig } from '../../hooks/useArmamentConfig'; // [2026-08-14 武装] 局外武装带入
+import { getEquipmentById } from '../../data/equipment'; // [2026-09-25 莉莉子 武装线] 武装任务查询
+import { isQuestDone, questKey } from '../../logic/questTracker'; // [2026-09-25 莉莉子 武装线] 整局任务达成判定
 
 type GameSessionProps = React.ComponentProps<typeof GameSession>;
 
@@ -26,14 +28,25 @@ export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, r
 
     // [2026-08-14 武装] 战斗构建合并：局内装备（equippedCards）+ 局外武装（useArmamentConfig）一起挂到对应卡
     // 武装静态修饰（+1/+1 / 费用-2）由 attachEquipment 生效；秘法回响（回合开始恢复法力）由 armamentManaRestore 生效
-    const armForHero = getArmament(run.heroKey, run.heroLevel ?? 1); // [2026-08-28 莉莉子 修复] 只带已解锁槽位武装（等级降低残留不带入）
+    // [2026-09-25 莉莉子 不叠加] 合并后整体去重（老存档可能残留同英雄重复武装）：同一件装备/武装只带一份
+    const armForHero = Array.from(new Set(getArmament(run.heroKey, run.heroLevel ?? 1).filter((v): v is string => !!v))); // [2026-08-28 莉莉子 修复] 只带已解锁槽位武装（等级降低残留不带入）
     const rogueEquipments = {
         ...(run.equippedCards ?? {}),
-        [run.heroKey]: [
+        [run.heroKey]: Array.from(new Set([
             ...(run.equippedCards?.[run.heroKey] ?? []),
-            ...armForHero.filter((v): v is string => !!v),
-        ],
+            ...armForHero,
+        ])),
     };
+    // ── [2026-09-25 莉莉子 三线任务化框架 · 武装线] 武装的战斗内效果 → 注入本场 ──
+    //   借道迷宫强化管线（分发 / 解锁门 / 面板展示全部复用），不为武装另开一套执行器
+    //   · 无 quest 的（Novel 型：噬牌之匣 / 王权之证）= 常驻生效
+    //   · 有 quest 的（Quest 型：余响之匣）= 完成整局任务后才注入
+    const armamentEffects = (run.armaments ?? []).flatMap(id => {
+        const def = getEquipmentById(id);
+        if (!def?.grantBattleEffectIds?.length) return [];
+        if (!def.quest) return def.grantBattleEffectIds;
+        return isQuestDone(run.questProgress, questKey.arm(id), def.quest.threshold) ? def.grantBattleEffectIds : [];
+    });
     // [2026-08-15] 武装断连排查日志：武装配置是否读到 / 英雄卡是否在牌组 / 合并后的装备列表
     console.log(`[RogueGameWrapper] heroKey=${run.heroKey} | 武装配置=${JSON.stringify(armForHero)} | deck含英雄卡=${run.deck.includes(run.heroKey)} | 合并装备=${JSON.stringify(rogueEquipments[run.heroKey])}`);
 
@@ -51,7 +64,7 @@ export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, r
                 initialPlayerNexus={run.hp} // [2026-08-11] 真衔接：战斗水晶初值 = 全局 HP
                 playerNexusMax={run.maxHp} // [2026-08-11] 真衔接：战斗水晶回血上限 = 全局 maxHp
                 initialEnemyNexus={encounter.enemyNexusHp} // [2026-08-28] 敌方水晶初始血量（难度基础值 + 生命强化折算，中后段+B10 / Boss+20）
-                rogueEnhancements={run.enhancements} // [2026-08-11] 玩家迷宫强化 id（战斗内 battleEffect 被动生效）
+                rogueEnhancements={[...run.enhancements, ...armamentEffects]} // [2026-08-11] 玩家迷宫强化 id · [2026-09-25 莉莉子 武装线] + 已完成整局任务的武装战斗内效果
                 enemyEnhancements={encounter.enemyBuffs ?? []} // [2026-08-27] 敌方迷宫强化 id（流派配置，战斗内 battleEffect 生效）
                 enemyEquipments={encounter.enemyEquipments} // [2026-08-30 程拍板] 敌方单位卡随机装备（难度分级）
                 rogueEquipments={rogueEquipments} // [2026-08-12 商店经济] 局内装备 + [2026-08-14 武装] 局外武装合并挂载

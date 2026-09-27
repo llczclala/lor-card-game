@@ -197,6 +197,27 @@ export const GameEvents = {
     // [2026-08-11 莉莉子] 迷宫强化战斗内触发 → 水晶处卡面淡入淡出闪烁
     // Payload: { icon: string, name: string }
     ROGUE_BUFF_FLASH: 'rogue_buff_flash',
+
+    // [2026-09-25 莉莉子 三线任务化框架 · 武装线] 整局任务事件的战斗内广播
+    // ── 用途：战斗里发生的事（天启者打击等）需要被 **run 层** 记账（整局任务跨战斗累积），
+    //    但 useGameState 拿不到 useRoguelikeRun 的 state → 走事件总线单向广播。
+    // ── 订阅方：useRoguelikeRun（推进 run.questProgress）
+    // Payload: { event: QuestEvent }
+    ROGUE_QUEST_EVENT: 'rogue_quest_event',
+
+    // [2026-09-25 莉莉子 武装线] 我方天启者阵亡广播（凯旋之匣：结算时判断"本场英雄是否活到最后"）
+    // Payload: { key: string }
+    ROGUE_HERO_DIED: 'rogue_hero_died',
+
+    // [2026-09-25 莉莉子 强化线] 战斗内发放 run 层金币（悬赏等）
+    // ── 金币是整局资源、存在 run 里，战斗侧只能广播（同 ROGUE_QUEST_EVENT 的思路）
+    // Payload: { amount: number, reason?: string }
+    ROGUE_GOLD_GRANT: 'rogue_gold_grant',
+    // [2026-09-25 莉莉子 三线任务化框架 · 进度可见性] 任务进度广播 → UI
+    // ── 设计文档第一章引用过炉石任务牌的坑 #1「进度必须公开可见」：
+    //    没有进度显示，"任务引导玩家"就无从谈起。广播方：useGameState（单场）/ useRoguelikeRun（整局）
+    // Payload: { scope: 'battle' | 'run', rows: { key, name, sub?, current, threshold, done }[] }
+    ROGUE_QUEST_UI: 'rogue_quest_ui',
 } as const;
 
 // ================= [新增] 弹道编排器专属事件 =================

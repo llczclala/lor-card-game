@@ -21,15 +21,18 @@ export const MAZE_ENHANCEMENTS: MazeEnhancement[] = MAZE_BUFFS
     .filter(b => b.playerEligible && !PASS_LOCKED_ENHANCEMENT_IDS.has(b.id))
     .map(b => ({ id: b.id, name: b.name, description: b.description, rarity: b.rarity, icon: b.icon, effect: b.effect! }));
 
-/** [2026-08-29 通行证] 构建可抽选池：基础池 + 已解锁的通行证强化（unlockedPass 传已解锁 id 列表） */
-const buildPool = (unlockedPass?: string[]): MazeEnhancement[] => {
+/** [2026-08-29 通行证] 构建可抽选池：基础池 + 已解锁的通行证强化（unlockedPass 传已解锁 id 列表）
+ *  [2026-09-25 莉莉子 强化不叠加] owned 传本局已拥有（run.enhancements）→ 直接从池中剔除：
+ *    强化一律不叠加（applyEnhancement 自带去重），若仍抽到已拥有的，玩家选完"什么都没发生"= 白选一场。 */
+const buildPool = (unlockedPass?: string[], owned?: string[]): MazeEnhancement[] => {
+    const own = new Set(owned ?? []);
     const passDefs = (unlockedPass ?? [])
         .map(id => MAZE_BUFFS.find(b => b.id === id))
         .filter((b): b is MazeBuff => !!b && b.playerEligible);
     return [
         ...MAZE_ENHANCEMENTS,
         ...passDefs.map(b => ({ id: b.id, name: b.name, description: b.description, rarity: b.rarity, icon: b.icon, effect: b.effect! })),
-    ];
+    ].filter(e => !own.has(e.id));
 };
 
 // [2026-08-05] 原逻辑保留：绝密难度剔除纯回复项（heal）
@@ -71,8 +74,8 @@ const pickWeightedEnhancementIndex = (pool: MazeEnhancement[], bonus?: RarityBon
     return pool.length - 1;
 };
 
-export const pickRandomEnhancements = (count: number, difficulty?: string, rarityBonus?: RarityBonusInput, unlockedPass?: string[]): MazeEnhancement[] => {
-    let pool = buildPool(unlockedPass); // [2026-08-29] 基础池 + 已解锁通行证强化
+export const pickRandomEnhancements = (count: number, difficulty?: string, rarityBonus?: RarityBonusInput, unlockedPass?: string[], owned?: string[]): MazeEnhancement[] => {
+    let pool = buildPool(unlockedPass, owned); // [2026-08-29] 基础池 + 已解锁通行证强化；[2026-09-25] 剔除本局已拥有（不叠加）
     if (difficulty === 'topsecret') {
         const filtered = pool.filter(e => e.effect.type !== 'heal');
         if (filtered.length >= count) pool = filtered;
@@ -86,9 +89,10 @@ export const pickRandomEnhancements = (count: number, difficulty?: string, rarit
     return result;
 };
 
-/** 从玩家强化池按指定稀有度抽一个强化（惊喜宝箱用；无则 undefined）。[2026-08-29] 支持已解锁通行证强化 */
-export const pickRandomEnhancementByRarity = (rarity: EnhancementRarity, unlockedPass?: string[]): MazeEnhancement | undefined => {
-    const pool = buildPool(unlockedPass).filter(e => e.rarity === rarity);
+/** 从玩家强化池按指定稀有度抽一个强化（惊喜宝箱用；无则 undefined）。[2026-08-29] 支持已解锁通行证强化
+ *  [2026-09-25 莉莉子 强化不叠加] owned 传已拥有 → 同稀有度已抽完时返回 undefined（调用方自行兜底） */
+export const pickRandomEnhancementByRarity = (rarity: EnhancementRarity, unlockedPass?: string[], owned?: string[]): MazeEnhancement | undefined => {
+    const pool = buildPool(unlockedPass, owned).filter(e => e.rarity === rarity);
     if (pool.length === 0) return undefined;
     return pool[Math.floor(Math.random() * pool.length)];
 };

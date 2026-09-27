@@ -64,6 +64,17 @@ export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     KEYWORD_POWER: '关键词成长',
     NEXUS_HP_BOOST: '水晶生命', // [2026-08-28] 敌方水晶生命强化
     CHAMPION_TO_HAND: '抽天启者', // [2026-09-01] 天启共鸣：开局从牌库抽天启者到手牌
+    DRAW_CARDS: '开局抽牌',       // [2026-09-25 莉莉子 三线任务化框架] 开局抽 N 张（武装任务兑现与后续条目共用）
+    DISCARD_LOWEST_BUFF_CHAMPION: '弃牌养核', // [2026-09-25 莉莉子 武装线] 噬牌之匣
+    SUMMON_INHERIT_LAST_DEAD: '召唤继承',     // [2026-09-25 莉莉子 武装线] 亡者低语
+    SPREAD_CHAMPION_KEYWORDS: '关键词扩散',   // [2026-09-25 莉莉子 武装线] 共鸣水晶
+    TAX_ENEMY_HAND: '敌方手牌加费',           // [2026-09-25 莉莉子 武装线] 破晓号令
+    DEATH_NEXUS_DAMAGE: '亡语灼水晶',         // [2026-09-25 莉莉子 强化线] 余烬
+    DEATH_STRIKE_RANDOM_ENEMY: '亡语打击',    // [2026-09-25 莉莉子 强化线] 献祭回响
+    DEATH_GIFT_KEYWORD: '亡语传承',           // [2026-09-25 莉莉子 强化线] 返祖
+    OPENING_ZERO_COST: '开局零费',            // [2026-09-25 莉莉子 强化线] 终焉回响
+    BOUNTY_CYCLE: '悬赏标记',                 // [2026-09-25 莉莉子 强化线] 悬赏
+    LONE_GUARD_BUFF: '孤军强化',              // [2026-09-25 莉莉子 强化线] 孤军
 };
 
 /** [2026-08-26 莉莉子] 装备静态修饰/效果 → 标签列表（方块底部展示） */

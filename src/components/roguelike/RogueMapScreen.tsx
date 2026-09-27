@@ -363,7 +363,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             const all: ShopTab[] = ['card', 'enhancement', 'equipment', 'remove'];
             shopTabsRef.current[node.id] = [...all].sort(() => Math.random() - 0.5).slice(0, count);
         }
-        setShopStock(generateShopStock(run.rarityBonus, run.passUnlockedEnhancements)); // [2026-08-29 通行证]
+        setShopStock(generateShopStock(run.rarityBonus, run.passUnlockedEnhancements, { equippedCards: run.equippedCards, ownedEnhancements: run.enhancements })); // [2026-08-29 通行证] [2026-09-25] 不叠加：不发已拥有强化/该卡已有装备
         setShopOpen(true);
     }, [run.heroLevel, run.rarityBonus]);
 
@@ -379,8 +379,10 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
         return map[r] ?? r;
     };
     const rollEnhanceOptions = (): MazeEnhancement[] => {
-        let opts = pickRandomEnhancements(3, run.difficulty, run.rarityBonus, run.passUnlockedEnhancements); // [2026-08-29 通行证]
-        if (run.pendingInvestments?.some(i => i.kind === 'enhancementRank')) {
+        // [2026-09-25 莉莉子 强化不叠加] 排除本局已拥有 → 不够 3 个就给几个（一个都没有时弹窗自带"返回地图"空态）
+        let opts = pickRandomEnhancements(3, run.difficulty, run.rarityBonus, run.passUnlockedEnhancements, run.enhancements); // [2026-08-29 通行证]
+        // [2026-09-25 莉莉子 不叠加] 候选为空（强化全拿到手）时不再消费「托付遗物」升档标记，否则标记白丢
+        if (opts.length > 0 && run.pendingInvestments?.some(i => i.kind === 'enhancementRank')) {
             opts = opts.map((e, i) => i === 0 ? { ...e, rarity: rankUpRarity(e.rarity) } : e);
             onConsumeEnhancementRank?.();
         }

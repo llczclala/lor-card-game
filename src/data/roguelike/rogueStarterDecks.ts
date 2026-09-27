@@ -18,6 +18,7 @@ export const ROGUE_HEROES: RogueHeroInfo[] = [
     { key: 'pupu_specular_soul', name: '卜卜·灵鉴', region: 'Pupu' },
     { key: 'mauxir_lotus_drive', name: '猫汐尔·莲驱', region: 'Mauxir' },
     { key: 'acacia_chrono_echo', name: '安卡希雅·时之重奏', region: 'Acacia' },
+    { key: 'marian', name: '茉莉安·霄鹰', region: 'Marian' }, // [2026-09-26 莉莉子] 肉鸽池补入第 6 位天启者
 ];
 
 /** [2026-08-29] 内置默认肉鸽卡组（写死自 dev_full_admin 配置；卡 key → 数量） */
@@ -68,6 +69,21 @@ export const DEFAULT_ROGUE_STARTER_DECKS: Record<string, { name: string; cards: 
             temp_spell_09: 1, temp_spell_19: 1, temp_spell_20: 1, temp_spell_10: 1,
             Poet_Squad_Caitlin: 1, Poet_Squad_Kelo: 1, Bridget_Squad_Chinchilla: 1,
             Crows_Eyest_Squad_An: 1, Green_Spirit_Squad_Eva: 1, Ulster_Squad_Koni: 1,
+        },
+    },
+    // [2026-09-26 莉莉子] 茉莉安·霄鹰 —— 埋雷引爆流（难度 3 档，同卜卜）
+    //   结构对齐同型「铺场成长」流派的配方：本体 ×2 + 支援技 ×1 + 同阵营小队 ×3 + 阵营法术 ×3 + 跨阵营队友 ×6
+    //   链条自洽：埋雷(本体库效在敌方备战席招信标) → 暴露(蕈影/以饵引狼/猎影标记)
+    //            → 引爆(重器制空炸5伤+AOE / 流萤亡语炸 / 夜视打水晶炸 / 虹彩削信标上限)
+    //            → 提现(静默行动把满场【暴露】换成我方全体永久 +1/+1) → 收割(猎影标记额外攻击)
+    marian: {
+        name: '肉鸽·茉莉安 霄鹰',
+        cards: {
+            marian: 2, marian_support: 1,
+            Truffle_Squad_Mushroom_Shadows: 1, Truffle_Squad_Elm: 1, Truffle_Squad_Iris: 1,
+            marian_faction_mark: 1, marian_faction_bait: 1, marian_faction_silence: 1,
+            Ulster_Squad_Maeve: 1, Crows_Eyest_Squad_An: 1, Bridget_Squad_Feier: 1,
+            SacredChants_Squad_Loka: 1, Ghost_Squad_Vez: 1, Danu_Squad_Wendy: 1,
         },
     },
 };

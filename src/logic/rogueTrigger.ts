@@ -13,8 +13,10 @@
 // ==========================================
 import { getRogueDefs, flashRogueBuff, applyPermanentBuff, pickRandomAlly, findStrongestUnit, applyStatBalance, applyStrikeEnhancement, isStrikeTargetAlive } from './rogueBattle';
 import { applyFrostbite, getPower, getHealth } from './keywords';
+import { isQuestDone, questKey } from './questTracker'; // [2026-09-25 莉莉子] 三线任务化框架：任务解锁判定
 import { eventBus, GameEvents } from '../utils/eventBus';
 import type { MazeBuff, BattleTrigger, BattleEffectClass } from '../data/roguelike/buffs';
+import { CHAMPION_GIFT_KEYWORDS } from '../data/roguelike/buffs'; // [2026-09-25 莉莉子 武装线] 共鸣水晶的赠予关键词池
 import type { CardData, GameState } from '../types';
 
 export type Side = 'player' | 'enemy';
@@ -331,6 +333,213 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         flashRogueBuff(def);
     },
 
+    DRAW_CARDS: (def, ctx) => {
+        // [2026-09-25 莉莉子 三线任务化框架] 开局抽 N 张：牌库顶 N 张进手牌（遵守 10 张手牌上限）
+        //   首个使用方 = 武装「余响之匣」的整局任务兑现（armfx_echo_box）；悬赏 / 王权之证 等后续条目复用
+        const n = (def.battleEffect?.params?.value as number) ?? 1;
+        const deck = sideDeck(ctx, ctx.owner);
+        const hand = sideHand(ctx, ctx.owner);
+        const take = Math.min(n, deck.length, Math.max(0, 10 - hand.length));
+        if (take <= 0) return;
+        hand.push(...deck.splice(0, take));
+        ctx.dirty.deck.add(ctx.owner);
+        ctx.dirty.hand.add(ctx.owner);
+        flashRogueBuff(def);
+    },
+
+    DISCARD_LOWEST_BUFF_CHAMPION: (def, ctx) => {
+        // [2026-09-25 莉莉子 武装线] 噬牌之匣：弃掉手牌中费用最低的一张（天启者除外）→ 天启者永久 +1/+1
+        //   "费用最低"让玩家可以操控结果：留着高价值牌，废牌自然被吃掉 —— 自动执行但可控（新操作维度）
+        const hand = sideHand(ctx, ctx.owner);
+        const idxs = hand.map((c, i) => (c.isChampion ? -1 : i)).filter(i => i >= 0);
+        if (idxs.length === 0) return;
+        let lowest = idxs[0];
+        for (const i of idxs) if ((hand[i].cost ?? 0) < (hand[lowest].cost ?? 0)) lowest = i;
+        hand.splice(lowest, 1);
+        ctx.dirty.hand.add(ctx.owner);
+        // 天启者本体永久 +1/+1（备战席 + 交战区攻/守两侧都找一遍）
+        const side = ctx.owner;
+        const champ = [
+            ...sideBench(ctx, side),
+            ...ctx.combatField.flatMap(f => (f.owner === side ? [f.attacker, f.blocker] : [])),
+        ].find(c => c?.isChampion);
+        if (champ) updateUnitById(ctx, champ.id, c => applyPermanentBuff(c, 1, 1));
+        flashRogueBuff(def);
+    },
+
+    // ---- [2026-09-25 莉莉子 武装线] 武装专用效果类 ----
+    SUMMON_INHERIT_LAST_DEAD: (def, ctx) => {
+        // 亡者低语：此后每次召唤，新单位获得"最后阵亡单位"的攻血
+        //   来源取墓地快照（含 buffs、不含致死伤害）—— 语义是"继承它的身材"，不是"继承它的血皮"
+        const grave = (ctx.owner === 'player' ? ctx.game.playerGraveyard : ctx.game.enemyGraveyard) ?? [];
+        const last = grave[grave.length - 1];
+        if (!last) return;
+        const target = ctx.info.playedCard ?? benchLast(ctx, ctx.owner);
+        if (!target) return;
+        const p = (last.power ?? 0) + (last.buffs?.power ?? 0);
+        const h = (last.health ?? 0) + (last.buffs?.health ?? 0);
+        if (p === 0 && h === 0) return;
+        updateUnitById(ctx, target.id, c => applyPermanentBuff(c, p, h));
+        flashRogueBuff(def);
+    },
+
+    SPREAD_CHAMPION_KEYWORDS: (def, ctx) => {
+        // 共鸣水晶：① 一次性随机赠予天启者一个关键词（每场一次，靠"候选池里一个都没有"判定）
+        //           ② 把天启者的关键词扩散给所有在场友军（备战席 + 交战区，关键词去重合并）
+        const side = ctx.owner;
+        const bench = sideBench(ctx, side);
+        const field = ctx.combatField.flatMap(f => (f.owner === side ? [f.attacker, f.blocker] : []));
+        const champ = [...bench, ...field].find(c => c?.isChampion);
+        if (!champ) return;
+        let champCard = champ;
+        if (!CHAMPION_GIFT_KEYWORDS.some(k => (champCard.keywords || []).includes(k))) {
+            const gift = CHAMPION_GIFT_KEYWORDS[Math.floor(Math.random() * CHAMPION_GIFT_KEYWORDS.length)];
+            champCard = { ...champCard, keywords: Array.from(new Set([...(champCard.keywords || []), gift])) };
+            updateUnitById(ctx, champ.id, () => champCard);
+            flashRogueBuff(def);
+        }
+        const ks = champCard.keywords || [];
+        if (ks.length === 0) return;
+        for (const u of [...bench, ...field]) {
+            if (!u || u.id === champ.id) continue;
+            const merged = Array.from(new Set([...(u.keywords || []), ...ks]));
+            if (merged.length !== (u.keywords || []).length) updateUnitById(ctx, u.id, c => ({ ...c, keywords: merged }));
+        }
+    },
+
+    TAX_ENEMY_HAND: (def, ctx) => {
+        // 破晓号令：敌方手牌中随机 count 张单位卡费用 +value（配合 oncePerBattle = 每场一次）
+        const value = (def.battleEffect?.params?.value as number) ?? 2;
+        const count = (def.battleEffect?.params?.count as number) ?? 3;
+        const hand = sideHand(ctx, 'enemy');
+        const idxs = hand.map((c, i) => (!c.isChampion && !c.type?.includes('spell') ? i : -1)).filter(i => i >= 0);
+        if (idxs.length === 0) return;
+        for (let i = idxs.length - 1; i > 0; i--) { // 洗牌取前 count 个 = 随机 count 张
+            const j = Math.floor(Math.random() * (i + 1));
+            [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
+        }
+        idxs.slice(0, count).forEach(i => { hand[i] = { ...hand[i], cost: (hand[i].cost ?? 0) + value }; });
+        ctx.dirty.hand.add('enemy');
+        flashRogueBuff(def);
+    },
+
+    // ---- [2026-09-25 莉莉子 强化线 · 新效果批] 亡语系三件 ----
+    DEATH_NEXUS_DAMAGE: (def, ctx) => {
+        // 余烬：我方单位阵亡时，敌方水晶受到 N 点伤害（"死亡即伤害"：铺场交换开始有回报）
+        //   ⚠️ 这是 game 级变更 —— unit_die 站点以前不提交 dirty.game，本轮已在 processDeaths 补上差异合并提交
+        const v = (def.battleEffect?.params?.value as number) ?? 1;
+        if (v <= 0) return;
+        const key = (ctx.owner === 'player' ? 'enemyNexus' : 'playerNexus') as 'enemyNexus' | 'playerNexus';
+        ctx.game[key] = Math.max(0, ((ctx.game[key] as number) ?? 0) - v);
+        ctx.dirty.game = true;
+        flashRogueBuff(def);
+    },
+
+    DEATH_STRIKE_RANDOM_ENEMY: (def, ctx) => {
+        // 献祭回响：我方单位阵亡时，对敌方随机单位造成等于其攻击力的伤害（亡语炸弹）
+        const dead = ctx.info.deadUnit;
+        if (!dead) return;
+        const dmg = Math.max(0, (dead.power ?? 0) + (dead.buffs?.power ?? 0)); // 取身材，不含致死伤害
+        if (dmg <= 0) return;
+        const foeSide: Side = ctx.owner === 'player' ? 'enemy' : 'player';
+        const foes = sideBench(ctx, foeSide);
+        if (foes.length === 0) return;
+        const victim = foes[Math.floor(Math.random() * foes.length)];
+        updateUnitById(ctx, victim.id, c => ({ ...c, damageTaken: (c.damageTaken ?? 0) + dmg, animState: 'hit' as const }));
+        flashRogueBuff(def);
+    },
+
+    DEATH_GIFT_KEYWORD: (def, ctx) => {
+        // 返祖：我方单位阵亡时，随机一个友军获得它的一个关键词（关键词传承）
+        //   瞬逝不算"遗产"（那是消耗品式的存在，传承下去语义混乱），故排除
+        const dead = ctx.info.deadUnit;
+        if (!dead) return;
+        const ks = (dead.keywords ?? []).filter(k => k !== 'Ephemeral');
+        if (ks.length === 0) return;
+        const gift = ks[Math.floor(Math.random() * ks.length)];
+        const friends = sideBench(ctx, ctx.owner).filter(c => c.id !== dead.id);
+        if (friends.length === 0) return;
+        const heir = friends[Math.floor(Math.random() * friends.length)];
+        updateUnitById(ctx, heir.id, c => ({ ...c, keywords: Array.from(new Set([...(c.keywords || []), gift])) }));
+        flashRogueBuff(def);
+    },
+
+    // ---- [2026-09-25 莉莉子 强化线 · 新效果批（第二组）] ----
+    OPENING_ZERO_COST: (def, ctx) => {
+        // 终焉回响：开局随机 N 张手牌费用变 0；代价 = 同一 params 里的 nexusCost（我方水晶 -N）
+        const n = (def.battleEffect?.params?.count as number) ?? 2;
+        const nexusCost = (def.battleEffect?.params?.nexusCost as number) ?? 0;
+        const hand = sideHand(ctx, ctx.owner);
+        const idxs = hand.map((_, i) => i);
+        for (let i = idxs.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
+        }
+        const picked = idxs.slice(0, n);
+        if (picked.length > 0) {
+            picked.forEach(i => { hand[i] = { ...hand[i], cost: 0 }; });
+            ctx.dirty.hand.add(ctx.owner);
+        }
+        if (nexusCost > 0) {
+            const key = (ctx.owner === 'player' ? 'playerNexus' : 'enemyNexus') as 'playerNexus' | 'enemyNexus';
+            ctx.game[key] = Math.max(1, ((ctx.game[key] as number) ?? 0) - nexusCost);
+            ctx.dirty.game = true;
+        }
+        flashRogueBuff(def);
+    },
+
+    BOUNTY_CYCLE: (def, ctx) => {
+        // 悬赏（自循环）：① 无标记 → 标记敌方攻击力最高的单位 ② 有标记且目标已不在场 → 结算并清空
+        //   结算放在 round_start（而非死亡瞬间）的理由：round_start 站点会提交 dirty.game，
+        //   而"敌方单位死亡"那一刻走的是**敌方**的强化分发（玩家侧的悬赏天然收不到），
+        //   用"目标是否还在场"来判定击杀，既绕开这个方向问题，也顺带兼容"被移除/变形"等非死亡消失。
+        const foeSide: Side = ctx.owner === 'player' ? 'enemy' : 'player';
+        const foes = sideBench(ctx, foeSide);
+        const bountyId = ctx.game.bountyId;
+        if (!bountyId) {
+            if (foes.length === 0) return;
+            let best = foes[0];
+            for (const u of foes) if (getPower(u) > getPower(best)) best = u;
+            ctx.game.bountyId = best.id;
+            ctx.dirty.game = true;
+            flashRogueBuff(def);
+            return;
+        }
+        const stillThere = [
+            ...foes,
+            ...ctx.combatField.flatMap(f => (f.owner === foeSide ? [f.attacker, f.blocker] : [])),
+        ].some(c => c?.id === bountyId);
+        if (stillThere) return;
+        ctx.game.bountyId = undefined; // 已击杀 → 结算并清空（下回合重新标记）
+        ctx.dirty.game = true;
+        const deck = sideDeck(ctx, ctx.owner);
+        const hand = sideHand(ctx, ctx.owner);
+        const take = Math.min(2, deck.length, Math.max(0, 10 - hand.length));
+        if (take > 0) {
+            hand.push(...deck.splice(0, take));
+            ctx.dirty.deck.add(ctx.owner);
+            ctx.dirty.hand.add(ctx.owner);
+        }
+        eventBus.emit(GameEvents.ROGUE_GOLD_GRANT, { amount: 50, reason: '悬赏' }); // 金币是 run 层资源 → 广播出去
+        flashRogueBuff(def);
+    },
+
+    LONE_GUARD_BUFF: (def, ctx) => {
+        // 孤军：我方场上恰好 1 个单位时，该单位 +4/+4 并获得【屏障】（条件判定已在分发前完成，见 requireOnlyOneUnit）
+        const mine = [
+            ...sideBench(ctx, ctx.owner),
+            ...ctx.combatField.flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : [])),
+        ].filter(Boolean) as CardData[];
+        if (mine.length !== 1) return;
+        const p = (def.battleEffect?.params?.power as number) ?? 4;
+        const h = (def.battleEffect?.params?.health as number) ?? 4;
+        updateUnitById(ctx, mine[0].id, c => ({
+            ...applyPermanentBuff(c, p, h),
+            keywords: Array.from(new Set([...(c.keywords || []), 'Barrier'])),
+        }));
+        flashRogueBuff(def);
+    },
+
     // ---- on_summon / on_play_unit：以刚打出的卡为目标 ----
     BUFF: (def, ctx) => {
         // 机不可失/蜂拥而至：本回合给刚上场单位 +N/+M
@@ -592,11 +801,35 @@ export const runRogueTrigger = (
     restrict?: (be: BattleEffectClass) => boolean,
 ): void => {
     ctx.trigger = trigger;
-    const defs = sortRogueDefs(getRogueDefs(enhIds, trigger));
+    // [2026-09-25 莉莉子 三线任务化框架] 任务版强化：quest 未达成的【不分发】。
+    //   解锁判定收口在这一处 —— 数据层只写 quest，各触发站点无需关心；进度读 ctx.game.questProgress。
+    const questProgress = ctx.game?.questProgress;
+    const defs = sortRogueDefs(getRogueDefs(enhIds, trigger)).filter(def => {
+        const q = def.quest;
+        return !q || isQuestDone(questProgress, questKey.enh(def.id), q.threshold);
+    });
     defs.forEach(def => {
         const be = def.battleEffect;
         if (!be) return;
         if (restrict && !restrict(be.effectClass)) return;
+        // [2026-09-25 莉莉子 强化线] 苛刻条件：我方场上恰好 1 个单位（孤军）
+        //   判定放在 oncePerBattle **之前** —— 否则条件不满足时也会把"每场一次"用掉
+        if (be.requireOnlyOneUnit) {
+            const mine = [
+                ...sideBench(ctx, ctx.owner),
+                ...ctx.combatField.flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : [])),
+            ].filter(Boolean);
+            if (mine.length !== 1) return;
+        }
+        // [2026-09-25 莉莉子 三线任务化框架] oncePerBattle：本场只生效一次
+        //   账本借用 questProgress 表的 `used:<id>` 键（round_start 站点会提交 dirty.game，故能落盘）
+        if (be.oncePerBattle) {
+            const usedKey = `used:${def.id}`;
+            const used = (ctx.game?.questProgress ?? {})[usedKey] ?? 0;
+            if (used > 0) return;
+            ctx.game.questProgress = { ...(ctx.game?.questProgress ?? {}), [usedKey]: 1 };
+            ctx.dirty.game = true;
+        }
         const handler = ROGUE_EFFECT_HANDLERS[be.effectClass];
         if (handler) handler(def, ctx);
         // 未注册 effectClass（SPELL_DOUBLE / NEXUS_HP_BOOST 等常驻查询型）静默忽略

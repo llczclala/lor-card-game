@@ -1,5 +1,14 @@
 // 关键修复：添加 type 关键字
 import type { CardData, GameState } from '../types';
+import { spellManaCapBonusOf, hoardSpellManaCapOf } from './questTracker';
+
+/**
+ * [2026-09-25 莉莉子 强化线] 本场「法术法力池上限」：基础 3 + 共鸣涌流成长 + 囤积的溢出额度。
+ *   这两件强化不改战斗内的即时效果，改的是**回合边界的资源规则** —— 所以统一在这里算，
+ *   而"溢出多少"天然受剩余法力限制（上限抬高 ≠ 白送法力）。
+ */
+export const spellManaCapOf = (g: GameState): number =>
+    3 + spellManaCapBonusOf(g.questProgress, g.rogueEnhancements) + hoardSpellManaCapOf(g.rogueEnhancements);
 
 /**
  * 计算回合开始时的状态变更
@@ -30,8 +39,8 @@ export const calculateRoundStart = (currentGame: GameState): Partial<GameState> 
     };
 
 
-    // 法力值存贮逻辑：多余 Mana 转入 Spell Mana (上限3)
-    const nextPlayerSpellMana = Math.min(3, prev.playerSpellMana + prev.playerMana);
+    // 法力值存贮逻辑：多余 Mana 转入 Spell Mana（[2026-09-25 莉莉子 强化线] 上限由 spellManaCapOf 动态给出：共鸣涌流成长 / 囤积提额）
+    const nextPlayerSpellMana = Math.min(spellManaCapOf(prev), prev.playerSpellMana + prev.playerMana);
     const nextEnemySpellMana = Math.min(3, prev.enemySpellMana + prev.enemyMana);
 
     return {

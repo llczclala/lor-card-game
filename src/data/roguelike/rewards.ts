@@ -63,9 +63,10 @@ const rarityWeights = (act: number, difficulty: RogueDifficulty, equipRarityBonu
     return base;
 };
 
-/** 按品质权重为指定卡抽一件装备（法术卡同走品质档；池子按卡筛选） */
-const pickEquipByAct = (act: number, card: { type: string }, difficulty: RogueDifficulty, equipRarityBonus: number): string | undefined => {
-    const pool = getEquipPoolForCard(card);
+/** 按品质权重为指定卡抽一件装备（法术卡同走品质档；池子按卡筛选）
+ *  [2026-09-25 莉莉子 装备不叠加] excludeIds 传该卡已挂装备 → 抽不到新装备时返回 undefined（该候选自然变裸卡） */
+const pickEquipByAct = (act: number, card: { type: string }, difficulty: RogueDifficulty, equipRarityBonus: number, excludeIds?: string[]): string | undefined => {
+    const pool = getEquipPoolForCard(card, excludeIds);
     if (pool.length === 0) return undefined;
     const weights = rarityWeights(act, difficulty, equipRarityBonus);
     const candidates = pool.filter(e => (weights[e.rarity] ?? 0) > 0);
@@ -86,14 +87,16 @@ const pickEquipByAct = (act: number, card: { type: string }, difficulty: RogueDi
  * @param opts.difficulty 难度（决定品质上限）
  * @param opts.equipRarityBonus 天启者等级装备稀有度加成（%）
  * @param opts.forceEquip 精英/Boss 必带装备
+ * @param opts.equippedCards [2026-09-25 莉莉子 装备不叠加] 本局卡→装备映射（排除该卡已有装备，不发重复件）
  */
 export const generateRewardOptions = (
     act: number,
     count: number,
-    opts?: { difficulty?: RogueDifficulty; equipRarityBonus?: number; forceEquip?: boolean },
+    opts?: { difficulty?: RogueDifficulty; equipRarityBonus?: number; forceEquip?: boolean; equippedCards?: Record<string, string[]> },
 ): RewardCardOption[] => {
     const difficulty = opts?.difficulty ?? 'normal';
     const equipRarityBonus = opts?.equipRarityBonus ?? 0;
+    const equippedCards = opts?.equippedCards;
     const withEquip = opts?.forceEquip ? true : Math.random() < EQUIP_CHANCE; // 精英/Boss 必带
     const options: RewardCardOption[] = [];
     const used = new Set<string>();
@@ -104,7 +107,8 @@ export const generateRewardOptions = (
         const card = pool[Math.floor(Math.random() * pool.length)];
         if (used.has(card.key)) continue;
         used.add(card.key);
-        options.push({ cardKey: card.key, equipId: withEquip ? pickEquipByAct(act, card, difficulty, equipRarityBonus) : undefined });
+        const equipId = withEquip ? pickEquipByAct(act, card, difficulty, equipRarityBonus, equippedCards?.[card.key]) : undefined;
+        options.push({ cardKey: card.key, equipId });
     }
     return options;
 };
@@ -143,7 +147,7 @@ const shuffle = <T,>(arr: T[]): T[] => {
  * 每名抽该阵营可收集卡 2 张（region 匹配 + isCollectible + 非英雄 → 天然排除不可选到的衍生法术）；
  * 机密以上再抽一件该品质档、英雄本体可佩戴的装备。
  */
-export const buildHeroRecruitOptions = (currentHeroKey: string, difficulty: RogueDifficulty): HeroRecruitOption[] => {
+export const buildHeroRecruitOptions = (currentHeroKey: string, difficulty: RogueDifficulty, equippedCards?: Record<string, string[]>): HeroRecruitOption[] => {
     const candidates = shuffle(ROGUE_HEROES.filter(h => h.key !== currentHeroKey)).slice(0, 3);
     const allowedRarities = RECRUIT_EQUIP_RARITY[difficulty]; // undefined = 普通难度无装备
     return candidates.map(h => {
@@ -155,7 +159,8 @@ export const buildHeroRecruitOptions = (currentHeroKey: string, difficulty: Rogu
         const companionKeys = shuffle(pool).slice(0, 2).map(c => c.key);
         let equipId: string | undefined;
         if (allowedRarities && heroDef) {
-            const eqPool = (getEquipPoolForCard(heroDef) ?? []).filter(e => allowedRarities.includes(e.rarity));
+            // [2026-09-25 莉莉子 装备不叠加] 排除该英雄卡已有装备 → 抽不到就裸身上阵
+            const eqPool = (getEquipPoolForCard(heroDef, equippedCards?.[h.key]) ?? []).filter(e => allowedRarities.includes(e.rarity));
             if (eqPool.length) equipId = eqPool[Math.floor(Math.random() * eqPool.length)].id;
         }
         return { heroKey: h.key, companionKeys, equipId };

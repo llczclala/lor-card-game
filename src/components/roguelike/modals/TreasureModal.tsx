@@ -59,13 +59,23 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
     run, onCollectGold, onPickCard, onPickEnhancement, onSacrificeForEpic, onCollectRandom, onClose,
 }) => {
     const [treasureType] = useState<TreasureType>(() => pickTreasureType());
-    const [cardOffers] = useState<ShopCardItem[]>(() => generateCardOffers(CARD_TREASURE_COUNT));
+    // [2026-09-25 莉莉子 装备不叠加] 卡牌宝箱候选卡不再佩戴"该卡已有"的装备
+    const [cardOffers] = useState<ShopCardItem[]>(() => generateCardOffers(CARD_TREASURE_COUNT, run.equippedCards));
     // 惊喜强化：2 优秀(绿) + 1 稀有 + 1 史诗（牺牲用）[2026-08-27] 原 common→uncommon（白品池空）
-    const [surpriseEnh] = useState(() => ({
-        normals: [pickRandomEnhancementByRarity('uncommon', run.passUnlockedEnhancements), pickRandomEnhancementByRarity('uncommon', run.passUnlockedEnhancements)].filter(Boolean), // [2026-08-29 通行证]
-        rare: pickRandomEnhancementByRarity('rare', run.passUnlockedEnhancements),
-        epic: pickRandomEnhancementByRarity('epic', run.passUnlockedEnhancements),
-    }));
+    // [2026-09-25 莉莉子 强化不叠加] ① 排除本局已拥有 ② 同批去重（此前两个"绿"可能抽到同一项，出现两张一样的卡）
+    const [surpriseEnh] = useState(() => {
+        const picked: string[] = [];
+        const pickOne = (rarity: Parameters<typeof pickRandomEnhancementByRarity>[0]) => {
+            const e = pickRandomEnhancementByRarity(rarity, run.passUnlockedEnhancements, [...run.enhancements, ...picked]); // [2026-08-29 通行证]
+            if (e) picked.push(e.id);
+            return e;
+        };
+        return {
+            normals: [pickOne('uncommon'), pickOne('uncommon')].filter(Boolean),
+            rare: pickOne('rare'),
+            epic: pickOne('epic'),
+        };
+    });
     const [sacrificeMode, setSacrificeMode] = useState(false); // 惊喜宝箱：是否已点"牺牲换史诗"
     const [revealed, setRevealed] = useState<RandomTreasureResult | null>(null); // 随机宝箱：揭示结果
 
@@ -264,7 +274,7 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                                 <p className="text-gray-300">神秘的宝箱……里面会有什么呢？</p>
                                 <button
                                     className={ACTION_BTN}
-                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setRevealed(pickRandomTreasure(run.passUnlockedEnhancements)); }} // [2026-08-29 通行证]
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setRevealed(pickRandomTreasure({ unlockedPass: run.passUnlockedEnhancements, ownedEnhancements: run.enhancements, equippedCards: run.equippedCards })); }} // [2026-08-29 通行证] [2026-09-25] 不叠加：排除已拥有强化 / 该卡已有装备
                                 >开启宝箱</button>
                             </>
                         )}

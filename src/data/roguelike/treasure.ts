@@ -38,8 +38,15 @@ const RANDOM_TREASURE_POOL: { kind: RandomTreasureResult['kind']; weight: number
     { kind: 'refresh', weight: 7.5 },
 ];
 
+/** [2026-09-25 莉莉子 不叠加] 抽宝箱上下文：已拥有强化（不再重复发）+ 卡→装备映射（不再发该卡已有的装备） */
+export interface TreasureRollContext {
+    unlockedPass?: string[];
+    ownedEnhancements?: string[];
+    equippedCards?: Record<string, string[]>;
+}
+
 /** 按权重抽一种随机宝箱奖励并生成内容 */
-export const pickRandomTreasure = (unlockedPass?: string[]): RandomTreasureResult => {
+export const pickRandomTreasure = (ctx?: TreasureRollContext): RandomTreasureResult => {
     const total = RANDOM_TREASURE_POOL.reduce((s, x) => s + x.weight, 0);
     let r = Math.random() * total;
     let kind: RandomTreasureResult['kind'] = 'gold';
@@ -52,11 +59,12 @@ export const pickRandomTreasure = (unlockedPass?: string[]): RandomTreasureResul
         case 'gold':
             return { kind: 'gold', amount: GOLD_TREASURE_AMOUNT };
         case 'card': {
-            const offer = generateCardOffers(1)[0];
+            const offer = generateCardOffers(1, ctx?.equippedCards)[0];
             return { kind: 'card', cardKey: offer.cardKey, equipId: offer.equipId };
         }
         case 'enhancement': {
-            const enh = pickRandomEnhancements(1, undefined, undefined, unlockedPass)[0]; // [2026-08-29 通行证]
+            // [2026-08-29 通行证] 已解锁通行证强化入池；[2026-09-25 莉莉子 不叠加] 排除已拥有 → 抽不到则退金币
+            const enh = pickRandomEnhancements(1, undefined, undefined, ctx?.unlockedPass, ctx?.ownedEnhancements)[0];
             return enh ? { kind: 'enhancement', enhancementId: enh.id } : { kind: 'gold', amount: GOLD_TREASURE_AMOUNT };
         }
         case 'maxHp':
