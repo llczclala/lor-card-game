@@ -51,7 +51,7 @@ export const ANALYST_LEVEL_REWARDS: Record<number, AnalystLevelReward> = {
     26: { dataGold: 500 },
     27: { pack: true },
     28: { dataGold: 550 },
-    29: { unlockEnhancement: 'enhance_after_attack_buff' }, // 以战养战
+    29: { armamentId: 'arm_triumph_box' }, // [2026-09-28 程拍板 · 神格神经] 原「以战养战」已摘出玩家强化池（"打击+1/+1"改由神格神经节点①提供）→ 本格改发「凯旋之匣」（紫）
     30: { pack: true },
 };
 

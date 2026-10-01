@@ -18,6 +18,7 @@ import { CARD_DB } from '../../../data/cards'; // [2026-08-28 事件] 删卡名
 import { getDialogueBg } from '../../../data/roguelike/dialogueBg'; // [2026-08-29 事件] 随机背景图
 // [2026-08-31 莉莉子 开发者] 全量强化选择器依赖
 import type { MazeBuff, EnhancementRarity } from '../../../data/roguelike/buffs';
+import { getBattleEffects } from '../../../data/roguelike/buffs'; // [2026-09-29 莉莉子] 修：DevEnhBlock 用了它但漏了导入
 import { RARITY_META } from '../RarityIcon';
 import { TRIGGER_LABELS, EFFECT_LABELS } from '../RogueCodex';
 import { Card } from '../../Card'; // [2026-09-06 莉莉子] 篝火/事件删卡：纯文字 chip → 完整卡面
@@ -116,8 +117,8 @@ const QUALITY_RANK: Record<EnhancementRarity, number> = { common: 0, uncommon: 1
 /** [2026-08-31 莉莉子 开发者] 全量强化信息块（对齐 RogueCodex 图鉴样式 + 选中/已拥有标记，可多选） */
 const DevEnhBlock: React.FC<{ buff: MazeBuff; selected: boolean; owned?: boolean; onClick: () => void }> = ({ buff, selected, owned, onClick }) => {
     const meta = RARITY_META[buff.rarity];
-    const trigger = buff.battleEffect?.trigger;
-    const effectClass = buff.battleEffect?.effectClass;
+    const trigger = getBattleEffects(buff)[0]?.trigger;
+    const effectClass = getBattleEffects(buff)[0]?.effectClass;
     return (
         <button
             onClick={onClick}

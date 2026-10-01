@@ -218,6 +218,11 @@ export const GameEvents = {
     //    没有进度显示，"任务引导玩家"就无从谈起。广播方：useGameState（单场）/ useRoguelikeRun（整局）
     // Payload: { scope: 'battle' | 'run', rows: { key, name, sub?, current, threshold, done }[] }
     ROGUE_QUEST_UI: 'rogue_quest_ui',
+    // [2026-09-29 程拍板 · 神格碎片] 发放万能碎片（任务奖励等）
+    // ── 依赖方向：货币真源在 useHeroDivinity，而任务奖励在 useUserSystem 发放；
+    //    两者互相 import 会成环，故用广播解耦（同 ROGUE_GOLD_GRANT 的思路）。
+    // Payload: { amount: number, reason?: string }
+    DIVINITY_UNIVERSAL_SHARD_GRANT: 'divinity_universal_shard_grant',
 } as const;
 
 // ================= [新增] 弹道编排器专属事件 =================

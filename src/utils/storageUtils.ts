@@ -17,6 +17,7 @@ export const STORAGE_KEYS = {
     ROGUE_PENDING_RUN: `${STORAGE_PREFIX}rogue_pending_run`, // [2026-08-28] 肉鸽未结算对局存档（暂离/继续）
     ANALYST_PASS: `${STORAGE_PREFIX}analyst_pass`, // [2026-09-04 账号等级] 评估嘉勉通行证独立存档（每用户）
     USER_BATTLE_RECORD: `${STORAGE_PREFIX}battle_record`, // [2026-09-04 战绩记录器] 持久对战记录（每用户）
+    ROGUE_DIVINITY: `${STORAGE_PREFIX}rogue_divinity`, // [2026-09-28 神格神经] 每英雄已解锁节点 + 悖论点银行（跨局累积）
 };
 
 // [新增] 简要用户信息接口 (用于列表展示)

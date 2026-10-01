@@ -17,10 +17,18 @@ import type { MissionDef } from '../data/missionData';
 import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局，用于任务奖励发货
 import { reloadHeroProgressionCache } from './useHeroProgression'; // [2026-09-04 莉莉子 修复] 切号后重载英雄养成缓存（模块级缓存不会自动跟随 USER_ID）
 import { reloadArmamentCache } from './useArmamentConfig'; // [2026-09-07] 切号后重载武装槽/品质档缓存
+import { reloadDivinityCache } from './useHeroDivinity'; // [2026-09-28 神格神经] 切号后重载节点解锁/悖论点银行
 import { computeAnalystLevels, ANALYST_LEVEL_REWARDS, type AnalystLevelupReward } from '../data/roguelike/analystProgression'; // [2026-08-29 通行证] 分析员升级
 import { computeAccountLevels, ACCOUNT_LEVEL_REWARD_DATA_GOLD, createAnalystPass, createEmptyBattleRecord } from '../data/accountProgression'; // [2026-09-04 账号等级]
 import { getArmamentDefs } from '../data/equipment'; // [2026-08-29 通行证] 卡包随机武装
 import { readArmStock, addArmStock, consumeArmStock, type ArmStockMap } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-09-29] 万能碎片广播（解耦 useHeroDivinity）
+// [2026-09-29 程拍板] 奖励匣体系（开包 → 抽匣子 → 开匣子得道具）
+import {
+    rollChest, dropShards, SHARD_CHEST_AMOUNT, type ChestInstance, type ChestKind,
+} from '../data/roguelike/divinityShards';
+import { ROGUE_HEROES } from '../data/roguelike/rogueStarterDecks'; // [2026-09-29] 碎片可归属的天启者
+import type { ShardWallet, ShardDropDetail } from '../data/roguelike/divinityShards';
 
 export interface UserSystemState {
     userId: string;
@@ -187,6 +195,7 @@ export const useUserSystem = () => {
         // [2026-09-04 莉莉子 修复] 切号后同步英雄养成缓存（顺序必须在写入新 USER_ID 之后）
         reloadHeroProgressionCache();
         reloadArmamentCache(); // [2026-09-07] 切号后同步武装槽配置/品质档缓存（同理由：模块级 shared 不自动跟随 USER_ID）
+        reloadDivinityCache(); // [2026-09-28 神格神经] 切号后同步神格神经解锁 + 悖论点银行（同理由）
 
         // 模拟一点点延迟，让 Loading 动画能展示出来
         setTimeout(() => setIsReady(true), 500);
@@ -707,6 +716,95 @@ export const useUserSystem = () => {
         return pick.id;
     }, [grantArmament]);
 
+    // ══════════════════════════════════════════════════════════
+    // [2026-09-29 程拍板] 奖励匣体系
+    //   开包流程改为：**开包 → 抽到一个匣子 → 打开匣子得到对应道具**
+    //   两类匣：武装匣（开对应品质武装）/ 神格碎片匣（开对应数量碎片，每5片一组随机归属某天启者）
+    //   ⚠️ 依赖方向：本 hook **不**直接写碎片钱包（那是 useHeroDivinity 的职责），
+    //      openChest 只**返回结果**，由同时持有两者的 App 层调用 divinity.applyShardDrop 入账。
+    // ══════════════════════════════════════════════════════════
+
+    /** 抽一个匣子（开包流程用）：随机大类 + 按权重随机品质 */
+    const rollRewardChest = useCallback((): ChestInstance => {
+        const kind: ChestKind = Math.random() < 0.5 ? 'armament' : 'shard';
+        return rollChest(kind);
+    }, []);
+
+    /** 发放一个待打开匣子（可指定大类，品质随机；不指定则随机大类） */
+    const grantPendingChest = useCallback((kind?: ChestKind) => {
+        const chest = kind ? rollChest(kind) : rollRewardChest();
+        setSettings(prev => {
+            if (!prev) return prev;
+            const newSettings = { ...prev, pendingChests: [...(prev.pendingChests ?? []), chest] };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+    }, [rollRewardChest, userId]);
+
+    /** 批量发放待打开匣子（通关/宝箱节点等） */
+    const grantPendingChests = useCallback((chests: ChestInstance[]) => {
+        if (!chests.length) return;
+        setSettings(prev => {
+            if (!prev) return prev;
+            const newSettings = { ...prev, pendingChests: [...(prev.pendingChests ?? []), ...chests] };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+    }, [userId]);
+
+    /**
+     * 打开第 index 个待打开匣子（默认第一个）：
+     *   · 武装匣 → 按**对应品质**随机一件武装入库，返回 { kind:'armament', armamentId }
+     *   · 碎片匣 → 按对应数量产出碎片（每5片一组随机归属），返回 { kind:'shard', detail, wallet }
+     *   ⚠️ 碎片入账由调用方（App 层）用返回的 wallet 调 divinity.applyShardDrop 完成。
+     */
+    const openChest = useCallback((index = 0): {
+        kind: ChestKind;
+        rarity: ChestInstance['rarity'];
+        armamentId?: string;
+        shardAmount?: number;
+        shardDetail?: ShardDropDetail[];
+        wallet?: ShardWallet;
+    } | null => {
+        const list = settings?.pendingChests ?? [];
+        const chest = list[index];
+        if (!chest) return null;
+
+        // 1. 先从队列移除（函数式更新，避免与 grantArmament 的更新互相覆盖——见 openPack 的踩坑注释）
+        setSettings(prev => {
+            if (!prev) return prev;
+            const cur = prev.pendingChests ?? [];
+            if (cur.length <= index) return prev;
+            const next = [...cur.slice(0, index), ...cur.slice(index + 1)];
+            const newSettings = { ...prev, pendingChests: next };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+
+        // 2. 按大类结算内容
+        if (chest.kind === 'armament') {
+            // 品质对应：优先抽**同品质**武装；同品质池为空则回退到全池（防某个品质没货）
+            const all = getArmamentDefs().filter(a => !a.consumable);
+            const sameRarity = all.filter(a => a.rarity === chest.rarity);
+            const pool = sameRarity.length ? sameRarity : all;
+            if (!pool.length) return { kind: chest.kind, rarity: chest.rarity };
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            grantArmament(pick.id);
+            return { kind: chest.kind, rarity: chest.rarity, armamentId: pick.id };
+        }
+
+        // 碎片匣：总数来自品质档，每 5 片一组随机归属
+        const amount = SHARD_CHEST_AMOUNT[chest.rarity];
+        const drop = dropShards(undefined, ROGUE_HEROES.map(h => h.key), amount);
+        return {
+            kind: chest.kind,
+            rarity: chest.rarity,
+            shardAmount: amount,
+            shardDetail: drop.details,
+            wallet: drop.wallet,
+        };
+    }, [settings, grantArmament, userId]);
+
     /** [2026-08-29 通行证] 获得一个待打开卡包（打开时才随机武装） */
     const grantPendingPack = useCallback(() => {
         setSettings(prev => {
@@ -717,25 +815,28 @@ export const useUserSystem = () => {
         });
     }, [userId]);
 
-    /** [2026-08-29 通行证] 打开一个卡包：随机武装 + 扣减待打开数 */
-    const openPack = useCallback((): string | null => {
-        const pick = grantPack();
-        if (pick) {
-            // [2026-09-15 莉莉子 BUG修复] 必须用**函数式**更新，且不能再用闭包 settings 整体覆盖。
-            // 成因：grantPack() 内部已通过 grantArmament 排队了一个函数式 setSettings（写入新武装库存），
-            // 此处若紧接着塞一个「值更新」，React 批处理时会用它**直接替换**掉前一个函数式更新的计算结果
-            // —— armamentStock 回到旧值 → 表现为「卡包开出的武装没入库、武装配置界面完全找不到」
-            // （武装库按 armamentStock 过滤，见 RogueHeroInfoModal.readArmStock）。
-            // 同一坑在 claimPassReward 里已用函数式累积规避，此处是漏网。
-            setSettings(prev => {
-                if (!prev || (prev.pendingPacks ?? 0) <= 0) return prev;
-                const newSettings = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) - 1 };
-                StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
-                return newSettings;
-            });
-        }
-        return pick;
-    }, [grantPack, userId]);
+    /**
+     * [2026-09-29 程拍板] 打开一个卡包 → **抽到一个奖励匣**（不再直接给武装）。
+     * 流程：开包 → 匣子入库（pendingChests）→ 玩家随后打开匣子得到道具。
+     * @returns 抽到的匣子（供开箱演出展示"先看到匣子"）
+     */
+    const openPack = useCallback((): ChestInstance | null => {
+        const chest = rollRewardChest();
+        // 先入队（函数式），再扣待打开数（同样函数式）——两个函数式更新会正确累积，不会互相覆盖
+        setSettings(prev => {
+            if (!prev) return prev;
+            const newSettings = { ...prev, pendingChests: [...(prev.pendingChests ?? []), chest] };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+        setSettings(prev => {
+            if (!prev || (prev.pendingPacks ?? 0) <= 0) return prev;
+            const newSettings = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) - 1 };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+        return chest;
+    }, [rollRewardChest, userId]);
 
     /** [2026-09-04 账号等级] 加分析员经验 → 评估嘉勉通行证已迁独立存档键（ANALYST_PASS_uid），不再占 profile.level/exp（那是账号等级） */
     const grantAnalystExp = useCallback((amount: number): { leveled: { from: number; to: number }[]; rewards: AnalystLevelupReward[] } => {
@@ -838,6 +939,11 @@ export const useUserSystem = () => {
         else if (reward.type === 'pack' && reward.amount) {
             for (let i = 0; i < reward.amount; i++) grantPendingPack();
         }
+        // [2026-09-29 程拍板] 万能神格碎片奖励（每日固定产出）
+        //   ⚠️ 碎片钱包真源在 useHeroDivinity，本 hook 不能反向 import（会成环）→ 用事件广播解耦
+        else if (reward.type === 'universalShard' && reward.amount) {
+            eventBus.emit(GameEvents.DIVINITY_UNIVERSAL_SHARD_GRANT, { amount: reward.amount, reason: 'mission' });
+        }
 
         if (needsCollectionSave) {
             setCollection(newCollection);
@@ -900,9 +1006,14 @@ export const useUserSystem = () => {
         grantAnalystExp,         // 加分析员经验（升级，奖励由通行证手动领取）
         claimPassReward,         // 领取某等级通行证奖励
         claimAllPassRewards,     // 一键领取所有可领奖励
-        grantPack,               // 打开卡包（随机武装）
+        grantPack,               // 直接给一个随机武装（内部用；面向玩家的入口请走 openPack）
         grantPendingPack,        // 获得待打开卡包
-        openPack,                // 打开一个卡包（扣待打开数 + 随机武装）
+        openPack,                // 打开一个卡包（扣待打开数 + **抽到一个奖励匣**）[2026-09-29 改造]
+        // [2026-09-29 程拍板] 奖励匣体系
+        rollRewardChest,         // 随机抽一个匣子（不入库，仅预览/演出用）
+        grantPendingChest,       // 发放一个待打开匣子（可指定大类）
+        grantPendingChests,      // 批量发放待打开匣子
+        openChest,               // 打开一个匣子（返回武装 id 或碎片分配结果）
         grantPassEnhancement,    // 解锁迷宫强化（强化池可遇）
         grantDataGold,           // 发放局外数据金
 

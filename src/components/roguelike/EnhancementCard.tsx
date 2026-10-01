@@ -5,6 +5,7 @@
 // ==========================================
 import React from 'react';
 import type { MazeBuff } from '../../data/roguelike/buffs';
+import { getBattleEffects } from '../../data/roguelike/buffs'; // [2026-09-28] 多效果条目统一视图
 import { RARITY_META } from './RarityIcon';
 import { TRIGGER_LABELS, EFFECT_LABELS } from './RogueCodex';
 
@@ -19,8 +20,11 @@ interface EnhancementCardProps {
 /** [2026-08-27] 迷宫强化图鉴卡：品质色边框 + 六边形图标 + 名称 + 品质/触发标签 + 描述 + 效果类标签 */
 export const EnhancementCard: React.FC<EnhancementCardProps> = ({ e, bindHover }) => {
     const meta = RARITY_META[e.rarity];
-    const trigger = e.battleEffect?.trigger;
-    const effectClass = e.battleEffect?.effectClass;
+    // [2026-09-28 莉莉子 神格神经] 一条强化可能带**多个效果**（如「决意·不退之阵」）：
+    //   标签统一由 getBattleEffects 展开 → 有几个触发时机/效果类就挂几个 chip（单效果条目表现不变）
+    const effects = getBattleEffects(e);
+    const triggerLabels = Array.from(new Set(effects.map(fx => fx.trigger)));
+    const effectLabels = Array.from(new Set(effects.map(fx => fx.effectClass)));
     const hoverProps = bindHover ? bindHover(e) : {};
     return (
         <div
@@ -51,20 +55,22 @@ export const EnhancementCard: React.FC<EnhancementCardProps> = ({ e, bindHover }
                     style={{ color: meta.color, border: `1px solid ${meta.color}44`, background: `${meta.color}11` }}>
                     {meta.label}
                 </span>
-                {trigger && (
-                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-mono text-cyan-300 border border-cyan-400/30 bg-cyan-400/10">
-                        {TRIGGER_LABELS[trigger]}
+                {triggerLabels.map(t => (
+                    <span key={t} className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-mono text-cyan-300 border border-cyan-400/30 bg-cyan-400/10">
+                        {TRIGGER_LABELS[t]}
                     </span>
-                )}
+                ))}
             </div>
             {/* 描述 */}
             <p className="text-gray-400 text-xs leading-snug line-clamp-3 min-h-[3rem]">{e.description}</p>
             {/* 效果类 */}
-            {effectClass && (
-                <div className="mt-auto text-center">
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-mono text-purple-200 border border-purple-400/30 bg-purple-500/10">
-                        {EFFECT_LABELS[effectClass]}
-                    </span>
+            {effectLabels.length > 0 && (
+                <div className="mt-auto flex flex-wrap justify-center gap-1">
+                    {effectLabels.map(c => (
+                        <span key={c} className="text-[10px] px-2 py-0.5 rounded-full font-mono text-purple-200 border border-purple-400/30 bg-purple-500/10">
+                            {EFFECT_LABELS[c]}
+                        </span>
+                    ))}
                 </div>
             )}
         </div>

@@ -12,8 +12,8 @@
 // 任务类型：每日(次日6点重置) | 每周(周一6点重置) | 永久成就(不重置) | 版本活动(不重置)
 export type MissionCategory = 'daily' | 'weekly' | 'achievement' | 'version';
 
-// 奖励类型：数据金 | 皮肤 | 卡背 | 卡牌 | 分析员经验 | 稀有武装 | 迷宫卡包
-export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack' | 'card' | 'analystExp' | 'armament' | 'pack';
+// 奖励类型：数据金 | 皮肤 | 卡背 | 卡牌 | 分析员经验 | 稀有武装 | 迷宫卡包 | 万能神格碎片
+export type MissionRewardType = 'dataGold' | 'skin' | 'cardBack' | 'card' | 'analystExp' | 'armament' | 'pack' | 'universalShard';
 
 // 监听条件类型
 export type MissionConditionType =
@@ -97,6 +97,14 @@ export const MISSIONS: MissionDef[] = [
         category: 'daily', title: '推演凯旋', description: '通关 1 次悖论迷宫',
         targetCount: 1, reward: { type: 'analystExp', amount: 240 }, // [2026-09-07] 分析员升太快：400→240
         condition: { type: 'rogue_win' }, rogue: true
+    },
+    {
+        // [2026-09-29 程拍板] **万能神格碎片固定产出口**（每日 20 片）
+        //   万能碎片不从「神格碎片匣」开出 —— 唯一稳定来源就是这条每日任务（+ 碎片溢出转化）
+        id: 'divinity_daily_shard_1',
+        category: 'daily', title: '神格汲取', description: '完成 1 场悖论迷宫推演，领取 20 片「万能神格碎片」（可替代任何天启者的专属碎片）',
+        targetCount: 1, reward: { type: 'universalShard', amount: 20 },
+        condition: { type: 'rogue_run' }, rogue: true
     },
 
     // ==========================================
@@ -441,12 +449,12 @@ export const MISSIONS: MissionDef[] = [
     // 旧 ID 的存档会自动保留，新 ID 会被视为全新任务，已领取玩家也能再次领取。
     // ==========================================
     {
-        id: 'version_old_friend_20260927',
-        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-09-27）',
+        id: 'version_old_friend_20261001',
+        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-10-01）',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'dataGold', amount: 8000 },
         condition: { type: 'direct_claim' },
-        showCondition: { accountCreatedBefore: '2026-09-27' }
+        showCondition: { accountCreatedBefore: '2026-10-01' }
     },
     {
         id: 'version_new_start',

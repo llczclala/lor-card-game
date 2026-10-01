@@ -26,6 +26,10 @@ import { useCardGaze } from '../../hooks/useCardGaze'; // [2026-08-13] 悬停卡
 import { FloatingCardPreview } from '../FloatingCardPreview'; // [2026-08-13] 悬停大图预览
 import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-08-13] 弹窗音效
 import { bindArmamentGaze } from './ArmamentPreview'; // [2026-08-26 莉莉子] 武装悬停大卡预览
+import { MAX_DIVINITY_LEVEL, getDivinityNodes, getDivinityIconKey } from '../../data/roguelike/heroDivinity'; // [2026-09-28 神格神经]
+import { useHeroDivinity } from '../../hooks/useHeroDivinity'; // [2026-09-28 神格神经] 解锁/碎片钱包
+import { HERO_IMAGES, SPELL_IMAGES } from '../../data/imageData'; // [2026-09-29] 神格神经：中央卡面原画 + 节点技能图标
+import { ShardIcon } from './ShardIcon'; // [2026-09-29 程拍板] 神格碎片图标（专属=头像菱形 / 万能=橙菱形）
 
 // [2026-08-13] 流派图标映射（lucide + 阵营主题色，对齐 heroTheme 单一来源）
 const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
@@ -519,18 +523,309 @@ const LevelRewardsModal: React.FC<{ isOpen: boolean; currentLevel: number; onClo
     );
 };
 
-// ════════════ 内容 ④：神格神经图（占位）════════
-export const DivinityPlaceholder: React.FC<{ heroName: string }> = ({ heroName }) => {
-    return (
-        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center h-full">
-            <Sparkles className="text-purple-500/60" size={48} />
-            <div>
+// ════════════ 内容 ④：神格神经图（[2026-09-28 莉莉子] 占位 → 实装）════════
+// 结构（程 09-28 设计）：**6 个节点 · 左 3 右 3**，每节点 1 星（0-6 星）
+//   ① 基调 A  ② 基调 B  ③ A 的升级  ④ B 的升级  ⑤ 固定槽（开局法力+1，全英雄同）  ⑥ 决胜能力
+// 解锁（程定）：**严格顺序**（③需①／④需②／⑤需①②③④／⑥需⑤）
+//   · [2026-09-29 程拍板] 货币改为**神格碎片**：专属碎片（每英雄各一种）+ **万能碎片（可全额替代）**
+//     花费优先级：先花专属、再用万能补足；价格 10/20/30/40/40/60（满级 200 片）
+// 载体：激活后由 RogueGameWrapper 注入本场（借道迷宫强化管线）；③④ 以"覆盖"方式取代 ①②（resolveDivinityEffects）
+// [2026-09-29 程拍板] 图标：①③ 小技能 · ②④ 大招 · ⑤ 支援技 · ⑥ 天启者法术（取 SPELL_IMAGES[node.icon]）
+//   界面：中央天启者**大卡面原画** + 左右各 3 节点**弧线环绕**（程按参考图定稿的放大版）
+//
+// ⚙️ 要调大小 / 错落幅度，改下面这组常量即可：
+//   📐 可用空间参考：游戏舞台固定 **1680×1050** 逻辑像素
+//      本内容区 ≈ **1288 宽 × 686 高**（1680 − 280 左列 − 48 px-6 − 24 gap-6 − 40 p-5；
+//      高度已扣掉顶栏 / 详情栏。divinity 下手牌主视觉是隐藏的，不占宽）
+//   ⚠️ 铁律：**总宽必须 < 1288**，否则会出横向滚动条、溢出还会压到左侧星槽
+const DIV_CARD_W = 310;                    // 中央卡面宽（**显式写死**）
+//   ↑ 不能改用 aspect-ratio + flex-1 —— 在 auto 宽容器里宽度会算飞，直接撑爆面板（踩过）
+const DIV_CARD_H = 540;                    // 中央卡面高
+const DIV_ICON_PX = 96;                    // 节点技能图标徽章直径
+const DIV_ICON_INNER_PX = 80;              // 徽章内圈（技能图）直径
+const DIV_BLOCK_W = 250;                   // 节点面板块宽
+const DIV_CARD_GAP = 26;                   // 卡面 ↔ 节点 的横向间距（收紧，别拉远）
+/** 弧线：**只有中间那个节点**（③④）往外推多少 px —— 上下两个留在原位，形成外弧 */
+const DIV_ARC_OFFSET = 44;
+/**
+ * 各列节点横向偏移（索引 0/1/2 = 上/中/下）。
+ * ⚠️ 方向踩过坑：只能把**中间**往外推（左列负 / 右列正）；
+ *    若改成"把上下两个向内推"，它们会撞进卡面，反而显得中间那个离卡面很远。
+ */
+const ARC_OFFSETS: Record<'left' | 'right', number[]> = {
+    left: [0, -DIV_ARC_OFFSET, 0],
+    right: [0, DIV_ARC_OFFSET, 0],
+};
+/** 舞台总宽（供参考/自检：应远小于 1288） */
+const DIV_STAGE_W = DIV_BLOCK_W * 2 + DIV_CARD_GAP * 2 + DIV_CARD_W + DIV_ARC_OFFSET * 2;
+
+export const DivinityContent: React.FC<{ heroKey: string; heroName: string; userSystem?: any }> = ({ heroKey, heroName, userSystem }) => {
+    const { getUnlocked, getHeroShardCount, getUniversalShardCount, getSpendPlan, canUnlock, unlockNode, resetHero } = useHeroDivinity();
+    const nodes = getDivinityNodes(heroKey);
+    const unlocked = getUnlocked(heroKey);
+    // [2026-09-29 程拍板] 碎片钱包（开发者账号恒 9999）
+    const heroShards = getHeroShardCount(heroKey);   // 本英雄专属碎片
+    const uniShards = getUniversalShardCount();      // 万能碎片
+    const theme = HERO_THEMES[heroKey] ?? HERO_THEMES.lyfe;
+    const isDev = userSystem?.userId === 'dev_full_admin'; // [2026-09-28 开发者] 重置按钮
+    const [pickId, setPickId] = useState<string | null>(null);
+    const [resetArmed, setResetArmed] = useState(false); // 两段确认，防手滑清空
+
+    // 未设计的天启者 → 占位（里芙纵切先行）
+    if (nodes.length === 0) {
+        return (
+            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center h-full">
+                <Sparkles className="text-purple-500/60" size={48} />
                 <p className="text-lg font-black text-white">神格神经图</p>
-                <p className="text-sm text-purple-300/70 mt-1 font-mono">对应 LOR「英雄之路」星力系统</p>
+                <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-gray-400">
+                    {heroName} 的神格神经尚在设计中（里芙已实装）
+                </div>
             </div>
-            <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-gray-400">
-                {heroName} 的神格神经图 · 开发中，敬请期待
+        );
+    }
+
+    const starCount = nodes.filter(n => unlocked.includes(n.id)).length;
+    const picked = nodes.find(n => n.id === pickId) ?? null;
+    const leftCol = nodes.filter(n => n.slot % 2 === 1);  // ① ③ ⑤
+    const rightCol = nodes.filter(n => n.slot % 2 === 0); // ② ④ ⑥
+
+    /**
+     * [2026-09-29 程拍板] 单个节点：**技能图标**（对齐 `SPELL_IMAGES[n.icon]`）
+     *   · 圆形徽章：外环=状态色（已激活金 / 可激活主题色 / 锁定灰），底衬技能图
+     *   · 分配：①③ 小技能 · ②④ 大招 · ⑤ 支援技 · ⑥ 天启者法术
+     */
+    const NodeBtn: React.FC<{ n: typeof nodes[number]; side: 'left' | 'right'; offsetX: number }> = ({ n, side, offsetX }) => {
+        const on = unlocked.includes(n.id);
+        const st = canUnlock(n);
+        const plan = getSpendPlan(heroKey, n);
+        const color = on ? '#facc15' : st.ok ? theme.color : '#4b5563';
+        const iconSrc = SPELL_IMAGES[getDivinityIconKey(n) as keyof typeof SPELL_IMAGES] as string | undefined;
+        const active = picked?.id === n.id;
+        return (
+            // 弧线错落：外层承担横移（避免与按钮自身的 hover scale 抢 transform）
+            <div style={{ transform: `translateX(${offsetX}px)` }}>
+                <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); setPickId(n.id); }}
+                    className={`group flex items-center gap-4 rounded-2xl border outline-none transition-all ${side === 'left' ? 'flex-row-reverse text-right' : 'text-left'} ${active ? 'scale-[1.04]' : 'hover:scale-[1.03]'}`}
+                    style={{
+                        width: DIV_BLOCK_W,
+                        padding: '14px 16px',
+                        background: active ? `${color}1f` : (on ? 'rgba(30,41,59,0.5)' : 'rgba(30,41,59,0.42)'),
+                        borderColor: active ? `${color}99` : (on ? `${color}44` : 'rgba(255,255,255,0.07)'),
+                        boxShadow: active ? `0 0 28px ${color}66` : (on ? `0 0 18px ${color}22` : 'none'),
+                    }}
+                >
+                    {/* 技能图标徽章（圆形 + 状态外环） */}
+                    <div className="relative shrink-0">
+                        <div
+                            className={`rounded-full flex items-center justify-center transition-all ${st.ok && !on ? 'animate-pulse' : ''}`}
+                            style={{
+                                width: DIV_ICON_PX, height: DIV_ICON_PX,
+                                background: `${color}22`,
+                                border: `3px solid ${color}`,
+                                boxShadow: active || on ? `0 0 26px ${color}aa, inset 0 0 16px ${color}44` : `0 0 10px ${color}44`,
+                            }}
+                        >
+                            <div className="overflow-hidden rounded-full" style={{ width: DIV_ICON_INNER_PX, height: DIV_ICON_INNER_PX, background: '#0b1020' }}>
+                                {iconSrc ? (
+                                    <img src={iconSrc} alt={n.name} className="w-full h-full object-cover" draggable={false}
+                                        style={{ filter: on || st.ok ? 'none' : 'grayscale(0.9) brightness(0.6)' }} />
+                                ) : (
+                                    <span className="w-full h-full flex items-center justify-center font-black text-white/70 text-xl">{n.slot}</span>
+                                )}
+                            </div>
+                        </div>
+                        {/* 已激活：右下角金星 */}
+                        {on && (
+                            <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-amber-400 text-black text-[13px] font-black flex items-center justify-center border-2 border-slate-950">★</span>
+                        )}
+                        {/* 可激活未激活：右上角提示点 */}
+                        {!on && st.ok && (
+                            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-emerald-400 border-2 border-slate-950 animate-pulse" />
+                        )}
+                    </div>
+                    {/* 文案：节点号 + 名字 + 状态 */}
+                    <div className={`flex flex-col gap-1.5 min-w-0 ${side === 'left' ? 'items-end' : 'items-start'}`}>
+                        <span className="text-[13px] font-mono text-gray-500 tracking-wider">节点 {n.slot}</span>
+                        <span className={`text-[21px] font-black leading-tight whitespace-nowrap ${on ? 'text-amber-200' : st.ok ? 'text-white' : 'text-gray-400'}`}>
+                            {n.name}
+                        </span>
+                        <span className={`text-[15px] font-mono flex items-center gap-1.5 ${on ? 'text-amber-400/90' : st.ok ? 'text-emerald-300' : 'text-gray-500'}`}>
+                            {on ? '已激活' : st.reason === 'locked' ? '🔒 前置未开' : (<><ShardIcon heroKey={heroKey} size={16} />{plan.total}</>)}
+                        </span>
+                    </div>
+                </button>
             </div>
+        );
+    };
+
+    return (
+        <div className="h-full flex flex-col gap-3">
+            {/* 顶部：星数 + 碎片钱包 */}
+            <div className="shrink-0 flex items-center justify-between px-2">
+                <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-white tracking-widest">神格神经图</span>
+                    <span className="flex items-center gap-0.5">
+                        {Array.from({ length: MAX_DIVINITY_LEVEL }).map((_, i) => (
+                            <span key={i} className={`text-[13px] leading-none ${i < starCount ? 'text-amber-400' : 'text-gray-600'}`}>★</span>
+                        ))}
+                    </span>
+                    <span className="text-xs font-mono text-gray-400">{starCount}/{MAX_DIVINITY_LEVEL}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    {isDev && (
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                eventBus.emit(GameEvents.UI_CLICK);
+                                if (!resetArmed) { setResetArmed(true); return; }
+                                resetHero(heroKey);   // 二次点击才真清空
+                                setResetArmed(false);
+                                setPickId(null);
+                            }}
+                            onBlur={() => setResetArmed(false)}
+                            className={`px-3 py-1 rounded-lg font-black text-xs border transition-all ${
+                                resetArmed
+                                    ? 'bg-red-600/80 border-red-400 text-white animate-pulse'
+                                    : 'bg-slate-800 border-white/10 text-gray-300 hover:bg-slate-700'
+                            }`}
+                            title="重置该天启者的神格神经（开发者专属，两段确认）"
+                        >
+                            {resetArmed ? '确认重置？' : '重置'}
+                        </button>
+                    )}
+                    {/* [2026-09-29 程拍板] 碎片钱包：本英雄专属（头像菱形）+ 万能（橙菱形） */}
+                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-500/15 border border-purple-400/40 text-purple-200 font-black text-xs"
+                        title={`${heroName}的神格碎片（专属，只能点本英雄）`}>
+                        <ShardIcon heroKey={heroKey} size={20} /> {heroName}碎片 {heroShards}
+                    </span>
+                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-200 font-black text-xs"
+                        title="万能碎片（可替代任何天启者的专属碎片）">
+                        <ShardIcon size={20} /> 万能 {uniShards}
+                    </span>
+                </div>
+            </div>
+
+            {/* ═══ 神经图 · [2026-09-29 程拍板 v3] 大卡面原画 + 节点外弧环绕 ═══
+                   布局（弧线：**只有中间那个**往外推，上下留在原位）：
+                        ①              ②
+                   ③ ←外弧   里芙卡面   外弧→ ④
+                        ⑤              ⑥
+                   ⚠️ 外层 overflow-hidden 是护栏：内容万一超宽也不会压到左侧星槽      */}
+            <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden">
+                {/* 舞台：显式尺寸（内容区 ≈1288×686，此处只占 ~950×566，余量充足） */}
+                <div className="flex items-center justify-center" style={{ maxWidth: DIV_STAGE_W }}>
+                    {/* 左列：① ③ ⑤（右对齐朝卡面；仅中间 ③ 外推） */}
+                    <div className="flex flex-col justify-between items-end h-full"
+                        style={{ height: DIV_CARD_H + 26, paddingTop: 4, paddingBottom: 4 }}>
+                        {leftCol.map((n, i) => <NodeBtn key={n.id} n={n} side="left" offsetX={ARC_OFFSETS.left[i] ?? 0} />)}
+                    </div>
+
+                    {/* 中央：天启者**大卡面原画**（显式宽高，杜绝 aspect-ratio 失控） */}
+                    <div className="shrink-0 flex flex-col items-center"
+                        style={{ marginLeft: DIV_CARD_GAP, marginRight: DIV_CARD_GAP }}>
+                        <div
+                            className="relative rounded-2xl overflow-hidden shrink-0"
+                            style={{
+                                width: DIV_CARD_W, height: DIV_CARD_H,
+                                border: `3px solid ${theme.color}`,
+                                boxShadow: `0 0 44px ${theme.glow}, 0 0 110px ${theme.color}44, inset 0 0 40px rgba(0,0,0,0.65)`,
+                            }}
+                        >
+                            <img
+                                src={HERO_IMAGES[heroKey]?.base}
+                                alt={heroName}
+                                className="w-full h-full object-cover"
+                                draggable={false}
+                            />
+                            {/* [2026-09-29 程拍板] 渐隐改用**天启者主题色**（原来用黑 → 把立绘的脸压黑了）
+                                · 顶部：主题亮色淡染（让卡面融进背景，但不遮脸）
+                                · 底部：阵营深色(soft) 沉底 → 主题色过渡，保证名字/星数可读 */}
+                            <div className="absolute inset-x-0 top-0 h-24 pointer-events-none"
+                                style={{ background: `linear-gradient(to bottom, ${theme.color}59, transparent)` }} />
+                            <div className="absolute inset-x-0 bottom-0 h-36 pointer-events-none"
+                                style={{ background: `linear-gradient(to top, ${theme.soft}F2, ${theme.color}55 55%, transparent)` }} />
+                            {/* 卡面底部：名字 + 星数 */}
+                            <div className="absolute inset-x-0 bottom-0 px-3 pb-4 flex flex-col items-center gap-2">
+                                <span className="text-[30px] font-black text-white tracking-wide drop-shadow-[0_0_10px_rgba(0,0,0,0.95)]">{heroName}</span>
+                                <span className="flex items-center gap-1.5">
+                                    {Array.from({ length: MAX_DIVINITY_LEVEL }).map((_, i) => (
+                                        <span key={i} className={`text-[19px] leading-none ${i < starCount ? 'text-amber-400' : 'text-white/25'}`}>★</span>
+                                    ))}
+                                </span>
+                            </div>
+                        </div>
+                        <span className="shrink-0 mt-3 text-[11px] text-gray-500 font-mono tracking-[0.42em]">NEURAL CORE</span>
+                    </div>
+
+                    {/* 右列：② ④ ⑥（左对齐朝卡面；仅中间 ④ 外推） */}
+                    <div className="flex flex-col justify-between items-start h-full"
+                        style={{ height: DIV_CARD_H + 26, paddingTop: 4, paddingBottom: 4 }}>
+                        {rightCol.map((n, i) => <NodeBtn key={n.id} n={n} side="right" offsetX={ARC_OFFSETS.right[i] ?? 0} />)}
+                    </div>
+                </div>
+            </div>
+
+            {/* 详情 + 激活 */}
+            {picked && (() => {
+                const on = unlocked.includes(picked.id);
+                const st = canUnlock(picked);
+                const plan = getSpendPlan(heroKey, picked);
+                const reqNames = picked.requires.map(r => nodes.find(x => x.id === r)?.name ?? r).join('、');
+                return (
+                    <div className="shrink-0 rounded-xl border border-white/10 bg-black/40 px-4 py-3">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="font-black text-white">{picked.name}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ color: theme.color, border: `1px solid ${theme.color}55` }}>
+                                节点 {picked.slot}
+                            </span>
+                            {picked.slot === 5 && <span className="text-[10px] text-gray-400">（全英雄固定槽）</span>}
+                        </div>
+                        <p className="text-xs text-gray-300 leading-relaxed mb-2">{picked.description}</p>
+                        {/* [2026-09-29 程拍板] 花费明细：先花专属、万能补足（万能可全额替代）—— 带碎片图标 */}
+                        {!on && (
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] font-mono text-gray-400 mb-2">
+                                <span>消耗：</span>
+                                <span className="flex items-center gap-1 text-purple-300">
+                                    <ShardIcon heroKey={heroKey} size={16} />{plan.heroSpend} 专属
+                                </span>
+                                {plan.universalSpend > 0 && (
+                                    <span className="flex items-center gap-1 text-amber-300">
+                                        <ShardIcon size={16} />{plan.universalSpend} 万能
+                                    </span>
+                                )}
+                                <span className="text-gray-500">（共 {plan.total} 片）</span>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] text-gray-500">
+                                {reqNames ? `前置：${reqNames}` : '无前置'}
+                            </span>
+                            <button
+                                type="button"
+                                disabled={!st.ok}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    eventBus.emit(GameEvents.UI_CLICK);
+                                    unlockNode(picked);
+                                }}
+                                className={`px-5 py-1.5 rounded-lg font-black text-xs tracking-wider transition-all ${
+                                    on ? 'bg-amber-500/20 text-amber-200 cursor-default'
+                                        : st.ok ? 'bg-gradient-to-r from-purple-600 to-fuchsia-500 hover:scale-105 shadow-[0_0_16px_rgba(168,85,247,0.45)] text-white'
+                                        : 'bg-white/5 text-gray-500 cursor-not-allowed'
+                                }`}
+                            >
+                                {on ? '已激活'
+                                    : st.reason === 'locked' ? '前置未开'
+                                    : st.reason === 'poor' ? `碎片不足（需 ${plan.total} 片）`
+                                    : `激活（${plan.total} 片）`}
+                            </button>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 };

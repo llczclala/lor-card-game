@@ -18,6 +18,7 @@ import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS } from '../data/im
 import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局 API
 import { getEquipmentById } from '../data/equipment'; // [2026-09-08] 武装奖励展示/弹窗
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { ShardIcon } from './roguelike/ShardIcon'; // [2026-09-29 程拍板] 万能碎片橙菱形图标
 // [2026-09-09 莉莉子] 金光领取弹窗抽为共享组件（主大厅/肉鸽复用），数据构造器与卡图辅助一并移入
 import { RewardClaimPopup, buildRewardPopupData, getCardRewardImage, type RewardPopupData } from './RewardClaimPopup';
 
@@ -239,6 +240,19 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                             <div className="flex flex-col items-start overflow-hidden">
                                                                 <span className="text-[8px] font-bold text-yellow-500/80 tracking-widest uppercase">PACK</span>
                                                                 <span className="font-bold text-xs text-yellow-300">迷宫卡包 ×{mission.reward.amount ?? 1}</span>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                // [2026-09-29 程拍板] 万能神格碎片奖励展示（橙菱形图标）
+                                                if (mission.reward.type === 'universalShard') {
+                                                    return (
+                                                        <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-lg border border-amber-500/30 min-w-[120px]">
+                                                            <ShardIcon size={20} className="shrink-0" />
+                                                            <div className="flex flex-col items-start overflow-hidden">
+                                                                <span className="text-[8px] font-bold text-amber-500/80 tracking-widest uppercase">SHARD</span>
+                                                                <span className="font-bold text-xs text-amber-200">万能碎片 ×{mission.reward.amount ?? 0}</span>
                                                             </div>
                                                         </div>
                                                     );

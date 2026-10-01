@@ -37,7 +37,7 @@ export const RogueSettleModal: React.FC<RogueSettleModalProps> = ({ run, expGain
                     <div className="flex justify-between"><span className="text-gray-400">剩余 HP</span><span className={run.hp > 0 ? 'text-green-400' : 'text-red-400'}>{run.hp}/{run.maxHp}</span></div>
                     <div className="flex justify-between"><span className="text-gray-400">金币</span><span className="text-amber-300">{run.gold}</span></div>
                     <div className="flex justify-between"><span className="text-gray-400">迷宫强化</span><span>{run.enhancements.length}</span></div>
-                    <div className="flex justify-between border-t border-white/10 mt-2 pt-2"><span className="text-gray-400">悖论点</span><span className="text-purple-300 font-black">+{run.paradoxPoints}</span></div>
+                    <div className="flex justify-between border-t border-white/10 mt-2 pt-2"><span className="text-gray-400">神格碎片</span><span className="text-purple-300 font-black">+{run.settledShards}</span></div>
                     {/* [2026-09-15 程拍板] 中途放弃 = 完全不算一局：隐藏经验与倍率明细 */}
                     {detail.abandoned ? (
                         <div className="flex justify-between border-t border-white/10 mt-2 pt-2">

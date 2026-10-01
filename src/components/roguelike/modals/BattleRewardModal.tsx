@@ -14,6 +14,7 @@ import { attachEquipment } from '../../../data/equipment';
 import type { RewardCardOption } from '../../../data/roguelike/rewards';
 import { Card } from '../../Card';
 import { PackOpenModal } from '../PackOpenModal'; // [2026-09-04] 完整滚轮开箱演出
+import type { ChestInstance } from '../../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
 
 // ==========================================
 // 手牌样式卡牌缩放（程调整处）：放大倍数
@@ -31,7 +32,7 @@ interface BattleRewardModalProps {
     onRefresh?: () => void; // [2026-08-29] 刷新三选一（消耗刷新次数）
     refreshCount?: number;  // [2026-08-29] 剩余刷新次数
     pendingPacks?: number;  // [2026-08-29] 胜利附带待打开卡包
-    onOpenPack?: () => string | null; // [2026-08-29] 打开卡包（随机武装）
+    onOpenPack?: () => ChestInstance | null; // [2026-09-29 程拍板] 开包 → 抽到一个奖励匣（原为返回武装 id）
 }
 
 export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, options, onPick, onSkip, onRefresh, refreshCount = 0, pendingPacks = 0, onOpenPack }) => {

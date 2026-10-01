@@ -59,8 +59,8 @@ export interface TutorialStage {
     /** 是否禁用开局换牌（新手关卡建议 true） */
     disableMulligan?: boolean;
 
-    /** 可选：敌方英雄等级覆盖（默认 1） */
-    enemyHeroLevel?: number;
+    // [2026-09-29 程拍板] 原 `enemyHeroLevel?: number`（敌方英雄等级覆盖）已移除 ——
+    //   敌人强度只由装备与迷宫强化控制，不设天启者等级；该字段此前也从未生效（被 GameSession 丢弃）。
 
     /** 考核目标描述（显示在界面上提示玩家） */
     objectives: string[];
@@ -147,7 +147,6 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
             level: 1,
         },
         disableMulligan: true,
-        enemyHeroLevel: 1,
         objectives: [
             '灵活运用进攻与格挡',
             '将敌方水晶生命值削减至 0',
@@ -176,7 +175,6 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
             level: 1,
         },
         disableMulligan: true,
-        enemyHeroLevel: 1,
         objectives: [
             '查看卡牌详情界面',
             '理解不同速度的法术',

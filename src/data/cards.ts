@@ -546,9 +546,10 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   'Marian_Wolf_Tooth_Beacon': {
     key: 'Marian_Wolf_Tooth_Beacon', name: '獠牙信标', cost: 0, power: 0, health: 20, maxHealth: 20,
     isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Last Breath','CantAttack'],
-    // [2026-09-19 T43] 数值 6 → 8 对齐注册表（effect_marian_beacon_lastbreath 于 2026-09-18 已拍板 6→8，
-    //   卡面漏改）；并补上 Lv2 的水晶条款。
-    description: '【亡语】阵亡时，对我方全体造成 8 点分摊伤害。\n敌方每有 1 个单位进攻，本单位 -1 血；若这次进攻拉取了我方暴露单位，则再 -1 血。\nLv2：若引爆时我方场上无可分摊的单位，伤害改为打击我方水晶。',
+    // [2026-09-28 莉莉子 修复] 数值一致性：卡面原写「8 点」，而效果注册表 params.spreadDamageTotal 实际是 **6**
+    //   （注册表注释写着"6 → 8（结掉待复核 TODO）"，但值并没有真的改过）。
+    //   程 2026-09-28 拍板：**以当前实际伤害为准** ⇒ 卡面改回 6。（神格神经 ⑥ 的"亡语翻倍"即 6→12）
+    description: '【亡语】阵亡时，对我方全体造成 6 点分摊伤害。\n敌方每有 1 个单位进攻，本单位 -1 血；若这次进攻拉取了我方暴露单位，则再 -1 血。\nLv2：若引爆时我方场上无可分摊的单位，伤害改为打击我方水晶。',
     imageUrl: UNIT_IMAGES.wolf_tooth_beacon,
     effects: ['effect_marian_beacon_lastbreath'], // [T09 已完成] 亡语分摊伤害（SPREAD_DAMAGE 新建类）
     isCollectible: false,

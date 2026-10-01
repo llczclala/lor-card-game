@@ -14,6 +14,8 @@ import type { RogueDifficulty } from '../data/roguelike/difficulties'; // [2026-
 import type { RogueInvestment } from '../data/roguelike/events'; // [2026-08-28] 事件投资标记
 import { CARD_DB } from '../data/cards';
 import { getEquipPoolForCard, getEquipmentById } from '../data/equipment'; // [2026-08-29 休整·探路] 回归随机装备 · [2026-09-25] 武装任务查询
+import { resolveDivinityEffects, getUnlockedNodes } from '../data/roguelike/heroDivinity'; // [2026-09-28 神格神经] 节点效果并入本局强化表
+import { computeRunShards, type ChestInstance } from '../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 神格碎片结算 + 奖励匣（取代悖论点）
 import { advanceQuest, questCount, questKey } from '../logic/questTracker'; // [2026-09-25 莉莉子 武装线] 整局任务进度推进
 import type { QuestEvent } from '../data/questTypes'; // [2026-09-25] 任务事件类型
 import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-09-25 莉莉子 武装线] 战斗内任务事件订阅
@@ -31,7 +33,10 @@ export interface RoguelikeRunState {
     enhancements: string[]; // [2026-08-05] 迷宫强化（原"遗物"改名）
     act: number; // 当前 Act (1~3)
     currentNodeId: string | null;
-    paradoxPoints: number;
+    /** [2026-09-29 程拍板] 本局结算所得**神格碎片**（取代原 paradoxPoints 悖论点） */
+    settledShards: number;
+    /** [2026-09-29 程拍板] 本局获得的**奖励匣**（武装匣/神格碎片匣；结算时入待打开队列） */
+    earnedChests: ChestInstance[];
     refreshCount: number; // [新增] 刷新次数
     reviveCount: number;  // [新增] 复活次数
     defeated: string[];   // [2026-08-10] 已击败的战斗节点 id（地图显示红叉）
@@ -142,6 +147,14 @@ export const useRoguelikeRun = () => {
         grantCardEquips(bonus?.grantedSpellEquips, true);
         grantCardEquips(bonus?.grantedUnitEquips, false);
 
+        // ── [2026-09-28 莉莉子 神格神经] 已解锁节点 → 并入本局强化表 ──
+        //   ⚠️ 为什么并进 run.enhancements，而不是"只在战斗层注入"（09-28 程实测踩的坑）：
+        //   局层面板（地图头像抽屉 RogueDrawer / 结算窗 RunEndModal）读的都是 **run.enhancements**，
+        //   只注入战斗层 ⇒ 战斗内能看到、地图抽屉里看不见（"只有天启共鸣"就是这么来的）。
+        //   并进这里后：抽屉可见、战斗分发可见、⑤ 的规则查询（读 game.rogueEnhancements）也走同一条路。
+        //   ③④ 的【升级覆盖】在 resolveDivinityEffects 内收口（被升级的原节点不出现）。
+        const divinityIds = resolveDivinityEffects(heroKey, getUnlockedNodes(heroKey));
+
         // [2026-09-01 莉莉子 修复] 预分配地图（含节点敌人/强化/BUFF）存 run：
         // 放弃本场战斗返回地图不再重新 generateMapLayout 随机敌人（此前 RogueMapScreen useMemo 随组件重挂载失效）
         const layout = generateMapLayout(difficulty);
@@ -154,10 +167,11 @@ export const useRoguelikeRun = () => {
             hp,
             maxHp,
             gold,
-            enhancements: [...extraEnh], // 等级给的强化都记录（即时型开局已生效；战斗型由 battleEffect 分发）
+            enhancements: [...extraEnh, ...divinityIds], // 等级给的强化都记录（即时型开局已生效；战斗型由 battleEffect 分发）· [2026-09-28] + 神格神经节点
             act: 1,
             currentNodeId: ROGUE_MAPS[difficulty][0]?.nodes[0]?.id ?? null, // [2026-08-04] 初始定位到第一重起点 [2026-08-28] 按难度取图
-            paradoxPoints: 0,
+            settledShards: 0,   // [2026-09-29] 本局结算神格碎片（结算时计算）
+            earnedChests: [],   // [2026-09-29] 本局获得的奖励匣（结算时入待打开队列）
             refreshCount: 1 + (bonus?.refreshCount ?? 0),
             reviveCount: 1 + (bonus?.reviveCount ?? 0),
             defeated: [], // [2026-08-10]
@@ -246,7 +260,8 @@ export const useRoguelikeRun = () => {
         setRun(prev => {
             if (!prev) return prev;
             if (!win) {
-                return { ...prev, status: 'dead' as const, paradoxPoints: prev.paradoxPoints + 5 };
+                // [2026-09-29 程拍板] 悖论点已废弃 → 改发**神格碎片**（败亡保底 RUN_SHARD_LOSE）
+                return { ...prev, status: 'dead' as const, settledShards: computeRunShards(false) };
             }
             return prev;
         });
@@ -382,7 +397,8 @@ export const useRoguelikeRun = () => {
             if (!prev) return prev;
             const nextAct = prev.act + 1;
             if (nextAct > ROGUE_MAPS[prev.difficulty].length) {
-                return { ...prev, status: 'won' as const, paradoxPoints: prev.paradoxPoints + 20 };
+                // [2026-09-29 程拍板] 悖论点已废弃 → 通关发**神格碎片**（RUN_SHARD_WIN）
+                return { ...prev, status: 'won' as const, settledShards: computeRunShards(true) };
             }
             // [2026-08-04] 推进后定位到下一重迷宫起点
             const nextStart = ROGUE_MAPS[prev.difficulty][nextAct - 1]?.nodes[0]?.id ?? null; // [2026-08-28] 按难度取图

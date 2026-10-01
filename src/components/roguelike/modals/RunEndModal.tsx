@@ -21,6 +21,8 @@ import { ROGUE_DIFFICULTIES } from '../../../data/roguelike/difficulties';
 import { useHeroProgression } from '../../../hooks/useHeroProgression'; // [2026-09-08] 等级→槽数量/基础品质
 import { useArmamentConfig } from '../../../hooks/useArmamentConfig'; // [2026-09-08] 实时武装槽/品质档
 import { PackOpenModal } from '../PackOpenModal'; // [2026-09-04] 通关卡包·完整滚轮开箱演出
+import { ChestOpenModal, type ChestOpenResult } from '../ChestOpenModal'; // [2026-09-29 程拍板] 打开匣子 → 得道具
+import type { ChestInstance } from '../../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
 
 /** [2026-08-29] 通关/败亡结算信息（经验动画起点/终点 + 倍率明细） */
 export interface RunEndInfo {
@@ -38,7 +40,11 @@ interface RunEndModalProps {
     run: RoguelikeRunState;
     runEnd: RunEndInfo;
     pendingPacks?: number; // [2026-08-29] 通关待打开卡包
-    onOpenPack?: () => string | null; // [2026-08-29] 打开卡包（随机武装）
+    onOpenPack?: () => ChestInstance | null; // [2026-09-29 程拍板] 开包 → 抽到一个奖励匣（原为返回武装 id）
+    // [2026-09-29 程拍板] 通关结算也能直接开匣（卡包抽到的匣子）
+    pendingChests?: ChestInstance[];
+    onOpenChest?: (index: number) => any;
+    onShardDrop?: (res: any) => void;
     onConfirm: () => void;
 }
 
@@ -48,7 +54,7 @@ type Phase = 'intro' | 'reso' | 'count' | 'retrain' | 'stats';
 const TIER_COLOR: Record<number, string> = { 1: '#a855f7', 2: '#facc15', 3: '#ef4444' };
 const TIER_NAME: Record<number, string> = { 1: '史诗', 2: '传说', 3: '神话' };
 
-export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPacks = 0, onOpenPack, onConfirm }) => {
+export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPacks = 0, onOpenPack, pendingChests = [], onOpenChest, onShardDrop, onConfirm }) => {
     const { won, heroKey, fromLevel, fromExp, toLevel, toExp, expGained, detail } = runEnd;
     const isWin = won;
     // [2026-09-08] 演出数据
@@ -60,6 +66,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
     const [disp, setDisp] = useState({ level: fromLevel, exp: fromExp });
     const [flashLevel, setFlashLevel] = useState(false); // 升级金光
     const [packOpen, setPackOpen] = useState(false); // [2026-09-04] 通关卡包·开箱弹窗（完整滚轮演出）
+    const [chestOpen, setChestOpen] = useState(false); // [2026-09-29] 通关结算·开匣子
     // [2026-09-08 演出] 共鸣白光路径（from→to 屏幕坐标）
     const [beam, setBeam] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const [ringBurst, setRingBurst] = useState(false); // 经验环受击脉冲
@@ -184,7 +191,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
         { label: '到达层数', value: `Act ${run.act}`, color: 'text-white' },
         { label: '金币', value: `${run.gold}`, color: 'text-amber-300' },
         { label: '迷宫强化', value: `${run.enhancements.length}`, color: 'text-violet-300' },
-        { label: '悖论点', value: `+${run.paradoxPoints}`, color: 'text-purple-300' },
+        { label: '神格碎片', value: `+${run.settledShards}`, color: 'text-purple-300' },
         { label: '本局用时', value: `${detail.durationMin} 分钟`, color: 'text-white' },
         { label: '击败 BOSS', value: isWin ? '✓' : '—', color: isWin ? 'text-emerald-400' : 'text-gray-500' },
     ];
@@ -314,6 +321,17 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                         </motion.button>
                     )}
 
+                    {/* [2026-09-29 程拍板] 通关结算·开匣子（卡包抽到的匣子在这里开） */}
+                    {isWin && phase === 'stats' && pendingChests.length > 0 && (
+                        <motion.button
+                            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                            onClick={() => setChestOpen(true)}
+                            className="px-6 py-2.5 rounded-xl bg-amber-500/25 border-2 border-amber-400/60 text-amber-100 font-black tracking-widest hover:bg-amber-500/45 hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.4)]"
+                        >
+                            💠 打开匣子 ×{pendingChests.length}
+                        </motion.button>
+                    )}
+
                     {/* 返回按钮 */}
                     <AnimatePresence>
                         {phase === 'stats' && (
@@ -407,6 +425,16 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                 pendingPacks={pendingPacks}
                 onOpenPack={() => onOpenPack?.() ?? null}
                 onClose={() => setPackOpen(false)}
+                onOpenChest={() => setChestOpen(true)} // [2026-09-29] 抽到匣子后可直接去开
+            />
+
+            {/* [2026-09-29 程拍板] 通关结算·开匣子 */}
+            <ChestOpenModal
+                isOpen={chestOpen}
+                chests={pendingChests}
+                onOpenChest={(i) => onOpenChest?.(i) ?? null}
+                onShardDrop={(res: ChestOpenResult) => onShardDrop?.(res)}
+                onClose={() => setChestOpen(false)}
             />
         </div>
     );

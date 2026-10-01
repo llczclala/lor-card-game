@@ -6,7 +6,7 @@
 // 商品生成含稀有度权重（run.rarityBonus 联动英雄等级加成）。
 // ==========================================
 import { CARD_DB } from '../cards';
-import { EQUIPMENT_DEFS, getEquipmentById, getEquipPoolForCard, type EquipmentRarity } from '../equipment';
+import { getEquipmentOnlyDefs, getEquipmentById, getEquipPoolForCard, type EquipmentRarity } from '../equipment';
 import { pickRandomEnhancements, type RarityBonusInput } from './enhancements';
 import type { EnhancementRarity } from './buffs';
 
@@ -110,13 +110,20 @@ export const generateShopStock = (rarityBonus?: RarityBonusInput, unlockedPass?:
         : null;
 
     // 买装备：抽 2 个不同装备（按稀有度权重，简化：均匀抽 + 去重）
+    // [2026-09-28 莉莉子 商店漏武装修复] 池改为 getEquipmentOnlyDefs()（非武装装备）：
+    //   原实现直接遍历 EQUIPMENT_DEFS 全库 → 武装（全库 78 件里 27 件，含碳原子板 / 重修申请两个消耗品）被当普通装备上架（单格约 35% 概率）。
+    //   而且买到的武装只挂在英雄卡上当图标（runBonus 只认开局快照 run.armaments）＝ 纯白扣金币，属付费陷阱。
+    // [2026-09-28 莉莉子 法术专属装备 · 类型闸] scope 传 'unit'：本页签的目标是**天启者**，
+    //   而 handleRogueBuyEquipment 不做类型校验 —— 若把 spellOnly（仅法术可挂）混进来，就会被挂到单位身上，
+    //   正是"武装混进商店"那类漏洞的翻版。（法术卡带装备走**买卡区**：generateCardOffers 已按卡筛池。）
+    const equipPool = getEquipmentOnlyDefs('unit');
     const equipments: ShopEquipmentItem[] = [];
     const usedEquip = new Set<string>();
-    for (let i = 0; i < 2 && i < EQUIPMENT_DEFS.length; i++) {
-        let e = EQUIPMENT_DEFS[Math.floor(Math.random() * EQUIPMENT_DEFS.length)];
+    for (let i = 0; i < 2 && i < equipPool.length; i++) {
+        let e = equipPool[Math.floor(Math.random() * equipPool.length)];
         let guard = 0;
         while (usedEquip.has(e.id) && guard++ < 20) {
-            e = EQUIPMENT_DEFS[Math.floor(Math.random() * EQUIPMENT_DEFS.length)];
+            e = equipPool[Math.floor(Math.random() * equipPool.length)];
         }
         usedEquip.add(e.id);
         equipments.push({ equipmentId: e.id, price: getEquipmentPrice(e.rarity) });
@@ -124,3 +131,19 @@ export const generateShopStock = (rarityBonus?: RarityBonusInput, unlockedPass?:
 
     return { cards, enhancement, equipments };
 };
+
+// ── [2026-09-28 莉莉子 防回归守卫] 商店商品自检（仅 DEV）──
+//   背景：09-28 修掉"商店装备区直接遍历 EQUIPMENT_DEFS 全库 ⇒ 武装（含碳原子板这类消耗品）上架"，
+//   但随后仍收到"玩家又遇到碳原子板"的反馈（经查是**旧包**：09-27 打的 dist/release，早于修复一天）。
+//   这里补一道**运行时自检**：将来任何改动若又让武装混进商店，开发期立刻报错，不必等玩家反馈。
+if (import.meta.env?.DEV) {
+    try {
+        const probe = generateShopStock();
+        const bad = probe.equipments.filter(it => getEquipmentById(it.equipmentId)?.isArmament);
+        if (bad.length > 0) {
+            console.error(`[shop] 商店装备区出现武装（禁止）：${bad.map(b => `${b.equipmentId}/${getEquipmentById(b.equipmentId)?.name}`).join('、')}`);
+        }
+    } catch (e) {
+        console.warn('[shop] 商品自检跳过（generateShopStock 探测失败）', e);
+    }
+}

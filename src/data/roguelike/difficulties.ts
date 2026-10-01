@@ -28,23 +28,20 @@ export const ROGUE_DIFFICULTIES: RogueDifficultyConfig[] = [
     { key: 'topsecret', label: '绝密', desc: '终极推演',        filter: DIFFICULTY_FILTER.topsecret, warnIcon: true, unlockAfter: 'secret' },
 ];
 
-// 难度 → 敌人血量倍率 / 等级加成（仅影响敌人强度，不动 AI 行为）
-export const DIFFICULTY_HP_MULTIPLIER: Record<RogueDifficulty, number> = {
-    normal: 1,
-    secret: 1.25,
-    topsecret: 1.5,
-};
-
-export const DIFFICULTY_LEVEL_BONUS: Record<RogueDifficulty, number> = {
-    normal: 0,
-    secret: 1,
-    topsecret: 2,
-};
-
-// [2026-08-28 程拍板] 敌方水晶基础生命值：普通 10 / 机密 20 / 绝密 25
+// [2026-09-29 程拍板 · 已移除] 原先这里还有两组"粗暴数值倍率"常量：
+//   · DIFFICULTY_HP_MULTIPLIER（1 / 1.25 / 1.5）
+//   · DIFFICULTY_LEVEL_BONUS（+0 / +1 / +2）
+//   它们是"难度直接乘血量倍率 / 抬高敌方天启者等级"的思路，**违背本作卡牌游戏底层逻辑** ——
+//   敌人强度只应由**装备**与**迷宫强化**控制（见 §3.2 / §3.3 两条轴），不该直接改数值。
+//   （两者实际也从未接线：hpMultiplier 无消费者、heroConfig.level 被 GameSession 丢弃。）
+//
+// [2026-08-28 程拍板] 敌方水晶基础生命值：普通 10 / 机密 20 / 绝密 30 → 这是**唯一保留**的数值轴，
+//   因为水晶血量是"关卡血量"而非"单位身材"，不受上述原则约束。
+// [2026-09-29 程拍板] 绝密 25 → 30：让绝密对普通达成 **3 倍血量**（10 / 20 / 30），
+//   原 25 只有 2.5 倍，机密→绝密的血量增量（+17%）明显小于普通→机密（+50%）。
 // 中后段（深度≥1/3）敌人额外持有 +10 生命强化、Boss 额外持有 +20 生命强化（mapLayout 预分配 → encounterBuilder 折算进敌方水晶初值）
 export const ENEMY_NEXUS_BASE: Record<RogueDifficulty, number> = {
     normal: 10,
     secret: 20,
-    topsecret: 25,
+    topsecret: 30,
 };

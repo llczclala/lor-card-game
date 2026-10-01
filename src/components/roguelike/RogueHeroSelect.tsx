@@ -5,11 +5,13 @@
 // ==========================================
 import React, { useState } from 'react';
 import { ArrowLeft, Star, RefreshCcw } from 'lucide-react';
+import { MAX_DIVINITY_LEVEL } from '../../data/roguelike/heroDivinity'; // [2026-09-28 神格神经] 星槽数（6）
+import { useHeroDivinity } from '../../hooks/useHeroDivinity'; // [2026-09-28 神格神经] 星槽点亮
 import { ROGUE_HEROES } from '../../data/roguelike/rogueStarterDecks';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { useHeroProgression } from '../../hooks/useHeroProgression'; // [2026-08-12 天启者养成] 等级/经验
 import { getHeroTheme } from '../../data/roguelike/heroTheme'; // [2026-08-13] 主题色随所选天启者切换
-import { OverviewContent, HeroAvatarRing, HeroHandContent, DeckContent, LevelsContent, DivinityPlaceholder, ArmamentContent, type HeroInfoWindow } from './RogueHeroInfoModal'; // [2026-08-13] 内容组件
+import { OverviewContent, HeroAvatarRing, HeroHandContent, DeckContent, LevelsContent, DivinityContent, ArmamentContent, type HeroInfoWindow } from './RogueHeroInfoModal'; // [2026-08-13] 内容组件 · [2026-09-28] 神格神经占位 → DivinityContent
 import { HeroSelectModal } from './HeroSelectModal'; // [2026-08-13] 更换天启者弹窗
 import { RoguePersonalize } from './RoguePersonalize'; // [2026-08-13] 个性化界面（照搬 PVE 枢纽详情）
 
@@ -36,6 +38,8 @@ export const RogueHeroSelect: React.FC<RogueHeroSelectProps> = ({ onBack, onSele
     const heroProgression = useHeroProgression();
     const progress = selectedKey ? heroProgression.getHeroProgress(selectedKey) : null;
     const theme = getHeroTheme(selectedKey ?? ROGUE_HEROES[0].key); // [2026-08-13] 主题色随所选天启者
+    const divinity = useHeroDivinity(); // [2026-09-28 神格神经] 星槽点亮（响应式）
+    const divinityLevel = selectedKey ? divinity.getLevel(selectedKey) : 0;
 
     // [2026-08-13] 确定按钮：当前英雄就是进来时已选的 → 置灰不可点
     const isDefaultSelected = selectedKey === initialHeroKey;
@@ -72,12 +76,13 @@ export const RogueHeroSelect: React.FC<RogueHeroSelectProps> = ({ onBack, onSele
                         <div className="flex items-center gap-4">
                             {/* [2026-08-13] 圆环头像组件（复用：选择界面头像区 / 等级界面顶部） */}
                             <HeroAvatarRing heroKey={selectedKey!} level={progress.level} exp={progress.exp} expToNext={progress.expToNext} />
-                            {/* 名字 + 神格星星槽（右侧，照旧） */}
+                            {/* 名字 + 神格星星槽（右侧，照旧）
+                                [2026-09-28 神格神经] 4 → 6 星（= 6 个节点），并按已解锁节点数点亮 */}
                             <div className="flex flex-col gap-2">
                                 <div className="text-2xl font-black text-white leading-tight">{selectedHero.name}</div>
                                 <div className="flex gap-1.5">
-                                    {[0, 1, 2, 3].map(i => (
-                                        <Star key={i} size={18} className="text-gray-600 fill-gray-600/30" />
+                                    {Array.from({ length: MAX_DIVINITY_LEVEL }).map((_, i) => (
+                                        <Star key={i} size={18} className={i < divinityLevel ? 'text-amber-400 fill-amber-400' : 'text-gray-600 fill-gray-600/30'} />
                                     ))}
                                 </div>
                             </div>
@@ -116,8 +121,9 @@ export const RogueHeroSelect: React.FC<RogueHeroSelectProps> = ({ onBack, onSele
 
                 {/* 主体：手牌样式 + 右侧窗口（顶部对齐） */}
                 <div className="flex flex-1 min-w-0 items-start gap-6">
-                    {/* 手牌样式（主视觉，大）+ 下方确定按钮（总览/等级/初始牌组/个性化/武装时移入内容区，主体隐藏避免重复） */}
-                    {activeWindow !== 'overview' && activeWindow !== 'levels' && activeWindow !== 'deck' && activeWindow !== 'personalize' && activeWindow !== 'armament' && (
+                    {/* 手牌样式（主视觉，大）+ 下方确定按钮（总览/等级/初始牌组/个性化/武装/神格神经时移入内容区，主体隐藏避免重复）
+                        [2026-09-28 程拍板] 神格神经界面**只保留神经图** —— 故把 divinity 也加进排除列表 */}
+                    {activeWindow !== 'overview' && activeWindow !== 'levels' && activeWindow !== 'deck' && activeWindow !== 'personalize' && activeWindow !== 'armament' && activeWindow !== 'divinity' && (
                         <div className="flex flex-col items-center shrink-0">
                             {selectedKey && <HeroHandContent key={selectedKey} heroKey={selectedKey} scale={1.35} />}
                             <button
@@ -149,7 +155,7 @@ export const RogueHeroSelect: React.FC<RogueHeroSelectProps> = ({ onBack, onSele
                         ) : activeWindow === 'levels' ? (
                             <LevelsContent heroKey={selectedKey} userSystem={userSystem} />
                         ) : activeWindow === 'divinity' ? (
-                            <DivinityPlaceholder heroName={selectedHero?.name ?? ''} />
+                            <DivinityContent heroKey={selectedKey} heroName={selectedHero?.name ?? ''} userSystem={userSystem} />
                         ) : activeWindow === 'armament' ? (
                             <ArmamentContent heroKey={selectedKey} userSystem={userSystem} />
                         ) : (

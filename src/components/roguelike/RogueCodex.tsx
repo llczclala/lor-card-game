@@ -7,7 +7,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Search, RotateCcw, Sparkles, Swords, Inbox, X, Lock } from 'lucide-react';
-import { PLAYER_ENHANCEMENTS, type MazeBuff, type BattleTrigger, type BattleEffectClass } from '../../data/roguelike/buffs';
+import { PLAYER_ENHANCEMENTS, getBattleEffects, type MazeBuff, type BattleTrigger, type BattleEffectClass } from '../../data/roguelike/buffs';
 import type { EnhancementRarity } from '../../data/roguelike/enhancements';
 import { EQUIPMENT_DEFS, type EquipmentDef } from '../../data/equipment';
 import { RARITY_META } from './RarityIcon';
@@ -33,6 +33,9 @@ export const TRIGGER_LABELS: Record<BattleTrigger, string> = {
     // [2026-08-27 莉莉子] 高级强化触发时机
     round_end: '回合结束',
     unit_die: '单位阵亡',
+    // [2026-09-28 莉莉子 神格神经] 新增时机（芬妮/卜卜/茉莉安）
+    on_attack_declare: '进攻宣告',
+    on_pull_exposed: '拉取暴露',
 };
 
 /** [2026-08-26 莉莉子] 战斗效果类 → 中文标签 */
@@ -55,6 +58,8 @@ export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     // [2026-08-27 莉莉子] 品质扩充批效果类
     BARRIER_NEXUS: '水晶屏障',
     NEXUS_TOUGH: '水晶坚韧', // [2026-08-30 莉莉子] 固若金汤重设计：受击伤害永久 -1
+    NEXUS_IMMUNE: '水晶免疫',      // [2026-09-29 程拍板] 不死之身：我方水晶免疫任何伤害
+    NEXUS_SELF_DAMAGE: '水晶自扣', // [2026-09-29 程拍板] 不死之身的代价：回合结束自扣水晶
     NEXUS_HEAL: '水晶回复',
     HAND_COST_DOWN: '手牌降费',
     DEATH_DISCOUNT: '亡语降费',
@@ -75,6 +80,21 @@ export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     OPENING_ZERO_COST: '开局零费',            // [2026-09-25 莉莉子 强化线] 终焉回响
     BOUNTY_CYCLE: '悬赏标记',                 // [2026-09-25 莉莉子 强化线] 悬赏
     LONE_GUARD_BUFF: '孤军强化',              // [2026-09-25 莉莉子 强化线] 孤军
+    // [2026-09-28 莉莉子 神格神经线] 神格神经专属效果类
+    START_MANA_BONUS: '开局法力',             // [2026-09-29] 规则查询型：开局最大法力 +N（神格·潮汐 / 敌方先机三档）
+    ALL_UNITS_GRANT_KEYWORD: '全军赋关键词',  // 里芙⑥：我方全体与此后召唤的单位 +N/+M 并获关键词
+    // [2026-09-28 莉莉子 神格神经 · 进攻宣告类]
+    RALLY_IF_ATTACK_POWER: '达标即备战',      // 芬妮②④：进攻单位攻击力总和达阈值 → 备战
+    CLONE_ON_DECLARE: '进攻时复制',           // 卜卜①③：进攻宣告时复制我方单位（以进攻中入场）
+    NEXUS_REPEAT_STRIKE: '水晶再击',          // 卜卜⑥：打击水晶记账 → 回合结束最强单位再打一次
+    // [2026-09-28 神格神经 · 猫汐尔]
+    MANA_PER_SUMMON_ROUND: '衍生物换法力',    // ①按当前衍生物数给本回合法力
+    MANA_PER_SUMMON_PERMANENT: '召唤永久涨法力', // ③每召唤 1 个衍生物 → 本场永久法力 +1
+    SPELL_COST_DOWN_ALL: '全法术减费',        // ⑥开局手牌+牌库法术魔耗 -N
+    REMOVE_MAX_POWER: '解除攻击上限',         // ⑥清除臆莲基座的攻击力上限
+    // [2026-09-28 神格神经 · 茉莉安]
+    EXPOSE_AND_DAMAGE: '暴露并造成伤害',      // ②④回合开始暴露一个敌人并造成伤害
+    BEACON_DAMAGE_MULT: '信标伤害翻倍',       // ⑥常驻查询：獠牙信标亡语伤害翻倍
 };
 
 /** [2026-08-26 莉莉子] 装备静态修饰/效果 → 标签列表（方块底部展示） */
@@ -182,8 +202,8 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
     /** 强化信息块 */
     const renderEnhBlock = (e: MazeBuff) => {
         const meta = RARITY_META[e.rarity];
-        const trigger = e.battleEffect?.trigger;
-        const effectClass = e.battleEffect?.effectClass;
+        const trigger = getBattleEffects(e)[0]?.trigger;
+        const effectClass = getBattleEffects(e)[0]?.effectClass;
         return (
             <div
                 key={e.id}

@@ -75,6 +75,10 @@ export const buildRewardPopupData = (title: string, reward: MissionRewardShape):
         // [2026-09-20 1.0.16 版本福利] 迷宫卡包：无图片资源，用通用图标 + 名称 + 数量呈现
         popup.itemName = '悖论迷宫卡包';
         popup.amount = reward.amount ?? 1;
+    } else if (reward.type === 'universalShard') {
+        // [2026-09-29 程拍板] 万能神格碎片：可替代任何天启者的专属碎片
+        popup.itemName = '万能神格碎片';
+        popup.amount = reward.amount ?? 0;
     }
     return popup;
 };

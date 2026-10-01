@@ -14,12 +14,13 @@ export type AIType =
 
 /**
  * 敌方英雄配置 (用于覆盖默认行为)
+ * [2026-09-29 程拍板] 移除 `level` / `hpMultiplier` —— 那是"直接乘数值倍率 / 设天启者初始等级"的
+ *   粗暴做法，**违背本作卡牌游戏底层逻辑**：敌人强度只应由**装备**与**迷宫强化**来控制。
+ *   （两者实际上也从未接线，属无效设计。）
  */
 export interface EnemyHeroConfig {
     heroKey: string;      // 英雄ID (如 'fenny', 'lyfe')
-    level: number;        // 初始等级 (1 或 2)
     customName?: string;  // 自定义名字 (如 "教官 芬妮", "噩梦 芬妮")
-    hpMultiplier?: number;// 血量倍率 (用于 Boss 战，例如 1.5 倍血量)
 }
 
 /**

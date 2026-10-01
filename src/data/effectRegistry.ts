@@ -2289,7 +2289,10 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         speed: 'BURST',
         targetRequirements: [],
         params: {
-            spreadDamageTotal: 6, // [2026-09-18 程拍板数值复核] 6 → 8（结掉原「待数值复核」TODO）
+            // [2026-09-28 莉莉子 数值一致性核对] 程拍板：**以当前实际伤害为准** = 6（卡面已同步改回 6）。
+            //   ⚠️ 原注释写"6 → 8（结掉原待数值复核 TODO）"是**不实记录** —— 值从未改成 8；
+            //   神格神经 ⑥「亡语翻倍」即以此为基础：6 → 12。
+            spreadDamageTotal: 6,
         }
     },
 

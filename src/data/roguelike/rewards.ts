@@ -6,7 +6,7 @@
 //       白装（代价装备）Act1 登场，中后期退出
 //       equipRarityBonus（等级奖励）→ 紫金加权
 //   - 法术卡也按品质档（不再绕过 → 前期不再凭空出紫装）
-//   - 与 shop.generateCardOffers 的区别：shop 均匀抽（含武装）、无品质渐进；本文件按进度/难度/加成分档
+//   - 与 shop.generateCardOffers 的区别：shop 均匀抽（非武装装备池，09-28 起排除武装）、无品质渐进；本文件按进度/难度/加成分档
 // ==========================================
 import { CARD_DB } from '../cards';
 import { getEquipPoolForCard, type EquipmentRarity } from '../equipment';

@@ -1800,6 +1800,43 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             if (statBalanceApplied) statBalanceDefs.forEach(def => flashRogueBuff(def));
         }
 
+        // ==========================================
+        // [2026-09-28 莉莉子 神格神经] 新触发时机「进攻宣告」（on_attack_declare）—— 程授权改本文件
+        //   服务：芬妮②④（进攻单位攻击力总和达标 → 备战）· 卜卜①③（进攻时复制召唤）
+        //   时机：STAT_BALANCE 之后、下面的渲染提交之前 ⇒ 本时机产生的增删会被同一次提交带出去
+        // ==========================================
+        let declTouched = false;
+        if (tempCombatField.length > 0) {
+            const declOwner = (tempCombatField[0]?.owner ?? 'player') as Side;
+            const declCtx: RogueTriggerCtx = {
+                game: { ...stateRef.current.game },
+                playerBench: [...tempPlayerBench],
+                enemyBench: [...tempEnemyBench],
+                combatField: tempCombatField,
+                playerHand: [...stateRef.current.playerHand],
+                enemyHand: [...stateRef.current.enemyHand],
+                playerDeck: [...stateRef.current.playerDeck],
+                enemyDeck: [...stateRef.current.enemyDeck],
+                owner: declOwner,
+                trigger: 'on_attack_declare',
+                createFullCard,
+                info: {},
+                dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+            };
+            runRogueTrigger(
+                declCtx,
+                declOwner === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements,
+                'on_attack_declare',
+            );
+            tempCombatField = declCtx.combatField;   // 复制召唤会追加参战单位
+            tempPlayerBench = declCtx.playerBench;
+            tempEnemyBench = declCtx.enemyBench;
+            if (declCtx.dirty.game) commitDirtyGame(declCtx.game, stateRef.current.game);
+            if (declCtx.dirty.hand.size > 0) { setPlayerHand(declCtx.playerHand); setEnemyHand(declCtx.enemyHand); }
+            if (declCtx.dirty.deck.size > 0) { setPlayerDeck(declCtx.playerDeck); setEnemyDeckState(declCtx.enemyDeck); } // [2026-09-29 莉莉子] 修 setEnemyDeck 笔误（实际 setter 名是 setEnemyDeckState）—— 否则进攻宣告触发牌库改动时运行时 ReferenceError
+            declTouched = declCtx.dirty.field || declCtx.dirty.bench.size > 0 || declCtx.dirty.hand.size > 0 || declCtx.dirty.deck.size > 0 || declCtx.dirty.game;
+        }
+
         // [修复] 根据进攻方决定格挡方：player 进攻 → enemy 格挡，enemy 进攻 → player 格挡
         const firstOwner = currentCombatField[0]?.owner || 'player';
         const blockTurnOwner = firstOwner === 'player' ? 'enemy' : 'player';
@@ -1816,10 +1853,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 统一结算并下发给 React 渲染层
         // 如果有法术待结算（如银臂乱打），推入堆栈后直接进入格挡阶段
         // 堆栈中的法术会在格挡确认后、战斗结算前通过 passTurn → resolveStack 自然结算
-        if (hasEffectTriggered || statBalanceApplied || pendingSpells.length > 0) {
-            setPlayerBench(hasEffectTriggered ? tempPlayerBench : stateRef.current.playerBench);
-            setEnemyBench(hasEffectTriggered ? tempEnemyBench : stateRef.current.enemyBench);
-            setCombatField((hasEffectTriggered || statBalanceApplied) ? (tempCombatField as any) : stateRef.current.combatField);
+        if (hasEffectTriggered || statBalanceApplied || pendingSpells.length > 0 || declTouched) {
+            setPlayerBench((hasEffectTriggered || declTouched) ? tempPlayerBench : stateRef.current.playerBench);
+            setEnemyBench((hasEffectTriggered || declTouched) ? tempEnemyBench : stateRef.current.enemyBench);
+            setCombatField((hasEffectTriggered || statBalanceApplied || declTouched) ? (tempCombatField as any) : stateRef.current.combatField);
         }
 
         // =====================================
@@ -2399,6 +2436,25 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                             stateRef.current.enemyDeck = nextEnemyDeck;
                         }
                     }
+
+                    // [2026-09-27 莉莉子 BUG修复] 交战区实例必须一并累计 ——
+                    //   病根：单位一宣告进攻，toggleAttacker 就把它**移出备战席**（只存在于 combatField）；
+                    //   而信标最主要的死法正是「我方进攻 N 个单位 → 信标 −N」⇒ 它被打爆那一刻，
+                    //   茉莉安正在交战区，bench/hand/deck 三处一份副本都没有 ⇒ 进度一点没加；
+                    //   战斗结束归位带回来的又是交战区那份旧实例 ⇒ 之前的累计一并丢失。
+                    //   ⇒ 症状：打爆多少次信标，她都停在 Lv1（「不需要在场也计入」反而在战斗中失效）。
+                    //   归属口径：attacker 属 f.owner，blocker 属发起方的对面（与判死 / 亡语分摊同源）。
+                    {
+                        const bumpField = (field: any[], side: 'player' | 'enemy') => field.map(f => {
+                            const atkSide: 'player' | 'enemy' = f.owner;
+                            const blkSide: 'player' | 'enemy' = f.owner === 'player' ? 'enemy' : 'player';
+                            const nextA = (f.attacker && atkSide === side) ? bumpBeaconDeaths([f.attacker])[0] : f.attacker;
+                            const nextB = (f.blocker && blkSide === side) ? bumpBeaconDeaths([f.blocker])[0] : f.blocker;
+                            return (nextA === f.attacker && nextB === f.blocker) ? f : { ...f, attacker: nextA, blocker: nextB };
+                        });
+                        const marianSide: 'player' | 'enemy' = summonerIsPlayer ? 'player' : 'enemy';
+                        nextCombatField = bumpField(nextCombatField, marianSide);
+                    }
                     console.log(`[BeaconDebug] 獠牙信标被破坏：召唤者=${summonerIsPlayer ? 'player' : 'enemy'}，已累计茉莉安升级进度`);
                 }
 
@@ -2561,9 +2617,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 }
 
                 // =====================================
-                // [2026-09-19 1.0.16 茉莉安] 信标被击败 → 补兵（两套规则，Lv2 优先）
-                // ── 规则 A 【Lv2 · 每回合首次】：任意等级补兵中最宽的一条，每回合只触发一次（round 节流）
-                // ── 规则 B 【Lv1 · 补兵券兑现】：她入场时若已有信标会发一张欠条（见 effectProcessor SUMMON 分支），
+                // [2026-09-19 1.0.16 茉莉安] 信标被击败 → 补兵（两套规则，**按她的等级二选一**）
+                // [2026-10-01 莉莉子] ⚠️ A / B **互斥**（不再写作"Lv2 优先"）：已升级只走 A、未升级只走 B。
+                //    原实现是 if / else-if 穿透 ⇒ A 判不中或本回合已用完时会掉进 B，白烧掉 Lv1 的补兵券。
+                // ── 规则 A 【Lv2 · 每回合首次】：每回合只触发一次（round 节流）
+                // ── 规则 B 【Lv1 · 补兵券兑现】：她入场时发一张欠条（见 effectProcessor SUMMON 分支），
                 //    此处兑现 —— **要求她本人活着在场**（程 2026-09-19 拍板）
                 // ── 共同口径：① 落点备战席满(6) / 落点已有存活信标 → 不补，且**券不消耗**（留着下次）
                 //    ② 先结算爆炸、再补新信标 ③ 补出的一律走 assembleBeaconCard（吃虹彩上限修正）
@@ -2579,10 +2637,23 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     const isLiveUnit = (c: CardData | null | undefined) =>
                         !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
 
-                    /** 召唤者侧是否有【活着在场】的茉莉安（needLv2=true 时同时要求 Lv2，备战席或交战区皆可） */
-                    const marianOnBoard = (needLv2: boolean): boolean => {
+                    // =====================================
+                    // [2026-10-01 莉莉子 BUG修复] 「她是否已升级」改用【分阵营升级标记】
+                    // ── 病根：规则 A 此前要求实例 `c.level === 2`，而 Lv2 变形发生在
+                    //    `game.levelUpCard` 触发的那个 effect（本文件的 upgradeFn）里，
+                    //    **晚于本次死亡结算** ⇒ 触发升级的那一次死亡永远判不中 A。
+                    // ── 更根本的是口径分叉：项目里「某方某英雄是否已升级」的权威判据是
+                    //    `isLeveledUpForSide`（`scanLibrarySummon` / `scanAndLevelUp` 都用它），
+                    //    其注释已写明「实例 level 未必同步」—— 补兵此前用的是**不可靠的那一套**。
+                    //    同一个问题两套口径 ⇒ 必有一处判错。
+                    // ── 统一后：A 认标记、B 只在未升级时兑现（见下方 if/else 链，两规则互斥）。
+                    // =====================================
+                    const marianLv2 = isLeveledUpForSide(nextGame, summonerSide, 'marian');
+
+                    /** 召唤者侧是否有【活着在场】的茉莉安（备战席或交战区皆可；与等级无关） */
+                    const marianAlive = (): boolean => {
                         const hit = (c: CardData | null | undefined) =>
-                            !!c && c.key === 'marian' && isLiveUnit(c) && (!needLv2 || c.level === 2);
+                            !!c && c.key === 'marian' && isLiveUnit(c);
                         return summonerBench.some(hit)
                             || (nextCombatField || []).some(f => [f.attacker, f.blocker].some(hit));
                     };
@@ -2604,18 +2675,22 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
                     if (!canLand) {
                         console.log(`[茉莉安补兵] ${landSide} 落点不可用（满员或已有存活信标）→ 本次不补，补兵券不消耗`);
-                    } else if (marianOnBoard(true) && nextGame.marianBeaconRespawnRound !== nextGame.round) {
+                    } else if (marianLv2 && marianAlive() && nextGame.marianBeaconRespawnRound !== nextGame.round) {
                         // 规则 A（Lv2 · 每回合首次）
                         nextGame.marianBeaconRespawnRound = nextGame.round;
                         summonReplacement('Lv2 每回合首次信标被击败');
-                    } else if (marianOnBoard(false) && voucherCount > 0) {
+                    } else if (!marianLv2 && marianAlive() && voucherCount > 0) {
                         // 规则 B（Lv1 欠条兑现，要求她活着在场）
+                        // ── [2026-10-01 莉莉子 BUG修复] **两规则互斥**：她已升级（marianLv2）时
+                        //    绝不再走这条 —— 否则规则 A 判不中/本回合用完后会一路穿透到这里，
+                        //    把本该留给 Lv1 的补兵券白烧掉（券只有 1 张，烧完 = 永久断档）。
+                        //    口径（程 2026-10-01 拍板）：Lv1 = 入场后只补一次；Lv2 = 每回合都补。
                         const voucherMap = { ...(nextGame.marianBeaconVoucher || {}) };
                         voucherMap[summonerSide] = voucherCount - 1;
                         nextGame.marianBeaconVoucher = voucherMap;
                         summonReplacement(`兑现补兵券（${summonerSide} 侧剩 ${voucherMap[summonerSide]} 张）`);
                     } else {
-                        console.log(`[茉莉安补兵] 条件不足（她不在场 / 券为空 / Lv2 本回合已补过）→ 不补`);
+                        console.log(`[茉莉安补兵] 条件不足 → 不补（她不在场=${!marianAlive()} / 已升级=${marianLv2} / 券=${voucherCount} / 本回合已补过=${nextGame.marianBeaconRespawnRound === nextGame.round}）`);
                     }
                 }
             }
@@ -4765,6 +4840,38 @@ setPlayerBench(prev => [...prev, blockerCard]);
                 return;
             }
             console.log(`[ExposedDebug] 拉取放行：${isChallenger ? '发起方带挑战者' : '目标带暴露'} → ${enemyUnit.name}`);
+            // ==========================================
+            // [2026-09-28 莉莉子 神格神经 · 茉莉安①③] 新触发时机「拉取暴露单位」（程授权改本文件）
+            //   语义：仅当**目标是暴露单位**时触发（程的设计写的是"拉取暴露单位"；
+            //   带挑战者去拉非暴露单位不触发）。加成对象 = **发起拉取的我方单位**（程 09-28 确认）。
+            //   载体：本回合 +N/+M（BUFF handler 的 roundBuffs）→ 通过 info.playedCard 指过去
+            // ==========================================
+            if (isExposed) {
+                const pullCtx: RogueTriggerCtx = {
+                    game: { ...stateRef.current.game },
+                    playerBench: [...stateRef.current.playerBench],
+                    enemyBench: [...stateRef.current.enemyBench],
+                    combatField: combatField.map(f => ({ ...f })),
+                    playerHand: [...stateRef.current.playerHand],
+                    enemyHand: [...stateRef.current.enemyHand],
+                    playerDeck: [...stateRef.current.playerDeck],
+                    enemyDeck: [...stateRef.current.enemyDeck],
+                    owner: 'player',
+                    trigger: 'on_pull_exposed',
+                    createFullCard,
+                    info: { playedCard: attacker },
+                    dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+                };
+                runRogueTrigger(pullCtx, stateRef.current.game.rogueEnhancements, 'on_pull_exposed');
+                if (pullCtx.dirty.field) {
+                    const buffedAttacker = pullCtx.combatField[combatIndex]?.attacker;
+                    if (buffedAttacker) setCombatField(prev => {
+                        const n = [...prev];
+                        if (n[combatIndex]) n[combatIndex] = { ...n[combatIndex], attacker: buffedAttacker };
+                        return n;
+                    });
+                }
+            }
         }
 
         // 如果该位置已经有阻挡者了，先把它踢回备战席

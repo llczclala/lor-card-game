@@ -62,6 +62,9 @@ import { RogueExpFeed, type ExpFeedItem } from './components/roguelike/RogueExpF
 import { EvaluationPanel } from './components/roguelike/EvaluationPanel'; // [2026-08-29 评估嘉勉] 分析员等级面板
 import { RogueMissionPanel } from './components/roguelike/RogueMissionPanel'; // [2026-08-29] 肉鸽专属任务面板
 import { useArmamentConfig } from './hooks/useArmamentConfig'; // [2026-08-29] 碳原子板武装快照
+import { useHeroDivinity } from './hooks/useHeroDivinity'; // [2026-09-28 神格神经] 节点解锁 + [2026-09-29] 神格碎片钱包
+import { dropShards, type ChestInstance } from './data/roguelike/divinityShards'; // [2026-09-29 程拍板] 结算碎片每5片一组随机归属 + 奖励匣
+import { ROGUE_HEROES } from './data/roguelike/rogueStarterDecks'; // [2026-09-29] 碎片可归属的天启者列表
 import { LevelUpToast } from './components/roguelike/LevelUpToast'; // [2026-08-12 天启者养成] 升级弹窗
 import { SACRIFICE_MAX_HP, type RandomTreasureResult } from './data/roguelike/treasure'; // [2026-08-12 宝箱节点]
 import { getHallBgmByIndex, getHallBgmByVideoUrl } from './data/movieData'; // [核心重构] 新增视频 URL 直查 BGM
@@ -113,6 +116,7 @@ export default function App() {
   const rogue = useRoguelikeRun();
   const heroProgression = useHeroProgression(); // [2026-08-12 天启者养成] 每英雄等级/经验
   const armamentConfig = useArmamentConfig(); // [2026-08-29] 碳原子板等武装快照
+  const divinity = useHeroDivinity(); // [2026-09-28 神格神经] 节点解锁 + [2026-09-29] 神格碎片钱包
   const [levelUpInfo, setLevelUpInfo] = useState<{ heroKey: string; fromLevel: number; toLevel: number } | null>(null); // [2026-08-12] 升级弹窗信息
   const [expToast, setExpToast] = useState<{ heroKey: string; amount: number } | null>(null); // [2026-08-12] 结算经验浮层
   const [expFeed, setExpFeed] = useState<ExpFeedItem[]>([]); // [2026-08-29] 局内经验/升级横幅队列
@@ -658,6 +662,13 @@ export default function App() {
     const accExp = Math.round(ACCOUNT_EXP_BY_MODE.rogue[won ? 'win' : 'lose'] * diffRewardMult);
     const accLeveled = userSystem.grantAccountExp(accExp);
     userSystem.recordBattle({ won, mode: 'rogue', heroKeys: [run.heroKey] });
+    // [2026-09-29 程拍板] 悖论点已废弃 → 本局结算发**神格碎片**，直接入碎片钱包
+    //   唯一收口在 settleRun（通关/败北各一次；中途放弃在上方早返回，不产出）
+    //   碎片「每 5 片为一组」随机归属某位天启者（与碎片匣同口径），各自的 200 片封顶溢出转万能
+    if (run.settledShards > 0) {
+      const drop = dropShards(undefined, ROGUE_HEROES.map(h => h.key), run.settledShards);
+      divinity.applyShardDrop(drop);
+    }
     pushExpFeed(`账号经验 +${accExp}`);
     if (accLeveled.leveled.length > 0) {
       accLeveled.leveled.forEach((l: { from: number; to: number }) => pushExpFeed(`账号 Lv.${l.from} → ${l.to}`, 'level'));
@@ -964,10 +975,10 @@ export default function App() {
     if (!rogue.useRefresh()) return false;
     return true;
   };
-  /** [2026-08-29] 三选一界面打开卡包：随机武装，返回武装 id（BattleRewardModal 展示） */
-  const handleRewardOpenPack = (): string | null => {
-    const pick = userSystem.openPack?.();
-    return pick ?? null;
+  /** [2026-09-29 程拍板] 三选一/通关界面开包：**抽到一个奖励匣**（先看到匣子，随后开匣子得道具） */
+  const handleRewardOpenPack = (): ChestInstance | null => {
+    const chest = userSystem.openPack?.();
+    return chest ?? null;
   };
 
   const handleRogueRest = () => {
@@ -1751,6 +1762,11 @@ export default function App() {
               onOpenPack={handleRewardOpenPack} // [2026-08-29] 三选一打开卡包
               onDevWin={userSystem.userId === 'dev_full_admin' ? handleRogueNodeDevWin : undefined} // [2026-08-29] 开发者一键胜利
               pendingPacks={userSystem.settings?.pendingPacks ?? 0} // [2026-08-29] 通关结算卡包
+              pendingChests={(userSystem.settings?.pendingChests ?? []) as ChestInstance[]} // [2026-09-29] 通关结算开匣
+              onOpenChest={(i: number) => userSystem.openChest?.(i) ?? null} // [2026-09-29] 打开匣子
+              onShardDrop={(res: any) => { // [2026-09-29] 碎片入账（divinity 是钱包真源）
+                if (res?.wallet) divinity.applyShardDrop({ wallet: res.wallet, details: res.shardDetail ?? [], totalOverflow: 0 });
+              }}
               onRunEndConfirm={handleRogueRunEnd}
               onBuyCard={handleRogueBuyCard}
               onBuyEnhancement={handleRogueBuyEnhancement}
@@ -1856,6 +1872,7 @@ export default function App() {
               isOpen={evaluationOpen}
               onClose={() => setEvaluationOpen(false)}
               userSystem={userSystem}
+              divinity={divinity} // [2026-09-29 程拍板] 奖励匣开箱（碎片入账需 divinity）
           />
 
       {/* [2026-08-20 逻辑研习] 悖论迷宫·肉鸽图鉴（强化/装备图鉴 + 右侧抽屉筛选） */}

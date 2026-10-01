@@ -50,6 +50,10 @@ export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, r
     // [2026-08-15] 武装断连排查日志：武装配置是否读到 / 英雄卡是否在牌组 / 合并后的装备列表
     console.log(`[RogueGameWrapper] heroKey=${run.heroKey} | 武装配置=${JSON.stringify(armForHero)} | deck含英雄卡=${run.deck.includes(run.heroKey)} | 合并装备=${JSON.stringify(rogueEquipments[run.heroKey])}`);
 
+    // ── [2026-09-28 莉莉子 神格神经] 已解锁节点已并入 `run.enhancements`（见 useRoguelikeRun.startRun）──
+    //   ⚠️ 不要在这里再注入一遍：那会让战斗内「敌我强化」面板**出现重复行**。
+    //   单一来源 = run.enhancements（地图抽屉 / 结算窗 / 战斗分发 / ⑤ 的规则查询全部吃这一份）。
+
     return (
         <div className="relative w-full h-full">
             <GameSession
@@ -64,7 +68,7 @@ export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, r
                 initialPlayerNexus={run.hp} // [2026-08-11] 真衔接：战斗水晶初值 = 全局 HP
                 playerNexusMax={run.maxHp} // [2026-08-11] 真衔接：战斗水晶回血上限 = 全局 maxHp
                 initialEnemyNexus={encounter.enemyNexusHp} // [2026-08-28] 敌方水晶初始血量（难度基础值 + 生命强化折算，中后段+B10 / Boss+20）
-                rogueEnhancements={[...run.enhancements, ...armamentEffects]} // [2026-08-11] 玩家迷宫强化 id · [2026-09-25 莉莉子 武装线] + 已完成整局任务的武装战斗内效果
+                rogueEnhancements={[...run.enhancements, ...armamentEffects]} // [2026-08-11] 玩家迷宫强化 id（[2026-09-28] 已含神格神经节点）· [2026-09-25 莉莉子 武装线] + 已完成整局任务的武装战斗内效果
                 enemyEnhancements={encounter.enemyBuffs ?? []} // [2026-08-27] 敌方迷宫强化 id（流派配置，战斗内 battleEffect 生效）
                 enemyEquipments={encounter.enemyEquipments} // [2026-08-30 程拍板] 敌方单位卡随机装备（难度分级）
                 rogueEquipments={rogueEquipments} // [2026-08-12 商店经济] 局内装备 + [2026-08-14 武装] 局外武装合并挂载

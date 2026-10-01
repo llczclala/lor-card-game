@@ -4301,7 +4301,13 @@ export const processEffect = (
         // =====================================
         case 'SPREAD_DAMAGE': {
             const sdParams = effect.params as EffectParams;
-            const total = sdParams.spreadDamageTotal || 0;
+            // [2026-09-28 莉莉子 神格神经 · 茉莉安⑥ 猎场收网] 信标亡语伤害翻倍
+            //   判定口径：信标的**召唤者侧**（= 宿主 context.owner 的对面）持有 divfx_marian_6 ⇒ ×2
+            //   （信标被放在对面席位，故它的效果宿主是"对面"，召唤者才是茉莉安一方）
+            const marianSummonerSide: 'player' | 'enemy' = context.owner === 'player' ? 'enemy' : 'player';
+            const marianEnh = marianSummonerSide === 'player' ? nextGame.rogueEnhancements : nextGame.enemyEnhancements;
+            const beaconMult = (marianEnh ?? []).includes('divfx_marian_6') ? 2 : 1;
+            const total = (sdParams.spreadDamageTotal || 0) * beaconMult;
             if (total <= 0) break;
 
             const isLive = (c: CardData | null | undefined) =>

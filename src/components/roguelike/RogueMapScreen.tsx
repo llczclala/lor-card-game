@@ -32,6 +32,7 @@ import type { RandomTreasureResult } from '../../data/roguelike/treasure'; // [2
 import { getHeroLevelBonus } from '../../data/roguelike/heroProgression'; // [2026-08-28] 商店页签位（等级奖励）
 import { rollRogueEvent, type RogueEvent } from '../../data/roguelike/events'; // [2026-08-28 事件]
 import type { EnhancementRarity } from '../../data/roguelike/buffs'; // [2026-08-28 事件] 强化品质提升
+import type { ChestInstance } from '../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
 import { motion } from 'framer-motion'; // [2026-08-25] 头像平滑移动动画层
 import mapZero from '../../image/map/map_zero.webp';
 
@@ -84,9 +85,12 @@ interface RogueMapScreenProps {
     heroRecruit?: { options: HeroRecruitOption[]; subNote?: string } | null;
     onHeroRecruitPick?: (heroKey: string) => void;
     onHeroRecruitSkip?: () => void;
-    onOpenPack: () => string | null; // [2026-08-29] 三选一打开卡包（随机武装）
+    onOpenPack: () => ChestInstance | null; // [2026-09-29 程拍板] 打开卡包（抽到奖励匣）
     onDevWin?: (nodeType: RogueNodeType, nodeId: string) => void; // [2026-08-29] 开发者一键胜利
     pendingPacks?: number; // [2026-08-29] 通关结算待打开卡包
+    pendingChests?: ChestInstance[]; // [2026-09-29] 通关结算待打开奖励匣
+    onOpenChest?: (index: number) => any; // [2026-09-29] 打开匣子
+    onShardDrop?: (res: any) => void; // [2026-09-29] 碎片入账
     onRunEndConfirm: () => void;
     // [2026-08-12 商店经济]
     onBuyCard: (cardKey: string, equipId: string | undefined, price: number) => boolean;
@@ -118,7 +122,7 @@ const MAX_ZOOM = 2.0;
 
 export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     run, reward,
-    onBackRequest, onBattle, onMoveTo, onRest, onRestRemove, onRestCopy, onRestScout, onEnhance, onRewardPick, onRewardSkip, onRewardRefresh, onRefreshEnhance, onOpenPack, onDevWin, pendingPacks, onRunEndConfirm,
+    onBackRequest, onBattle, onMoveTo, onRest, onRestRemove, onRestCopy, onRestScout, onEnhance, onRewardPick, onRewardSkip, onRewardRefresh, onRefreshEnhance, onOpenPack, onDevWin, pendingPacks, pendingChests, onOpenChest, onShardDrop, onRunEndConfirm,
     heroRecruit, onHeroRecruitPick, onHeroRecruitSkip, // [2026-09-04 首战招募]
     onBuyCard, onBuyEnhancement, onBuyEquipment, onRemoveCard, onShopRefresh,
     onTreasureGold, onTreasureCard, onTreasureEnhancement, onTreasureSacrifice, onTreasureRandom,
@@ -803,7 +807,9 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
 
             {/* 通关/死亡结算（天启者经验动画） */}
             {run.status !== 'active' && runEnd && (
-                <RunEndModal run={run} runEnd={runEnd} pendingPacks={pendingPacks} onOpenPack={onOpenPack} onConfirm={onRunEndConfirm} />
+                <RunEndModal run={run} runEnd={runEnd} pendingPacks={pendingPacks} onOpenPack={onOpenPack}
+                    pendingChests={pendingChests} onOpenChest={onOpenChest} onShardDrop={onShardDrop}
+                    onConfirm={onRunEndConfirm} />
             )}
 
             {/* [2026-08-10] 头像抽屉：牌组 / 迷宫强化列表 */}

@@ -16,8 +16,8 @@ import { applyFrostbite, getPower, getHealth } from './keywords';
 import { isQuestDone, questKey } from './questTracker'; // [2026-09-25 莉莉子] 三线任务化框架：任务解锁判定
 import { eventBus, GameEvents } from '../utils/eventBus';
 import type { MazeBuff, BattleTrigger, BattleEffectClass } from '../data/roguelike/buffs';
-import { CHAMPION_GIFT_KEYWORDS } from '../data/roguelike/buffs'; // [2026-09-25 莉莉子 武装线] 共鸣水晶的赠予关键词池
-import type { CardData, GameState } from '../types';
+import { CHAMPION_GIFT_KEYWORDS, getBattleEffects } from '../data/roguelike/buffs'; // [2026-09-25 莉莉子 武装线] 共鸣水晶的赠予关键词池 · [2026-09-28] 多效果条目统一视图
+import type { CardData, GameState, Keyword } from '../types';
 
 export type Side = 'player' | 'enemy';
 
@@ -28,21 +28,21 @@ export type Side = 'player' | 'enemy';
 export const EFFECT_CLASS_PRIORITY: Partial<Record<BattleEffectClass, number>> = {
     DUEL_STRONGEST: 0,        // 回合末王见王最先（跨双方效果，一次去重）
     ALL_BUFF: 5,              // 全体增益先于单点 targeting
+    ALL_UNITS_GRANT_KEYWORD: 6, // [2026-09-28 神格神经 ⑥] 开局/召唤的全体赋予，排在单点增益之前
     FREEZE_STRONGEST: 10,     // 冻结最先（数据层 freeze_strongest 亦显式 10）
     SET_STRONGEST_STATS: 20,  // 衰弱随后 → 对实时战场重判"当前最强"
 };
 
-/** 同 trigger 强化的确定性排序（priority 升序；同值按 defs 原序 = 获取序，Array.sort 稳定） */
-export const sortRogueDefs = (defs: MazeBuff[]): MazeBuff[] =>
-    [...defs].sort((a, b) => {
-        const pa = a.battleEffect?.priority
-            ?? (a.battleEffect ? EFFECT_CLASS_PRIORITY[a.battleEffect.effectClass] : undefined)
-            ?? Number.MAX_SAFE_INTEGER;
-        const pb = b.battleEffect?.priority
-            ?? (b.battleEffect ? EFFECT_CLASS_PRIORITY[b.battleEffect.effectClass] : undefined)
-            ?? Number.MAX_SAFE_INTEGER;
-        return pa - pb;
-    });
+/** 同 trigger 强化的确定性排序（priority 升序；同值按 defs 原序 = 获取序，Array.sort 稳定）
+ *  [2026-09-28 莉莉子 神格神经] 支持多效果条目：给定 trigger 时取**命中该 trigger 的那个效果**的优先级 */
+export const sortRogueDefs = (defs: MazeBuff[], trigger?: BattleTrigger): MazeBuff[] => {
+    const prioOf = (d: MazeBuff): number => {
+        const list = getBattleEffects(d);
+        const be = (trigger ? list.find(e => e.trigger === trigger) : undefined) ?? list[0];
+        return be?.priority ?? (be ? EFFECT_CLASS_PRIORITY[be.effectClass] : undefined) ?? Number.MAX_SAFE_INTEGER;
+    };
+    return [...defs].sort((a, b) => prioOf(a) - prioOf(b));
+};
 
 // ==========================================
 // 触发附带事件信息（各 trigger 站点按需填写）
@@ -169,17 +169,30 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
     // ---- round_start / game_start：无条件生效类（总是闪） ----
     GENERATE: (def, ctx) => {
         // 暗箭难防：回合开始在手牌生成一张（可瞬逝）暗箭
+        // [2026-09-28 神格神经 · 猫汐尔②④] 新增 `count`：一次生成 N 张（每张独立实例 + 独立 id）
         const genKey = def.battleEffect?.params?.generateKey as string | undefined;
         if (!genKey) return;
-        const card = ctx.createFullCard(genKey);
-        if (!card) return;
-        if (def.battleEffect?.params?.isVolatile) card.keywords = [...(card.keywords || []), 'Volatile' as any];
+        const count = Math.max(1, (def.battleEffect?.params?.count as number) ?? 1);
         const hand = sideHand(ctx, ctx.owner);
-        if (hand.length >= 10) return;
-        hand.push(card);
-        ctx.dirty.hand.add(ctx.owner);
-        eventBus.emit('sfx_generate', card);
-        flashRogueBuff(def);
+        let added = 0;
+        for (let i = 0; i < count; i++) {
+            if (hand.length >= 10) break; // 手牌上限兜底（满了就少发，不爆牌）
+            const card = ctx.createFullCard(genKey);
+            if (!card) break;
+            if (def.battleEffect?.params?.isVolatile) card.keywords = [...(card.keywords || []), 'Volatile' as any];
+            // [2026-09-28 莉莉子 神格神经] costOverride：生成时改写费用
+            //   （里芙 ④「0 费单挑」/ ⑥「0 费专注」/ 安卡希雅 ⑥「0 费剑舞」）
+            const costOverride = def.battleEffect?.params?.costOverride as number | undefined;
+            if (costOverride !== undefined) card.cost = costOverride;
+            if (i > 0) card.id = `${card.id}_g${i}`; // 多张时确保 id 唯一（手牌查表按 id）
+            hand.push(card);
+            added++;
+            eventBus.emit('sfx_generate', card);
+        }
+        if (added > 0) {
+            ctx.dirty.hand.add(ctx.owner);
+            flashRogueBuff(def);
+        }
     },
 
     RALLY: (def, ctx) => {
@@ -198,6 +211,30 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             ? { ...ctx.game, playerNexusTough: true }
             : { ...ctx.game, enemyNexusTough: true };
         ctx.dirty.game = true;
+        flashRogueBuff(def);
+    },
+
+    NEXUS_IMMUNE: (def, ctx) => {
+        // [2026-09-29 程拍板] 不死之身：我方水晶**免疫任何伤害**（标记型）
+        //   各水晶伤害点统一查 game.playerNexusImmune / enemyNexusImmune
+        ctx.game = ctx.owner === 'player'
+            ? { ...ctx.game, playerNexusImmune: true }
+            : { ...ctx.game, enemyNexusImmune: true };
+        ctx.dirty.game = true;
+        flashRogueBuff(def);
+    },
+
+    NEXUS_SELF_DAMAGE: (def, ctx) => {
+        // [2026-09-29 程拍板] 不死之身的代价：回合结束**自扣我方水晶** N 点
+        //   ⚠️ 刻意**不走伤害管线**（不判免疫/坚韧、不发 NEXUS_STRIKED）—— 语义是"生命值 -N"而非"受到伤害"
+        //   只发 unit_damage 供飘字与受击音（表现层），不参与任何战绩/任务计数
+        const v = (def.battleEffect?.params?.value as number) ?? 0;
+        if (v <= 0) return;
+        ctx.game = ctx.owner === 'player'
+            ? { ...ctx.game, playerNexus: Math.max(0, ctx.game.playerNexus - v) }
+            : { ...ctx.game, enemyNexus: Math.max(0, ctx.game.enemyNexus - v) };
+        ctx.dirty.game = true;
+        eventBus.emit('unit_damage', { id: ctx.owner === 'player' ? 'nexus_player' : 'nexus_enemy', amount: v });
         flashRogueBuff(def);
     },
 
@@ -230,12 +267,17 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
 
     HAND_COST_DOWN: (def, ctx) => {
         // 战术储备：回合开始手牌随机单位卡费用 -1
+        // [2026-09-28 神格神经 · 安卡希雅②④] 两处扩展：
+        //   ① `anyCard: true` → 任意类型手牌（含法术），对应"随机一张手牌魔耗值-1/-2"
+        //   ② 只抽 **费用 > 0** 的牌 —— 抽到 0 费牌等于白费一次（与"装备适用性"同一条原则：不做无效事）
         const amount = (def.battleEffect?.params?.amount as number) ?? 1;
-        const unitIdx = sideHand(ctx, ctx.owner)
-            .map((c, i) => (c.type?.includes('unit') ? i : -1)).filter(i => i >= 0);
-        if (unitIdx.length === 0) return;
-        const idx = unitIdx[Math.floor(Math.random() * unitIdx.length)];
+        const anyCard = def.battleEffect?.params?.anyCard === true;
         const hand = sideHand(ctx, ctx.owner);
+        const idxs = hand
+            .map((c, i) => ((anyCard || c.type?.includes('unit')) && (c.cost || 0) > 0 ? i : -1))
+            .filter(i => i >= 0);
+        if (idxs.length === 0) return;
+        const idx = idxs[Math.floor(Math.random() * idxs.length)];
         hand[idx] = {
             ...hand[idx],
             cost: Math.max(0, (hand[idx].cost || 0) - amount),
@@ -381,6 +423,50 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         if (p === 0 && h === 0) return;
         updateUnitById(ctx, target.id, c => applyPermanentBuff(c, p, h));
         flashRogueBuff(def);
+    },
+
+    RALLY_IF_ATTACK_POWER: (def, ctx) => {
+        // [2026-09-28 莉莉子 神格神经 · 芬妮②④] 发起进攻时，若我方进攻单位攻击力**总和** > 阈值 → 备战
+        //   备战 = 再给一个进攻标识（与 RALLY handler 同款写法）
+        const threshold = (def.battleEffect?.params?.threshold as number) ?? 10;
+        const attackers = ctx.combatField
+            .flatMap(f => (f.owner === ctx.owner ? [f.attacker] : []))
+            .filter(Boolean) as CardData[];
+        const total = attackers.reduce((s, u) => s + getPower(u), 0);
+        if (total <= threshold) return;
+        ctx.game = { ...ctx.game, attackToken: { ...ctx.game.attackToken, [ctx.owner]: 'rally' } };
+        ctx.dirty.game = true;
+        eventBus.emit('gain_token_rally', { owner: ctx.owner });
+        flashRogueBuff(def);
+    },
+
+    ALL_UNITS_GRANT_KEYWORD: (def, ctx) => {
+        // [2026-09-28 莉莉子 神格神经 ⑥ 决胜] 我方全体（game_start）或刚召唤的单位（on_summon）
+        //   永久 +N/+M 与关键词；已带该关键词且无数值增量时跳过（不白闪）
+        // [2026-09-29 程拍板] params 支持 `keywords: string[]`（多关键词一条搞定；旧 `keyword` 单数仍兼容）
+        const p = (def.battleEffect?.params?.power as number) ?? 0;
+        const h = (def.battleEffect?.params?.health as number) ?? 0;
+        const pms = def.battleEffect?.params;
+        const kws: Keyword[] = pms?.keywords
+            ? (pms.keywords as Keyword[])
+            : (pms?.keyword ? [pms.keyword as Keyword] : []);
+        const grant = (u: CardData): CardData => {
+            const buffed = applyPermanentBuff(u, p, h);
+            return kws.length
+                ? { ...buffed, keywords: Array.from(new Set([...(buffed.keywords || []), ...kws])) }
+                : buffed;
+        };
+        const targets = (ctx.trigger === 'game_start'
+            ? [...sideBench(ctx, ctx.owner), ...ctx.combatField.flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : []))]
+            : [ctx.info.playedCard ?? benchLast(ctx, ctx.owner)]
+        ).filter(Boolean) as CardData[];
+        let fired = false;
+        for (const u of targets) {
+            const hasAllKw = kws.every(k => (u.keywords || []).includes(k));
+            if (hasAllKw && p === 0 && h === 0) continue; // 纯关键词且全都有 → 无事可做
+            if (updateUnitById(ctx, u.id, grant)) fired = true;
+        }
+        if (fired) flashRogueBuff(def);
     },
 
     SPREAD_CHAMPION_KEYWORDS: (def, ctx) => {
@@ -543,18 +629,63 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
     // ---- on_summon / on_play_unit：以刚打出的卡为目标 ----
     BUFF: (def, ctx) => {
         // 机不可失/蜂拥而至：本回合给刚上场单位 +N/+M
+        // [2026-09-28 神格神经 · 茉莉安①③] 新增 `keywords`：本回合数值之外再赋予关键词
+        //   （【快速攻击】这类关键词没有"本回合"口径 ⇒ 按永久赋予处理）
         const card = ctx.info.playedCard ?? benchLast(ctx, ctx.owner);
         if (!card) return;
         const power = (def.battleEffect?.params?.power as number) ?? 1;
         const health = (def.battleEffect?.params?.health as number) ?? 1;
+        const extraKeywords = (def.battleEffect?.params?.keywords as Keyword[] | undefined) ?? [];
         const updated = {
             ...card,
             roundBuffs: {
                 power: (card.roundBuffs?.power || 0) + power,
                 health: (card.roundBuffs?.health || 0) + health,
             },
+            ...(extraKeywords.length
+                ? { keywords: Array.from(new Set([...(card.keywords || []), ...extraKeywords])) }
+                : {}),
         };
         updateUnitById(ctx, card.id, () => updated);
+        flashRogueBuff(def);
+    },
+
+    EXPOSE_AND_DAMAGE: (def, ctx) => {
+        // [2026-09-28 神格神经 · 茉莉安②④] 回合开始：① 暴露一个敌人（**攻击力最高的未暴露者**，对齐蕈影口径）
+        //                                        ② 对随机敌人 / 血量最多的敌人造成 N 点伤害（屏障/坚韧照常结算）
+        const foe: Side = ctx.owner === 'player' ? 'enemy' : 'player';
+        const p = def.battleEffect?.params ?? {};
+        const dmg = (p.damage as number) ?? 2;
+        const live = sideBench(ctx, foe).filter(c => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying');
+        if (live.length === 0) return;
+        // ① 暴露
+        const unexposed = live.filter(c => !(c.keywords || []).includes('Exposed'));
+        if (unexposed.length > 0) {
+            const exp = unexposed.reduce((a, b) => (getPower(a) >= getPower(b) ? a : b));
+            updateUnitById(ctx, exp.id, c => ({
+                ...c,
+                keywords: Array.from(new Set([...(c.keywords || []), 'Exposed' as Keyword])),
+            }));
+        }
+        // ② 伤害
+        const pick = p.damageTarget === 'mostHp'
+            ? live.reduce((a, b) => (getHealth(a) >= getHealth(b) ? a : b))
+            : live[Math.floor(Math.random() * live.length)];
+        const hasBarrier = (pick.keywords || []).includes('Barrier') && !(pick.depletedKeywords || []).includes('Barrier');
+        if (hasBarrier && dmg > 0) {
+            updateUnitById(ctx, pick.id, c => ({
+                ...c,
+                depletedKeywords: [...(c.depletedKeywords || []), 'Barrier'],
+                animState: 'hit' as const,
+            }));
+        } else {
+            let actual = dmg;
+            if ((pick.keywords || []).includes('Tough') && actual > 0) actual = Math.max(0, actual - 1);
+            if (actual > 0) {
+                updateUnitById(ctx, pick.id, c => ({ ...c, damageTaken: (c.damageTaken || 0) + actual, animState: 'hit' as const }));
+                eventBus.emit('unit_damage', { id: pick.id, amount: actual });
+            }
+        }
         flashRogueBuff(def);
     },
 
@@ -577,6 +708,137 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             }
         }
         // 保持旧语义：每张召唤动作都闪一次图标（含非首次召唤时）
+        flashRogueBuff(def);
+    },
+
+    CLONE_ON_DECLARE: (def, ctx) => {
+        // [2026-09-28 莉莉子 神格神经 · 卜卜①③] 进攻宣告时：复制我方一个单位，**以"进攻中"状态参战**，并赋予【瞬逝】
+        //   params.strongest=true → 复制攻击力最高者（③）；否则随机（①）
+        //   params.power / health → 给复制品的追加数值（③ 的 +2/+0）
+        //   落点：直接进交战区（此时还没分配格挡 ⇒ 它同样可能被格挡）
+        const bench = sideBench(ctx, ctx.owner);
+        const alive = bench.filter(c => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying');
+        if (alive.length === 0) return;
+        const p = def.battleEffect?.params ?? {};
+        const source = p.strongest === true
+            ? alive.reduce((a, b) => (getPower(a) >= getPower(b) ? a : b))
+            : alive[Math.floor(Math.random() * alive.length)];
+        let clone: CardData = {
+            ...source,
+            id: `clone_${Math.random().toString(36).slice(2, 11)}`,
+            isDead: false,
+            damageTaken: 0,
+            animState: 'idle' as const,
+            roundBuffs: undefined,           // 复制品不带"本回合"临时 buff（按白板复制）
+            keywords: Array.from(new Set([...(source.keywords || []), 'Ephemeral' as Keyword])),
+        };
+        const addP = (p.power as number) ?? 0;
+        const addH = (p.health as number) ?? 0;
+        if (addP || addH) clone = applyPermanentBuff(clone, addP, addH);
+        ctx.combatField.push({ owner: ctx.owner, attacker: clone } as any);
+        ctx.dirty.field = true;
+        eventBus.emit(GameEvents.SFX_SUMMON);
+        flashRogueBuff(def);
+    },
+
+    NEXUS_REPEAT_STRIKE: (def, ctx) => {
+        // [2026-09-28 莉莉子 神格神经 · 卜卜⑥] 两段式（一条强化两个 battleEffects）：
+        //   on_nexus_strike → 记账"本回合我方打了几次敌方水晶"（键带回合号）
+        //   round_end       → 按记账次数，由我方备战席攻击力最高的单位**再次打击敌方水晶**
+        // ⚠️ 兑现时不 emit NEXUS_STRIKED —— 那会再次触发 on_nexus_strike 形成回环；只发飘字。
+        const round = ctx.game?.round ?? 0;
+        const key = `div:bubu6:r${round}`;
+        const qp = ctx.game?.questProgress ?? {};
+        if (ctx.trigger === 'on_nexus_strike') {
+            ctx.game.questProgress = { ...qp, [key]: (qp[key] ?? 0) + 1 };
+            ctx.dirty.game = true;
+            return;
+        }
+        // round_end
+        const times = qp[key] ?? 0;
+        if (times <= 0) return;
+        const strongest = findStrongestUnit(sideBench(ctx, ctx.owner), ctx.combatField, ctx.owner);
+        if (!strongest) return;
+        const raw = getPower(strongest);
+        if (raw <= 0) return;
+        const nexusTough = ctx.owner === 'player' ? ctx.game.enemyNexusTough : ctx.game.playerNexusTough;
+        // [2026-09-29] 不死之身：对方水晶免疫任何伤害 → 此处直接不打（免疫优先于坚韧）
+        const nexusImmune = ctx.owner === 'player' ? ctx.game.enemyNexusImmune : ctx.game.playerNexusImmune;
+        if (nexusImmune) return;
+        const perHit = nexusTough ? Math.max(0, raw - 1) : raw;
+        const total = perHit * times;
+        if (total <= 0) return;
+        ctx.game = ctx.owner === 'player'
+            ? { ...ctx.game, enemyNexus: Math.max(0, ctx.game.enemyNexus - total) }
+            : { ...ctx.game, playerNexus: Math.max(0, ctx.game.playerNexus - total) };
+        ctx.game.questProgress = { ...(ctx.game.questProgress ?? {}), [key]: 0 };
+        ctx.dirty.game = true;
+        eventBus.emit('unit_damage', { id: ctx.owner === 'player' ? 'nexus_enemy' : 'nexus_player', amount: total });
+        flashRogueBuff(def);
+    },
+
+    MANA_PER_SUMMON_ROUND: (def, ctx) => {
+        // [2026-09-28 神格神经 · 猫汐尔①] 回合开始：备战席上每有 1 个召唤衍生物 → **本回合**最大法力 +1
+        //   本回合口径：直接加到本轮已算好的法力上（下回合由 calculateRoundStart 从零重算 ⇒ 不累积）
+        const n = sideBench(ctx, ctx.owner).filter(c => (c.race || []).includes('summon')).length;
+        if (n <= 0) return;
+        ctx.game = ctx.owner === 'player'
+            ? { ...ctx.game, playerMaxMana: (ctx.game.playerMaxMana || 0) + n, playerMana: (ctx.game.playerMana || 0) + n }
+            : { ...ctx.game, enemyMaxMana: (ctx.game.enemyMaxMana || 0) + n, enemyMana: (ctx.game.enemyMana || 0) + n };
+        ctx.dirty.game = true;
+        flashRogueBuff(def);
+    },
+
+    MANA_PER_SUMMON_PERMANENT: (def, ctx) => {
+        // [2026-09-28 神格神经 · 猫汐尔③] 每召唤 1 个召唤衍生物 → 本场永久最大法力 +1
+        //   只计数，不直接改法力：真正的生效点在 logic/core.ts 的 startManaBonusOf（每回合从此处读）
+        const summoned = ctx.info.playedCard ?? benchLast(ctx, ctx.owner);
+        if (!summoned || !(summoned.race || []).includes('summon')) return;
+        const key = 'div:mauxir:mana';
+        const cur = ctx.game?.questProgress?.[key] ?? 0;
+        if (cur >= 10) return; // 法力上限本身是 10（calculateRoundStart 内 min(10,…)），计数到顶即可
+        ctx.game.questProgress = { ...(ctx.game?.questProgress ?? {}), [key]: cur + 1 };
+        ctx.dirty.game = true;
+        flashRogueBuff(def);
+    },
+
+    SPELL_COST_DOWN_ALL: (def, ctx) => {
+        // [2026-09-28 神格神经 · 猫汐尔⑥] 开局：我方**手牌 + 牌库**里所有法术魔耗 -N
+        //   ⚠️ 只能覆盖开局时已在手/库里的法术；战斗中"新生成"的法术（如生成到手牌的衍生物法术）吃不到 —— 已在文档标注
+        const amount = (def.battleEffect?.params?.amount as number) ?? 1;
+        const isSpell = (c: CardData) => !!c.type?.startsWith('spell');
+        let touched = false;
+        for (const arr of [sideHand(ctx, ctx.owner), sideDeck(ctx, ctx.owner)]) {
+            arr.forEach((c, i) => {
+                if (!isSpell(c) || (c.cost || 0) <= 0) return;
+                arr[i] = { ...c, cost: Math.max(0, (c.cost || 0) - amount), customProgress: (c.customProgress || 0) | 2 };
+                touched = true;
+            });
+        }
+        if (!touched) return;
+        ctx.dirty.hand.add(ctx.owner);
+        ctx.dirty.deck.add(ctx.owner);
+        flashRogueBuff(def);
+    },
+
+    REMOVE_MAX_POWER: (def, ctx) => {
+        // [2026-09-28 神格神经 · 猫汐尔⑥] 解除指定卡的攻击力上限（臆莲基座 maxPower:10）
+        //   `getPower` 读卡上的 maxPower；把它清掉即"不再有上限"。
+        //   两个触发点：game_start（已在场的）+ on_summon（此后召唤的）
+        const cardKey = def.battleEffect?.params?.cardKey as string | undefined;
+        if (!cardKey) return;
+        const clear = (c: CardData): CardData => (c.key === cardKey && c.maxPower !== undefined ? { ...c, maxPower: undefined } : c);
+        if (ctx.trigger === 'game_start') {
+            let touched = false;
+            const bench = sideBench(ctx, ctx.owner);
+            bench.forEach((c, i) => { const n = clear(c); if (n !== c) { bench[i] = n; touched = true; } });
+            if (touched) ctx.dirty.bench.add(ctx.owner);
+            if (touched) flashRogueBuff(def);
+            return;
+        }
+        const target = ctx.info.playedCard ?? benchLast(ctx, ctx.owner);
+        if (!target || target.key !== cardKey || target.maxPower === undefined) return;
+        updateUnitById(ctx, target.id, clear);
         flashRogueBuff(def);
     },
 
@@ -622,8 +884,16 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
     // ---- after_attack / after_attacked / on_first_play_unit：BUFF 自身 ----
     BUFF_SELF: (def, ctx) => {
         // 以战养战/以守为攻/狂怒印记/铁壁反击/先锋之锐/斩杀协议：触发单位自身永久 +N/+M
+        // [2026-09-28 神格神经 · 芬妮①③] 新增可选 `keywords`：数值之外再赋予关键词（+4/+0 与【碾压】）
         const power = (def.battleEffect?.params?.power as number) ?? 0;
         const health = (def.battleEffect?.params?.health as number) ?? 0;
+        const extraKeywords = (def.battleEffect?.params?.keywords as Keyword[] | undefined) ?? [];
+        const grow = (u: CardData): CardData => {
+            const buffed = applyPermanentBuff(u, power, health);
+            return extraKeywords.length
+                ? { ...buffed, keywords: Array.from(new Set([...(buffed.keywords || []), ...extraKeywords])) }
+                : buffed;
+        };
         let target: CardData | undefined;
 
         if (ctx.trigger === 'on_first_play_unit') {
@@ -639,14 +909,14 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             // 原判据只看 animState，漏掉"伤害已致死但尚未标 dying"的单位 → 被 +1/+1 救活。
             if (!isStrikeTargetAlive(target)) return;
             // 直接改 updatedFight 对象（站点统一 setCombatField 提交），无散装 set
-            const buffed = applyPermanentBuff(target, power, health);
+            const buffed = grow(target);
             if (ctx.trigger === 'after_attack') fight.attacker = buffed;
             else fight.blocker = buffed;
             flashRogueBuff(def);
             return;
         }
         if (!target) return;
-        const buffed = applyPermanentBuff(target, power, health);
+        const buffed = grow(target);
         updateUnitById(ctx, target.id, () => buffed);
         flashRogueBuff(def);
     },
@@ -670,16 +940,34 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
     // ---- unit_die：以阵亡单位为目标 ----
     DEATH_GIFT: (def, ctx) => {
         // 英魂传承：阵亡单位攻血赋予手牌随机单位
+        // [2026-09-28 神格神经 · 卜卜②④] 两个新参数（默认行为不变）：
+        //   `powerOnly: true` → 只给攻击力（②）
+        //   `targets: 'all'`  → 候选目标扩到 手牌 + 备战席 + 交战区（④）
         const dead = ctx.info.deadUnit;
         if (!dead) return;
+        const p = def.battleEffect?.params ?? {};
         const power = getPower(dead);
-        const health = getHealth(dead);
+        const health = p.powerOnly === true ? 0 : getHealth(dead);
+        if (power === 0 && health === 0) return;
         const hand = sideHand(ctx, ctx.owner);
-        const unitHand = hand.map((c, i) => (!c.isChampion && c.type?.includes('unit') ? i : -1)).filter(i => i >= 0);
-        if (unitHand.length === 0) return;
-        const idx = unitHand[Math.floor(Math.random() * unitHand.length)];
-        hand[idx] = applyPermanentBuff(hand[idx], power, health);
-        ctx.dirty.hand.add(ctx.owner);
+        const handIdx = hand.map((c, i) => (!c.isChampion && c.type?.includes('unit') ? i : -1)).filter(i => i >= 0);
+        type Cand = { kind: 'hand'; idx: number } | { kind: 'unit'; id: string };
+        const cands: Cand[] = handIdx.map(i => ({ kind: 'hand' as const, idx: i }));
+        if (p.targets === 'all') {
+            sideBench(ctx, ctx.owner).forEach(c => cands.push({ kind: 'unit', id: c.id }));
+            ctx.combatField
+                .flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : []))
+                .filter(Boolean)
+                .forEach(c => cands.push({ kind: 'unit', id: (c as CardData).id }));
+        }
+        if (cands.length === 0) return;
+        const pick = cands[Math.floor(Math.random() * cands.length)];
+        if (pick.kind === 'hand') {
+            hand[pick.idx] = applyPermanentBuff(hand[pick.idx], power, health);
+            ctx.dirty.hand.add(ctx.owner);
+        } else {
+            updateUnitById(ctx, pick.id, c => applyPermanentBuff(c, power, health));
+        }
         flashRogueBuff(def);
     },
 
@@ -703,10 +991,21 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
 
     RESURRECT: (def, ctx) => {
         // 亡灵军团(首个)/不死军团(全部)：复活阵亡单位回备战席（保留数值清死亡态，附幻象）
+        // [2026-09-28 神格神经 · 芬妮⑥] 三个新参数（默认行为不变）：
+        //   `oncePerRound` 每回合一次（账本键带回合号 → 下回合自动恢复）
+        //   `keywords`     复活后额外赋予关键词（【凶恶】【坚韧】）
+        //   `noEphemeral`  不带【幻象】（芬妮⑥ 是"救回来"，不是"再死一次"）
         const dead = ctx.info.deadUnit;
         if (!dead) return;
-        const resurrectAll = def.battleEffect?.params?.all === true;
-        if (!resurrectAll) {
+        const p = def.battleEffect?.params ?? {};
+        const resurrectAll = p.all === true;
+        if (p.oncePerRound === true) {
+            const key = `used:${def.id}:r${ctx.game?.round ?? 0}`;
+            const used = (ctx.game?.questProgress ?? {})[key] ?? 0;
+            if (used > 0) return;
+            ctx.game.questProgress = { ...(ctx.game?.questProgress ?? {}), [key]: 1 };
+            ctx.dirty.game = true;
+        } else if (!resurrectAll) {
             // 非全复活：每批(processDeaths 一次调用)每侧只复活首个阵亡者
             if (ctx.info.resurrectedSide === ctx.owner) return;
             ctx.info.resurrectedSide = ctx.owner;
@@ -714,12 +1013,17 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         const bench = sideBench(ctx, ctx.owner);
         const aliveCount = bench.filter(c => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying').length;
         if (aliveCount >= 6) return;
+        const extraKeywords = (p.keywords as Keyword[] | undefined) ?? [];
         const revived: CardData = {
             ...dead,
             isDead: false,
-            damageTaken: 0,
+            damageTaken: 0, // 满血（血量 = maxHealth − damageTaken）
             animState: 'idle' as const,
-            keywords: [...(dead.keywords || []), 'Ephemeral' as any],
+            keywords: Array.from(new Set([
+                ...(dead.keywords || []),
+                ...(p.noEphemeral === true ? [] : ['Ephemeral' as Keyword]),
+                ...extraKeywords,
+            ])),
         };
         // 原实现：remove 死者 + concat revived（死者仍在数组中的墓碑态），对齐处理
         const i = bench.findIndex(c => c.id === dead.id);
@@ -769,14 +1073,15 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             hitE = { ...hitE, target: applyStrikeEnhancement(ctx.game.enemyEnhancements, 'after_attack', hitE.target) };
         }
         // 碾压溢出写水晶（固若金汤水晶坚韧：溢出减 1，飘字同步实际伤害）
-        if (hitE.overflow > 0) {
+        //   [2026-09-29] 不死之身：对方水晶免疫伤害时整段跳过（不飘字/不发受击）
+        if (hitE.overflow > 0 && !ctx.game.enemyNexusImmune) {
             const finalOverflow = ctx.game.enemyNexusTough ? Math.max(0, hitE.overflow - 1) : hitE.overflow;
             ctx.game = { ...ctx.game, enemyNexus: Math.max(0, ctx.game.enemyNexus - finalOverflow) };
             ctx.dirty.game = true;
             eventBus.emit('unit_damage', { id: 'nexus_enemy', amount: finalOverflow });
             eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'enemy', amount: finalOverflow });
         }
-        if (hitP.overflow > 0) {
+        if (hitP.overflow > 0 && !ctx.game.playerNexusImmune) {
             const finalOverflow = ctx.game.playerNexusTough ? Math.max(0, hitP.overflow - 1) : hitP.overflow;
             ctx.game = { ...ctx.game, playerNexus: Math.max(0, ctx.game.playerNexus - finalOverflow) };
             ctx.dirty.game = true;
@@ -804,34 +1109,39 @@ export const runRogueTrigger = (
     // [2026-09-25 莉莉子 三线任务化框架] 任务版强化：quest 未达成的【不分发】。
     //   解锁判定收口在这一处 —— 数据层只写 quest，各触发站点无需关心；进度读 ctx.game.questProgress。
     const questProgress = ctx.game?.questProgress;
-    const defs = sortRogueDefs(getRogueDefs(enhIds, trigger)).filter(def => {
+    const defs = sortRogueDefs(getRogueDefs(enhIds, trigger), trigger).filter(def => {
         const q = def.quest;
         return !q || isQuestDone(questProgress, questKey.enh(def.id), q.threshold);
     });
     defs.forEach(def => {
-        const be = def.battleEffect;
-        if (!be) return;
-        if (restrict && !restrict(be.effectClass)) return;
-        // [2026-09-25 莉莉子 强化线] 苛刻条件：我方场上恰好 1 个单位（孤军）
-        //   判定放在 oncePerBattle **之前** —— 否则条件不满足时也会把"每场一次"用掉
-        if (be.requireOnlyOneUnit) {
-            const mine = [
-                ...sideBench(ctx, ctx.owner),
-                ...ctx.combatField.flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : [])),
-            ].filter(Boolean);
-            if (mine.length !== 1) return;
+        // [2026-09-28 莉莉子 神格神经] **一条强化可有多个效果**（battleEffects）：
+        //   逐个命中本 trigger 的效果执行；执行时把 def **克隆**一份、battleEffect 指向当前效果，
+        //   这样所有 handler 仍照旧读 `def.battleEffect.params`，**无需改动任何一个 handler**。
+        for (const be of getBattleEffects(def)) {
+            if (be.trigger !== trigger) continue;
+            if (restrict && !restrict(be.effectClass)) continue;
+            // [2026-09-25 莉莉子 强化线] 苛刻条件：我方场上恰好 1 个单位（孤军）
+            //   判定放在 oncePerBattle **之前** —— 否则条件不满足时也会把"每场一次"用掉
+            if (be.requireOnlyOneUnit) {
+                const mine = [
+                    ...sideBench(ctx, ctx.owner),
+                    ...ctx.combatField.flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : [])),
+                ].filter(Boolean);
+                if (mine.length !== 1) continue;
+            }
+            // [2026-09-25 莉莉子 三线任务化框架] oncePerBattle：本场只生效一次
+            //   账本借用 questProgress 表的 `used:<id>` 键（round_start 站点会提交 dirty.game，故能落盘）
+            //   [2026-09-28] 键带效果序号：多效果条目里"每场一次"的只锁那一条效果，不误伤同条目的其他效果
+            if (be.oncePerBattle) {
+                const usedKey = `used:${def.id}:${be.effectClass}`;
+                const used = (ctx.game?.questProgress ?? {})[usedKey] ?? 0;
+                if (used > 0) continue;
+                ctx.game.questProgress = { ...(ctx.game?.questProgress ?? {}), [usedKey]: 1 };
+                ctx.dirty.game = true;
+            }
+            const handler = ROGUE_EFFECT_HANDLERS[be.effectClass];
+            if (handler) handler({ ...def, battleEffect: be }, ctx);
+            // 未注册 effectClass（SPELL_DOUBLE / NEXUS_HP_BOOST 等常驻查询型）静默忽略
         }
-        // [2026-09-25 莉莉子 三线任务化框架] oncePerBattle：本场只生效一次
-        //   账本借用 questProgress 表的 `used:<id>` 键（round_start 站点会提交 dirty.game，故能落盘）
-        if (be.oncePerBattle) {
-            const usedKey = `used:${def.id}`;
-            const used = (ctx.game?.questProgress ?? {})[usedKey] ?? 0;
-            if (used > 0) return;
-            ctx.game.questProgress = { ...(ctx.game?.questProgress ?? {}), [usedKey]: 1 };
-            ctx.dirty.game = true;
-        }
-        const handler = ROGUE_EFFECT_HANDLERS[be.effectClass];
-        if (handler) handler(def, ctx);
-        // 未注册 effectClass（SPELL_DOUBLE / NEXUS_HP_BOOST 等常驻查询型）静默忽略
     });
 };

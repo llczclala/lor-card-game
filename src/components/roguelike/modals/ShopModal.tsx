@@ -162,6 +162,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
     const affordable = (price: number) => run.gold >= price;
     const mark = (id: string) => setPurchased(prev => new Set(prev).add(id));
 
+    // [2026-09-28 莉莉子 纵深防御] 本页签**可售装备清单**：武装（isArmament）与法术专属（spellOnly）一律剔除。
+    //   本页签的目标卡是**天启者（单位）**；池子已在 generateShopStock 收口，这里是最后一道闸 ——
+    //   将来若池子又被改坏，玩家最多看到"少了两格"，而不会白花金币买到一件无效武装。
+    const equipOffers = stock.equipments.filter(it => {
+        const d = getEquipmentById(it.equipmentId);
+        return !!d && !d.isArmament && !d.spellOnly;
+    });
+
     // [2026-09-10] 局外武装（对齐 RogueGameWrapper 战斗构建口径：只取已解锁槽位的武装）
     const { getArmament } = useArmamentConfig();
     /** 英雄卡按"手牌样式"渲染所需的装备列表 = 局内已购装备 + 局外武装（Card 据此渲染右下角图标 + 悬停大卡） */
@@ -242,7 +250,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                 label={t.label}
                                 badge={t.key === 'card' ? stock.cards.length
                                     : t.key === 'enhancement' ? (stock.enhancement ? 1 : 0)
-                                    : t.key === 'equipment' ? stock.equipments.length
+                                    : t.key === 'equipment' ? equipOffers.length
                                     : removableDeck.length}
                             />
                         ))}
@@ -302,10 +310,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                         {tab === 'equipment' && (() => {
                             // [2026-09-10] 英雄候选 = 牌组里所有天启者卡（本局主英雄 + 首战招募来的英雄，去重）
                             const champions = Array.from(new Set(run.deck.filter(k => CARD_DB[k]?.isChampion)));
+                            // [2026-09-28 莉莉子 纵深防御] 装备页签**再拦一道**：武装（isArmament）永不可作为局内装备购买。
+                            //   池子已在 generateShopStock 收口；这里是"万一将来池子又被改坏"的最后一道闸 ——
+                            //   玩家侧看得见但买不到，好过白花金币。法术专属（spellOnly）同理不进本页签（本页签目标是天启者）。
                             // 已选且未售出的装备（售出的可能被留在 state 里，实时过滤掉）
                             // [2026-09-25 莉莉子 装备不叠加] 已挂在所选天启者身上的装备不再计入（不重复挂 / 不重复收费）
                             const onHero = (equipmentId: string) => !!equipHeroPick && (run.equippedCards?.[equipHeroPick] ?? []).includes(equipmentId);
-                            const picks = stock.equipments.filter(it => equipPicks.has(it.equipmentId) && !purchased.has(`eq_${it.equipmentId}`) && !onHero(it.equipmentId));
+                            const picks = equipOffers.filter(it => equipPicks.has(it.equipmentId) && !purchased.has(`eq_${it.equipmentId}`) && !onHero(it.equipmentId));
                             const total = picks.reduce((s, it) => s + it.price, 0);
                             // 三选一条件全满足才可买：选了英雄 + 选了装备 + 金币够
                             const canBuy = !!equipHeroPick && picks.length > 0 && run.gold >= total;
@@ -363,11 +374,11 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                     <div className="text-[11px] font-black tracking-widest text-emerald-300/70 mb-2.5">
                                         ② 选择装备（可多选 · 不受武装槽位限制）
                                     </div>
-                                    {stock.equipments.length === 0 ? (
+                                    {equipOffers.length === 0 ? (
                                         <p className="text-gray-500 text-sm py-3">暂无装备出售</p>
                                     ) : (
                                         <div className="grid grid-cols-2 gap-3 w-full max-w-[860px]">
-                                            {stock.equipments.map(item => {
+                                            {equipOffers.map(item => {
                                                 const def = getEquipmentById(item.equipmentId);
                                                 if (!def) return null;
                                                 const sold = purchased.has(`eq_${item.equipmentId}`);

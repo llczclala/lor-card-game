@@ -69,6 +69,8 @@ export const RogueMissionPanel: React.FC<RogueMissionPanelProps> = ({ isOpen, on
         if (m.reward.type === 'analystExp') return `+${m.reward.amount} 分析员经验`;
         if (m.reward.type === 'armament' && m.reward.armamentId) return `武装「${getEquipmentById(m.reward.armamentId)?.name ?? m.reward.armamentId}」`;
         if (m.reward.type === 'dataGold') return `+${m.reward.amount} 数据金`;
+        if (m.reward.type === 'universalShard') return `万能神格碎片 ×${m.reward.amount}`; // [2026-09-29 程拍板]
+        if (m.reward.type === 'pack') return `悖论迷宫卡包 ×${m.reward.amount ?? 1}`;
         return '';
     };
 

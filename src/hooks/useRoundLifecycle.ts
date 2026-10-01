@@ -158,16 +158,25 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             // [新增] 如果都没找到，检查是否是水晶受击——直接扣水晶血量
             if (!found) {
                 if (targetId === 'nexus_enemy') {
-                    // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：直扣水晶伤害减 1，飘字 amount 同步实际伤害
-                    const finalDmg = stateRef.current.game?.enemyNexusTough ? Math.max(0, damage - 1) : damage;
-                    setGame(prev => ({ ...prev, enemyNexus: Math.max(0, prev.enemyNexus - finalDmg) }));
-                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'enemy', amount: finalDmg });
-                    found = true;
+                    // [2026-09-29 程拍板] 不死之身：敌方水晶**免疫任何伤害** → 整段跳过（不扣血/不飘字/不发受击）
+                    if (stateRef.current.game?.enemyNexusImmune) {
+                        found = true;
+                    } else {
+                        // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：直扣水晶伤害减 1，飘字 amount 同步实际伤害
+                        const finalDmg = stateRef.current.game?.enemyNexusTough ? Math.max(0, damage - 1) : damage;
+                        setGame(prev => ({ ...prev, enemyNexus: Math.max(0, prev.enemyNexus - finalDmg) }));
+                        eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'enemy', amount: finalDmg });
+                        found = true;
+                    }
                 } else if (targetId === 'nexus_player') {
-                    const finalDmg = stateRef.current.game?.playerNexusTough ? Math.max(0, damage - 1) : damage;
-                    setGame(prev => ({ ...prev, playerNexus: Math.max(0, prev.playerNexus - finalDmg) }));
-                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'player', amount: finalDmg });
-                    found = true;
+                    if (stateRef.current.game?.playerNexusImmune) {
+                        found = true;
+                    } else {
+                        const finalDmg = stateRef.current.game?.playerNexusTough ? Math.max(0, damage - 1) : damage;
+                        setGame(prev => ({ ...prev, playerNexus: Math.max(0, prev.playerNexus - finalDmg) }));
+                        eventBus.emit(GameEvents.NEXUS_STRIKED, { target: 'player', amount: finalDmg });
+                        found = true;
+                    }
                 }
             }
 
@@ -1371,7 +1380,9 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
                     // [新增] 统一清算水晶受损！
                     // 等待子弹全部落地后，将刚才预演中累积的水晶伤害直接写入引擎，并呼叫震屏与飘字反馈。
-                    if (nexusDamageAccumulator > 0) {
+                    // [2026-09-29 程拍板] 不死之身：目标水晶免疫伤害 → 整段跳过
+                    const scImmune = owner === 'player' ? !!stateRef.current.game?.enemyNexusImmune : !!stateRef.current.game?.playerNexusImmune;
+                    if (nexusDamageAccumulator > 0 && !scImmune) {
                         const targetNexusId = owner === 'player' ? 'nexus_enemy' : 'nexus_player';
                         // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：弹夹扫射累积打水晶减 1，飘字 amount 同步实际伤害
                         const isScTough = owner === 'player' ? !!stateRef.current.game?.enemyNexusTough : !!stateRef.current.game?.playerNexusTough;
@@ -1703,7 +1714,9 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                         if (newCombatField.length > 0) { setCombatField(newCombatField); stateRef.current.combatField = newCombatField; }
                     }
 
-                    if (nexusDmg > 0) {
+                    // [2026-09-29 程拍板] 不死之身：目标水晶免疫伤害 → 整段跳过
+                    const gmImmune = enemyPlayer === 'player' ? !!stateRef.current.game?.playerNexusImmune : !!stateRef.current.game?.enemyNexusImmune;
+                    if (nexusDmg > 0 && !gmImmune) {
                         // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：盖弥尔 AOE 打水晶减 1，飘字 amount 同步实际伤害
                         const isGmTough = enemyPlayer === 'player' ? !!stateRef.current.game?.playerNexusTough : !!stateRef.current.game?.enemyNexusTough;
                         const finalGmDmg = isGmTough ? Math.max(0, nexusDmg - 1) : nexusDmg;

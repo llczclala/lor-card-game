@@ -12,7 +12,9 @@ import { ANALYST_LEVEL_REWARDS, ANALYST_MAX_LEVEL, getAnalystExpToNext } from '.
 import { getEquipmentById } from '../../data/equipment';
 import { readArmStock } from '../../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
 import { getBuffById, type MazeBuff } from '../../data/roguelike/buffs';
-import { PackOpenModal } from './PackOpenModal'; // [2026-08-29] 卡包开箱演出
+import { PackOpenModal } from './PackOpenModal'; // [2026-08-29] 卡包 → 抽到匣子
+import { ChestOpenModal, type ChestOpenResult } from './ChestOpenModal'; // [2026-09-29 程拍板] 打开匣子 → 得道具
+import type { ChestInstance } from '../../data/roguelike/divinityShards'; // [2026-09-29] 奖励匣
 import { RARITY_META } from './RarityIcon'; // [2026-09-04] 武装品质元数据
 import { bindArmamentGaze } from './ArmamentPreview'; // [2026-09-04] 悬停大图检视
 import { EnhancementPreview, type EnhancementPreviewHover } from './EnhancementPreview'; // [2026-09-04] 强化悬停大图
@@ -34,11 +36,13 @@ interface EvaluationPanelProps {
     isOpen: boolean;
     onClose: () => void;
     userSystem: any; // useUserSystem（profile/settings/openPack/grantAnalystExp）
+    divinity?: any;  // [2026-09-29 程拍板] useHeroDivinity（开匣子后的碎片入账）
 }
 
-export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClose, userSystem }) => {
+export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClose, userSystem, divinity }) => {
     const [toast, setToast] = useState<string | null>(null);
     const [packOpen, setPackOpen] = useState(false); // [2026-08-29] 卡包开箱演出
+    const [chestOpen, setChestOpen] = useState(false); // [2026-09-29] 奖励匣开箱
     // [2026-09-04] 强化解锁悬停大图（EnhancementPreview 受控浮层；500ms delay + 150ms leaveBuffer，同 NodePreviewPanel 手感）
     const [hoverBuff, setHoverBuff] = useState<EnhancementPreviewHover | null>(null);
     const enhEnterRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,6 +57,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
     const armStockMap = readArmStock(userSystem?.settings as any);
     const ownedArmaments = Object.keys(armStockMap).filter(id => (armStockMap[id] ?? 0) > 0);
     const pendingPacks = userSystem?.settings?.pendingPacks as number | undefined;
+    const pendingChests = (userSystem?.settings?.pendingChests ?? []) as ChestInstance[]; // [2026-09-29] 待打开匣子
 
     // ESC 关闭（capture + stopImmediatePropagation 拦截全局 ESC）
     useEffect(() => {
@@ -191,6 +196,27 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                                     </span>
                                 )}
                             </div>
+                            {/* [2026-09-29 程拍板] 待打开匣子：卡包抽到的匣子在这里开启 */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setChestOpen(true)}
+                                    disabled={pendingChests.length <= 0}
+                                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black tracking-wider transition-all ${
+                                        pendingChests.length > 0
+                                            ? 'bg-gradient-to-r from-amber-600 to-yellow-400 text-black hover:scale-105 shadow-[0_0_25px_rgba(250,204,21,0.45)]'
+                                            : 'bg-white/5 text-gray-500 cursor-not-allowed'
+                                    }`}
+                                >
+                                    <Gem size={18} />
+                                    打开匣子
+                                </button>
+                                {/* 匣子数量角标 */}
+                                {pendingChests.length > 0 && (
+                                    <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-amber-500 border-2 border-slate-900 text-[10px] font-black text-black flex items-center justify-center">
+                                        {pendingChests.length}
+                                    </span>
+                                )}
+                            </div>
                             <button onClick={onClose} className="p-2 rounded-full text-gray-400 hover:bg-white/10 hover:text-white transition-all">
                                 <X size={20} />
                             </button>
@@ -299,12 +325,25 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
             {/* [2026-09-04] 强化解锁悬停大图浮层（portal body，品质强化卡面） */}
             <EnhancementPreview hover={hoverBuff} />
 
-            {/* [2026-08-29] 卡包开箱演出（CS:GO 风格滚动抽武装） */}
+            {/* [2026-08-29] 卡包开箱演出（卡包 → 抽到一个奖励匣） */}
             <PackOpenModal
                 isOpen={packOpen}
                 pendingPacks={pendingPacks ?? 0}
                 onOpenPack={() => userSystem?.openPack?.() ?? null}
                 onClose={() => setPackOpen(false)}
+                onOpenChest={() => setChestOpen(true)}
+            />
+
+            {/* [2026-09-29 程拍板] 奖励匣开箱（匣子 → 武装 / 神格碎片） */}
+            <ChestOpenModal
+                isOpen={chestOpen}
+                chests={pendingChests}
+                onOpenChest={(i) => userSystem?.openChest?.(i) ?? null}
+                onShardDrop={(res: ChestOpenResult) => {
+                    // 碎片入账（本组件同时持有 divinity，依赖方向由 App 层注入保证）
+                    if (res?.wallet) divinity?.applyShardDrop?.({ wallet: res.wallet, details: res.shardDetail ?? [], totalOverflow: 0 });
+                }}
+                onClose={() => setChestOpen(false)}
             />
         </AnimatePresence>
     );

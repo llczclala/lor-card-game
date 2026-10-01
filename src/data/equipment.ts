@@ -53,7 +53,7 @@ export interface EquipmentRoundStart {
 /** [2026-08-20 成长型装备] 触发式成长声明：事件发生时，给目标永久 +power/+health（须在场） */
 export interface EquipmentTrigger {
     event: 'player_cast_spell' | 'after_attack' | 'after_attacked';
-    target: 'self' | 'random_ally'; // self=装备卡自己；random_ally=随机在场友军
+    target: 'self' | 'random_ally'; // self=装备卡自己；random_ally=随机在场我方单位
     power: number;
     health: number;
 }
@@ -67,6 +67,9 @@ export interface EquipmentDef {
     isArmament?: boolean;     // [2026-08-14 武装] 武装=特殊装备：局外带入、局内不可获取，进入游戏前配置
     consumable?: boolean;     // [2026-09-07 消耗品武装] 效果发挥后从库存消失（碳原子板/重修申请）；卡包随机池、武装入口需排除此类。
                               //   [2026-09-15] 碳原子板语义收紧：仅通关才"发挥"（翻倍+消耗），败北/中途放弃原样保留
+    spellOnly?: boolean;      // [2026-09-28 法术专属装备] **仅法术卡可挂**（单位卡不可）。
+                              //   理由：法术与单位价值轴不同 —— 单位装备强化"它站在那里"，法术装备只能强化"这一次结算"
+                              //   （费用 / 结算数值 / 回响 / 手牌约束 / 法术法力 / 速度与目标）。见 技术手册/设计-法术专属装备.md
     costMod?: number;         // [静态修饰] 费用修正（装备1：-1）
     keywords?: Keyword[];     // [静态修饰] 附加关键词（装备2：QuickAttack）
     powerMod?: number;        // [静态修饰] 攻击修正（装备4：+4）
@@ -84,7 +87,7 @@ export interface EquipmentDef {
     //   借用迷宫强化的分发管线（trigger + handler + 面板展示）在战斗内生效，不为武装另开执行器。
     grantBattleEffectIds?: string[];
     // ── [2026-09-25 莉莉子 三线任务化框架] 「新机制」与「常驻代价」两条声明 ──
-    /** 新机制：持有者阵亡时触发（遗嘱 = 把身上装备转给随机友军） */
+    /** 新机制：持有者阵亡时触发（遗嘱 = 把身上装备转给随机我方单位） */
     onOwnerDie?: { class: 'TRANSFER_EQUIPMENT' };
     /** 常驻代价（Pact）：无法被治疗 —— attachEquipment 写入卡牌，治疗结算处直接跳过 */
     pactNoHeal?: boolean;
@@ -379,21 +382,21 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     {
         id: 'equip_grow_spell_ally',
         name: '乐手的疗愈独奏',
-        description: '我方施放一个法术后，随机一个友军获得 +1/+1。',
-        rarity: 'epic', icon: eq_musician_case, // [2026-09-11] 阿尔戈·乐手的小提琴（心理诊疗，"一听那些音乐问题便迎刃而解" → 惠及友军）· 原名「灵气传导」
+        description: '我方施放一个法术后，随机一个我方单位获得 +1/+1。',
+        rarity: 'epic', icon: eq_musician_case, // [2026-09-11] 阿尔戈·乐手的小提琴（心理诊疗，"一听那些音乐问题便迎刃而解" → 惠及我方单位）· 原名「灵气传导」
         onTrigger: { event: 'player_cast_spell', target: 'random_ally', power: 1, health: 1 },
     },
     {
         id: 'equip_grow_attack',
         name: '磨砺之锋',
-        description: '此卡攻击后，获得 +1/+1。',
+        description: '此卡打击后，获得 +1/+1。',
         rarity: 'rare', icon: abc_spell,
         onTrigger: { event: 'after_attack', target: 'self', power: 1, health: 1 },
     },
     {
         id: 'equip_grow_attacked',
         name: '伊莉斯的修枝剪',
-        description: '此卡被攻击后，获得 +1/+1。',
+        description: '此卡被打击后，获得 +1/+1。',
         rarity: 'rare', icon: eq_elice_shears, // [2026-09-11] 重叶·伊莉斯的园丁剪（修剪促进生长 → 受创后反而更强）· 原名「愈战愈勇」；⚠️ 与迷宫强化「愈战愈勇」重名，本次改名顺带解开撞车
         onTrigger: { event: 'after_attacked', target: 'self', power: 1, health: 1 },
     },
@@ -468,7 +471,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     {
         id: 'equip_will',
         name: '遗嘱',
-        description: '此卡阵亡时，把它身上的其他装备全部转移给随机一个存活友军。',
+        description: '此卡阵亡时，将其身上的其他装备全部转移给随机一个存活的我方单位。',
         rarity: 'rare', icon: abc_spell,
         // 新机制：没有任务也没有数值，纯粹"死得有价值"（装备传承）
         onOwnerDie: { class: 'TRANSFER_EQUIPMENT' },
@@ -480,6 +483,44 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         rarity: 'mythic', icon: abc_spell,
         powerMod: 6, healthMod: 6, keywords: ['QuickAttack', 'Overwhelm'],
         pactNoHeal: true, // Pact 常驻代价：放弃续航换爆发
+    },
+    // ── [2026-09-28 莉莉子 法术专属装备 · 第一波] 仅法术卡可挂（spellOnly）。
+    //   立项原因：法术池原先只剩「海基的推演手记」1 件 → ①法术"随机装备"名不副实 ②Act1 品质权重里 epic=0
+    //     ⇒ Act1 法术永远带不上装备。本波 4 件把 白/蓝/紫/金 四档补齐，Act1 缺口自然消失。
+    //   ⚠️ 史诗/传说档位偏低是刻意的：**覆盖面比通用装备窄 ⇒ 同效果低一档**（见设计文档 §六 数值锚点）。
+    //   ⚠️ 本条目的 costMod / keywords 都是**静态修饰**，attachEquipment 写入即生效（Echo 由 useSpellSystem 结算后处理）。
+    //   🔸 第二波（伤害 +N / 目标 +1 / 回想释放 等）需要新挂点，未实装 —— 见设计文档 §5.2。
+    {
+        id: 'equip_spell_pact_scratch',
+        name: '速记草稿',
+        description: '使该卡费用 -1；代价：获得【瞬逝】（回合结束未打出即弃置）。',
+        rarity: 'common', icon: abc_spell, // TODO 专属图（暂用 abc 占位）
+        spellOnly: true,
+        costMod: -1, keywords: ['Volatile'], // Pact 代价型：前期最缺费，代价真实（不打就烂手里）
+    },
+    {
+        id: 'equip_spell_echo_copy',
+        name: '誊抄副本',
+        description: '使该卡获得【回响】（打出后在手牌生成一张该卡的瞬逝复制品）。',
+        rarity: 'rare', icon: abc_spell,
+        spellOnly: true,
+        keywords: ['Echo'], // 一张变两张 —— 法术流的连锁引擎（对已带回响的法术由适用性过滤自动排除）
+    },
+    {
+        id: 'equip_spell_rush_transcript',
+        name: '加急誊本',
+        description: '使该卡费用 -2。',
+        rarity: 'epic', icon: abc_spell,
+        spellOnly: true,
+        costMod: -2, // 高费法术的解锁键（只作用于一张法术，故较通用减费低一档：通用 -1 费 = 紫）
+    },
+    {
+        id: 'equip_spell_chain_fuse',
+        name: '连锁引信',
+        description: '使该卡费用 -1，并获得【回响】。',
+        rarity: 'legendary', icon: abc_spell,
+        spellOnly: true,
+        costMod: -1, keywords: ['Echo'], // 费用 + 次数双收益，单卡级最强档
     },
     // ── 武装（[2026-08-14] 特殊装备：局外带入、局内不可获取，进入游戏前配置到武装槽）──
     // ── [2026-09-25 莉莉子 任务化武装批 v3 · 试点] 《设计-肉鸽三线任务化框架》7.1 ──
@@ -543,7 +584,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         //   改名 arm_attune_crystal（名字仍是「共鸣水晶」）；新增条目务必跑一次全库 id 唯一性检查。
         id: 'arm_attune_crystal',
         name: '共鸣水晶',
-        description: '本局累计用天启者打击 3 次后：随机赋予天启者一个关键词，此后其关键词同时赋予在场友军。',
+        description: '本局累计用天启者打击 3 次后：随机赋予天启者一个关键词，此后其关键词同时赋予在场我方单位。',
         rarity: 'rare', icon: abc_spell,
         isArmament: true,
         quest: { event: 'hero_attack', threshold: 3, scope: 'run' },
@@ -570,7 +611,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     {
         id: 'arm_unyielding',
         name: '不屈之证',
-        description: '每场战斗中，当天启者已升级时，它首次阵亡会以 1 点生命存活（每场一次）。',
+        description: '每场战斗中，当天启者已升级时，其首次阵亡会以 1 点生命值存活（每场一次）。',
         rarity: 'legendary', icon: abc_spell,
         isArmament: true,
         // Condition 型：门槛是"天启者已升级"，在死亡清算处判定并拦截（每场一次，账本用 questProgress 的 used: 键）
@@ -668,7 +709,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     {
         id: 'arm_grow_spell_ally',
         name: '梅芙的赞美特调',
-        description: '我方施放一个法术后，随机一个友军获得 +2/+2。',
+        description: '我方施放一个法术后，随机一个我方单位获得 +2/+2。',
         rarity: 'legendary', icon: eq_maeve_drink, // [2026-09-11] 阿尔斯特·梅芙的饮料（"受赞美的植物会长得更茁壮" → 一杯饮品把赞美递出去）· 原名「法术共鸣」；⚠️ 与迷宫强化「法术共鸣」重名，本次改名顺带解开撞车
         isArmament: true,
         onTrigger: { event: 'player_cast_spell', target: 'random_ally', power: 2, health: 2 },
@@ -684,7 +725,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     {
         id: 'arm_grow_attacked',
         name: '多尼尔的金苹果',
-        description: '此卡被攻击后，获得 +3/+3。',
+        description: '此卡被打击后，获得 +3/+3。',
         rarity: 'mythic', icon: eq_dornier_apple, // [2026-09-11] 堤丰·多尼尔的帽子与金苹果（她梦见本该守护的金苹果飞走 → 受创后仍守住并成长）· 原名「律动之核」
         isArmament: true,
         onTrigger: { event: 'after_attacked', target: 'self', power: 3, health: 3 },
@@ -744,6 +785,68 @@ if (import.meta.env?.DEV) {
 export const getArmamentDefs = (): EquipmentDef[] => EQUIPMENT_DEFS.filter(e => e.isArmament);
 
 /**
+ * [2026-09-28 莉莉子 商店漏武装修复 · 09-28 法术专属扩展] 「局内可获得装备」池：**非武装**装备，按作用对象分池。
+ *   武装（`isArmament`，含碳原子板 / 重修申请等消耗品）的设计口径是**局外带入、局内不可获取**（见 EquipmentDef.isArmament 注释），
+ *   但商店「买装备」页签原先直接遍历 `EQUIPMENT_DEFS` 全库 → 武装被当普通装备出售（碳原子板等消耗品反复上架，买了也不生效：runBonus 只认开局快照）。
+ *   ⚠️ 今后任何「局内发放/出售装备」的入口，一律走 `getEquipmentOnlyDefs(scope)` 或 `getEquipPoolForCard()`，**不要直接遍历 EQUIPMENT_DEFS**。
+ * @param scope 'unit' = 单位/天启者可挂（排除 spellOnly）；'spell' = 法术卡可挂（仅 spellOnly）。
+ *   ⚠️ 刻意**不给默认值**：调用点必须显式想清"这是给谁买的"—— 09-28 商店漏武装就是"没想清作用对象"造成的。
+ */
+export const getEquipmentOnlyDefs = (scope: 'unit' | 'spell'): EquipmentDef[] =>
+    EQUIPMENT_DEFS.filter(e => !e.isArmament && (scope === 'spell' ? e.spellOnly === true : !e.spellOnly));
+
+/**
+ * [2026-09-28 莉莉子 装备适用性铁律（程拍板）] 一件装备是否**对这张卡有实际提升**。
+ *   原则：能给这张卡挂，就必须对它有提升 —— 否则是"占格子的空装备"（玩家白花钱 / 白占名额）。
+ *   详见 技术手册/设计-法术专属装备.md §四。
+ *
+ * **A 类型轴**：`spellOnly` ↔ 法术卡；其余非武装装备 ↔ 单位卡（武装走局外 3 槽，不经本判定）
+ * **B 效果轴**：
+ *   · `costMod < 0` → 卡的基础费用必须 > 0（0 费卡减费无效）
+ *   · 关键词 → 该卡**尚无**此关键词（attachEquipment 对关键词做 Set 去重 ⇒ 重复 = 纯浪费）
+ *   · Q8 口径（程定）：**允许部分重叠** —— 只要还有任意一项新增（关键词 / 数值 / 机制）就保留；
+ *     只有"**只提供关键词、且增量关键词全空**"才淘汰
+ * **C 跨装备去重**（Q6 程定）：`equippedIds` 传入该卡已挂装备 —— 它们提供的关键词同样计入"卡已有"
+ *
+ * ⚠️ 第二波装备（伤害 +N / 目标 +1 / 回想释放…）实装时，须在此追加"按 `effectRegistry.class` 判伤害类法术""有目标才可 +1"等判定。
+ */
+export const isEquipmentApplicable = (
+    def: EquipmentDef,
+    card: { type: string; cost?: number; keywords?: Keyword[] },
+    equippedIds?: string[],
+): boolean => {
+    if (!def || !card?.type) return false;
+
+    // A 类型轴
+    const isSpell = card.type.startsWith('spell');
+    if (isSpell !== (def.spellOnly === true)) return false;
+
+    // 已有集合 = 卡面关键词 ∪ 该卡已挂装备提供的关键词（C 轴）
+    const owned = new Set<Keyword>(card.keywords ?? []);
+    for (const id of equippedIds ?? []) {
+        for (const kw of EQUIPMENT_BY_ID[id]?.keywords ?? []) owned.add(kw);
+    }
+    const gainKeywords = (def.keywords ?? []).filter(k => !owned.has(k));
+
+    // B 效果轴：减费对 0 费卡无效；且费用必须够减（-2 费装备不给 1 费法术 —— 见设计文档 §4.2「费用 ≥ 减费量」）
+    if ((def.costMod ?? 0) < 0 && (card.cost ?? 0) < Math.abs(def.costMod ?? 0)) return false;
+
+    // 该装备是否还有"关键词以外"的收益（数值 / 机制 / 代价都算 —— 有它就不做去重淘汰）
+    const hasNonKeywordValue = (def.costMod ?? 0) !== 0
+        || !!def.powerMod || !!def.healthMod
+        || !!def.onPlay || !!def.onTrigger || !!def.onRoundStart
+        || !!def.quest || !!def.questReward
+        || !!def.grantBattleEffectIds?.length
+        || !!def.runBonus || !!def.pactNoHeal || def.pactNexusCost !== undefined
+        || def.runBattleEndGold !== undefined || !!def.reviveOncePerBattle || !!def.onOwnerDie;
+
+    // C 轴去重：只有关键词收益，且一个新增关键词都没有 → 淘汰
+    if (!hasNonKeywordValue && (def.keywords?.length ?? 0) > 0 && gainKeywords.length === 0) return false;
+
+    return true;
+};
+
+/**
  * [2026-09-25 莉莉子 武装线] 这批装备/武装带来的「开局水晶代价」合计（Pact 常驻代价的一部分）。
  * 在 **战斗水晶初值处直接扣** —— 不走效果类：game_start 站点不提交 game 级变更（只提交 bench/hand/deck/field），
  * 用效果类写的扣血会被静默丢弃。
@@ -757,24 +860,25 @@ export const getArmamentNexusCost = (equips?: Record<string, string[]>): number 
 };
 
 /**
- * [2026-08-29 莉莉子] 某张卡可佩戴的随机装备池（奖励/商店/宝箱/事件带装备卡共用）：
- *   单位卡 → 全部非武装装备；
- *   法术卡 → 仅纯减费装备（costMod<0 且无任何其他修饰），杜绝数值/关键词/特效等对法术无效的装备（程拍板）。
- * [2026-09-25 莉莉子 装备不叠加] 第 2 参 excludeIds：排除"已挂在这张卡上"的装备。
- *   attachEquipment 对同一 id 是硬去重（重复挂 = 静默忽略），所以发奖时若还发已有的那件，等于纯加价/白给。
+ * [2026-08-29 莉莉子 立 · 2026-09-28 重构] 某张卡可佩戴的随机装备池（奖励 / 商店 / 宝箱 / 事件带装备卡共用）：
+ *   · 单位卡 → 非武装、**非** spellOnly 的装备；
+ *   · 法术卡 → 非武装、**spellOnly** 的装备
+ *     （Q1 决议：通用减费不再挂法术 —— 法术用自己的减费装备；原"仅纯减费"白名单随之作废）。
+ *   两支都再经 `isEquipmentApplicable()` 过滤：**能给这张卡挂，就必须对它有提升**（适用性铁律）。
+ * [2026-09-25 莉莉子 装备不叠加] 第 2 参 excludeIds = **该卡已挂的装备**：
+ *   · 排除它们（attachEquipment 对同一 id 硬去重 ⇒ 再发已有那件 = 纯加价 / 白给）
+ *   · 同时喂给适用性判定，做 Q6 跨装备去重（它们提供的关键词也算"卡已有"）
  */
-export const getEquipPoolForCard = (card: { type: string }, excludeIds?: string[]): EquipmentDef[] => {
+export const getEquipPoolForCard = (card: { type: string; cost?: number; keywords?: Keyword[] }, excludeIds?: string[]): EquipmentDef[] => {
     if (!card) return [];
     const exclude = excludeIds?.length ? new Set(excludeIds) : null;
-    if (card.type.startsWith('spell')) {
-        return EQUIPMENT_DEFS.filter(e =>
-            !e.isArmament && (e.costMod ?? 0) < 0
-            && !e.powerMod && !e.healthMod
-            && !e.keywords?.length && !e.onPlay && !e.onTrigger && !e.onRoundStart
-            && !exclude?.has(e.id)
-        );
-    }
-    return EQUIPMENT_DEFS.filter(e => !e.isArmament && !exclude?.has(e.id));
+    const isSpell = card.type.startsWith('spell');
+    return EQUIPMENT_DEFS.filter(e =>
+        !e.isArmament
+        && !exclude?.has(e.id)
+        && (isSpell ? e.spellOnly === true : !e.spellOnly)
+        && isEquipmentApplicable(e, card, excludeIds)
+    );
 };
 
 /**

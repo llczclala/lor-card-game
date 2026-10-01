@@ -4,17 +4,18 @@
 //   逻辑层（useGameState / useRoundLifecycle）按 trigger 查询玩家已拥有的战斗型强化，
 //   再按 battleEffect.effectClass 执行（复用 createCard / RALLY 等现有机制）。
 // ==========================================
-import { MAZE_BUFFS, type MazeBuff, type BattleTrigger } from '../data/roguelike/buffs';
+import { MAZE_BUFFS, getBattleEffects, type MazeBuff, type BattleTrigger } from '../data/roguelike/buffs';
 import { EQUIPMENT_BY_ID, type EquipmentTrigger } from '../data/equipment';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import type { CardData } from '../types';
 import { getPower, getHealth } from './keywords'; // [2026-08-27] 找最强单位用 · [2026-09-15 莉莉子] getHealth 用于打击强化的存活判据
 
-/** 按触发时机筛选玩家已拥有的战斗型迷宫强化（无则返回空数组） */
+/** 按触发时机筛选玩家已拥有的战斗型迷宫强化（无则返回空数组）
+ *  [2026-09-28 莉莉子 神格神经] 改用 getBattleEffects：支持"一条强化多个效果"（任一效果命中该 trigger 即选中；执行侧再逐效果跑） */
 export const getRogueDefs = (ids: string[] | undefined, trigger: BattleTrigger): MazeBuff[] =>
     (ids ?? [])
         .map(id => MAZE_BUFFS.find(b => b.id === id))
-        .filter((b): b is MazeBuff => !!b && !!b.battleEffect && b.battleEffect.trigger === trigger);
+        .filter((b): b is MazeBuff => !!b && getBattleEffects(b).some(e => e.trigger === trigger));
 
 /** 触发强化特效：我方水晶处卡面淡入淡出闪烁（复用，各处统一 emit） */
 export const flashRogueBuff = (def: MazeBuff) => {
@@ -137,11 +138,14 @@ export const applyStrikeEnhancement = (
     if (!isStrikeTargetAlive(unit)) return unit;
     let out = unit;
     getRogueDefs(enhIds, trigger).forEach(def => {
-        const be = def.battleEffect!;
-        if (be.effectClass === 'BUFF_SELF') {
-            out = applyPermanentBuff(out, (be.params?.power as number) ?? 0, (be.params?.health as number) ?? 0);
-        } else if (be.effectClass === 'STAT_BALANCE') {
-            out = applyStatBalance(out, (be.params?.mode as string) ?? 'health_to_power');
+        // [2026-09-28 莉莉子 神格神经] 逐效果遍历（一条强化可能带多个效果）
+        for (const be of getBattleEffects(def)) {
+            if (be.trigger !== trigger) continue;
+            if (be.effectClass === 'BUFF_SELF') {
+                out = applyPermanentBuff(out, (be.params?.power as number) ?? 0, (be.params?.health as number) ?? 0);
+            } else if (be.effectClass === 'STAT_BALANCE') {
+                out = applyStatBalance(out, (be.params?.mode as string) ?? 'health_to_power');
+            }
         }
         flashRogueBuff(def);
     });

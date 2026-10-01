@@ -2,29 +2,32 @@
 // 悖论迷宫 · 卡包开箱演出（转盘老虎机 · 重构版）
 // [2026-09-04 莉莉子 + 程拍板] 四优化：
 //   ① 转盘待命型：弹窗打开滚轮匀速往复慢转（预热待命）→ 点开箱 → 加速冲刺 → 减速定格在中间标记线
-//   ② 鼠标悬停格子 → ArmamentPreview 大图检视（看清具体是什么武装）
-//   ③ 滚动格改六边形武装图标（clip-path 扁六边形，替代原长方形卡）
-//   ④ 定格瞬间自动弹出效果详情弹窗（品质 + 描述 + 修饰标签），按钮收进弹窗
-// 动画模型：rAF 直接驱动 strip 的 transform（translate3d）——
-//   idle    待命慢转：s 在 [0, IDLE_MAX] 正弦往复（无限），目标卡（index=TARGET_INDEX）永不出现在待命带
-//   rolling 从触发瞬间的 s 起 easeOutQuart 冲/减速到 TARGET_X（目标卡中心对准窗口标记线）→ result
-//   result  定格 + 目标放大光效 + 自动弹详情弹窗；「收起」后回 idle 恢复慢滚待命，可连开
-// 换底说明：每次开箱重建 sequence（新 pick 入 TARGET_INDEX 位），切换瞬间 strip 立即高速左冲，单帧贴图替换不可察觉
+//   ② 鼠标悬停格子 → 大图检视（看清具体是什么）
+//   ③ 滚动格改六边形图标（clip-path 扁六边形，替代原长方形卡）
+//   ④ 定格瞬间自动弹出效果详情弹窗（品质 + 描述），按钮收进弹窗
+// [2026-09-29 程拍板 · 匣子化改造] **卡包改为开出「奖励匣」，不再直接开武装**：
+//   开包 → 滚轮定格在一个**匣子**（武装匣 / 神格碎片匣 × 六档品质）→ 匣子入待打开队列
+//   → 玩家随后在「待打开匣子」里开匣子，才得到对应品质武装 / 对应数量神格碎片。
 // ==========================================
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Package, X } from 'lucide-react';
-import { getEquipmentById, getArmamentDefs, type EquipmentDef } from '../../data/equipment';
 import { RARITY_META } from './RarityIcon';
-import { bindArmamentGaze, getEquipBadges } from './ArmamentPreview';
+import {
+    CHEST_KIND_LABEL, describeChestContent, CHEST_RARITY_ORDER,
+    type ChestInstance, type ChestKind,
+} from '../../data/roguelike/divinityShards';
 import { getGameScale } from '../../utils/gameScale'; // [2026-09-04] 详情 portal 逃出 scale 容器后按 gameScale 补偿
 
 interface PackOpenModalProps {
     isOpen: boolean;
     pendingPacks: number;
-    onOpenPack: () => string | null; // 打开一个卡包，返回武装 id
+    /** 打开一个卡包 → 返回抽到的**匣子**（[2026-09-29] 原为返回武装 id） */
+    onOpenPack: () => ChestInstance | null;
     onClose: () => void;
+    /** 打开背包里的匣子（跳去待打开匣子列表 / 直接开） */
+    onOpenChest?: () => void;
 }
 
 // ── 滚轮几何（可调）──
@@ -50,14 +53,21 @@ const easeOutQuart = (t: number) => 1 - Math.pow(1 - t, 4);
 
 type Phase = 'idle' | 'rolling' | 'result';
 
-export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPacks, onOpenPack, onClose }) => {
+/** [2026-09-29] 匣子序列项 = 大类 + 品质（滚轮里滚的就是匣子） */
+type ChestEntry = ChestInstance;
+
+export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPacks, onOpenPack, onClose, onOpenChest }) => {
     const [phase, setPhase] = useState<Phase>('idle');
-    const [sequence, setSequence] = useState<string[]>([]);
-    const [result, setResult] = useState<string | null>(null);
+    const [sequence, setSequence] = useState<ChestEntry[]>([]);
+    const [result, setResult] = useState<ChestEntry | null>(null);
     const [detailOpen, setDetailOpen] = useState(false);
 
     const stripRef = useRef<HTMLDivElement | null>(null);
-    const armsRef = useRef(getArmamentDefs().filter(a => !a.consumable)); // [2026-09-07] 卡包不出现消耗品武装（碳原子板/重修申请），抽取池与滚动带一致排除
+    // [2026-09-29] 滚轮素材 = 12 种匣子（2 大类 × 6 品质）
+    const chestPoolRef = useRef<ChestEntry[]>(
+        (['armament', 'shard'] as ChestKind[]).flatMap(kind =>
+            CHEST_RARITY_ORDER.map(rarity => ({ kind, rarity }))),
+    );
     const phaseRef = useRef<Phase>('idle');
     const sRef = useRef(0);        // 当前 strip 位移（px）
     const s0Ref = useRef(0);       // rolling 触发瞬间的起始位移
@@ -65,20 +75,20 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
     const tRef = useRef(0);        // rolling 已播放时长
     const isOpenRef = useRef(false);
 
-    const setPh = (p: Phase) => { phaseRef.current = p; setPhase(p); console.log(`[PACK] phase → ${p}`); }; // [2026-09-07 排查日志] 阶段切换
+    const setPh = (p: Phase) => { phaseRef.current = p; setPhase(p); };
 
     const paint = (s: number) => {
         if (stripRef.current) stripRef.current.style.transform = `translate3d(${-Math.round(s)}px,0,0)`;
     };
 
-    const randArmId = () => {
-        const a = armsRef.current;
-        return a.length ? a[Math.floor(Math.random() * a.length)].id : '';
+    const randChest = (): ChestEntry => {
+        const a = chestPoolRef.current;
+        return a[Math.floor(Math.random() * a.length)];
     };
-    const buildSequence = (targetId?: string) => {
-        const seq: string[] = [];
-        for (let i = 0; i < SEQ_LEN; i++) seq.push(randArmId());
-        if (targetId) seq[TARGET_INDEX] = targetId;
+    const buildSequence = (target?: ChestEntry) => {
+        const seq: ChestEntry[] = [];
+        for (let i = 0; i < SEQ_LEN; i++) seq.push(randChest());
+        if (target) seq[TARGET_INDEX] = target;
         setSequence(seq);
     };
 
@@ -132,24 +142,13 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
     // result → 延迟自动弹详情弹窗
     useEffect(() => {
         if (phase !== 'result') { setDetailOpen(false); return; }
-        console.log(`[PACK] 到 result,${REVEAL_DELAY}ms 后开详情弹窗`); // [2026-09-07 排查日志]
-        const t = setTimeout(() => {
-            console.log('[PACK] 定时器到点 → 开详情弹窗'); // [2026-09-07 排查日志]
-            setDetailOpen(true);
-        }, REVEAL_DELAY);
-        return () => { console.log('[PACK] 详情定时器被清理（phase 又变了?）'); clearTimeout(t); }; // [2026-09-07 排查日志]
+        const t = setTimeout(() => setDetailOpen(true), REVEAL_DELAY);
+        return () => clearTimeout(t);
     }, [phase]);
-
-    // [2026-09-07 排查日志] 详情弹窗渲染条件状态（定位"定格后弹窗不出现"）
-    useEffect(() => {
-        const rd = result ? getEquipmentById(result) : undefined;
-        console.log(`[PACK] 状态→ detailOpen=${detailOpen} phase=${phase} result=${result ?? 'null'} hasDef=${!!rd} hasMeta=${!!(rd && RARITY_META[rd.rarity])}`);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [detailOpen, phase, result]);
 
     if (!isOpen) return null;
 
-    /** 点开箱 / 再开一个：抽目标武装（入库）→ 重建序列 → 高速冲刺 */
+    /** 点开箱 / 再开一个：抽一个匣子（入库）→ 重建序列 → 高速冲刺 */
     const handleOpen = () => {
         if (phaseRef.current === 'rolling') return;
         const pick = onOpenPack?.();
@@ -162,17 +161,12 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
         setPh('rolling');
     };
 
-    const resultDef: EquipmentDef | undefined = result ? getEquipmentById(result) : undefined;
-    const resultMeta = resultDef ? RARITY_META[resultDef.rarity] : undefined;
+    const resultMeta = result ? RARITY_META[result.rarity] : undefined;
     const canOpen = pendingPacks > 0;
     const gameScale = getGameScale(); // portal 详情浮层分辨率补偿
 
-    /** 悬停检视：仅待命/定格时转发给全局 ArmamentPreview（冲刺期忽略，避免大图闪烁误关） */
-    const gazeEnter = (e: React.MouseEvent, id: string) => {
-        if (phase === 'rolling') return;
-        bindArmamentGaze(id).onMouseEnter(e);
-    };
-    const gazeLeave = (id: string) => { bindArmamentGaze(id).onMouseLeave(); };
+    /** 匣子显示名：品质 + 大类（例：紫色 神格碎片匣） */
+    const chestName = (c: ChestEntry): string => `${RARITY_META[c.rarity].label}·${CHEST_KIND_LABEL[c.kind]}`;
 
     return (
         <AnimatePresence>
@@ -191,10 +185,10 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                     {/* 标题 */}
                     <div className="flex items-center gap-2 mb-1">
                         <Package size={32} className="text-purple-300" />
-                        <h3 className="text-4xl font-black tracking-widest text-white">卡包开箱</h3>
+                        <h3 className="text-4xl font-black tracking-widest text-white">卡包开匣</h3>
                     </div>
                     <p className="text-sm text-purple-300/70 mb-5 font-mono tracking-wider">
-                        {phase === 'idle' ? `待打开卡包 ×${pendingPacks} · 点击开箱` : phase === 'rolling' ? 'ROLLING...' : 'RESULT'}
+                        {phase === 'idle' ? `待打开卡包 ×${pendingPacks} · 点击开匣` : phase === 'rolling' ? 'ROLLING...' : 'RESULT'}
                     </p>
 
                     {/* ── 滚动展示窗（老虎机转盘）── */}
@@ -212,10 +206,8 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
 
                         {/* 滚动序列（rAF 手动 transform） */}
                         <div ref={stripRef} className="absolute top-0 left-0 flex will-change-transform">
-                            {sequence.map((id, i) => {
-                                const def = getEquipmentById(id);
-                                if (!def) return <div key={i} style={{ width: CARD_W, height: CARD_H }} className="shrink-0" />;
-                                const meta = RARITY_META[def.rarity];
+                            {sequence.map((chest, i) => {
+                                const meta = RARITY_META[chest.rarity];
                                 const isTarget = i === TARGET_INDEX;
                                 const isReveal = isTarget && phase === 'result';
                                 return (
@@ -223,10 +215,8 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                         key={i}
                                         className="relative shrink-0 flex items-center justify-center"
                                         style={{ width: CARD_W, height: CARD_H }}
-                                        onMouseEnter={(e) => gazeEnter(e, def.id)}
-                                        onMouseLeave={() => gazeLeave(def.id)}
                                     >
-                                        {/* 六边形图标：外层铺品质色（clip 露 2px 环 = 品质描边）+ 内层 inset 深底卡面；drop-shadow 辉光不被 clip 裁 */}
+                                        {/* 六边形图标：外层铺品质色（clip 露 2px 环 = 品质描边）+ 内层深底 + 匣子标识 */}
                                         <motion.div
                                             className="relative"
                                             style={{
@@ -239,8 +229,11 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                             animate={isReveal ? { scale: 1.6 } : { scale: 1 }}
                                             transition={{ type: 'spring', stiffness: 300, damping: 15 }}
                                         >
-                                            <div className="absolute inset-[2px] overflow-hidden flex items-center justify-center" style={{ clipPath: HEXAGON, background: '#0d1320' }}>
-                                                <img src={def.icon} alt={def.name} className="w-full h-full object-cover" draggable={false} />
+                                            <div className="absolute inset-[2px] overflow-hidden flex flex-col items-center justify-center gap-0.5" style={{ clipPath: HEXAGON, background: '#0d1320' }}>
+                                                <Package size={20} className="text-white/80" />
+                                                <span className="text-[9px] font-black leading-none" style={{ color: meta.color }}>
+                                                    {chest.kind === 'armament' ? '武装' : '碎片'}
+                                                </span>
                                             </div>
                                         </motion.div>
                                         {/* 停住后目标加皇冠/选中标记 */}
@@ -277,10 +270,10 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                     </div>
 
                     <p className="text-[11px] text-gray-500 mt-3 font-mono tracking-wider pointer-events-none">
-                        💡 悬停图标可查看武装详情 · 停下中间的即为抽中
+                        🎁 卡包开出的是**奖励匣** · 停下中间的即为抽中，随后可在「待打开匣子」里开启
                     </p>
 
-                    {/* ── 底部按钮：待命开箱 / 滚动中（result 时由详情弹窗接管）── */}
+                    {/* ── 底部按钮：待命开匣 / 滚动中（result 时由详情弹窗接管）── */}
                     <div className="h-[60px] flex items-center mt-1">
                         {phase === 'idle' && (
                             <button onClick={handleOpen} disabled={!canOpen}
@@ -289,7 +282,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                         ? 'bg-gradient-to-r from-purple-600 to-purple-400 text-white hover:scale-105 shadow-[0_0_30px_rgba(168,85,247,0.5)]'
                                         : 'bg-white/5 text-gray-500 cursor-not-allowed'
                                 }`}>
-                                🎁 开箱！
+                                🎁 开匣！
                             </button>
                         )}
                         {phase === 'rolling' && (
@@ -310,7 +303,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                      [2026-09-07 修复] 去掉包裹 portal 的 AnimatePresence：portal 不是 AnimatePresence 可识别的 motion child，
                      进入动画不触发 → 弹窗停在 opacity:0 全透明却仍拦截点击（"定格后没弹窗、点不动"）；改普通条件渲染，portal 内 motion 自播进入动画。
                      分辨率补偿 scale 移入独立纯 div，避免被 framer 的 transform 动画覆盖。 */}
-                {detailOpen && phase === 'result' && resultDef && resultMeta && createPortal(
+                {detailOpen && phase === 'result' && result && resultMeta && createPortal(
                     <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                         className="fixed inset-0 z-[1500] flex items-center justify-center bg-black/70"
@@ -324,44 +317,52 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                 style={{ background: resultMeta.cardBg, borderColor: `${resultMeta.color}66`, boxShadow: `0 0 40px ${resultMeta.color}44` }}
                             >
                                 <div className="text-lg font-black tracking-widest" style={{ color: resultMeta.color, textShadow: `0 0 18px ${resultMeta.color}88` }}>
-                                    ✨ 获得武装 ✨
+                                    ✨ 获得奖励匣 ✨
                                 </div>
-                                {/* 六边形大图标（外层品质色环 + 内层深底卡面） */}
+                                {/* 六边形大图标（外层品质色环 + 内层深底 + 匣子标识） */}
                                 <div className="relative"
                                     style={{ width: BIG_HEX, height: BIG_HEX, clipPath: HEXAGON, background: resultMeta.color, filter: `drop-shadow(0 0 18px ${resultMeta.color}aa)` }}>
-                                    <div className="absolute inset-[3px] overflow-hidden flex items-center justify-center" style={{ clipPath: HEXAGON, background: '#0d1320' }}>
-                                        <img src={resultDef.icon} alt={resultDef.name} className="w-full h-full object-cover" draggable={false} />
+                                    <div className="absolute inset-[3px] overflow-hidden flex flex-col items-center justify-center gap-1" style={{ clipPath: HEXAGON, background: '#0d1320' }}>
+                                        <Package size={38} className="text-white/85" />
+                                        <span className="text-[11px] font-black" style={{ color: resultMeta.color }}>
+                                            {result.kind === 'armament' ? '武装' : '碎片'}
+                                        </span>
                                     </div>
                                 </div>
                                 {/* 名称 */}
                                 <div className="text-xl font-black tracking-wide text-center" style={{ color: '#fff', textShadow: `0 0 10px ${resultMeta.color}88` }}>
-                                    {resultDef.name}
+                                    {chestName(result)}
                                 </div>
-                                {/* 品质 + 武装 chips */}
+                                {/* 品质 + 大类 chips */}
                                 <div className="flex flex-wrap justify-center gap-1.5">
                                     <span className="text-xs px-2 py-0.5 rounded font-mono" style={{ color: resultMeta.color, border: `1px solid ${resultMeta.color}55`, background: `${resultMeta.color}11` }}>
                                         {resultMeta.label}
                                     </span>
-                                    {resultDef.isArmament && (
-                                        <span className="text-xs px-2 py-0.5 rounded font-mono text-amber-200 border border-amber-300/30 bg-amber-400/10">武装</span>
-                                    )}
+                                    <span className="text-xs px-2 py-0.5 rounded font-mono text-amber-200 border border-amber-300/30 bg-amber-400/10">
+                                        {CHEST_KIND_LABEL[result.kind]}
+                                    </span>
                                 </div>
-                                {/* 效果描述 */}
-                                <p className="text-gray-200 text-sm leading-relaxed text-center">{resultDef.description}</p>
-                                {/* 修饰标签（费用/攻血/关键词/打出/成长等） */}
-                                {getEquipBadges(resultDef).length > 0 && (
-                                    <div className="flex flex-wrap justify-center gap-1.5">
-                                        {getEquipBadges(resultDef).map(b => (
-                                            <span key={b} className="text-xs px-2.5 py-0.5 rounded-full font-mono text-cyan-200 border border-cyan-400/30 bg-cyan-500/10">{b}</span>
-                                        ))}
-                                    </div>
-                                )}
-                                {/* 按钮：再开一个 → 直接下一包冲刺；收起 → 恢复慢滚待命 */}
-                                <div className="flex gap-2.5 mt-2">
+                                {/* 开出内容预告 */}
+                                <p className="text-gray-200 text-sm leading-relaxed text-center">
+                                    {describeChestContent(result.kind, result.rarity)}
+                                    {result.kind === 'shard' && (
+                                        <span className="block text-[11px] text-cyan-300/80 mt-1">
+                                            碎片每 {5} 片为一组，随机归属一位天启者 · 万能碎片不会从这里开出
+                                        </span>
+                                    )}
+                                </p>
+                                {/* 按钮：开匣（去开刚拿到的匣子）/ 再开一包 / 收起 */}
+                                <div className="flex flex-wrap justify-center gap-2.5 mt-2">
+                                    {onOpenChest && (
+                                        <button onClick={() => { onClose(); onOpenChest(); }}
+                                            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.5)]">
+                                            🔓 去开匣子
+                                        </button>
+                                    )}
                                     {pendingPacks > 0 && (
                                         <button onClick={handleOpen}
                                             className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-400 text-white font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(168,85,247,0.5)]">
-                                            🎁 再开一个（×{pendingPacks}）
+                                            🎁 再开一包（×{pendingPacks}）
                                         </button>
                                     )}
                                     <button onClick={() => {

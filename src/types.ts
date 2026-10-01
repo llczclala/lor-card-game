@@ -278,6 +278,7 @@ export interface GameState {
   playerNexusMax?: number; // [2026-08-11] 玩家水晶回血上限（肉鸽=全局 run.maxHp，缺省 20；effectProcessor HEAL 封顶用）
   playerNexusBarrier?: number; // [2026-08-27] 玩家水晶屏障（固若金汤：可挡伤害点数，回合末清零）
   playerNexusTough?: boolean; // [2026-08-30 莉莉子] 玩家水晶坚韧（固若金汤：受击伤害永久 -1）
+  playerNexusImmune?: boolean; // [2026-09-29 程拍板] 玩家水晶**免疫任何伤害**（不死之身；回合结束自扣不在此列）
   rogueEnhancements?: string[]; // [2026-08-11] 玩家迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
   enemyEnhancements?: string[]; // [2026-08-27] 敌方迷宫强化 id 列表（战斗内被动强化，battleEffect 分发）
   // [2026-09-25 莉莉子 三线任务化框架] 单场任务进度表：key → 已累计次数。
@@ -321,6 +322,7 @@ export interface GameState {
   enemyNexusMax?: number; // [2026-08-30 莉莉子] 敌方水晶回血上限（=敌方水晶初值；肉鸽=难度基础+生命强化，缺省 20）
   enemyNexusBarrier?: number; // [2026-08-27] 敌方水晶屏障（固若金汤：可挡伤害点数，回合末清零）
   enemyNexusTough?: boolean; // [2026-08-30 莉莉子] 敌方水晶坚韧（固若金汤：受击伤害永久 -1）
+  enemyNexusImmune?: boolean; // [2026-09-29 程拍板] 敌方水晶**免疫任何伤害**（不死之身；回合结束自扣不在此列）
   round: number;
   attackToken: {
     player: AttackTokenType;
@@ -448,7 +450,10 @@ export interface UserSettings {
   ownedArmaments?: string[]; // [2026-08-29 评估嘉勉] 已拥有武装 id 的种类名（stock>0 的 id 集合；旧读取兼容，权威请用 armamentStock）
   armamentStock?: Record<string, number>; // [2026-09-07 真数量库存] 每件武装库存数量（普通上限3/消耗品不限；装备占用、消耗品发挥后-1）
   passUnlockedEnhancements?: string[]; // [2026-08-29 评估嘉勉·通行证] 已解锁的通行证专属迷宫强化 id（达到等级解锁后才在强化池可遇到）
-  pendingPacks?: number; // [2026-08-29 评估嘉勉·通行证] 待打开的卡包数（打开才随机获得武装）
+  pendingPacks?: number; // [2026-08-29 评估嘉勉·通行证] 待打开的卡包数（打开 → 抽到一个奖励匣）
+  // [2026-09-29 程拍板] 奖励匣体系：开包改为「先抽到匣子 → 再打开匣子得到道具」
+  //   两类匣：武装匣（开对应品质武装）/ 神格碎片匣（开对应数量神格碎片，每5片一组随机归属某天启者）
+  pendingChests?: import('./data/roguelike/divinityShards').ChestInstance[];
   passClaimedRewards?: number[]; // [2026-08-29 通行证·手动领取] 已领取的通行证奖励等级（达到等级后需在通行证面板手动领取）
   videoResolution?: '1k' | '2k' | '4k';
   lastSeenAnnouncementVersion?: string; // [2026-08-09] 已读过的公告版本号（新版本首次进大厅弹窗标记）

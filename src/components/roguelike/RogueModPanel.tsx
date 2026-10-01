@@ -5,7 +5,7 @@
 //   圆形图标 + 稀有度边框色，悬浮显示名称与说明（参考 LOR 战斗内查看 powers）。
 // ==========================================
 import React from 'react';
-import { MAZE_BUFFS } from '../../data/roguelike/buffs';
+import { MAZE_BUFFS, getBattleEffects } from '../../data/roguelike/buffs'; // [2026-09-28] 多效果条目统一视图
 import { RARITY_META } from './RarityIcon';
 
 interface RogueModPanelProps {
@@ -15,7 +15,7 @@ interface RogueModPanelProps {
 export const RogueModPanel: React.FC<RogueModPanelProps> = ({ enhancements }) => {
     const defs = (enhancements ?? [])
         .map(id => MAZE_BUFFS.find(b => b.id === id))
-        .filter((b): b is NonNullable<typeof b> => !!b && !!b.battleEffect);
+        .filter((b): b is NonNullable<typeof b> => !!b && getBattleEffects(b).length > 0);
     if (defs.length === 0) return null;
 
     return (
