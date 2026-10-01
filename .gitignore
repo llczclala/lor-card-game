@@ -15,3 +15,6 @@ transcode-staging/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ---- 事故留档（编码损坏副本，保留在磁盘但不入库）----
+*.corrupt.bak
