@@ -161,7 +161,7 @@ export const ACACIA_DIVINITY_NODES: DivinityNode[] = [
     {
         id: 'div_acacia_6', heroKey: 'acacia_chrono_echo', slot: 6,
         name: '剑舞长空',
-        description: '回合开始时，在手牌中生成一张 0 费的「安卡希雅的剑舞」，且我方所有单位获得【先攻】。',
+        description: '回合开始时，在手牌中生成一张 0 费、瞬逝的「灵轨月轮·扩散」。我方所有单位获得【侦察】（含此后召唤的单位）。',
         requires: ['div_acacia_5'],
         grants: ['divfx_acacia_6'],
         icon: 'acacia_chrono_echo_spell',

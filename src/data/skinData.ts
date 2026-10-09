@@ -182,6 +182,34 @@ export const COSMETIC_REGISTRY: CosmeticConfig[] = [
     { type: 'skin', name: '休息一刻', cardKey: 'FanLing_Squad_Wasi', skinId: 1, source: 'BOTH', price: 1 },
 
     // ==========================================
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-07] 安卡 / 茉莉安的**专属后勤** —— 皮肤目录整块漏登记
+    // ── 病根：这两支小队的 `_01 / _02` 立绘与三档裁剪坐标（`cardCropConfig.ts:90-100`）**早就备好了**，
+    //    但本注册表里**一条都没有** ⇒ 皮肤选择器看不到、商店/盲盒摸不到、成就任务也没做
+    //    ⇒ 皮肤在游戏里**完全没有获取渠道**（程 2026-10-05 报）。
+    // ── 更要命的一条：`grantMissionReward` 的皮肤奖励是**按 `missionId` 反查本表**才能解锁
+    //    （`useUserSystem.ts:1090`：`getMissionItems('skin').find(s => s.missionId === …)`）
+    //    ⇒ 缺登记时"任务能完成、奖励发不出去" —— 所以必须与 `missionData.ts` 的 6 条成就任务**两侧同补**。
+    // ── 本批按其余 14 支小队的同款口径补齐：skinId 1「阶段二」走成就任务；skinId 2「休息一刻」走商店/盲盒。
+    // ── 顺带收益：三架松露无人机已由 `TOKEN_SKIN_ALIASES` 继承成员皮肤
+    //    （夜视→蕈影 / 流萤→榆 / 园丁→虹彩，`imageData.ts`）⇒ 成员皮肤一解锁，无人机三档立绘同时可用。
+    // ==========================================
+    // Logistics (后勤) · 圣树小队（安卡希雅专属）
+    { type: 'skin', name: '阶段二', cardKey: 'Sacred_Tree_Squad_Lumi',     skinId: 1, source: 'MISSION', missionId: 'mission_sacredtree_lumi_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Sacred_Tree_Squad_Lumi',     skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Sacred_Tree_Squad_Margaret', skinId: 1, source: 'MISSION', missionId: 'mission_sacredtree_margaret_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Sacred_Tree_Squad_Margaret', skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Sacred_Tree_Squad_Alvina',   skinId: 1, source: 'MISSION', missionId: 'mission_sacredtree_alvina_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Sacred_Tree_Squad_Alvina',   skinId: 2, source: 'BOTH', price: 1 },
+
+    // Logistics (后勤) · 松露小队（茉莉安专属）
+    { type: 'skin', name: '阶段二', cardKey: 'Truffle_Squad_Mushroom_Shadows', skinId: 1, source: 'MISSION', missionId: 'mission_truffle_mushroom_shadows_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Truffle_Squad_Mushroom_Shadows', skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Truffle_Squad_Elm',              skinId: 1, source: 'MISSION', missionId: 'mission_truffle_elm_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Truffle_Squad_Elm',              skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Truffle_Squad_Iris',             skinId: 1, source: 'MISSION', missionId: 'mission_truffle_iris_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Truffle_Squad_Iris',             skinId: 2, source: 'BOTH', price: 1 },
+
+    // ==========================================
     // 🎴 饰品资产区 (Cosmetics)
     // ==========================================
     // 卡背 (Card Backs)

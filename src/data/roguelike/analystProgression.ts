@@ -4,11 +4,29 @@
 //   等级轨道 1~30，每级一个固定奖励槽；经验来自「对局（完成/通关）+ 任务」双来源。
 //   奖励类型：稀有武装（ownedArmaments）/ 卡包（打开随机武装）/ 迷宫强化解锁（passUnlockedEnhancements）/
 //            局外数据金（大厅货币）。
+//
+// [2026-10-04 程拍板 · 30 级后**无限成长**] 打破"30 级封顶"：
+//   ① **31 级之后每级所需经验 = 与 29→30 同级（1080）**（不递增 ⇒ 产出节奏恒定）
+//   ② **每 5 级一个里程碑，只有里程碑给 1 个卡包**；非里程碑等级**不发奖励**
+//      （程的原话：避免给玩家太多卡包 → 养成溢出）
+//   ③ 领取**不允许跳级**（31+ 走水位 `passClaimedUpTo`，见 useUserSystem）
+//   ⚠️ 与 ≤30 的固定奖励表**并存**：≤30 查表；>30 只认里程碑。
+//   ⚠️ **经验曲线只定义到 30**（30 个台阶）——31+ 由 `ANALYST_POST_CAP_EXP` 兜住。
 // ==========================================
 
-export const ANALYST_MAX_LEVEL = 30;
+/** ≤ 这个等级：走固定奖励表 `ANALYST_LEVEL_REWARDS` */
+export const ANALYST_FIXED_REWARD_MAX = 30;
+/** 30 级之后每级所需经验（= 29→30 那一档 1080，程拍板「与 29 级到 30 级一致」） */
+export const ANALYST_POST_CAP_EXP = 1080;
+/** 里程碑间隔：30 级之后每 N 级一个里程碑（**只有里程碑给卡包**） */
+export const ANALYST_MILESTONE_STEP = 5;
+
+/** ⚠️ 兼容旧引用（UI/逻辑曾用 `ANALYST_MAX_LEVEL` 表示"固定表的上限"）。
+ *  语义已收窄为**固定奖励表的上限**，**不再**表示"等级封顶"。 */
+export const ANALYST_MAX_LEVEL = ANALYST_FIXED_REWARD_MAX;
 
 // 每级升到下一级所需分析员经验（索引 i = 从 Lv(i+1) 升到 Lv(i+2)）。累计约 1.4 万。
+// ⚠️ 只覆盖 Lv1→30；31+ 一律取 ANALYST_POST_CAP_EXP。
 export const ANALYST_EXP_CURVE: number[] = [
     80, 100, 120, 140, 160, 180, 200, 220, 240, 260,         // Lv1→11
     290, 320, 350, 380, 410, 440, 470, 500, 540, 580,         // Lv11→21
@@ -61,10 +79,31 @@ Object.entries(ANALYST_LEVEL_REWARDS).forEach(([lv, r]) => {
     if (r.unlockEnhancement) PASS_UNLOCK_ENHANCEMENTS[Number(lv)] = r.unlockEnhancement;
 });
 
-/** 升到下一级所需经验（满级返回 0） */
+/** 升到下一级所需经验（**30 级之后恒为 `ANALYST_POST_CAP_EXP`，永不返回 0**） */
 export const getAnalystExpToNext = (level: number): number => {
-    if (level >= ANALYST_MAX_LEVEL) return 0;
-    return ANALYST_EXP_CURVE[level - 1] ?? 0;
+    if (level >= ANALYST_FIXED_REWARD_MAX) return ANALYST_POST_CAP_EXP; // [2026-10-04] 原先返回 0 = 封顶；现改为恒定台阶
+    return ANALYST_EXP_CURVE[level - 1] ?? ANALYST_POST_CAP_EXP;
+};
+
+/** 30 级之后的里程碑等级（每 `ANALYST_MILESTONE_STEP` 级一个） */
+export const isAnalystMilestone = (level: number): boolean =>
+    level > ANALYST_FIXED_REWARD_MAX && level % ANALYST_MILESTONE_STEP === 0;
+
+/** 下一个里程碑等级（严格大于当前等级） */
+export const getNextAnalystMilestone = (level: number): number =>
+    (Math.floor(Math.max(level, ANALYST_FIXED_REWARD_MAX) / ANALYST_MILESTONE_STEP) + 1) * ANALYST_MILESTONE_STEP;
+
+/**
+ * **取某等级的奖励 —— 唯一出口**。凡是要知道"这一级给什么"的地方**都必须走它**：
+ *   · ≤30：查固定表（1 级无奖励 ⇒ `undefined`）
+ *   · >30：**只认里程碑** ⇒ 里程碑给 1 个卡包，其余等级 `undefined`（程拍板 ④）
+ *
+ * ⚠️ 为什么必须收成一个出口：原先"查表"散在 4 处（领取 / 一键领取 / UI 轨道 / 强化解锁映射），
+ *    31+ 一放开就会出现"有的地方认、有的地方不认"⇒ 典型症状是**一键领取静默跳过 31+**。
+ */
+export const getAnalystReward = (level: number): AnalystLevelReward | undefined => {
+    if (level <= ANALYST_FIXED_REWARD_MAX) return ANALYST_LEVEL_REWARDS[level];
+    return isAnalystMilestone(level) ? { pack: true } : undefined;
 };
 
 /** 升级跨过的等级奖励（供发放） */
@@ -75,6 +114,12 @@ export interface AnalystLevelupReward {
 
 /**
  * 加分析员经验，连续升级并收集跨过等级的全部奖励（武装/卡包/强化/数据金）。
+ * [2026-10-04] 改造为**无限成长**：
+ *   · 去掉 `Math.min(ANALYST_MAX_LEVEL, …)` 钳位（否则存档里 31+ 的等级再拿一次经验就被压回 30）
+ *   · 去掉"满级清经验"（否则 30 级后的经验每局都被吞掉，永远升不了 31）
+ *   · 奖励改走唯一出口 `getAnalystReward`（>30 只有里程碑才有）
+ *   · **两道死循环护栏**：`need <= 0` 立即退出 + 迭代上限
+ *     ⚠️ 这两道不是多余的：`getAnalystExpToNext` 一旦返回 0，`e -= 0` 永远减不完 ⇒ **等级会被冲到天上**
  * @returns 新等级/经验 + 升级段列表 + 跨过等级的奖励清单
  */
 export const computeAnalystLevels = (
@@ -82,20 +127,32 @@ export const computeAnalystLevels = (
     exp: number,
     amount: number,
 ): { level: number; exp: number; leveled: { from: number; to: number }[]; rewards: AnalystLevelupReward[] } => {
-    let lv = Math.max(1, Math.min(ANALYST_MAX_LEVEL, level));
-    let e = exp + amount;
+    // [2026-10-04 独立审查 #1 修复] 入口消毒：`JSON.parse('1e999')` 会得到 `Infinity`，
+    //   而 `Math.floor(Infinity) || 1` **仍是 Infinity**（truthy）⇒ 旧写法拦不住脏存档。
+    //   一旦 lv=Infinity，`lv += 1` 永远不变 ⇒ 护栏跑满却没进展，还会把 `level: Infinity` 写回存档，
+    //   进而让 `claimPostCapPassRewards` 的 `for (lv <= level)` **永不终止**（客户端卡死）。
+    const lvIn = Number(level);
+    let lv = Number.isFinite(lvIn) ? Math.max(1, Math.floor(lvIn)) : 1;
+    let e = Number.isFinite(exp) && Number.isFinite(amount) ? exp + amount : 0;
     const leveled: { from: number; to: number }[] = [];
     const rewards: AnalystLevelupReward[] = [];
-    while (lv < ANALYST_MAX_LEVEL) {
+    let guard = 0;
+    // 迭代上限 1000：正常一局最多连升几级，1000 级余量绰绰有余，同时把"脏 exp 造成的巨型数组"封住
+    while (lv >= 1 && guard++ < 1000) {
         const need = getAnalystExpToNext(lv);
+        if (!Number.isFinite(need) || need <= 0) break; // ⚠️ 护栏一：绝不让 need≤0 进循环
+        if (!Number.isFinite(e)) break;                 // ⚠️ 护栏二：e 非有限（NaN/±Infinity）⇒ 立即退出
+                                                        //   （NaN 与任何数比较都是 false ⇒ 没有这道就会空转到迭代上限）
         if (e < need) break;
         e -= need;
         const from = lv;
         lv += 1;
         leveled.push({ from, to: lv });
-        const reward = ANALYST_LEVEL_REWARDS[lv];
+        const reward = getAnalystReward(lv);
         if (reward) rewards.push({ level: lv, reward });
     }
-    if (lv >= ANALYST_MAX_LEVEL) e = 0; // 满级后经验清零
+    if (guard >= 1000) {
+        console.warn('[通行证] 单次升级迭代触顶（1000 级）—— 疑似存档异常（等级/经验被改成极端值），已截断；剩余经验保留待下次继续');
+    }
     return { level: lv, exp: e, leveled, rewards };
 };

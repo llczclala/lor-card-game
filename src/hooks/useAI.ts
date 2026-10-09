@@ -21,6 +21,90 @@ type AIProps = {
     personality?: EnemyArchetype['aiPersonality']; // [2026-08-06] AI 流派性格（默认 balanced）
 };
 
+// ============================================================
+// [2026-10-04 莉莉子 · AI 停机保护性修复] 模块级工具
+//   放在组件外 = 天然不受闭包陈旧影响（心跳 effect 的 deps=[] 也安全）。
+//
+// 背景：一次系统性排查证实「AI 永久停机」是**一整类**缺陷，共同形状是
+//   「AI 做完（或该做）一个动作，但没有任何被监听的值发生变化 ⇒ 再也没人叫醒它」。
+// 已证实的洞分四类：
+//   ① 闸门与依赖不一致 —— pendingLevelUps / levelUpCard 冻结 AI，却不在依赖表里
+//      （原闸门 useAI.ts:52 vs 原依赖表 587-596）
+//   ② 决策做了，但推进动作**静默 no-op** —— passTurn 在 calibratePending / 额外攻击+格挡 /
+//      非白名单阶段（useGameState.ts:4721 / 4734 / 4785）什么都不写
+//   ③ 决策靠"一个依赖都没动"的 setState 推进（格挡阶段：combatField 只换内容不换长度），
+//      并把唯一推进力压在一个**生命周期外**的裸 setTimeout 上
+//   ④ 冻结状态的唯一出口压在 UI 定时器上，而那个定时器会被"父组件重渲染"反复清零
+//      （AI 校准面板：onConfirm 是内联函数却在依赖表里）
+// 本文件负责「让 AI 永远能自己醒过来」，并在复发时**自带现场取证**。
+// ============================================================
+
+/** 被阻塞多久开始周期性打现场快照（ms） */
+const AI_STALL_WARN_MS = 20000;
+/** 同一阻塞连续超过该时长后，走"引擎已有的安全出口"（ms） */
+const AI_STALL_ESCAPE_MS = 45000;
+/** 连续崩溃时的重试退避上限（ms） */
+const AI_CRASH_BACKOFF_MAX_MS = 15000;
+
+/**
+ * **唯一阻塞判据**：排定决策时与开火前都用它，消除"排定时快照 vs 开火时真值"的不对称。
+ *
+ * ⚠️ 刻意**不**把 `select_*` / `pendingSpell` 算作阻塞（对独立审查 P4 的**有意偏离**）：
+ *    那几项是**玩家侧**的半程施法状态；若把它算成阻塞，玩家半程施法跨过优先权翻转时，
+ *    AI 会永久冻结（而 passTurn 又不清 spellCasting）⇒ 等于**制造**一个新的死锁。
+ *    故只把它作为看门狗日志信号，不作为闸门。
+ */
+const readBlockReason = (game: GameState): string | null => {
+    if (game.gameResult) return 'game_over';
+    if (game.turnOwner !== 'enemy') return 'not_ai_turn';
+    if (game.phase === 'animating') return 'phase_animating';
+    if (game.levelUpCard) return 'levelup_overlay';
+    if ((game.pendingLevelUps?.length ?? 0) > 0) return 'levelup_queue';
+    if (game.calibratePending) return 'calibrate';
+    if (game.spellCasting?.step === 'choose_mode') return 'choose_mode';
+    return null;
+};
+
+/** 现场快照：只取标量与短字符串，**不序列化任何活对象** */
+// [2026-10-04 独立审查 #9 修复] 本函数是在 catch / 看门狗里当**实参**求值的 ⇒ 它自己绝不能抛，
+//   否则异常会从 catch 里逃出去、后面的兜底动作根本轮不到。故对结构全部做防御式读取。
+const snapshotAIState = (
+    game: GameState,
+    live: { enemyHand?: CardData[]; enemyBench?: CardData[]; combatField?: any[] },
+) => ({
+    round: game.round,
+    phase: game.phase,
+    turnOwner: game.turnOwner,
+    levelUpCard: game.levelUpCard?.key ?? null,
+    pendingLevelUps: (game.pendingLevelUps ?? []).map(c => c?.key),
+    spellCasting: game.spellCasting
+        ? `${game.spellCasting.step}${game.spellCasting.choiceOwner ? '/' + game.spellCasting.choiceOwner : ''}`
+        : null,
+    calibratePending: game.calibratePending
+        ? `${game.calibratePending.owner}(${game.calibratePending.drawnCards?.length ?? 0}张)`
+        : null,
+    spellStack: (game.spellStack ?? []).map(s => s?.card?.key),
+    consecutivePasses: game.consecutivePasses,
+    enemyMana: `${game.enemyMana}/${game.enemySpellMana}`,
+    attackTokenEnemy: game.attackToken?.enemy ?? null,
+    enemyHand: (live.enemyHand ?? []).map(c => c?.key),
+    enemyBench: (live.enemyBench ?? []).map(c => c?.key),
+    combatFieldLen: (live.combatField ?? []).length,
+});
+
+/**
+ * [2026-10-04 独立审查 #6 修复] **进展指纹**：只取"真的推进了才会变"的标量。
+ *
+ * 病根：心跳的存活判据是"没被阻塞"（谓词），不是"游戏往前走了"（进展）。
+ *   万一某个分支的动作**什么都没写**，依赖不会变、心跳又会以 0 延迟重排一次决策 ⇒
+ *   1 次/秒的动作风暴，而且因为"没被阻塞"，看门狗的报警/逃生**全都不会触发**（完全隐形）。
+ *   两次心跳之间指纹不变 ⇒ 判定空转并退避。
+ */
+const progressFingerprint = (g: GameState) =>
+    `${g.phase}|${g.turnOwner}|${g.round}|${g.lastActionTimestamp}` +
+    `|${g.pendingLevelUps?.length ?? 0}|${g.levelUpCard?.id ?? '-'}` +
+    `|${g.spellStack?.length ?? 0}|${g.calibratePending ? 'cal' : '-'}|${g.consecutivePasses}`;
+
 export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, actions, setMessage, disabled = false, paused = false, difficulty = 'normal', personality = 'balanced' }: AIProps) => {
     // [修改] 将 playerBench 加入 Ref
     const stateRef = useRef({ game, enemyHand, enemyBench, playerBench, combatField });
@@ -36,26 +120,105 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
         stateRef.current = { game, enemyHand, enemyBench, playerBench, combatField };
     }, [game, enemyHand, enemyBench, playerBench, combatField]);
 
-    useEffect(() => {
-        // ★ 教程模式：AI 不自动行动，由剧本控制
-        if (disabled) return;
-        // [2026-08-30 莉莉子] 局内暂停：冻结 AI（paused 变化时 effect 重跑会 clearTimeout 掉旧 timer）
-        if (paused) return;
-        const { game: currGame } = stateRef.current;
+    // ============================================================
+    // [2026-10-04 莉莉子 · AI 停机保护性修复] 调度基建
+    //   把"唤醒"从「纯依赖驱动」改成「依赖驱动 + 独立心跳兜底」：
+    //     · scheduleTick()：**至多一个在途**决策定时器（依赖变化不再重置在途计时 ⇒ 消除"依赖
+    //       抖一下就把 AI 的思考重置、永远轮不到它出手"的另一种死法）
+    //     · 心跳（1s，deps=[]）：只要轮到 AI 且无阻塞，就保证一定有决策定时器在跑
+    //     · 停机看门狗：被阻塞超阈值 → 打现场快照（自带取证）+ 只走引擎**已有**的安全出口
+    //   ⚠️ 心跳与延迟回调的闭包是**首次渲染**的那一份，所以它们只能读下面这些 ref，
+    //      绝不直接读 props/state（enabledRef 每渲染刷新，拿到的是最新 actions）。
+    // ============================================================
+    const runDecisionRef = useRef<() => void>(() => {});
+    const decideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // [2026-10-04 独立审查 #10] 不再维护 append-only 的"延迟回调数组"：两个延迟回调各由下面
+    //   两个 Timer ref 自己持有句柄（卸载时逐个清），否则已触发的句柄会永久堆积在数组里。
+    // 在途互斥：格挡确认 / 进攻提交（修 P7"双 confirmBlock ⇒ 优先权被翻两次"）
+    const blockConfirmInFlightRef = useRef(false);
+    const blockConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const commitAttackInFlightRef = useRef(false);
+    const commitAttackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // 停机看门狗状态
+    const stallRef = useRef<{ since: number; reason: string } | null>(null);
+    const stallEscapedRef = useRef(false);
+    // 连续崩溃退避（防止同一处异常被心跳以 1 次/秒无限刷屏）
+    const crashStreakRef = useRef(0);
+    // [2026-10-04 独立审查 #6] 进展指纹 + 空转计数（心跳退避用）—— 见 progressFingerprint 注释
+    const lastFingerprintRef = useRef('');
+    const noProgressStreakRef = useRef(0);
+    // 最新一次渲染的 props（心跳/延迟回调唯一允许读的"外部输入"）
+    const enabledRef = useRef({ disabled, paused, actions, setMessage });
+    enabledRef.current = { disabled, paused, actions, setMessage };
 
-        // [核心修改] 植入 AI 逻辑锁：增加对 pendingLevelUps 队列的监控。
-        // 只要有人排队等升级，或者正在播动画，AI 的时间就会被完全冻结！
-        if (
-            currGame.gameResult ||
-            currGame.turnOwner === 'player' ||
-            currGame.phase === 'animating' ||
-            (currGame.pendingLevelUps && currGame.pendingLevelUps.length > 0) ||
-            (currGame.spellCasting?.step === 'choose_mode') ||     // [2026-07-20] AI 命运抉择中，暂停等待
-            (currGame.calibratePending?.owner === 'enemy')         // [2026-07-20] AI 校准中，暂停等待
-        ) return;
+    /**
+     * 排定一次决策。**幂等**：已有在途定时器就直接返回（不重置、不叠加）。
+     * 只读 ref ⇒ 可以被 deps=[] 的心跳安全调用。
+     */
+    const scheduleTick = (delayMs: number, reason: string) => {
+        if (decideTimerRef.current !== null) return;
+        const en = enabledRef.current;
+        if (en.disabled || en.paused) return;
+        const g = stateRef.current.game;
+        const block = readBlockReason(g);
+        if (block) {
+            if (!stallRef.current || stallRef.current.reason !== block) {
+                stallRef.current = { since: Date.now(), reason: block };
+                stallEscapedRef.current = false;
+            }
+            return;
+        }
+        stallRef.current = null;
+        stallEscapedRef.current = false;
+        if (reason !== 'heartbeat') crashStreakRef.current = 0; // 有真实进展 ⇒ 清空崩溃退避
 
-        const timer = setTimeout(() => {
-            try { // [try-catch 保护] 任何未捕获异常都不会让 AI 卡死
+        // [2026-10-04 独立审查 #6 修复] 心跳是"存活判据"，不是"进展判据"：两次心跳之间指纹不变
+        //   ⇒ 上一次决策什么都没改（空转）⇒ 退避 + 打日志。否则会变成 1 次/秒的动作风暴，
+        //   而且因为"没被阻塞"，看门狗的报警/逃生**全都不会触发**（完全隐形）。
+        const fp = progressFingerprint(g);
+        if (reason === 'heartbeat' && fp === lastFingerprintRef.current) {
+            noProgressStreakRef.current += 1;
+            if (noProgressStreakRef.current === 1 || noProgressStreakRef.current % 10 === 0) {
+                console.warn(`[AI-Watchdog] 🔁 决策空转 ${noProgressStreakRef.current} 次（未被阻塞、但状态无变化），已退避`,
+                    snapshotAIState(g, stateRef.current));
+            }
+        } else if (reason !== 'heartbeat') {
+            noProgressStreakRef.current = 0;
+        }
+        lastFingerprintRef.current = fp;
+
+        const delay = reason === 'heartbeat'
+            ? Math.min(AI_CRASH_BACKOFF_MAX_MS, delayMs + (crashStreakRef.current + noProgressStreakRef.current) * 3000)
+            : delayMs;
+        decideTimerRef.current = setTimeout(() => {
+            decideTimerRef.current = null;
+            // [2026-10-04 独立审查 #3 修复] 暂停 / 教程禁用必须在**开火时**再挡一次：
+            //   原实现里 `paused`/`disabled` 既是闸门、又靠 effect cleanup 取消在途定时器；
+            //   现在定时器不再随依赖重建 ⇒ 若不在此复查，暂停**之前**排定的那次决策会在
+            //   PauseOverlay 后面照常出牌 / 发起进攻 / 让过。
+            const fireEn = enabledRef.current;
+            if (fireEn.disabled || fireEn.paused) {
+                console.log('[AI] ⏸️ 开火时已暂停/禁用，取消本次决策');
+                return;
+            }
+            runDecisionRef.current();
+        }, delay);
+    };
+
+    // 决策体：每渲染刷新引用 ⇒ tick 执行时用的是**最新**的 actions / setMessage
+    //（原实现把 actions 闭在"排定那一刻"的渲染里、1.5s 后才用 ⇒ 陈旧闭包写绝对法力值会吞掉新涨的法力）
+    runDecisionRef.current = () => {
+        // 开火前用**同一份**判据复查，消除"排定时快照 vs 开火时真值"的不对称
+        const preG = stateRef.current.game;
+        const preBlock = readBlockReason(preG);
+        if (preBlock) {
+            console.log(`[AI] ⏸️ 开火前复查发现阻塞（${preBlock}），本轮取消`);
+            return;
+        }
+        // [2026-10-05] 法术冷却标记只在主阶段被消费；若这次唤醒落在别的阶段，必须就地清掉，
+        //   否则它会跨回合存活，静默吞掉下一回合的第一次法术评估。
+        if (preG.phase !== 'main') spellCooldownRef.current = false;
+        try { // [try-catch 保护] 见下方 catch：原「崩溃就让过」是一张假保险
             const freshState = stateRef.current;
             const { game: g, enemyHand: hand, enemyBench: bench, combatField: field } = freshState;
 
@@ -65,7 +228,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
             if (g.gameResult) return; // [新增] 游戏已结束，AI 停止行动
             if (g.turnOwner !== 'enemy') return;
             if (g.spellCasting?.step === 'choose_mode') return;       // [2026-07-20] 二次守卫：AI 命运抉择中
-            if (g.calibratePending?.owner === 'enemy') return;         // [2026-07-20] 二次守卫：AI 校准中
+            if (g.calibratePending) return;                            // [2026-10-03] 二次守卫：任一方校准中（原只认 enemy）
 
             // ============================================================
             // [2026-09-27 莉莉子] AI 反制响应（NEGATE）—— 程授权「最小侵入」档
@@ -127,11 +290,27 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
             // --- 阶段 A: 防守/格挡阶段 (Block Phase) ---
             if (g.phase === 'block_declare') {
                 console.log(`[AI] 🛡️ 进入格挡阶段 — field=${field.length} bench=${bench.length}`);
+                // [2026-10-04 莉莉子] 幂等守卫：本分支**不幂等** —— 重入会把格挡者重新分配一遍、
+                //   再消耗一次备战席（覆盖已有 blocker + 多扣单位），并排出第二个 confirmBlock。
+                //   而 confirmBlock 每次都会翻 turnOwner（useGameState.ts:2014-2021）⇒ 翻两次 = 白翻。
+                if (blockConfirmInFlightRef.current) {
+                    console.log('[AI] 🛡️ 格挡确认已在途，跳过重复决策（防优先权被翻两次）');
+                    return;
+                }
                 // 🛡️ [修复] 检查进攻方归属——如果战场上是敌方在进攻，说明是敌方的进攻回合，AI 不应该格挡！
                 const isPlayerAttacking = field.some(f => f.attacker && f.owner === 'player');
                 if (!isPlayerAttacking) {
                     setMessage('敌方无须格挡，确认防线。');
-                    actions.confirmBlock(); // 强制推进到响应阶段，绝不能调用 passTurn
+                    // [2026-10-04 独立审查 #8 修复] 这条路径原来**完全没有在途标记**：
+                    //   confirmBlock 每次都会翻 turnOwner（useGameState.ts:2014-2021），重复调用 = 白翻。
+                    //   同步调用 ⇒ 成功/失败都立刻释放（失败时若尚未写 state，重试是安全的）。
+                    if (blockConfirmInFlightRef.current) return;
+                    blockConfirmInFlightRef.current = true;
+                    try {
+                        actions.confirmBlock(); // 强制推进到响应阶段，绝不能调用 passTurn
+                    } finally {
+                        blockConfirmInFlightRef.current = false;
+                    }
                     return;
                 }
 
@@ -283,9 +462,24 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                     actions.setCombatField(newCombatField);
 
                     // 稍微延迟一下确认，展示格挡意图
-                    setTimeout(() => {
-                        actions.confirmBlock(); // [核心修复] 调用 confirmBlock，切入 react_to_block 阶段
+                    // [2026-10-04 莉莉子] 原为**裸 setTimeout**：不在 effect cleanup 里（暂停/卸载都拦不住），
+                    //   且没有在途互斥 ⇒ 500ms 内有依赖变化会再进一次本分支、排出第二个 confirmBlock。
+                    //   现：句柄挂 `blockConfirmTimerRef`（卸载统一清理）+ 在途标记（配合上方幂等守卫）。
+                    blockConfirmInFlightRef.current = true;
+                    const confirmTimer = setTimeout(() => {
+                        blockConfirmTimerRef.current = null;
+                        try {
+                            actions.confirmBlock(); // [核心修复] 调用 confirmBlock，切入 react_to_block 阶段
+                            // [2026-10-04 独立审查 #8 修复] **成功之后**才解除在途标记。
+                            //   抛错时保持 true，交给心跳的"自愈"（定时器句柄已为 null ⇒ ≤1s 后复位）接手；
+                            //   若在这里先解除，抛错会立刻让下一个 tick 重入本分支，
+                            //   把已有 blocker 重新分配一遍、再多扣一次备战席（正是上面注释说的那种损坏）。
+                            blockConfirmInFlightRef.current = false;
+                        } catch (e) {
+                            console.error('[AI] confirmBlock 抛出异常（格挡确认未完成）:', e);
+                        }
                     }, 500);
+                    blockConfirmTimerRef.current = confirmTimer;
                 }
                 return;
             }
@@ -536,6 +730,12 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
 
                         setMessage("敌方发起进攻！");
                         if (actions.setCombatField && actions.setEnemyBench && actions.commitAttack) {
+                            // [2026-10-04 莉莉子] 幂等守卫：同格挡分支 —— 重入会重复把单位推入战场并排出第二个 commitAttack
+                            if (commitAttackInFlightRef.current) {
+                                console.log('[AI] ⚔️ 进攻提交已在途，跳过重复决策');
+                                return;
+                            }
+                            commitAttackInFlightRef.current = true;
                             const newCombat = cappedAttackers.map((c: CardData) => {
                                 const target = challengerTargets.get(c.id);
                                 return { attacker: c, blocker: target || null, owner: 'enemy', isChallenged: !!target };
@@ -551,9 +751,17 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                             actions.setCombatField(newCombat);
 
                             // 2. 延迟 50ms 确保 React 完成 DOM 与 State 渲染后，调用标准发车指令触发所有特效
-                            setTimeout(() => {
-                                actions.commitAttack();
+                            // [2026-10-04 莉莉子] 同格挡分支：句柄挂 `commitAttackTimerRef`（卸载统一清理）+ 在途标记
+                            const atkTimer = setTimeout(() => {
+                                commitAttackTimerRef.current = null;
+                                try {
+                                    actions.commitAttack();
+                                    commitAttackInFlightRef.current = false; // 成功才解除（同 #8 的口径）
+                                } catch (e) {
+                                    console.error('[AI] commitAttack 抛出异常（进攻提交未完成）:', e);
+                                }
                             }, 50);
+                            commitAttackTimerRef.current = atkTimer;
                         }
                         return;
                     }
@@ -571,15 +779,32 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
             } // ← 主阶段 if 结束
 
             // ========== AI 行动完整保护 ==========
-            } catch (err) {
-                console.error(`[AI] 💥 未捕获异常导致 AI 逻辑崩溃:`, err);
-                // 崩溃时尝试让过，避免 AI 永久卡死
-                try { actions?.passTurn(); } catch (_) {}
+        } catch (err) {
+            crashStreakRef.current += 1;
+            const gs = stateRef.current.game;
+            // [2026-10-04 莉莉子 · 修复"假保险"]
+            //   原实现注释写「任何未捕获异常都不会让 AI 卡死」，但唯一恢复动作是 actions.passTurn()——
+            //   而 passTurn 在 calibratePending / 额外攻击+格挡 / 非白名单阶段
+            //   （useGameState.ts:4721 / 4734 / 4785）都是**静默 no-op**，什么都不写 ⇒ 那张保险是空的。
+            //   现改为：按**当前阶段**调用该阶段真正有效的推进动作 + 打印现场快照。
+            //   "是否真的推进了"不在这里自证，由独立的心跳看门狗判定（不谎报成功）。
+            console.error(
+                `[AI] 💥 未捕获异常导致 AI 逻辑崩溃（连续第 ${crashStreakRef.current} 次）:`,
+                err, snapshotAIState(gs, stateRef.current));
+            try {
+                if (gs.phase === 'main' || gs.phase === 'react_to_block') actions?.passTurn?.();
+                else if (gs.phase === 'attack_declare') actions?.commitAttack?.();
+                else if (gs.phase === 'block_declare') actions?.confirmBlock?.();
+            } catch (e2) {
+                console.error('[AI] 崩溃兜底动作本身抛出异常：', e2);
             }
+        }
+    };
 
-        }, 1500); // 思考时间 1.5s
-
-        return () => clearTimeout(timer);
+    // 依赖变化 → **只发起调度**；在途定时器不重置（消除"依赖抖一下就把思考重置"的饿死）
+    useEffect(() => {
+        scheduleTick(1500, 'deps'); // 思考时间 1.5s
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         game.turnOwner,
         game.phase,
@@ -589,5 +814,99 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
         game.spellCasting?.step, // [2026-07-20] AI 抉择结束/开始时唤醒/暂停
         game.calibratePending,   // [2026-07-20] AI 校准结束/开始时唤醒/暂停
         paused,                  // [2026-08-30 莉莉子] 暂停/恢复时重跑 effect，清掉旧 timer
+        // [2026-10-04 莉莉子] 补全"闸门在依赖表外"的两处漏项 —— 原本它们冻结 AI 却没人再唤醒它
+        game.pendingLevelUps?.length,
+        game.levelUpCard,
     ]);
+
+    // ============================================================
+    // [2026-10-04 莉莉子] 心跳 + 停机看门狗（deps=[]，不随状态重排）
+    //   这是本次"永久停机"整类缺陷的总闸：
+    //     · 只要轮到 AI 且无阻塞 ⇒ 保证一定有决策定时器在跑（依赖驱动的缺口由它补上）
+    //     · 一旦被阻塞超时 ⇒ **自带取证**：打印现场快照，之后对症修复就有据可依
+    //     · 到更高阈值只走引擎**已有**的安全出口，绝不擅自改引擎状态
+    //   ⚠️ 闭包是首次渲染那一份，只能读 ref（enabledRef 每渲染刷新）。
+    // ============================================================
+    useEffect(() => {
+        const iv = setInterval(() => {
+            const en = enabledRef.current;
+            const live = stateRef.current;
+            const g = live.game;
+
+            // 在途标记自愈：定时器已经不在了（被清理/组件抖动）但标记还留着 ⇒ 复位，
+            // 否则"在途互斥"本身会变成新的永久停机源。
+            if (blockConfirmTimerRef.current === null) blockConfirmInFlightRef.current = false;
+            if (commitAttackTimerRef.current === null) commitAttackInFlightRef.current = false;
+
+            if (en.disabled || en.paused) { stallRef.current = null; stallEscapedRef.current = false; return; }
+
+            const block = readBlockReason(g);
+            if (!block) {
+                stallRef.current = null;
+                stallEscapedRef.current = false;
+                scheduleTick(0, 'heartbeat'); // 无阻塞 ⇒ 立刻保证有在途决策
+                return;
+            }
+
+            const now = Date.now();
+            if (!stallRef.current || stallRef.current.reason !== block) {
+                stallRef.current = { since: now, reason: block };
+                stallEscapedRef.current = false;
+                console.warn(`[AI-Watchdog] ⏳ AI 被阻塞，开始计时 — 原因=${block}`, snapshotAIState(g, live));
+                return;
+            }
+            const stalledMs = now - stallRef.current.since;
+
+            if (stalledMs >= AI_STALL_WARN_MS && stalledMs < AI_STALL_WARN_MS + 1500) {
+                console.warn(`[AI-Watchdog] ⚠️ AI 已被阻塞 ${Math.round(stalledMs / 1000)}s — 原因=${block}`, snapshotAIState(g, live));
+            }
+
+            if (stalledMs >= AI_STALL_ESCAPE_MS && !stallEscapedRef.current) {
+                stallEscapedRef.current = true;
+                console.error(
+                    `[AI-Watchdog] 🚨 AI 持续被阻塞 ${Math.round(stalledMs / 1000)}s 未自愈 — 原因=${block}。` +
+                    `现场快照如下（这就是本机制"自带取证"的用途，下次复发请把这几行发我）：`,
+                    snapshotAIState(g, live));
+                // 只处理**引擎已有安全出口**的那一种：AI 自己的校准面板
+                //（引擎自带"放弃选择"分支，且会自动接着处理排队中的校准 —— useGameState.ts:5434 / 5451-5470）
+                //
+                // [2026-10-04 独立审查 #2 修复] **必须限定 owner === 'enemy'**：
+                //   闸门对"任一方校准"一视同仁（沿用 2026-10-03 的口径，本次不改）；但**出手**只能替 AI 自己。
+                //   否则玩家把校准面板开着 ≥45s，就会被**敌方 AI 的看门狗**"放弃"掉自己的校准、
+                //   连同牌库被重排（confirmCalibrate 的放弃分支会重写牌库）。那是拿 AI 的手改玩家的决定。
+                const calOwner = g.calibratePending?.owner;
+                if (block === 'calibrate' && calOwner === 'enemy' && typeof en.actions?.confirmCalibrate === 'function') {
+                    console.warn('[AI-Watchdog] 🛠️ 走引擎已有出口：confirmCalibrate()（放弃本次选择，接着处理排队中的校准）');
+                    try {
+                        en.actions.confirmCalibrate();
+                        // [独立审查 #2 附带] 逃生是一次性的：若队列里还有同一方的下一次校准，
+                        //   reason 字符串仍是 'calibrate' ⇒ 计时不会被刷新、逃生也不会再来。
+                        //   这里主动复位，让下一块面板重新获得完整的 45s 窗口。
+                        stallRef.current = null;
+                        stallEscapedRef.current = false;
+                    } catch (e) {
+                        console.error('[AI-Watchdog] confirmCalibrate 抛出异常：', e);
+                    }
+                } else {
+                    // 其余情况**不擅自改引擎状态**（升级链还牵着 L2 卡面数据替换，改错会永久丢数据）：
+                    //   · phase_animating / levelup_* → 交给 useGameState 的 animating 看门狗（本次已改为"限时+进展感知"）
+                    //   · 玩家侧的 calibrate → **不碰**（那是玩家的决定，只有玩家能确认）
+                    //   · choose_mode → 交给 GameSession 的自动抉择（其依赖不含内联函数，不会被重渲染饿死）
+                    console.warn(`[AI-Watchdog] ℹ️ 原因=${block}${block === 'calibrate' ? `(owner=${calOwner ?? '?'})` : ''} 不在本机制处置范围（避免擅改引擎状态 / 越权替玩家决定），已交由对应看门狗/自动流程`);
+                }
+            }
+        }, 1000);
+        return () => clearInterval(iv);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // 卸载清理：所有延迟回调必须跟着组件生命周期走（原先两个裸 setTimeout 不在 cleanup 里）
+    useEffect(() => () => {
+        if (decideTimerRef.current !== null) { clearTimeout(decideTimerRef.current); decideTimerRef.current = null; }
+        // [2026-10-04 独立审查 #10] 两个延迟回调各自由自己的 ref 持有句柄 ⇒ 逐个清，不再用堆积数组
+        if (blockConfirmTimerRef.current !== null) { clearTimeout(blockConfirmTimerRef.current); blockConfirmTimerRef.current = null; }
+        if (commitAttackTimerRef.current !== null) { clearTimeout(commitAttackTimerRef.current); commitAttackTimerRef.current = null; }
+        blockConfirmInFlightRef.current = false;
+        commitAttackInFlightRef.current = false;
+    }, []);
 };

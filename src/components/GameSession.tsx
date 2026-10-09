@@ -12,19 +12,23 @@ import { PauseOverlay } from './PauseOverlay'; // [2026-08-30 莉莉子] 局内�
 import gsap from 'gsap'; // [2026-09-19 莉莉子] 局内暂停：冻结 GSAP 全局时间轴（法术弹道等 JS 驱动动效）
 import { BeaconExplosionLayer } from './BeaconExplosionLayer'; // [2026-09-19 1.0.16 茉莉安] 信标引爆特效层
 import { UltimateStrikeLayer } from './UltimateStrikeLayer'; // [2026-09-19 1.0.16 茉莉安] 大招逐击演出层
+import { CostReduceVFXLayer } from './CostReduceVFXLayer'; // [2026-10-08 莉莉子] 减费特效层「绿潮降临」（P1）
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
-import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason } from '../utils/gameRules';
+import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason, canPlayerRetractBlocker } from '../utils/gameRules';
 import { Battlefield } from './Battlefield';
 import { CARD_DB, createCard } from '../data/cards';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
 import { gameLogger } from '../utils/gameLogger'; // [2026-09-04 莉莉子] 真实对局开始清空黑匣子（沙盒污染防御）
 import { useVoice } from '../hooks/useVoice';
+import { useStableCallback, useStableCallbackR } from '../hooks/useStableCallback'; // [2026-10-02 莉莉子 性能] 稳定回调：让 React.memo 在热路径上真正生效
 // [核心引入] 引入 LEVELUP_ICONS
 import { UI_IMAGES, PERSONALIZATION_ASSETS, getSkinImage, LEVELUP_ICONS } from '../data/imageData';
 import { DeskMedia } from './DeskMedia'; // [2026-08-13] 动态牌桌媒体组件（兜底静态图 + 日志）
 import { ManaGemSystem } from './ManaGemSystem';
 import { calculateNewMana } from '../utils/gameRules';
+// [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔进度：撤回进攻等"回备战席"出口的幂等贴值
+import { applyMauxirProgress } from '../utils/mauxirProgress';
 import { getCardBackUrl} from '../utils/styleUtils';
 import { getCardBackVideo } from '../data/cardBackVideos'; // [2026-08-23 莉莉子] 动态卡背视频
 // [修改] 引用新的 Hook
@@ -306,8 +310,23 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // [2026-09-04 莉莉子 沙盒防御] 真实对局挂载即清空黑匣子残留日志：
     // 沙盒练习直连 useGameState，会把 game_end 写进模块级 gameLogger 且不清；
     // 不清会在本场结算 flushLogs 时被误扫进军功任务。每次真实 GameSession 挂载即清，保证任务只计本局。
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-04] **紧跟着写入本局牌组快照**（顺序即语义：必须在 clearLogs 之后，
+    //   否则会被上面那句清掉）。
+    //   需求来源：「XX小队：作战成功」卡面写的是「**携带**全员（各三张），赢得一场对局胜利」——
+    //   而任务系统在结算时只能读到对局日志 ⇒ "携带了什么"必须在这里落进日志
+    //   （原实现只能拿 play_card 反推"打出过"，与卡面口径不符，且漏掉替换打出的那一次）。
+    //   ⚠️ 教程局不记：教程用的是固定演示牌组，记进去会让"携带类"任务被教程顺手完成。
     useEffect(() => {
         gameLogger.clearLogs();
+        if (!tutorialInit) {
+            gameLogger.logEvent({
+                type: 'deck_list',
+                turn: 0,
+                isPlayerSide: true,
+                cardKeys: [...deck],
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ==========================================
@@ -576,7 +595,28 @@ export const GameSession: React.FC<GameSessionProps> = ({
         onComplete: (card, targets) => {
             // 当目标选择完成后，调用游戏状态的 finalizeSpell
             actions.finalizeSpell(card, 'player', targets);
-        }
+        },
+        // [2026-10-02 莉莉子 BUG修复] 补传棋盘快照读器。
+        //   本实例是"UI 层简版"（见下方注释：stateRef 等一律没传），
+        //   于是「目标不足时放宽」（钢羽傍身：对面只有 1 个单位时也要能打出）
+        //   在游戏内拿不到棋盘数据、永远走不了放宽分支。
+        //   这里只补这一项 —— 它是纯新增参数，不会激活任何既有分支（尤其不碰 select_discard 那条）。
+        boardSnapshot: () => ({ playerBench, enemyBench, combatField }),
+        // [2026-10-04 莉莉子] 「生机补充」满血屏蔽（ally_not_full）：
+        //   本实例是 UI 层简版（stateRef 一律没传）⇒ 拿不到 game.playerNexus
+        //   ⇒ 玩家点满血水晶时既不高亮、也点不动、更没有提示。
+        //   nexusSnapshot 让 hook 能读到水晶血量；onInvalidTarget 给一句可见反馈。
+        //   ⚠️ 仍然只补纯新增参数，不激活任何既有分支（尤其不碰 select_discard 那条）。
+        nexusSnapshot: () => ({
+            player: game.playerNexus,
+            playerMax: game.playerNexusMax ?? 20,
+            enemy: game.enemyNexus,
+            enemyMax: game.enemyNexusMax ?? 20,
+        }),
+        // ⚠️ 必须走 announce（中央播报），**不能用 setMessage** ——
+        //   本组件从不解构/渲染 `message`，useGameState 里它也没有消费方
+        //   ⇒ 写进 message state 的提示玩家一个字都看不到（全项目唯一渲染点在沙盒）。
+        onInvalidTarget: (msg: string) => announce(msg, 'TARGET REJECTED', 'phase_hint', 2000),
     } as Parameters<typeof useSpellSystem>[0]); // [2026-08-27] UI 层简版调用只传 onComplete；useSpellSystem 接口过严（stateRef 等内部有守卫），断言消除类型误报
     // ==========================================
     // [核心新增] 手牌索敌预瞄侦察兵 (Hand Target Watchdog)
@@ -803,12 +843,22 @@ export const GameSession: React.FC<GameSessionProps> = ({
             // Phase 1: 保存原始 phase，全部入栈（画面中央显示所有暗箭 + 瞄准线）
             // 保存当前 game phase（从闭包游戏状态读取）
             setGame(prev => ({ ...prev, spellStack: stackItems, phase: 'animating' }));
-            setMessage('⚔️ 暗箭连发！');
+            // [2026-10-05 莉莉子] 暗箭的**中央播报已移除** ——
+            //   本段下一句就把 phase 设为 `'animating'`（`:827`），而 `useGameAnnouncer`
+            //   一旦发现 `phase !== 'main'` 就会**立刻 `setAnnouncement(null)`**
+            //   ⇒ 在这里播报等于"设完当场被抹"，玩家一个字看不到（最多残留一帧）。
+            //   ⚠️ 上一版我删掉 Phase 2 逐发播报的理由（"会顶掉 Phase 1 的 2 秒窗口"）**前提是假的**：
+            //      Phase 1 根本没有窗口。现改为**整段不播报**，暗箭的归属与节奏由**弹道飞行动画**表达。
+            //   📌 判据（可复用）：**`phase !== 'main'` 期间不要调 `announce`**，它会被 phase 守护抹掉。
             await new Promise(r => setTimeout(r, 2000));
 
             // Phase 2: 逐发开火
             for (const item of stackItems) {
-                setMessage(`⚡ ${item.owner === 'player' ? '我方' : '敌方'}·暗箭`);
+                // [2026-10-05 莉莉子] 逐发归属**刻意不播报**：
+                //   中央播报是「立即替换」语义（`useGameAnnouncer.setMsg` 每次都先 clearTimeout 上一条再覆盖），
+                //   而这里是**每 400ms 一发**（见下方 await）⇒ 播了只会快速闪动，
+                //   还会把上面那条「⚔️ 暗箭连发！」的 2 秒展示窗口顶掉。
+                //   逐发归属由**弹道飞行动画**本身表达即可。
 
                 // [2026-07-07 修复] 弹道飞行前清除当前法术的瞄准线
                 setGame(prev => ({
@@ -855,7 +905,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
             // 结算完成，恢复 phase 到 main
             setGame(prev => ({ ...prev, phase: 'main', spellStack: [] }));
-            setMessage('');
+            // [2026-10-05 莉莉子] 原 `setMessage('')` 随**已废弃的 message 通道**一并清掉：
+            //   中央播报自己会在 2000ms 后消失，无需手工清空。
 
             // 通知教程控制器
             eventBus.emit('TUTORIAL_SPELL_SHOW_COMPLETE', null);
@@ -1034,23 +1085,35 @@ export const GameSession: React.FC<GameSessionProps> = ({
     const combatFieldRef = useRef(combatField);
     combatFieldRef.current = combatField;
 
-    // [侦察] 观察攻击宣言 → 计算侦察状态（active=全侦察有效 / invalid=混入无效 / null=无）
-    // 纯观察：只读 combatField + attackToken，不改战斗逻辑；广播给卡面/卡槽特效层
+    // [侦察] 观察攻击宣言 → 计算侦察状态（active=全侦察有效 / invalid=混入或本回合已用过 / null=无侦察）
+    // 纯观察：只读 combatField + scoutUsedThisRound，不改战斗逻辑；广播给卡面/卡槽特效层
     // [2026-09-19 BUG修复] 敌我【两边都算】并按阵营分别广播 ——
     //   此前只统计玩家侧（owner==='player'），敌人用侦察进攻时算出的永远是 null，
     //   而消费端判据是 `!== 'active'` ⇒ 敌方侦察单位恒被判「无效」→ 永远播灰色特效。
+    // [2026-10-06 BUG修复 · 视觉判据与结算对齐] **不再拿进攻标识当代理指标**：
+    //   ── 病根：这里判的是 `attackToken[side] === 'normal'`，而 2026-10-03 的结算改造
+    //      （`useGameState.ts` 侦察段）**原话就是「不再拿 token 值当代理指标」**，改判 `scoutUsedThisRound`
+    //      —— 那次**只迁了结算层，视觉层没跟上**。
+    //   ── 症状（程实测）：**没有进攻标识**的回合，用「灵轨月轮·扩散」召出 4 把带【侦察】的飞剑发起进攻 ——
+    //      结算层**照常发给了进攻标识**（即效果生效，已用 `[AttackTokenSettle]` 日志确认），
+    //      但卡面特效恒判「无效」（灰白停转）⇒ **观感与事实正好相反**。
+    //   ── 现口径（与结算同源、逐字对齐）：
+    //        `allScout = 全部进攻者都是侦察` · `fresh = 本回合该侧还没用过侦察`
+    //        ⇒ active = allScout && fresh；混入非侦察 / 本回合已用过 ⇒ invalid；无侦察进攻者 ⇒ null。
+    //      ⚠️ 刻意**不看进攻标识** —— 程的口径：没有标识的回合，仅派持侦察的单位进攻照样算有效侦察。
     useEffect(() => {
         (['player', 'enemy'] as const).forEach(side => {
-            const isFirstAttack = game.attackToken[side] === 'normal';
             const attackers = combatField.filter(f => f.owner === side && f.attacker);
-            const scoutCount = attackers.filter(f => f.attacker?.keywords?.includes('Scout')).length;
+            const scouts = attackers.filter(f => f.attacker?.keywords?.includes('Scout'));
+            const usedThisRound = !!game.scoutUsedThisRound?.[side];
+            const allScout = attackers.length > 0 && scouts.length === attackers.length;
             let state: 'active' | 'invalid' | null = null;
-            if (isFirstAttack && attackers.length > 0 && scoutCount > 0) {
-                state = scoutCount === attackers.length ? 'active' : 'invalid';
+            if (scouts.length > 0) {
+                state = (allScout && !usedThisRound) ? 'active' : 'invalid';
             }
             notifyScoutState(side, state);
         });
-    }, [combatField, game.attackToken.player, game.attackToken.enemy]);
+    }, [combatField, game.scoutUsedThisRound?.player, game.scoutUsedThisRound?.enemy]);
     const msgRef = useRef(setMessage);
     msgRef.current = setMessage;
 
@@ -1140,7 +1203,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
         // ★ 教程：如果期望点击操作，屏蔽拖拽
         if (tutorialInteractionMode.current === 'click_target') {
-            setMessage('请使用点击来完成格挡');
+            announce('请使用点击来完成格挡', 'USE CLICK', 'phase_hint', 2000);
             return;
         }
 
@@ -1149,7 +1212,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
         const isPlayerTurn = game.turnOwner === 'player';
         const hasAttackToken = game.attackToken.player !== null;
         if (phase === 'block_declare' && isPlayerTurn && card.keywords.includes('CantBlock')) {
-            setMessage('该单位无法进行格挡！');
+            // [2026-10-05 莉莉子] **刻意不在这里播报** ——
+            //   同一次"按下 + 抬起"会走两个入口（本 pointerdown 与 handleBenchCardClick 的 click），
+            //   两处同条件 ⇒ 会连播两次同一句；而 `setMsg` 每次都生成**新 id**、
+            //   `GameAnnouncement` 又是 `AnimatePresence mode="wait"`（退场 0.3s→进场 0.4s）
+            //   ⇒ 玩家会看到明显一"闪"。播报统一交给 click 那处（`:2238`），此处只保留拦截逻辑。
             return;
         }
         const canDrag =
@@ -1457,6 +1524,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     /** 战场卡牌 pointerDown — 战场→备战席反向拖拽 */
     const onCombatPointerDown = (e: React.PointerEvent, card: CardData, index: number, role: 'attacker' | 'blocker') => {
+        // [2026-10-02 莉莉子 BUG修复] 被**敌方**用挑战/暴露拉走的我方单位，连**拖拽**都不许起手。
+        //   ── 引擎侧（recallBlocker）已有一道守卫兜底，但 UI 先拦能避免"拖了却弹回"的迷惑手感。
+        //   ── 判据与引擎共用同一个函数 `canPlayerRetractBlocker`，杜绝两条路径口径分叉。
+        if (role === 'blocker' && !canPlayerRetractBlocker(combatField[index])) {
+            announce('被挑战的单位无法撤回！', 'CANNOT RETREAT', 'phase_hint', 2000);
+            return;
+        }
+
         // 只允许在有效阶段拖拽我方单位
         const phase = game.phase;
         const isPlayerTurn = game.turnOwner === 'player';
@@ -1468,7 +1543,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
         // ★ 教程：如果期望点击操作，屏蔽反向拖拽
         if (tutorialInteractionMode.current === 'click_target') {
-            setMessage('请使用点击来完成格挡');
+            announce('请使用点击来完成格挡', 'USE CLICK', 'phase_hint', 2000);
             return;
         }
 
@@ -1822,7 +1897,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 if (sc?.step === 'select_hand_target' || sc?.step === 'select_discard' || pending) {
                     actions.cancelPendingSpell();
                 } else if (sc) {
-                    // 普通瞄准（select_ally/enemy/any，未扣费）→ 退卡回手牌
+                    // 按 step 路由到 `cancelChoice` —— **退不退费由它自己判断**：
+                    //   · `choose_mode`（尚未抉择、**尚未扣费**）⇒ 只退卡；
+                    //   · `select_ally/enemy/any`（**已抉择 ⇒ 已按子卡费用扣费**）⇒ 退卡 **并退费**。
+                    // ⚠️ [2026-10-05 莉莉子] 原注释写"未扣费"在旧版成立（那时抉择扣费会被 commitSpell
+                    //    的 cleanSnapshot 覆盖掉，等于没扣）；扣费修好后此说法**已过时**，特此更正，
+                    //    以免后来人据此判断"不该退费"。
                     actions.cancelChoice();
                 }
             }
@@ -1897,17 +1977,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
             const cardTypeFilter = sc.cardTypeFilter;
             // 卡牌类型过滤
             if (cardTypeFilter === 'unit' && card.type !== 'unit' && !card.type?.includes('unit')) {
-                setMessage("只能选择单位卡牌！");
+                announce('只能选择单位卡牌！', 'INVALID CARD', 'phase_hint', 2000);
                 return false;
             }
             if (cardTypeFilter === 'spell' && !card.type?.includes('spell')) {
-                setMessage("只能选择法术卡牌！");
+                announce('只能选择法术卡牌！', 'INVALID CARD', 'phase_hint', 2000);
                 return false;
             }
             // [2026-07-14 白猎] 费用上限过滤
             const maxCost = sc.maxCost;
             if (maxCost !== undefined && (card.cost || 0) >= maxCost) {
-                setMessage(`只能选择费用低于${maxCost}的卡牌！`);
+                announce(`只能选择费用低于${maxCost}的卡牌！`, 'INVALID CARD', 'phase_hint', 2000);
                 return false;
             }
             const currentIds = sc.targets.map((t: any) => t.id);
@@ -1936,16 +2016,16 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     ? EFFECT_DB[spellSystem.activeCard.effects[0]]
                     : null;
                 if (req.cardTypeFilter === 'unit' && !card.type?.includes('unit')) {
-                    setMessage("只能选择单位卡牌！");
+                    announce('只能选择单位卡牌！', 'INVALID CARD', 'phase_hint', 2000);
                     return false;
                 }
                 if (req.cardTypeFilter === 'spell' && !card.type?.includes('spell')) {
-                    setMessage("只能选择法术卡牌！");
+                    announce('只能选择法术卡牌！', 'INVALID CARD', 'phase_hint', 2000);
                     return false;
                 }
                 const maxCost = castingCardDef?.params?.maxCost;
                 if (maxCost !== undefined && (card.cost || 0) >= maxCost) {
-                    setMessage(`只能选择费用低于${maxCost}的卡牌！`);
+                    announce(`只能选择费用低于${maxCost}的卡牌！`, 'INVALID CARD', 'phase_hint', 2000);
                     return false;
                 }
             }
@@ -1962,11 +2042,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
             if (card.type.includes('unit')) {
                 // [2026-07-20 替换打出] 备战席满员时不拦截，交给 playCard 走替换流程
-                if (playerBench.length >= 6) { setMessage("选择一个己方单位进行替换"); }
+                // [2026-10-05 莉莉子] 这里**不再播报**"选择一个己方单位进行替换" ——
+                //   本句位于 `playerBench.length >= 6` 的**前置检查**里，而紧接着还有
+                //   「战斗阶段无法派出单位」/「法术场上条件」等**会 early-return 的拒绝分支**
+                //   ⇒ 早退时玩家会先被喂一句"请去替换"，再被告知"根本不能打" = **错信息**。
+                //   替换流程自身有 UI 提示（选中/按钮文案），无需在此抢跑。
                 // [2026-07-16 修复] 战斗阶段不能打出单位卡牌（isPlayable 已正确拦截高光，但点击仍能打出）
                 const isCombatPhase = game.phase === 'attack_declare' || game.phase === 'block_declare' || game.phase === 'react_to_block';
                 if (isCombatPhase) {
-                    setMessage("战斗阶段无法派出单位！");
+                    announce('战斗阶段无法打出单位！', 'PHASE LOCKED', 'phase_hint', 2000);
                     return false;
                 }
                 actions.playCard(card, 'player');
@@ -1975,7 +2059,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 // [2026-07-27 莉莉子] 战斗阶段不能打出慢速法术（isPlayable 已拦截高光，点击也要拦住）
                 const isCombatPhase = game.phase === 'attack_declare' || game.phase === 'block_declare' || game.phase === 'react_to_block';
                 if (isCombatPhase && card.type === 'spell-slow') {
-                    setMessage("战斗阶段无法施放慢速法术！");
+                    announce('战斗阶段无法施放慢速法术！', 'PHASE LOCKED', 'phase_hint', 2000);
                     return false;
                 }
 
@@ -1984,7 +2068,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 //   ⚠️ 同源函数也用于手牌高亮，两处必须一致，否则"高光说能打、点了打不出去"
                 const spellBlockReason = getSpellPlayBlockReason(card, { playerBench, enemyBench, combatField });
                 if (spellBlockReason) {
-                    setMessage(`${spellBlockReason}，无法打出！`);
+                    announce(`${spellBlockReason}，无法打出！`, 'CANNOT PLAY', 'phase_hint', 2000);
                     return false;
                 }
 
@@ -2015,7 +2099,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
             if (location === 'bench') {
                 // ★ 教程：如果期望拖拽操作，屏蔽点击选攻击者（防止批量多拖）
                 if (tutorialInteractionMode.current === 'drag_target') {
-                    setMessage('请使用拖拽来指派进攻单位');
+                    announce('请使用拖拽来指派进攻单位', 'USE DRAG', 'phase_hint', 2000);
                     return false;
                 }
                 eventBus.emit(GameEvents.UI_CLICK);
@@ -2034,13 +2118,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 // 即使 combatField 暂无敌人进攻者（敌方进攻进入交战区时序偶发延迟）。
                 // 否则点里芙被拦 → 格挡任务 block_selected 不完成 → 教程卡住（实测偶发复现）。
                 if (!tutorialInit) {
-                    setMessage('当前没有可格挡的敌方进攻者');
+                    announce('当前没有可格挡的敌方进攻者', 'NO ATTACKER', 'phase_hint', 2000);
                     return false;
                 }
             }
             // ★ 教程：如果期望拖拽操作，屏蔽点击选格挡者
             if (tutorialInteractionMode.current === 'drag_target') {
-                setMessage('请使用拖拽来完成格挡');
+                announce('请使用拖拽来完成格挡', 'USE DRAG', 'phase_hint', 2000);
                 return false;
             }
             eventBus.emit(GameEvents.UI_CLICK);
@@ -2062,7 +2146,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
         // 2. 归还到备战席
         if (myAttackers.length > 0) {
-            setPlayerBench(prev => [...prev, ...myAttackers]);
+            // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 撤回进攻也是"回备战席"的出口：
+            //   带回来的是**交战区那份实例**，必须把猫汐尔的进度权威值重新贴一遍（幂等，没命中则原样）
+            setPlayerBench(prev => applyMauxirProgress([...prev, ...myAttackers], 'player') as CardData[]);
         }
 
         // 3. 清空战场并回退阶段
@@ -2171,6 +2257,161 @@ export const GameSession: React.FC<GameSessionProps> = ({
         setViewCard(card);
     }, [playerHand, playerBench, playerField, enemyBench, enemyField]);
 
+    // ══════════════════════════════════════════════════════════════
+    // [2026-10-02 莉莉子 性能优化] 热路径事件回调 —— 统一走 useStableCallback
+    //   背景：本项目 useGameState / useSpellSystem 的 useMemo 数量为 0 ⇒
+    //     game / actions / spellSystem **每次渲染都是新对象**；
+    //     而这些回调原先全写成**内联箭头**传给子组件 ⇒
+    //     子组件的 React.memo 浅比较必然失败 ⇒ 全屏 20+ 张 Card 在任意状态变化时全量重渲染。
+    //   做法：useStableCallback 内部用 ref 转调「最新实现」⇒
+    //     对外引用**永久稳定**（memo 生效），且读到的**永远是最新闭包**（无过期值风险）。
+    //   覆盖：备战席 / 敌方备战席 / 战场槽位 / 战场卡牌 / 挑战者选择 / 战场拖拽 / 悬停预览。
+    // ══════════════════════════════════════════════════════════════
+
+    /** 备战席卡牌点击（原内联 onClick） */
+    const handleBenchCardClick = useStableCallback((c: CardData) => {
+        // [2026-07-20 替换打出] 替换选择模式：选中一个备战席单位
+        if (game.spellCasting?.step === 'select_bench') {
+            const sc = game.spellCasting;
+            const currentIds = sc.targets.map((t: any) => t.id);
+            const newTargets = currentIds.includes(c.id) ? [] : [{ type: 'ally', id: c.id }];
+            actions.updateSpellCasting({ ...sc, targets: newTargets });
+            eventBus.emit(GameEvents.SFX_SELECT_UNIT);
+            setMessage(newTargets.length > 0 ? `已选择 ${c.name}，点击确认替换` : '选择一个单位替换');
+            return;
+        }
+        if (spellSystem.isCasting) {
+            spellSystem.handleTargetClick(c, 'player');
+            return;
+        }
+        // [新增] 拦截逻辑：无法格挡（仅在格挡阶段生效）
+        if (game.phase === 'block_declare' && c.keywords.includes('CantBlock')) {
+            announce('该单位无法进行格挡！', 'CANNOT BLOCK', 'phase_hint', 2000);
+            return;
+        }
+        handleCardClick(c, 'bench', 'player');
+    });
+
+    /** 敌方备战席卡牌点击（原内联 onClick；原实现有一段重复且不可达的 else-if，已收敛） */
+    const handleEnemyBenchCardClick = useStableCallback((c: CardData) => {
+        if (spellSystem.isCasting) {
+            spellSystem.handleTargetClick(c, 'enemy');
+            return;
+        }
+        if (game.phase === 'attack_declare' && game.selectedChallengerId) {
+            eventBus.emit(GameEvents.UI_CLICK);
+            actions.challengeEnemy(game.selectedChallengerId, c.id);
+            return;
+        }
+        handleCardClick(c, 'enemy_bench', 'enemy');
+    });
+
+    /** 战场槽位点击：分配 / 撤回格挡（原 Battlefield 的内联 onCombatClick） */
+    const handleCombatSlotClick = useStableCallback((i: number) => {
+        // [2026-08-26 莉莉子 BUG修复] 施法选目标（isCasting）时不触发格挡——
+        // 否则单挑施法选目标时点击战斗区卡牌冒泡到槽位，会误把残留的格挡者派上去挡
+        if (spellSystem.isCasting) return;
+        // 1. 格挡宣言阶段且已选中备战席单位 → 点击槽位 = 分配阻挡
+        if (game.phase === 'block_declare' && game.selectedBlockerId) {
+            eventBus.emit(GameEvents.UI_CLICK);
+            actions.assignBlocker(i, game.selectedBlockerId);
+        }
+        // 2. 未选中人但点了已有阻挡者 → 撤回
+        else if (game.phase === 'block_declare' && game.turnOwner === 'player') {
+            if (combatField[i].blocker) actions.recallBlocker(i);
+        }
+    });
+
+    /** 战场卡牌点击（原 Battlefield 的内联 onCardClick） */
+    const handleCombatCardClick = useStableCallback((c: CardData, l: string, o: string) => {
+        // [新增] 战斗中单位的施法目标选择
+        if (spellSystem.isCasting) {
+            spellSystem.handleTargetClick(c, o as 'player' | 'enemy');
+            return;
+        }
+        if (l === 'combat' && o === 'player') {
+            // [2026-09-16 1.0.16 茉莉安 · T11] 【暴露】实装：
+            //   门槛从「必须带【挑战者】」放宽为「任意我方攻击者都能选中」——
+            //   因为暴露是【防守方的公开漏洞】，不需要任何特权即可拉取。
+            if (game.phase === 'attack_declare') {
+                if (game.selectedChallengerId === c.id) {
+                    actions.selectChallenger(c.id);
+                } else if (game.selectedChallengerId !== c.id) {
+                    eventBus.emit(GameEvents.UI_CLICK);
+                    actions.selectChallenger(c.id);
+                    return;
+                }
+            }
+            eventBus.emit(GameEvents.RECALL_UNIT);
+            if (game.phase === 'attack_declare') actions.toggleAttacker(c, false);
+            if (game.phase === 'block_declare') {
+                // ★ 教程：如果期望拖拽操作，屏蔽点击撤回格挡
+                if (tutorialInteractionMode.current === 'drag_target') {
+                    announce('请使用拖拽来撤回格挡', 'USE DRAG', 'phase_hint', 2000);
+                    return;
+                }
+                const idx = combatField.findIndex(f => f.blocker?.id === c.id);
+                if (idx !== -1) {
+                    // [2026-10-05 莉莉子 BUG修复] **点击路径的可见反馈** ——
+                    //   引擎 `recallBlocker`（useGameState）被拒时只写**不可见**的 `setMessage`，
+                    //   而拖拽路径（`:1500`）早就有 announce ⇒ **两条路径体验不对称**：
+                    //   拖拽会弹"被挑战的单位无法撤回"，点击却"点不动且毫无解释"。
+                    //   判据与引擎 / 拖拽路径**共用同一个函数** `canPlayerRetractBlocker`，口径不分叉。
+                    if (!canPlayerRetractBlocker(combatField[idx])) {
+                        announce('被挑战的单位无法撤回！', 'CANNOT RETREAT', 'phase_hint', 2000);
+                        return;
+                    }
+                    actions.recallBlocker(idx);
+                }
+            }
+        }
+        else if (l === 'combat' && o === 'enemy') {
+            const idx = combatField.findIndex(f => f.blocker?.id === c.id);
+            // [核心修复] 严格守卫：只有在玩家自己宣告进攻的阶段，才能撤销自己用"挑战者"拉上来的敌军
+            if (idx !== -1 && game.phase === 'attack_declare' && combatField[idx].owner === 'player') {
+                eventBus.emit(GameEvents.RECALL_UNIT);
+                actions.recallBlocker(idx);
+            }
+        }
+        else {
+            handleCardClick(c, l, o);
+        }
+    });
+
+    /**
+     * 挑战者选择。
+     * ⚠️ 不能直接透传 `actions.selectChallenger` —— actions 每次渲染都是新对象，
+     *    那样 Battlefield 的 memo 会被它单独打破。
+     */
+    const handleChallengerSelect = useStableCallback((id: string) => {
+        actions.selectChallenger(id);
+    });
+
+    /** 战场→备战席拖拽（onCombatPointerDown 是普通函数，每次渲染都新建） */
+    const handleCombatPointerDownStable = useStableCallback(
+        (e: React.PointerEvent, card: CardData, index: number, role: 'attacker' | 'blocker') => {
+            onCombatPointerDown(e, card, index, role);
+        });
+
+    /** 战场悬停预览（bindGazeEvents 来自 useCardGaze，引用不稳定） */
+    const handleCardGazeEvents = useStableCallbackR((c: CardData) => bindGazeEvents(c));
+
+    // ── 手牌区回调（原为内联箭头；是手牌组件 memo 化的前置条件） ──
+    /** 敌方手牌离场动画完成 */
+    const handleEnemyHandAnimComplete = useStableCallback((id: string) => {
+        onHandAnimComplete(id, 'enemy');
+    });
+
+    /** 我方手牌离场动画完成 */
+    const handlePlayerHandAnimComplete = useStableCallback((id: string) => {
+        onHandAnimComplete(id, 'player');
+    });
+
+    /** 手牌卡牌点击 */
+    const handleHandCardClick = useStableCallback((c: CardData) => {
+        handleCardClick(c, 'hand', 'player');
+    });
+
     // [新增] 控制打出卡牌时的通用放大动画
     const [showPlayAnimation, setShowPlayAnimation] = useState(false);
 
@@ -2193,8 +2434,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     // [2026-07-18] AI抉择：自动选择（延迟让玩家看到过程）
     // [2026-07-20 修复] 移除 turnOwner 依赖，防止 AI 被暂停前 timer 被清除导致卡死
+    // [2026-10-02 莉莉子 BUG修复] 归属判据从 turnOwner 改为 spellCasting.choiceOwner。
+    //   病根：玩家可在对方优先权阶段打出极速抉择法术（如进攻被格挡时的「深思熟虑」），
+    //   此时 turnOwner === 'enemy' ⇒ 本 effect 会拿**敌方法力**替**玩家**评估并自动选定/撤回，
+    //   同时选项与取消又被另两处 turnOwner 守卫拦住 ⇒ 界面彻底失去响应。
     useEffect(() => {
-        if (!game.activeCard || game.turnOwner !== 'enemy' || game.spellCasting?.step !== 'choose_mode') return;
+        if (!game.activeCard || game.spellCasting?.choiceOwner !== 'enemy' || game.spellCasting?.step !== 'choose_mode') return;
 
         const choices = game.activeCard.choices;
         if (!choices || choices.length === 0) return;
@@ -2217,7 +2462,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     const { canPlay } = evaluateChoiceCondition(
                         checkData, game.enemyMana, game.enemySpellMana,
                         game.spellCasting?.isHeroLeveled,
-                        game.phase
+                        game.phase,
+                        // [2026-10-05 莉莉子 BUG修复 · 20261005-01] AI 侧同样受慢速时机枷锁约束
+                        //   （越权施放对 AI 一样不合法；全不可选时走下方 cancelChoice 正常撤回）
+                        { owner: 'enemy', turnOwner: game.turnOwner, stackLength: game.spellStack.length }
                     );
                     if (canPlay) {
                         pickedKey = key;
@@ -2234,7 +2482,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }, 2000);
 
         return () => clearTimeout(autoSelectTimer);
-    }, [game.activeCard?.id, game.spellCasting?.step]);
+    }, [game.activeCard?.id, game.spellCasting?.step, game.spellCasting?.choiceOwner]);
 
     // [2026-08-11 肉鸽全局 HP 衔接] 统一结算退出：把剩余水晶传给上层回调
     const settleExit = () => {
@@ -2278,6 +2526,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
             {/* [2026-09-19 1.0.16 茉莉安] 獠牙信标引爆特效层：原位置浮现贴图 → 紫色球心射出激光。
                 与 VFXLayer 同层（SVG + getScreenCTM 逆变换），z 略高一线以盖住瞄准线 */}
             <BeaconExplosionLayer />
+
+            {/* [2026-10-08 莉莉子] 减费特效层「绿潮降临」：源头炸裂 → 能量束 → 手牌命中（数字老虎机翻滚）。
+                数据源走 logic/costReduceVFX.ts 的唯一出口；本层 z-[41] 必须高于手牌层 z-40，否则手牌会盖住特效 */}
+            <CostReduceVFXLayer />
 
             {/* [2026-09-19 1.0.16 茉莉安] 大招「最终指令」逐击演出层（准星 → 冲击 → 击杀爆炸 → 余波） */}
             <UltimateStrikeLayer />
@@ -2332,6 +2584,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
             {/* [2026-07-17 鸦眼小队] 校准面板 */}
             {game.calibratePending && (
                 <CalibratePanel
+                    // [2026-10-03 莉莉子 BUG修复 · 校准排队] **换场必须重挂载**：
+                    //   面板的交互态（animPhase / selectedId）是组件内部 state。
+                    //   队列出队时若沿用同一个实例，它会停在 `exit` 态 ⇒
+                    //   AI 那场永远不会自动确认（配合 passTurn 的校准守卫 = 整局卡死）。
+                    //   key 由「归属 + 候选卡 id 序列」构成 ⇒ 换人/换牌即重新走 enter→select。
+                    key={`${game.calibratePending.owner}-${game.calibratePending.drawnCards.map(d => d.card.id).join('|')}`}
                     cards={game.calibratePending.drawnCards}
                     onConfirm={(selectedId) => actions.confirmCalibrate(selectedId)}
                     onViewArt={handleViewCard}
@@ -2426,7 +2684,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     <div
                         className="fixed inset-0 z-[500] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in cursor-pointer"
                         onClick={() => {
-                            if (game.turnOwner === 'enemy') return; // [2026-07-20] AI 的抉择，玩家不可取消
+                            if (game.spellCasting?.choiceOwner === 'enemy') return; // [2026-10-02 莉莉子修复] 只锁 AI 自己的抉择（原判据 turnOwner 会误锁玩家在对方优先权阶段打出的极速抉择）
                             eventBus.emit(GameEvents.CANCEL_SPELL);
                             actions.cancelChoice(); // [核心大扫除] 回收站权力交还给底层引擎
                         }}
@@ -2439,12 +2697,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 const choiceData = CARD_DB[choiceKey] as CardData;
                                 if (!choiceData) return null;
 
+                                // [2026-10-02 莉莉子 BUG修复] 归属方只认 choiceOwner，不认 turnOwner。
+                                //   否则玩家在对方优先权阶段打出的极速抉择，会拿**敌方法力**做「够不够」判定，
+                                //   选项被误显示为「法力值不足」而点不动（界面看着能点、实际 canPlay=false）。
+                                const isEnemyChoice = game.spellCasting?.choiceOwner === 'enemy';
+
                                 // [2026-07-30 飞剑减费] 为朔望之期 + 剑痕时空按本牌局飞剑数折扣
                                 const FLYING_SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
                                 let displayChoiceData = choiceData;
                                 let isCostDiscounted = false;
                                 if (FLYING_SWORD_DISCOUNT_KEYS.includes(choiceKey)) {
-                                    const fsTotal = game.turnOwner === 'enemy'
+                                    const fsTotal = isEnemyChoice
                                         ? (game.enemyFlyingSwordsTotal || 0)
                                         : (game.playerFlyingSwordsTotal || 0);
                                     if (fsTotal > 0) {
@@ -2460,10 +2723,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 // 呼叫法务和裁判：这个卡能不能放？
                                 const { canPlay, lockedMessage } = evaluateChoiceCondition(
                                     displayChoiceData,
-                                    game.turnOwner === 'enemy' ? game.enemyMana : game.playerMana,
-                                    game.turnOwner === 'enemy' ? game.enemySpellMana : game.playerSpellMana,
+                                    isEnemyChoice ? game.enemyMana : game.playerMana,
+                                    isEnemyChoice ? game.enemySpellMana : game.playerSpellMana,
                                     game.spellCasting?.isHeroLeveled,
-                                    game.phase
+                                    game.phase,
+                                    // [2026-10-05 莉莉子 BUG修复 · 20261005-01] 慢速子卡的时机枷锁
+                                    //   （归属方 / 当前优先权 / 法术堆栈长度）—— 与 playCard 的慢速守卫同口径
+                                    {
+                                        owner: isEnemyChoice ? 'enemy' : 'player',
+                                        turnOwner: game.turnOwner,
+                                        stackLength: game.spellStack.length,
+                                    }
                                 );
 
                                 // 保留原有的视效区分：数组第0个(小技能)偏蓝，第1个(大招)偏红
@@ -2479,7 +2749,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         <div className={`group relative transition-all duration-300 ${canPlay ? 'cursor-pointer hover:scale-110 hover:-translate-y-4' : ''}`}
                                              onClick={(e) => {
                                                  e.stopPropagation();
-                                                 if (game.turnOwner === 'enemy') return; // [2026-08-07 莉莉子修复] AI 的抉择，玩家不可点击（与背景取消逻辑一致）
+                                                 if (game.spellCasting?.choiceOwner === 'enemy') return; // [2026-10-02 莉莉子修复] 只锁 AI 自己的抉择（同背景取消）
                                                  if (canPlay) actions.resolveChoice(choiceKey); // 直接传递 Key
                                              }}>
                                             <div className={`absolute -top-16 left-1/2 -translate-x-1/2 text-2xl font-bold ${textColor} opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-4 group-hover:translate-y-0 whitespace-nowrap`}>
@@ -2690,7 +2960,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     <div ref={isCasting ? spellCenterRef : undefined} data-entity-id={card.id} className={`relative w-[110px] h-[110px] rounded-full overflow-hidden z-10 bg-black ${isStackTargetable ? 'ring-4 ring-red-400/80 animate-pulse' : ''}`}>
                                         {/* [2026-09-26 莉莉子] 动态法术卡面：有视频播视频，否则静态插画兜底 */}
                                         {spellStackVideoSrc ? (
-                                            <CardFaceVideo src={spellStackVideoSrc} className="w-full h-full object-cover animate-pulse-slow opacity-90 mix-blend-screen" />
+                                            <CardFaceVideo src={spellStackVideoSrc} poster={currentImageUrl} className="w-full h-full object-cover animate-pulse-slow opacity-90 mix-blend-screen" />
                                         ) : (
                                         <img src={currentImageUrl} className="w-full h-full object-cover animate-pulse-slow opacity-90 mix-blend-screen" draggable={false} />
                                         )}
@@ -2851,7 +3121,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 {/* --- B. 中间战场层 (居中限制宽度) --- */}
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 h-full w-[65%] flex flex-col z-10">
                     {/* 1. 敌方手牌 */}
-                    <EnemyHand hand={enemyHand} cardBackUrl={enemyCardBack} cardBackVideoUrl={enemyCardBackVideo} onAnimComplete={(id) => onHandAnimComplete(id, 'enemy')} />
+                    <EnemyHand hand={enemyHand} cardBackUrl={enemyCardBack} cardBackVideoUrl={enemyCardBackVideo} onAnimComplete={handleEnemyHandAnimComplete} />
 
                     {/* 3. 核心战场 - 整合备战席为绝对定位，彻底解决高度挤压问题 */}
                     <div className="flex-1 relative">
@@ -2879,20 +3149,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     }
                                     // [2026-09-18] 暴露标记的显示时机：仅进攻宣言阶段（程拍板收窄）
                                     isAttackDeclare={game.phase === 'attack_declare'}
-                                    onClick={() => {
-
-                                        if (spellSystem.isCasting) {
-                                            spellSystem.handleTargetClick(c, 'enemy'); // 优先处理施法点击
-                                        } else if (game.phase === 'attack_declare' && game.selectedChallengerId) {
-                                            eventBus.emit(GameEvents.UI_CLICK);
-                                            actions.challengeEnemy(game.selectedChallengerId, c.id);
-                                        } else if (spellSystem.isCasting) {
-                                            // [新增] 施法模式下，点击敌方单位
-                                            spellSystem.handleTargetClick(c, 'enemy');
-                                        } else {
-                                            handleCardClick(c, 'enemy_bench', 'enemy');
-                                        }
-                                    }}
+                                    onClick={handleEnemyBenchCardClick} // [2026-10-02 莉莉子 性能] 原内联箭头已抽为稳定引用（见上方 handleEnemyBenchCardClick）
                                     onViewArt={handleViewCard}
                                     isSpeaking={c.id === speakingCardId}
                                     isTargetable={spellSystem.checkIsTargetable(c, 'enemy')}
@@ -2911,80 +3168,20 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 skinOverrides={skinOverrides} // [新增] 喂给战场组件！
                                 turnOwner={game.turnOwner}
                                 selectedBlockerId={game.selectedBlockerId}
-                                onCombatClick={(i) => {
-                                    // [2026-08-26 莉莉子 BUG修复] 施法选目标（isCasting）时不触发格挡——
-                                    // 否则单挑施法选目标时点击战斗区卡牌冒泡到槽位，会误把残留的格挡者派上去挡
-                                    if (spellSystem.isCasting) return;
-                                    // 1. 优先判定：是否处于"格挡宣言"阶段且"已选中备战席单位"
-                                    // 如果选中了人，点击槽位 = 分配阻挡
-                                    if (game.phase === 'block_declare' && game.selectedBlockerId) {
-                                        eventBus.emit(GameEvents.UI_CLICK);
-                                        actions.assignBlocker(i, game.selectedBlockerId);
-                                    }
-                                    // 2. 其次判定：如果没有选中人，但点击了已有的阻挡者 = 撤回
-                                    else if (game.phase === 'block_declare' && game.turnOwner === 'player') {
-                                        if (combatField[i].blocker) actions.recallBlocker(i);
-                                    }
-                                }}
-                                onCardClick={(c, l, o) => {
-
-                                     // [新增] 战斗中单位的施法目标选择
-                                     if (spellSystem.isCasting) {
-                                         spellSystem.handleTargetClick(c, o as 'player'|'enemy');
-                                         return;
-                                     }
-                                     if (l === 'combat' && o === 'player') {
-                                         // [2026-09-16 1.0.16 茉莉安 · T11] 【暴露】实装：
-                                         //   门槛从「必须带【挑战者】」放宽为「任意我方攻击者都能选中」——
-                                         //   因为暴露是【防守方的公开漏洞】，不需要任何特权即可拉取。
-                                         //   挑战者仍然只决定「能不能拉没暴露的目标」，资格最终由
-                                         //   challengeEnemy（引擎侧）判定，UI 只负责让玩家点得动。
-                                         if (game.phase === 'attack_declare') {
-                                             if (game.selectedChallengerId === c.id) {
-                                                 actions.selectChallenger(c.id);
-                                             } else if (game.selectedChallengerId !== c.id) {
-                                                 eventBus.emit(GameEvents.UI_CLICK);
-                                                 actions.selectChallenger(c.id);
-                                                 return;
-                                             }
-                                         }
-                                         eventBus.emit(GameEvents.RECALL_UNIT);
-                                         if (game.phase === 'attack_declare') actions.toggleAttacker(c, false);
-                                         if (game.phase === 'block_declare') {
-                                             // ★ 教程：如果期望拖拽操作，屏蔽点击撤回格挡
-                                             if (tutorialInteractionMode.current === 'drag_target') {
-                                                 setMessage('请使用拖拽来撤回格挡');
-                                                 return;
-                                             }
-                                             const idx = combatField.findIndex(f => f.blocker?.id === c.id);
-                                             if (idx !== -1) actions.recallBlocker(idx);
-                                         }
-                                     }
-                                     else if (l === 'combat' && o === 'enemy') {
-                                         const idx = combatField.findIndex(f => f.blocker?.id === c.id);
-                                         // [核心修复] 严格守卫：只有在玩家自己宣告进攻的阶段，才能撤销自己用“挑战者”拉上来的敌军！
-                                         // 绝对禁止在敌方分配格挡时，或战斗响应期间，跨权限踢回敌军。
-                                         if (idx !== -1 && game.phase === 'attack_declare' && combatField[idx].owner === 'player') {
-                                             eventBus.emit(GameEvents.RECALL_UNIT);
-                                             actions.recallBlocker(idx);
-                                         }
-                                     }
-                                     else {
-                                         handleCardClick(c, l, o);
-                                     }
-                                }}
+                                onCombatClick={handleCombatSlotClick} // [2026-10-02 莉莉子 性能] 原内联箭头已抽为稳定引用（见上方）
+                                onCardClick={handleCombatCardClick} // [2026-10-02 莉莉子 性能] 原内联箭头已抽为稳定引用（见上方 handleCombatCardClick）
                                 onViewArt={handleViewCard}
                                 speakingCardId={speakingCardId}
                                 selectedChallengerId={game.selectedChallengerId}
-                                onChallengerClick={actions.selectChallenger}
+                                onChallengerClick={handleChallengerSelect}
                                 cardBackUrl={currentCardBackUrl}
                                 cardBackVideoUrl={currentCardBackVideo}
-                                onCombatPointerDown={onCombatPointerDown} // [新增] 战场→备战席拖拽
+                                onCombatPointerDown={handleCombatPointerDownStable} // [新增] 战场→备战席拖拽
                                 // [补漏修复] 将 GameSession 计算好的雷达数据传递给 Battlefield 组件
                                 dragPreviewSlots={dragPreviewSlots}
                                 previewAttackerCount={previewAttackerCount}
                                 // [新增] 战场悬停预览
-                                cardGazeEvents={bindGazeEvents}
+                                cardGazeEvents={handleCardGazeEvents}
                             />
                         </div>
 
@@ -3009,32 +3206,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         // [修改] 主阶段持有攻击标识时，所有单位高亮发蓝光！
                                         highlightTarget={(game.phase === 'attack_declare' && game.turnOwner === 'player') || (game.phase === 'block_declare' && game.turnOwner === 'player' && hasBlockableEnemyAttacker) || canAttackPhase || game.spellCasting?.step === 'select_bench'}
                                         isBlocking={game.phase === 'block_declare'}
-                                    onClick={() => {
-                                        // [2026-07-20 替换打出] 替换选择模式：选中一个备战席单位
-                                        if (game.spellCasting?.step === 'select_bench') {
-                                            const sc = game.spellCasting;
-                                            const currentIds = sc.targets.map((t: any) => t.id);
-                                            const newTargets = currentIds.includes(c.id) ? [] : [{ type: 'ally', id: c.id }];
-                                            actions.updateSpellCasting({ ...sc, targets: newTargets });
-                                            eventBus.emit(GameEvents.SFX_SELECT_UNIT);
-                                            setMessage(newTargets.length > 0 ? `已选择 ${c.name}，点击确认替换` : '选择一个单位替换');
-                                            return;
-                                        }
-                                        if (spellSystem.isCasting) {
-                                            spellSystem.handleTargetClick(c, 'player');
-                                        } else {
-                                            // [新增] 拦截逻辑：无法格挡
-                                            // 仅在格挡阶段生效
-                                            if (game.phase === 'block_declare' && c.keywords.includes('CantBlock')) {
-                                                setMessage("该单位无法进行格挡！");
-                                                // 播放错误音效 (可选)
-                                                // eventBus.emit(GameEvents.ERROR_SFX);
-                                                return;
-                                            }
-
-                                            handleCardClick(c, 'bench', 'player');
-                                        }
-                                    }}
+                                    onClick={handleBenchCardClick} // [2026-10-02 莉莉子 性能] 由内联箭头改为稳定引用（见上方 handleBenchCardClick），让 React.memo(Card) 生效
                                     onViewArt={handleViewCard}
                                     isSpeaking={c.id === speakingCardId}
                                     isTargetable={spellSystem.checkIsTargetable(c, 'player')}
@@ -3238,7 +3410,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 cardBackUrl={currentCardBackUrl}
                                 cardBackVideoUrl={currentCardBackVideo}
                                 skinOverrides={skinOverrides} // [新增] 喂给手牌区！
-                                onCardClick={(c) => handleCardClick(c, 'hand', 'player')}
+                                onCardClick={handleHandCardClick}
                                 onHover={setHoveredCard}
                                 onViewArt={handleViewCard}
                                 playerBench={playerBench}
@@ -3246,7 +3418,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 enemyBench={enemyBench} // [2026-09-19] 法术场上条件拦截用
                                 isCastingForHand={isCastingForHand} // [核心修复] 将索敌状态精准打通至手牌组件！
                                 handTargetFilter={handTargetFilter} // [2026-08-08 莉莉子] HAND_CARD 目标过滤条件，供手牌高亮
-                                onAnimComplete={(id) => onHandAnimComplete(id, 'player')} // [2026-07-22 莉莉子] 手牌动画完成回调
+                                onAnimComplete={handlePlayerHandAnimComplete} // [2026-10-02 莉莉子 性能] 改为稳定引用
                             />
                         )}
                     </div>

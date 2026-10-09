@@ -106,16 +106,31 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
     // [2026-09-10 莉莉子] 鼠标是否位于「触发卡牌 ∪ 保持元素」区域内。
     // 触发卡牌用进入时抓到的 cardRect（即使鼠标已离开，矩形仍有效）；
     // 保持元素（如卡牌大图本体）实时查询 —— 它们随 gazeTarget 渲染/卸载。
+    //
+    // [2026-10-02 莉莉子 BUG修复] 判定改为「触发卡牌 ∪ 保持元素的**并集包围盒**」。
+    //   病根：大图与触发卡之间留了 OFFSET(8px) 间隙（见 FloatingCardPreview），
+    //   而原先分别判定两个矩形 ⇒ **间隙不在任何矩形内** ⇒ 鼠标穿行时被判为"已离开"。
+    //   程/粉丝原话：「鼠标移开备战席的卡牌后，左侧的预览大图会很容易消失」。
+    //   并集包围盒把这段间隙桥接进来 —— 鼠标从卡牌滑向大图的整条路径都在保持区内。
     const inHoldRegion = useCallback((x: number, y: number): boolean => {
-        const trig = currentGazeRef.current?.cardRect;
-        if (trig && x >= trig.left && x <= trig.right && y >= trig.top && y <= trig.bottom) return true;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        const addRect = (r: DOMRect | undefined | null) => {
+            if (!r) return;
+            if (r.width <= 0 && r.height <= 0) return;
+            if (r.left < minX) minX = r.left;
+            if (r.top < minY) minY = r.top;
+            if (r.right > maxX) maxX = r.right;
+            if (r.bottom > maxY) maxY = r.bottom;
+        };
+
+        addRect(currentGazeRef.current?.cardRect as DOMRect | undefined);
         if (holdSelector) {
             for (const el of Array.from(document.querySelectorAll(holdSelector))) {
-                const r = el.getBoundingClientRect();
-                if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+                addRect(el.getBoundingClientRect());
             }
         }
-        return false;
+        if (minX === Infinity) return false;
+        return x >= minX && x <= maxX && y >= minY && y <= maxY;
     }, [holdSelector]);
 
     // [2026-09-10 莉莉子] 保持监控：鼠标离开触发源后不再"到点即关"，
@@ -125,13 +140,26 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
         const onMove = (e: MouseEvent) => {
             lastMouseRef.current = { x: e.clientX, y: e.clientY };
             if (!holdingRef.current) return;
-            if (inHoldRegion(e.clientX, e.clientY)) return; // 仍在保持区 → 继续显示
-            // 真正离开了 → 关闭（同原 dismiss 语义）
-            holdingRef.current = false;
-            if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null; }
-            setGazeTarget(null);
-            currentGazeRef.current = null;
-            isGazingRef.current = false;
+            if (inHoldRegion(e.clientX, e.clientY)) {
+                // [2026-10-02 莉莉子 BUG修复] 回到保持区 → 取消待关闭计时器，保持显示
+                if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null; }
+                return;
+            }
+            // [2026-10-02 莉莉子 BUG修复] 离开保持区的**第一帧不再立即关闭**。
+            //   病根：原实现 `setGazeTarget(null)` 就地执行 ⇒ 鼠标只要有一帧落在
+            //   "卡牌与大图之间"的间隙、或途经任何非保持区，大图当场消失，
+            //   玩家根本来不及把鼠标移到大图上检视武装。
+            //   修法：改为**缓冲关闭** —— 起一个 leaveBuffer 计时器；期间鼠标若回到保持区即取消。
+            if (leaveTimerRef.current) return; // 已有待关闭计时器 → 让它继续等
+            leaveTimerRef.current = window.setTimeout(() => {
+                leaveTimerRef.current = null;
+                const m = lastMouseRef.current;
+                if (holdingRef.current && m && inHoldRegion(m.x, m.y)) return; // 已回到保持区 → 继续显示
+                holdingRef.current = false;
+                setGazeTarget(null);
+                currentGazeRef.current = null;
+                isGazingRef.current = false;
+            }, leaveBuffer);
         };
         window.addEventListener('mousemove', onMove);
         return () => {

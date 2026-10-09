@@ -15,7 +15,12 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false, // 允许在渲染进程中使用 Node API (如果需要)
-      webSecurity: false       // 允许加载本地资源
+      webSecurity: false,      // 允许加载本地资源
+      // [2026-10-05 莉莉子 BUG修复 · 20261005-11] **关闭后台节流**
+      //   默认情况下窗口失焦/被遮挡/最小化时，Chromium 会节流定时器与 rAF（媒体也可能被挂起）
+      //   ⇒ 表现就是"切出去再回来，影片停在那一帧、看门狗也没在跑"。
+      //   本游戏是单窗口桌面应用，不需要"后台省电"，关掉它换"任何时候都不许停"。
+      backgroundThrottling: false
     },
     // 默认全屏体验更好
     fullscreen: false,

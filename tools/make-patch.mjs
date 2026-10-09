@@ -275,7 +275,11 @@ console.log(`   压缩后: ${(archiveSize / 1024 / 1024).toFixed(1)} MB`);
 // ═══════════════════════════════════════════════════
 console.log('🔧 生成自解压安装器...');
 
-const tag = OLD_VERSION ? `patch-v${OLD_VERSION}` : `full-v${NEW_VERSION}`;
+// [2026-10-03 莉莉子] 命名改用**升级后的版本号** NEW_VERSION。
+//   旧实现是 `patch-v${OLD_VERSION}` ⇒ 打 v1.0.18.2 的补丁会叫 `patch-v1.0.18.1.exe`，
+//   与上一版补丁（v1.0.18.1 那次脚本产出 patch-v1.0.18.exe、程手动改名成 patch-v1.0.18·1.exe）
+//   **看起来一模一样** ⇒ 极易发错补丁给玩家。保留 full/patch 前缀区分"首次全量"与"差量补丁"。
+const tag = OLD_VERSION ? `patch-v${NEW_VERSION}` : `full-v${NEW_VERSION}`;
 const OUTPUT_NAME = `${tag}.exe`;
 const outputPath = join(RELEASE_DIR, OUTPUT_NAME);
 const launcherExe = join(TOOLS_DIR, 'patch-launcher.exe');

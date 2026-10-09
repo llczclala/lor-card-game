@@ -9,6 +9,7 @@
 
 import type { CardData, Keyword } from '../types';
 import type { EquipmentQuestReward, QuestSpec } from './questTypes'; // [2026-09-25 莉莉子] 三线任务化框架：任务声明与兑现
+import { getEffectDef } from './effectRegistry'; // [2026-10-08 第二波] 适用性判定要按 effectRegistry.class 认"伤害类法术"
 import abc_spell from '../image/spells/abc.webp';
 import equipment_resonance from '../image/equipment/equipment00.webp'; // [2026-09-09] 碳原子板专属图（程提供）
 import equipment_retrain from '../image/equipment/equipment01.webp'; // [2026-09-09] 重修申请专属图（程提供）
@@ -70,6 +71,30 @@ export interface EquipmentDef {
     spellOnly?: boolean;      // [2026-09-28 法术专属装备] **仅法术卡可挂**（单位卡不可）。
                               //   理由：法术与单位价值轴不同 —— 单位装备强化"它站在那里"，法术装备只能强化"这一次结算"
                               //   （费用 / 结算数值 / 回响 / 手牌约束 / 法术法力 / 速度与目标）。见 技术手册/设计-法术专属装备.md
+    /**
+     * [2026-10-08 莉莉子 法术专属装备 · 第二波] **卡级结算修饰**：法术结算时由结算器读"**当前结算的那张卡**"身上的装备。
+     *   为什么单独立字段：法术是「一次性结算」，它的强化对象就是"这一次结算"；
+     *   而 `onTrigger` / `quest` 需要"在场锚点"—— 法术在手牌/堆叠里，永远推不到（见 设计-法术专属装备.md §3.3）。
+     *   当前组已实装：`damageAdd` / `damageMult`（读取点：`effectProcessor` 的 getSpellDamageBonus / getSpellDamageMultiplier）。
+     *   后续组（回法力 / 抽牌 / 速度 / 目标数 / 双施 / 条件减费）按挂点逐个补，**不预先声明空字段**（免得变成死数据）。
+     */
+    spellResolve?: {
+        damageAdd?: number;   // 该卡造成的伤害 +N（研习批注 +1 / 增补弹药 +2）
+        damageMult?: number;  // 该卡造成的伤害 ×N（过载誊本 ×2）
+        /** 该卡打出时**追加到效果链末尾**执行的效果 id（余温笔录 / 页码夹层）
+         *  —— 复用现成效果管线（DRAW 的动画/牌库耗尽/手牌上限全自动），不另开手写逻辑 */
+        grantEffects?: string[];
+        /** 该卡结算速度提升为【极速】（引信加速）
+         *  ⚠️ 这条**必须在挂载时改写 `card.type`**（不能像 grantEffects 那样追加效果）：
+         *     速度的唯一真源是 `card.type`，施法窗口/堆叠/反制/UI 标签全读它。
+         *  📌 已知外观边界：卡面**描述文本**里的"慢速："字样不会跟着改（那在 `cards.ts` 的 description 里），
+         *     但卡牌详情面板的速度标签（`Overlays.tsx:333`）会正确显示为「极速」。 */
+        speedBurst?: boolean;
+        /** **本回合尚未打出过法术**时，该卡费用 −N（活页夹页）。读对局状态快照（见 gameRules.spellCastSnapshot） */
+        conditionalCostModIfNoSpellThisRound?: number;
+        /** 本场该方已打出 ≥N 个法术时，该卡费用**变为 0**（双生符） */
+        costZeroIfSpellsCast?: number;
+    };
     costMod?: number;         // [静态修饰] 费用修正（装备1：-1）
     keywords?: Keyword[];     // [静态修饰] 附加关键词（装备2：QuickAttack）
     powerMod?: number;        // [静态修饰] 攻击修正（装备4：+4）
@@ -522,6 +547,80 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         spellOnly: true,
         costMod: -1, keywords: ['Echo'], // 费用 + 次数双收益，单卡级最强档
     },
+    // ── [2026-10-08 莉莉子 法术专属装备 · 第二波 · 第 1 组：卡级伤害] ──
+    //   挂点：`effectProcessor.getSpellDamageBonus / getSpellDamageMultiplier` 读 `context.sourceCard` 的装备
+    //   （施法那张卡由 `useSpellSystem.commitSpell` 第 5 参传给 `executeSpellEffect` → 进 EffectContext.sourceCard）
+    //   定价依 设计-法术专属装备.md §六：伤害 +1 = 绿 / +2 = 金 / 翻倍 = 红（代价 +2 费）
+    {
+        id: 'equip_spell_margin_notes',
+        name: '研习批注',
+        description: '使该卡造成的伤害 +1。',
+        rarity: 'uncommon', icon: abc_spell,
+        spellOnly: true,
+        spellResolve: { damageAdd: 1 },
+    },
+    {
+        id: 'equip_spell_extra_ammo',
+        name: '增补弹药',
+        description: '使该卡造成的伤害 +2。',
+        rarity: 'legendary', icon: abc_spell,
+        spellOnly: true,
+        spellResolve: { damageAdd: 2 },
+    },
+    {
+        id: 'equip_spell_overload_transcript',
+        name: '过载誊本',
+        description: '使该卡造成的伤害翻倍；代价：该卡费用 +2。',
+        rarity: 'mythic', icon: abc_spell,
+        spellOnly: true,
+        costMod: 2, // Pact 代价：翻倍不是白给的
+        spellResolve: { damageMult: 2 },
+    },
+    // ── [2026-10-08 莉莉子 法术专属装备 · 第二波 · 第 2 组：结算后追加] ──
+    //   挂点：`spellResolve.grantEffects` → `spells.ts` 在效果链末尾执行
+    //   ⚠️ 适用性不额外加闸：DRAW 自身会处理"牌库空 / 手牌满"（静默不出牌），误挂也不会崩
+    {
+        id: 'equip_spell_warm_notes',
+        name: '余温笔录',
+        description: '该卡打出后，恢复 1 点法术法力。',
+        rarity: 'rare', icon: abc_spell,
+        spellOnly: true,
+        spellResolve: { grantEffects: ['effect_equip_warm_notes'] },
+    },
+    {
+        id: 'equip_spell_page_slip',
+        name: '页码夹层',
+        description: '该卡打出后，抽 1 张牌。',
+        rarity: 'rare', icon: abc_spell,
+        spellOnly: true,
+        spellResolve: { grantEffects: ['effect_equip_page_slip_draw1'] },
+    },
+    // ── [2026-10-08 莉莉子 法术专属装备 · 第二波 · 第 3 组：速度改写] ──
+    {
+        id: 'equip_spell_fuse_accel',
+        name: '引信加速',
+        description: '使该卡的结算速度提升为【极速】。',
+        rarity: 'epic', icon: abc_spell,
+        spellOnly: true,
+        spellResolve: { speedBurst: true },
+    },
+    // ── [2026-10-08 莉莉子 法术专属装备 · 第二波 · 第 4 组：条件费用] ──
+    {
+        id: 'equip_spell_loose_leaf',
+        name: '活页夹页',
+        description: '本回合尚未打出过法术时，该卡费用 -1。',
+        rarity: 'uncommon', icon: abc_spell,
+        spellOnly: true,
+        spellResolve: { conditionalCostModIfNoSpellThisRound: -1 },
+    },
+    {
+        id: 'equip_spell_twin_sigil',
+        name: '双生符',
+        description: '本场已打出 3 个法术后，该卡费用变为 0。',
+        rarity: 'epic', icon: abc_spell,
+        spellOnly: true,
+        spellResolve: { costZeroIfSpellsCast: 3 },
+    },
     // ── 武装（[2026-08-14] 特殊装备：局外带入、局内不可获取，进入游戏前配置到武装槽）──
     // ── [2026-09-25 莉莉子 任务化武装批 v3 · 试点] 《设计-肉鸽三线任务化框架》7.1 ──
     //   武装的任务是【整局作用域】（跨战斗累积）；完成后由 grantBattleEffectId 指向的战斗内效果持续生效
@@ -602,7 +701,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     {
         id: 'arm_triumph_box',
         name: '凯旋之匣',
-        description: '每场战斗结束时，若天启者仍然存活，获得 30 金币。',
+        description: '战斗胜利后，若天启者仍然存活，获得 30 金币。',
         rarity: 'epic', icon: abc_spell,
         isArmament: true,
         // Novel：打通"战斗表现"与"局内经济"（保护英雄 = 更多资源）；结算在 run 层，不走战斗内管线
@@ -752,7 +851,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     {
         id: 'arm_retrain',
         name: '重修申请',
-        description: '不提供任何效果。携带通关推演后，按难度将该武装所在槽位的可装备品质上限提升至：普通→史诗、机密→传说、绝密→神话（槽已达更高则本局不消耗）。升档后此武装消失 1 份（消耗品，可多份囤积；多槽各装一份可一局分别升）。',
+        description: '不提供任何效果。携带通关推演后，按难度将该武装所在槽位的可装备品质上限提升至：普通→史诗、机密→传说、绝密→神话（槽已达更高则本局不消耗）。升档后此武装消失 1 份（消耗品）。',
         rarity: 'rare', icon: equipment_retrain, // [2026-09-09] 专属图 equipment01
         isArmament: true,
         consumable: true,
@@ -810,9 +909,52 @@ export const getEquipmentOnlyDefs = (scope: 'unit' | 'spell'): EquipmentDef[] =>
  *
  * ⚠️ 第二波装备（伤害 +N / 目标 +1 / 回想释放…）实装时，须在此追加"按 `effectRegistry.class` 判伤害类法术""有目标才可 +1"等判定。
  */
+/**
+ * [2026-10-08 莉莉子 · 法术专属装备 第二波] 装备的**条件费用修正**（纯计算，不碰状态）：
+ *   调用方（`utils/gameRules.getEffectiveSpellCost`）把"本回合/本场已施法数"传进来。
+ *   返回：`mod` = 费用增量（负数 = 减费）· `zero` = 是否归零（双生符）。
+ *   ⚠️ 为什么放这里：装备表的读取（`EQUIPMENT_BY_ID`）在本文件，gameRules 只做算术，依赖方向干净。
+ */
+export const getSpellConditionalCost = (
+    card: { equipment?: string[]; cost?: number },
+    state: { thisRound: number; thisRun: number },
+): { mod: number; zero: boolean } => {
+    let mod = 0;
+    let zero = false;
+    for (const id of card.equipment ?? []) {
+        const sr = EQUIPMENT_BY_ID[id]?.spellResolve;
+        if (!sr) continue;
+        const condMod = sr.conditionalCostModIfNoSpellThisRound ?? 0;
+        if (condMod !== 0 && state.thisRound === 0) mod += condMod;
+        if (sr.costZeroIfSpellsCast !== undefined && state.thisRun >= sr.costZeroIfSpellsCast) zero = true;
+    }
+    return { mod, zero };
+};
+
+/**
+ * [2026-10-08 莉莉子 · 法术专属装备 第二波] 该卡身上装备声明的「**追加效果 id**」列表。
+ * 消费者：`spells.ts` 的 executeSpellEffect —— 拼在 `CARD_DB[key].effects` **之后**执行
+ * （法术结算是按 DB 的 effects 跑的，所以只能在调用侧拼，不能改实例的 effects）。
+ */
+export const getSpellResolveGrantEffects = (card?: { equipment?: string[] }): string[] => {
+    const out: string[] = [];
+    for (const id of card?.equipment ?? []) {
+        for (const e of EQUIPMENT_BY_ID[id]?.spellResolve?.grantEffects ?? []) out.push(e);
+    }
+    return out;
+};
+
+/** [2026-10-08 第二波] 「伤害类法术」白名单（设计文档 §4.2；与 effectProcessor 的增伤点对齐） */
+const DAMAGE_EFFECT_CLASSES = new Set(['STRIKE', 'SPREAD_DAMAGE', 'CHAIN_STRIKE', 'TITAN_PULSE', 'FLYING_SWORD']);
+const isDamageSpell = (card: { type: string; effects?: string[] }): boolean =>
+    (card.effects ?? []).some(id => {
+        const cls = getEffectDef(id)?.class;
+        return !!cls && DAMAGE_EFFECT_CLASSES.has(cls);
+    });
+
 export const isEquipmentApplicable = (
     def: EquipmentDef,
-    card: { type: string; cost?: number; keywords?: Keyword[] },
+    card: { type: string; cost?: number; keywords?: Keyword[]; effects?: string[] },
     equippedIds?: string[],
 ): boolean => {
     if (!def || !card?.type) return false;
@@ -831,6 +973,20 @@ export const isEquipmentApplicable = (
     // B 效果轴：减费对 0 费卡无效；且费用必须够减（-2 费装备不给 1 费法术 —— 见设计文档 §4.2「费用 ≥ 减费量」）
     if ((def.costMod ?? 0) < 0 && (card.cost ?? 0) < Math.abs(def.costMod ?? 0)) return false;
 
+    // [2026-10-08 第二波] spellResolve 的适用性：伤害类修饰只能挂给**真的会造成伤害**的法术
+    //   （反例：给纯增益/抽牌/治疗法术挂"伤害 +1" = 占格子的空装备，正是 §四 要灭的）
+    if (def.spellResolve) {
+        const sr = def.spellResolve;
+        if ((sr.damageAdd ?? 0) !== 0 || (sr.damageMult ?? 1) > 1) {
+            if (!isDamageSpell(card)) return false;
+        }
+        // 已是极速 ⇒ 速度改写等于没提升（§四 铁律：能给这张卡挂，就必须对它有提升）
+        if (sr.speedBurst && card.type === 'spell-burst') return false;
+        // 条件减费：费用必须 ≥ 1（0 费卡减不动）；归零型：费用必须 > 0（否则本来就是 0）
+        if ((sr.conditionalCostModIfNoSpellThisRound ?? 0) !== 0 && (card.cost ?? 0) < 1) return false;
+        if (sr.costZeroIfSpellsCast !== undefined && (card.cost ?? 0) <= 0) return false;
+    }
+
     // 该装备是否还有"关键词以外"的收益（数值 / 机制 / 代价都算 —— 有它就不做去重淘汰）
     const hasNonKeywordValue = (def.costMod ?? 0) !== 0
         || !!def.powerMod || !!def.healthMod
@@ -838,7 +994,8 @@ export const isEquipmentApplicable = (
         || !!def.quest || !!def.questReward
         || !!def.grantBattleEffectIds?.length
         || !!def.runBonus || !!def.pactNoHeal || def.pactNexusCost !== undefined
-        || def.runBattleEndGold !== undefined || !!def.reviveOncePerBattle || !!def.onOwnerDie;
+        || def.runBattleEndGold !== undefined || !!def.reviveOncePerBattle || !!def.onOwnerDie
+        || !!def.spellResolve; // [2026-10-08 第二波] 卡级结算修饰也算实打实的收益（防被 C 轴去重误杀）
 
     // C 轴去重：只有关键词收益，且一个新增关键词都没有 → 淘汰
     if (!hasNonKeywordValue && (def.keywords?.length ?? 0) > 0 && gainKeywords.length === 0) return false;
@@ -911,6 +1068,11 @@ export const attachEquipment = (card: CardData, equipId: string): CardData => {
             buffs.health = (buffs.health || 0) + Math.max(def.healthMod, 1 - curHealth);
         }
         next.buffs = buffs;
+    }
+    // [2026-10-08 莉莉子 · 法术专属装备 第二波] **速度改写**（引信加速）：非极速法术 → `spell-burst`
+    //   改 `type` 一处即可覆盖全链路（施法窗口 / 堆叠结算 / 反制白名单 / UI 速度标签）
+    if (def.spellResolve?.speedBurst && next.type !== 'spell-burst') {
+        next.type = 'spell-burst';
     }
     // [2026-09-25 莉莉子 三线任务化框架 · Pact 常驻代价] 无法被治疗：写入卡牌标记，治疗结算处直接跳过
     if (def.pactNoHeal) next.cantBeHealed = true;

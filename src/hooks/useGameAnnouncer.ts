@@ -35,8 +35,20 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase, disableMull
 
 
     // 辅助：设置公告
+    // [2026-10-05 莉莉子] **同文案去抖**：800ms 内重复的**同一句话**直接忽略。
+    // ── 病根：拒绝类播报会在"反复点同一个无效目标"时被**连续触发**
+    //    （反复点不可格挡的单位、反复点无效手牌…），而每次都会生成**新 id** ⇒
+    //    `GameAnnouncement` 的 `AnimatePresence mode="wait"` 要走"退场 0.3s + 进场 0.4s"
+    //    ⇒ 画面持续"闪"，反而看不清说了什么。
+    // ── 只对**完全相同**（mainText + subText）的重复生效：文案一变就照常播，
+    //    因此不影响「第 N 回合 / 你的进攻回合」这类正常序列（它们的文案各不相同）。
+    const lastMsgRef = useRef<{ key: string; at: number }>({ key: '', at: 0 });
     const setMsg = (text: string, sub: string, type: AnnouncementData['type'], duration: number = 0) => {
-        const id = Date.now().toString();
+        const dedupKey = `${text}|${sub}`;
+        const now = Date.now();
+        if (lastMsgRef.current.key === dedupKey && now - lastMsgRef.current.at < 800) return;
+        lastMsgRef.current = { key: dedupKey, at: now };
+        const id = now.toString();
         setAnnouncement({ id, mainText: text, subText: sub, type, duration });
 
         // [核心修改] 每次设置新公告前，先掐死上一个未完结的自动销毁定时器
@@ -161,9 +173,31 @@ export const useGameAnnouncer = ({ game, drawCards, isMulliganPhase, disableMull
         const hasChanged = prev.player !== curr.player || prev.enemy !== curr.enemy;
 
         if (hasChanged) {
-            // 如果变成了有 Token 的状态，则播报
+            // [2026-10-03 莉莉子 · 进攻标识三层分离 ⑥] **只播"标识"、不再播"回合"**。
+            //   病根：备战/侦察在**回合内**追加标识时，这里会调 showPhaseHint() 播「你的进攻回合」
+            //   ⇒ 玩家把它数成一个**新回合** ⇒ 于是把"备战抢攻"报成
+            //     「连续两个回合都是我的进攻回合 / 进攻标识没有轮换」（粉丝反馈的直接来源）。
+            //   真正的"回合"播报只由上方 `round` 变化那条负责（第 N 回合 + showPhaseHint）。
             if (curr.player || curr.enemy) {
-                showPhaseHint();
+                const mine = !!curr.player;
+                // [2026-10-03 莉莉子 · 文案口径] 副标题**只在真的"追加"时**才说"可再次进攻"。
+                //   病根：`attackToken` 变化有**两种来源** ——
+                //     ① 基准轮换（`calculateRoundStart` 写 `'normal'`）：这是本回合的**第一次**进攻权；
+                //     ② 追加进攻权（`grantExtraAttackTurn` 写 `'rally'`，来自备战 / 侦察）。
+                //   旧实现不区分，于是**每回合开头**也弹「EXTRA ATTACK · 本回合可再次进攻」——
+                //   玩家本回合连一次都还没打，却被提示"可再次进攻"，与"回合"侧播报自相矛盾。
+                //   ⚠️ 取值判据直接用标识本身（`'rally'` = 追加），**不新增任何状态**。
+                const myToken = curr.player;
+                const enemyToken = curr.enemy;
+                const isExtra = mine ? myToken === 'rally' : enemyToken === 'rally';
+                setMsg(
+                    mine ? '获得进攻标识' : '对手获得进攻标识',
+                    isExtra
+                        ? (mine ? 'EXTRA ATTACK · 本回合可再次进攻' : 'EXTRA ATTACK')
+                        : (mine ? '本回合的进攻权' : 'NORMAL'),
+                    'phase_hint',
+                    1500,
+                );
             }
             prevAttackTokenRef.current = { ...curr };
         }

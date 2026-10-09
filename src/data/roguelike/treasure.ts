@@ -5,7 +5,25 @@
 // 复用商店经济基础（卡生成 shop.ts、强化抽选 enhancements.ts）。
 // ==========================================
 import { generateCardOffers } from './shop';
-import { pickRandomEnhancements } from './enhancements';
+import { pickRandomEnhancements, type RarityBonusInput } from './enhancements';
+import type { EnhancementRarity } from './buffs';
+import type { RogueDifficulty } from './difficulties';
+
+// ═══════════════════════════════════════════════
+// [2026-10-08 莉莉子 · 难度分层] 惊喜强化宝箱的**档位随难度提升**
+//   旧实现写死：绿/绿/蓝 + 牺牲换紫（`TreasureModal` 里硬编码）⇒ 三档难度完全一样
+//   normals = 「普通档」两张；rare = 「稀有档」一张；sacrifice = 牺牲生命上限换的那一张
+// ═══════════════════════════════════════════════
+export interface SurpriseBoxTier {
+    normals: [EnhancementRarity, EnhancementRarity];
+    rare: EnhancementRarity;
+    sacrifice: EnhancementRarity;
+}
+export const SURPRISE_BOX_TIERS: Record<RogueDifficulty, SurpriseBoxTier> = {
+    normal:    { normals: ['uncommon', 'uncommon'], rare: 'rare',      sacrifice: 'epic' },
+    secret:    { normals: ['uncommon', 'rare'],     rare: 'epic',      sacrifice: 'legendary' },
+    topsecret: { normals: ['rare', 'epic'],         rare: 'legendary', sacrifice: 'mythic' },
+};
 
 export type TreasureType = 'gold' | 'card' | 'surprise' | 'random';
 
@@ -43,6 +61,10 @@ export interface TreasureRollContext {
     unlockedPass?: string[];
     ownedEnhancements?: string[];
     equippedCards?: Record<string, string[]>;
+    /** [2026-10-08 难度分层] 本局难度（决定奖励品质） */
+    difficulty?: RogueDifficulty;
+    /** [2026-10-08 难度分层] 英雄等级稀有度加成（此前随机宝箱**漏传**，等于练度对宝箱无效） */
+    rarityBonus?: RarityBonusInput;
 }
 
 /** 按权重抽一种随机宝箱奖励并生成内容 */
@@ -59,12 +81,14 @@ export const pickRandomTreasure = (ctx?: TreasureRollContext): RandomTreasureRes
         case 'gold':
             return { kind: 'gold', amount: GOLD_TREASURE_AMOUNT };
         case 'card': {
-            const offer = generateCardOffers(1, ctx?.equippedCards)[0];
+            // [2026-10-08 难度分层] 难度 → 带装备概率 + 装备品质
+            const offer = generateCardOffers(1, ctx?.equippedCards, { difficulty: ctx?.difficulty })[0];
             return { kind: 'card', cardKey: offer.cardKey, equipId: offer.equipId };
         }
         case 'enhancement': {
             // [2026-08-29 通行证] 已解锁通行证强化入池；[2026-09-25 莉莉子 不叠加] 排除已拥有 → 抽不到则退金币
-            const enh = pickRandomEnhancements(1, undefined, undefined, ctx?.unlockedPass, ctx?.ownedEnhancements)[0];
+            // [2026-10-08 难度分层] 原第二/三参写死 `undefined, undefined` ⇒ 难度与等级加成**双双失效**，现补齐
+            const enh = pickRandomEnhancements(1, ctx?.difficulty, ctx?.rarityBonus, ctx?.unlockedPass, ctx?.ownedEnhancements)[0];
             return enh ? { kind: 'enhancement', enhancementId: enh.id } : { kind: 'gold', amount: GOLD_TREASURE_AMOUNT };
         }
         case 'maxHp':

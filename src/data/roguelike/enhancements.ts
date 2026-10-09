@@ -7,6 +7,8 @@
 
 import { MAZE_BUFFS, type MazeBuff, type EnhancementEffect, type EnhancementRarity } from './buffs';
 import { PASS_UNLOCK_ENHANCEMENTS } from './analystProgression'; // [2026-08-29 通行证] 通行证解锁的强化
+import type { RogueDifficulty } from './difficulties'; // [2026-10-08 难度分层]
+import { enhWeightsFor } from './difficultyTiers'; // [2026-10-08 难度分层] 强化品质权重唯一真源
 
 export type { EnhancementRarity, EnhancementEffectType } from './buffs';
 
@@ -43,19 +45,13 @@ export interface RarityBonusInput {
     legendary: number;
 }
 
-// 稀有度基准权重（高稀有度越稀有）[2026-08-27] 六档：白/绿低档最常出，红暂空
-const RARITY_BASE_WEIGHT: Record<EnhancementRarity, number> = {
-    common: 70,     // 白（若有最基础档，最常见）
-    uncommon: 60,   // 绿（原 common 平移）
-    rare: 30,       // 蓝
-    epic: 9,        // 紫
-    legendary: 1,   // 金
-    mythic: 0,      // 红（暂无强化）
-};
-
-const pickWeightedEnhancementIndex = (pool: MazeEnhancement[], bonus?: RarityBonusInput): number => {
+// [2026-10-08 莉莉子 · 难度分层] 原 `RARITY_BASE_WEIGHT`（白70/绿60/蓝30/紫9/金1/红0）**已移除**：
+//   ① 它不区分难度 ② `mythic: 0` ⇒ 池里那 5 条红色强化**永远抽不到**（粉丝反馈核查确认）
+//   权重改按难度取表，唯一真源见 `difficultyTiers.ts` 的 ENH_WEIGHTS + ENH_CAP
+const pickWeightedEnhancementIndex = (pool: MazeEnhancement[], bonus?: RarityBonusInput, difficulty?: RogueDifficulty): number => {
+    const table = enhWeightsFor(difficulty);
     const weights = pool.map(e => {
-        let w = RARITY_BASE_WEIGHT[e.rarity] ?? 10;
+        let w = table[e.rarity] ?? 0;
         if (bonus) {
             // [2026-08-27] 六档：低档（白/绿）减权，高档（蓝/紫/金）加权；红暂无强化不参与
             if (e.rarity === 'common' || e.rarity === 'uncommon') w = Math.max(1, w - (bonus.rare + bonus.epic + bonus.legendary));
@@ -74,7 +70,7 @@ const pickWeightedEnhancementIndex = (pool: MazeEnhancement[], bonus?: RarityBon
     return pool.length - 1;
 };
 
-export const pickRandomEnhancements = (count: number, difficulty?: string, rarityBonus?: RarityBonusInput, unlockedPass?: string[], owned?: string[]): MazeEnhancement[] => {
+export const pickRandomEnhancements = (count: number, difficulty?: RogueDifficulty, rarityBonus?: RarityBonusInput, unlockedPass?: string[], owned?: string[]): MazeEnhancement[] => {
     let pool = buildPool(unlockedPass, owned); // [2026-08-29] 基础池 + 已解锁通行证强化；[2026-09-25] 剔除本局已拥有（不叠加）
     if (difficulty === 'topsecret') {
         const filtered = pool.filter(e => e.effect.type !== 'heal');
@@ -82,7 +78,7 @@ export const pickRandomEnhancements = (count: number, difficulty?: string, rarit
     }
     const result: MazeEnhancement[] = [];
     while (result.length < count && pool.length > 0) {
-        const idx = pickWeightedEnhancementIndex(pool, rarityBonus);
+        const idx = pickWeightedEnhancementIndex(pool, rarityBonus, difficulty);
         result.push(pool[idx]);
         pool.splice(idx, 1);
     }

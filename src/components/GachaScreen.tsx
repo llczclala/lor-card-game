@@ -73,9 +73,63 @@ export const GachaScreen: React.FC<GachaScreenProps> = ({ userSystem, onBack, in
         let newSilver = resources.silverCoin;
         let newBitGold = resources.bitGold;
 
+        // ══════════════════════════════════════════════════════════════════════
+        // [2026-10-02 莉莉子 BUG修复 · BUG-20261002-14 十连重复不转化]
+        //
+        // 病根：十连的 10 次 rollOne **共用同一份「抽卡前快照」**（collection / settings），
+        //   循环里不往工作副本入账 ⇒ `rollRare` 的重复判定
+        //   （`userSettings.unlockedCardBacks.includes(idx)` / `collection.ownedCards[key]`）
+        //   **只能看见这一抽之前就已经拥有的**。
+        //   同一次十连里第二件同名卡背/牌桌/皮肤，此刻还没入库 ⇒ 被判成 `isNew`，
+        //   拿不到 `convertedCurrency`；随后 `performGacha` 的「已有就跳过」分支直接丢弃
+        //   ⇒ **既不入库、也不转化、也不补偿**（粉丝原话：「重复获得卡背好像不会转化诶」「确实没转化」）。
+        //
+        // 修法：维护一份**滚动的工作副本**，每抽完就把它「预入账」进去，
+        //   让第 N 抽能看见前 N-1 抽的结果 ⇒ 第二件同名物即被判重 → 正常转比特金。
+        //   顺带修掉同族连带伤：卡牌在同一批次里抽到第 4 张时，现在会正确转比特金，
+        //   而不再是把库存顶到 4 张（`rollRare` 的 3 张上限分支此前同样看不见批次内前几张）。
+        //
+        // 注：只影响**本次抽取的判重**，不改 `rollOne` / `performGacha` 的任何既有规则。
+        // ══════════════════════════════════════════════════════════════════════
+        const workingCollection = {
+            ...collection!,
+            ownedCards: { ...(collection!.ownedCards ?? {}) },
+            ownedSkins: { ...((collection as any)?.ownedSkins ?? {}) },
+        } as typeof collection;
+        const workingSettings = {
+            ...(userSystem.settings as any),
+            unlockedCardBacks: [...((userSystem.settings as any)?.unlockedCardBacks ?? [])],
+            unlockedDesks: [...((userSystem.settings as any)?.unlockedDesks ?? [])],
+        };
+
         for (let i = 0; i < count; i++) {
-            const res = rollOne(collection!, newPity, newSkinPity, currentTarget, userSystem.settings, activePool);
+            const res = rollOne(workingCollection!, newPity, newSkinPity, currentTarget, workingSettings, activePool);
             results.push(res);
+
+            // ── 预入账：把这一抽记进工作副本，供**后续抽次**判重 ──
+            if (!res.convertedCurrency) {
+                if (res.type === 'card') {
+                    const k = res.key as string;
+                    if (k) (workingCollection as any).ownedCards[k] = ((workingCollection as any).ownedCards[k] ?? 0) + 1;
+                } else if (res.type === 'skin') {
+                    const k = res.key as string;
+                    const sid = (res as any).skinId;
+                    if (k && sid !== undefined) {
+                        const arr: number[] = (workingCollection as any).ownedSkins[k] ?? [];
+                        if (!arr.includes(sid)) (workingCollection as any).ownedSkins[k] = [...arr, sid];
+                    }
+                } else if (res.type === 'cardBack') {
+                    const idx = res.key as number;
+                    if (idx !== undefined && !workingSettings.unlockedCardBacks.includes(idx)) {
+                        workingSettings.unlockedCardBacks = [...workingSettings.unlockedCardBacks, idx];
+                    }
+                } else if (res.type === 'desk') {
+                    const idx = res.key as number;
+                    if (idx !== undefined && !workingSettings.unlockedDesks.includes(idx)) {
+                        workingSettings.unlockedDesks = [...workingSettings.unlockedDesks, idx];
+                    }
+                }
+            }
 
             if (res.isRare && res.type !== 'skin') {
                 newPity = 0;

@@ -20,9 +20,12 @@ import { HeroAvatarRing, HeroHandContent, ArmamentSlot } from '../RogueHeroInfoM
 import { ROGUE_DIFFICULTIES } from '../../../data/roguelike/difficulties';
 import { useHeroProgression } from '../../../hooks/useHeroProgression'; // [2026-09-08] 等级→槽数量/基础品质
 import { useArmamentConfig } from '../../../hooks/useArmamentConfig'; // [2026-09-08] 实时武装槽/品质档
+// [2026-10-04 独立审查 #10] 移除 `useUserSystem` 导入 —— 本组件不再自带实例（批量 API 改由 props 注入）
 import { PackOpenModal } from '../PackOpenModal'; // [2026-09-04] 通关卡包·完整滚轮开箱演出
 import { ChestOpenModal, type ChestOpenResult } from '../ChestOpenModal'; // [2026-09-29 程拍板] 打开匣子 → 得道具
 import type { ChestInstance } from '../../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
+import { RunEnhancementsModal } from './RunEnhancementsModal';
+import { RunEnhancementStrip } from '../RunEnhancementStrip'; // [2026-10-04 程拍板] 手牌下方的迷宫强化图标列（悬停出大卡） // [2026-10-04 程拍板] 本局构筑回顾（迷宫强化清单）
 
 /** [2026-08-29] 通关/败亡结算信息（经验动画起点/终点 + 倍率明细） */
 export interface RunEndInfo {
@@ -46,6 +49,15 @@ interface RunEndModalProps {
     onOpenChest?: (index: number) => any;
     onShardDrop?: (res: any) => void;
     onConfirm: () => void;
+    /**
+     * [2026-10-04 独立审查 #10 修复] ⚡ 一键开匣：**必须由调用方注入**（= App 那个唯一实例的 API）。
+     *   原先本组件自己 `useUserSystem()` new 了**第二个实例** —— 而 `useUserSystem` 的 `settings` 是
+     *   各实例**独立快照**（无同步）⇒ 一边「一键全开」清空队列后，另一边仍按旧快照列出这批匣子
+     *   ⇒ **重复可开（双发）**，或反过来把对方才知道的匣子删而未结算。
+     */
+    onOpenAllChests?: () => ChestOpenResult[];
+    /** [2026-10-04 ②] 武装库存：供开匣详情预览按库存标注（与实际抽取同源）。同样由调用方注入 */
+    armamentStock?: Record<string, number>;
 }
 
 type Phase = 'intro' | 'reso' | 'count' | 'retrain' | 'stats';
@@ -54,7 +66,7 @@ type Phase = 'intro' | 'reso' | 'count' | 'retrain' | 'stats';
 const TIER_COLOR: Record<number, string> = { 1: '#a855f7', 2: '#facc15', 3: '#ef4444' };
 const TIER_NAME: Record<number, string> = { 1: '史诗', 2: '传说', 3: '神话' };
 
-export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPacks = 0, onOpenPack, pendingChests = [], onOpenChest, onShardDrop, onConfirm }) => {
+export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPacks = 0, onOpenPack, pendingChests = [], onOpenChest, onShardDrop, onOpenAllChests, armamentStock, onConfirm }) => {
     const { won, heroKey, fromLevel, fromExp, toLevel, toExp, expGained, detail } = runEnd;
     const isWin = won;
     // [2026-09-08] 演出数据
@@ -67,6 +79,8 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
     const [flashLevel, setFlashLevel] = useState(false); // 升级金光
     const [packOpen, setPackOpen] = useState(false); // [2026-09-04] 通关卡包·开箱弹窗（完整滚轮演出）
     const [chestOpen, setChestOpen] = useState(false); // [2026-09-29] 通关结算·开匣子
+    // [2026-10-04 程拍板] 本局构筑回顾（点击统计卡的「迷宫强化」打开；**通关/败亡都可用**）
+    const [buildOpen, setBuildOpen] = useState(false);
     // [2026-09-08 演出] 共鸣白光路径（from→to 屏幕坐标）
     const [beam, setBeam] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const [ringBurst, setRingBurst] = useState(false); // 经验环受击脉冲
@@ -83,6 +97,9 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
     // [2026-09-08] 右槽列数据：实时配置（结算后已清消耗品）→ 空槽显示新品质上限色
     const { getQualityTier, getArmament } = useArmamentConfig();
     const heroProgression = useHeroProgression();
+    // [2026-10-04 独立审查 #10] 原先这里是 `const userSystem = useUserSystem();` —— **已删除**：
+    //   它让本组件持有第二个 settings 快照，导致「一键开匣」与其余开匣入口不同源（双发/漏结算）。
+    //   现在批量与库存都由调用方（App 的单一实例）经 props 注入。
     const heroLevel = heroProgression.getHeroLevel(heroKey);
     const heroBonus = getHeroLevelBonus(heroLevel);
     const unlockSlots = heroBonus.armamentSlots;
@@ -187,11 +204,16 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
     }, [phase]);
 
     const diffLabel = ROGUE_DIFFICULTIES.find(d => d.key === run.difficulty)?.label ?? run.difficulty;
-    const statCards: { label: string; value: string; color: string }[] = [
+    const statCards: { label: string; value: string; color: string; onClick?: () => void }[] = [
         { label: '到达层数', value: `Act ${run.act}`, color: 'text-white' },
         { label: '金币', value: `${run.gold}`, color: 'text-amber-300' },
-        { label: '迷宫强化', value: `${run.enhancements.length}`, color: 'text-violet-300' },
-        { label: '神格碎片', value: `+${run.settledShards}`, color: 'text-purple-300' },
+        // [2026-10-04 程拍板] 「迷宫强化」改成**可点击** → 展开「本局构筑」回顾
+        //   （此前只有一个数字，玩家知道自己拿了 12 个、却一个都不认识；而这正是肉鸽最有纪念意义的部分）
+        { label: '迷宫强化', value: `${run.enhancements.length}`, color: 'text-violet-300', onClick: () => setBuildOpen(true) },
+        // [2026-10-03 程拍板] 结算直发**万能碎片**（按难度 5/10/15），且**只有通关给** ⇒ 败亡为 0、整格不显示
+        ...(run.settledShards > 0
+            ? [{ label: '万能碎片', value: `+${run.settledShards}`, color: 'text-amber-300' }]
+            : []),
         { label: '本局用时', value: `${detail.durationMin} 分钟`, color: 'text-white' },
         { label: '击败 BOSS', value: isWin ? '✓' : '—', color: isWin ? 'text-emerald-400' : 'text-gray-500' },
     ];
@@ -290,7 +312,23 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                                 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
                                 className="grid grid-cols-3 gap-3 pointer-events-none"
                             >
-                                {statCards.map(c => (
+                                {statCards.map(c => c.onClick ? (
+                                    // [2026-10-04 程拍板] 可点击的统计格（当前只有「迷宫强化」）
+                                    //   ⚠️ 外层容器是 `pointer-events-none` ⇒ 必须自己打开 `pointer-events-auto`，
+                                    //      否则整格点不动（这正是"看起来能点、点了没反应"的经典成因）
+                                    <button
+                                        key={c.label}
+                                        onClick={() => c.onClick!()}
+                                        title="查看本局构筑"
+                                        className="pointer-events-auto group w-28 rounded-xl border border-violet-400/35 bg-violet-500/10 px-2 py-2 text-center backdrop-blur-sm transition hover:scale-105 hover:border-violet-300/70 hover:bg-violet-500/20"
+                                    >
+                                        <div className={`text-base font-black ${c.color}`}>{c.value}</div>
+                                        <div className="mt-0.5 flex items-center justify-center gap-1 text-[10px] tracking-wider text-gray-400 group-hover:text-violet-200">
+                                            {c.label}
+                                            <span className="text-violet-300/70">▸</span>
+                                        </div>
+                                    </button>
+                                ) : (
                                     <div key={c.label} className="w-28 bg-white/5 border border-white/10 rounded-xl px-2 py-2 text-center backdrop-blur-sm">
                                         <div className={`text-base font-black ${c.color}`}>{c.value}</div>
                                         <div className="text-[10px] text-gray-400 mt-0.5 tracking-wider">{c.label}</div>
@@ -353,8 +391,11 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                 {/* ══ 右半：天启者手牌大图 + 武装槽列（结算演出舞台） ══ */}
                 <motion.div
                     initial={{ opacity: 0, x: 40 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3, type: 'spring', stiffness: 160, damping: 20 }}
-                    className="flex items-center gap-7 shrink-0"
+                    // [2026-10-04 程拍板] 由「横排」改为「竖排」：上半 = 天启者手牌 + 武装槽列；下半 = **迷宫强化图标列**
+                    className="flex flex-col items-center gap-6 shrink-0"
                 >
+                    {/* 上半：手牌大图 + 武装槽列（原来就是这一对，包一层保持横排） */}
+                    <div className="flex items-center gap-7">
                     <HeroHandContent heroKey={heroKey} scale={1.3} noLabels equipIds={liveValues.filter((v): v is string => !!v)} />
 
                     {/* 武装槽列（只画已解锁槽；共鸣/重修演出的舞台） */}
@@ -416,6 +457,11 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                              (phase === 'stats' && retrainDone && retrain ? `✨ 已可装备 ${TIER_NAME[retrain.tier]} 武装` : '')}
                         </div>
                     </div>
+                    </div>
+
+                    {/* [2026-10-04 程拍板] **迷宫强化图标列** —— 放在天启者手牌**下方**；
+                        悬停浮出强化大卡（EnhancementPreview，复用结算/匣子同款手感） */}
+                    <RunEnhancementStrip enhancements={run.enhancements} iconSize={56} />
                 </motion.div>
             </div>
 
@@ -434,8 +480,20 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                 chests={pendingChests}
                 onOpenChest={(i) => onOpenChest?.(i) ?? null}
                 onShardDrop={(res: ChestOpenResult) => onShardDrop?.(res)}
+                // [2026-10-04 独立审查 #10] 走**调用方注入**的批量 API（不再是本组件自己的实例）
+                onOpenAllChests={onOpenAllChests ? () => onOpenAllChests() ?? [] : undefined}
+                armamentStock={armamentStock} // [2026-10-04 ②] 详情预览按库存标注（与实际抽取同源）
                 onClose={() => setChestOpen(false)}
             />
+
+            {/* [2026-10-04 程拍板 · 方案 A] 本局构筑回顾（迷宫强化清单）
+                —— 由统计卡的「迷宫强化」点击打开；**通关与败亡都可用**（复盘价值一致） */}
+            {buildOpen && (
+                <RunEnhancementsModal
+                    enhancements={run.enhancements}
+                    onClose={() => setBuildOpen(false)}
+                />
+            )}
         </div>
     );
 };

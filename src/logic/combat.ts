@@ -1,5 +1,5 @@
 import type { CardData, GameState, Keyword } from '../types';
-import { checkCardLevelUp, getLeveledUpCard } from '../utils/gameRules';
+import { checkCardLevelUp, getLeveledUpCard, isNexusImmune } from '../utils/gameRules';
 import { calculateCombatInteraction, deadlyLethalInject } from './keywords'; // [新增] · [2026-09-12 莉莉子 剧毒]
 
 
@@ -8,6 +8,11 @@ export interface SingleCombatResult {
     updatedFight: { attacker: CardData, blocker: CardData | null, owner: 'player' | 'enemy' };
     attackerDamage: number;  // [修复] 攻击者承受的伤害（用于发射 unit_damage 事件）
     blockerDamage: number;   // [修复] 阻挡者承受的伤害（用于发射 unit_damage 事件）
+    // [2026-10-06 莉莉子] **本击阻挡者是否挥出反击**（引擎在 `:211-213` / `:378-380` 本来就算了，此前只内部用）。
+    //   为什么要透传：`after_attacked` / `after_attack` 类成长必须靠**这个事实**判"有没有发生互相打击" ——
+    //   拿 `attackerDamage > 0` 当代理是错的：①【荆棘】反伤会让它**假阳**（阻挡者没挥击也会 >0）
+    //   ② 反击被【坚韧】减到 0 / 被【屏障】吸收会让它**假阴**（阻挡者挥了却是 0）。
+    blockerDidStrike: boolean;
     nexusDamage?: { target: 'player' | 'enemy', amount: number };
     levelUpUpdate?: CardData;
     killedUnits: CardData[];
@@ -78,6 +83,7 @@ export const resolveSingleCombat = (
             attackerDamage: 0,   // [修复] 补全接口字段
             blockerDamage: 0,    // [修复] 补全接口字段
             nexusDamage: undefined,
+            blockerDidStrike: false, // [2026-10-06] 攻击者已死 ⇒ 根本没发生互相打击
             killedUnits: [] // 已经在法术结算时记录过死亡，不再重复宣告
         };
     }
@@ -204,11 +210,13 @@ export const resolveSingleCombat = (
         newAttacker.animState = 'hit';
     }
 
+    // [2026-10-06 莉莉子] 提到块外 ⇒ 随结果透传（见 `SingleCombatResult.blockerDidStrike` 的注释）
+    let blockerDidStrike = false;
     if (newBlocker) {
         // 判定阻挡者是否挥出了常规反击：
         // 如果攻击者有先攻，且（阻挡者被秒杀了 OR 攻击者因幻象自己蒸发了），则阻挡者未能挥出反击
         // 如果是连击（Double Attack）：第二击是普通攻击，只要阻挡者活着就必定反击
-        const blockerDidStrike = hasDoubleAttack
+        blockerDidStrike = hasDoubleAttack
           ? getCurrentHP(newBlocker) > 0
           : !(newAttacker.keywords.includes('QuickAttack') && (getCurrentHP(newBlocker) <= 0 || qaEphemeralDeath));
 
@@ -232,6 +240,7 @@ export const resolveSingleCombat = (
         blockerDamage: totalBlockerDmg,     // [修复] 透传受伤数据，供外层发射 unit_damage 事件
         nexusDamage: nexusDmgInfo,
         levelUpUpdate,
+        blockerDidStrike, // [2026-10-06] 透传给 after_attacked / after_attack 类成长判据
         killedUnits
     };
 };
@@ -272,6 +281,7 @@ export const resolveDoubleStrikeCombat = (
             blockerDamage: 0,
             nexusDamage: undefined,
             killedUnits: [],
+            blockerDidStrike: false, // [2026-10-06] 攻击者已死 ⇒ 没发生互相打击
             strike1: { attackerDamage: 0, blockerDamage: 0, blockerStruck: false, blockerDidStrike: false },
             strike2: null
         };
@@ -373,9 +383,11 @@ export const resolveDoubleStrikeCombat = (
         newAttacker.animState = 'hit';
     }
 
+    // [2026-10-06 莉莉子] 提到块外 ⇒ 随结果透传（同 resolveSingleCombat）
+    let blockerDidStrike = false;
     if (newBlocker) {
         // 阻挡者反击判定：连击第二击是普通攻击，只要阻挡者活着就必定反击（同 resolveSingleCombat）
-        const blockerDidStrike = strike2
+        blockerDidStrike = strike2
             ? getCurrentHP(newBlocker) > 0
             : !(newAttacker.keywords.includes('QuickAttack') && (getCurrentHP(newBlocker) <= 0 || qaEphemeralDeath));
         const blockerDiesFromEphemeral = blockerDidStrike && newBlocker.keywords.includes('Ephemeral');
@@ -397,6 +409,12 @@ export const resolveDoubleStrikeCombat = (
         nexusDamage: nexusDmgInfo,
         levelUpUpdate,
         killedUnits,
+        // [2026-10-06 莉莉子 · 三轮审查 Q2 反例] 透传的必须是**"这一整次进攻里阻挡者到底有没有挥出"**：
+        //   上面那个函数级 `blockerDidStrike` 是用**击后**存活算的（服务于幻象死亡判定，不能动），
+        //   而"挥出"的事实是**击前**存活（`strike2` 的 `!!blkAfterFirst`，与 keywords.ts 的双方互击一致）。
+        //   第二击把阻挡者打死时两者会矛盾 ⇒ 顶层必须用**分段事实**，
+        //   否则攻击者被漏发 `after_attacked`、阻挡者被漏发 `after_attack`（分支②④）。
+        blockerDidStrike: strike2 ? strike2.blockerDidStrike : false,
         strike1,
         strike2,
     };
@@ -440,7 +458,9 @@ export const calculateCombatOutcome = (
         const result = calculateCombatInteraction(newAttacker, newBlocker);
 
         // 1. 应用水晶伤害 (包含直接攻击和碾压溢出)
-        if (result.nexusDamage > 0) {
+        // [2026-10-06 莉莉子 · 审计收口] 补查**水晶免疫**（不死之身）—— 本函数是另一条水晶结算路径，
+        //   此前同样没查 ⇒ 免疫形同虚设。免疫时**整段跳过**（不扣血、也不上报 nexusDmgInfo）。
+        if (result.nexusDamage > 0 && !isNexusImmune(game, owner === 'player' ? 'enemy' : 'player')) {
             if (owner === 'player') {
                 eNexus -= result.nexusDamage;
                 nexusDmgInfo = { target: 'enemy', amount: result.nexusDamage };

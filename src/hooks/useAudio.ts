@@ -1,10 +1,13 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { AUDIO_ASSETS, type BgmKey } from '../data/audio';
+// [2026-10-05 莉莉子 BUG修复 · 20261005-06] 音量改为"可读取的当前值"（模块级快照）
+import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
 
 export const useAudio = () => {
     const bgmRef = useRef<HTMLAudioElement | null>(null);
     const currentTrackRef = useRef<string | null>(null);
-    const volumeRef = useRef(0.5);
+    // [2026-10-05 莉莉子] 初值改为**读取全局快照**（不再是写死的 0.5）—— 与 useVoice/useSfx 同口径
+    const volumeRef = useRef(getVolume('bgm'));
 
     // 初始化
     useEffect(() => {
@@ -39,6 +42,8 @@ export const useAudio = () => {
         if (bgmRef.current) {
             bgmRef.current.volume = newVol;
         }
+        // 4. [2026-10-05] 同步全局快照（供之后新挂的实例自取）
+        setVolumeSnapshot('bgm', newVol);
     }, []);
 
     // [修改] 扩展类型定义，加入 'gacha' 和 'deck_builder'

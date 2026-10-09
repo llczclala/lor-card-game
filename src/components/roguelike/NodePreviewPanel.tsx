@@ -87,6 +87,12 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
         .filter((b): b is MazeBuff => !!b);
 
     // ── 底部动作按钮 ──
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-13 / 方案 P1] **已用掉的节点**：底部不再给「进入」
+    //   ── 病根：`state === 'current'` 的非战斗分支**无条件**给「进入」⇒ 站在节点上右键再进
+    //      就能把该节点的好处再拿一遍（事件抽新事件 / 休整反复回血 / 商店重买…）。
+    //   ── 覆盖：事件（选择时记）· 强化（选定记）· 休整（四行动任一记）· 宝箱（领奖记）· 商店（首次购买/刷新记）
+    //   ── 记录来源：`run.resolvedNodes`（`useRoguelikeRun.markNodeResolved`）
+    const isResolved = (run?.resolvedNodes ?? []).includes(node.id);
     let action: { label: string; onClick: () => void } | null = null;
     if (state === 'available') {
         action = { label: '前往', onClick: () => onMoveTo(node.id) };
@@ -95,7 +101,8 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
         if (isCombat) {
             if (!isDefeated) action = { label: '战斗', onClick: () => onBattle(node.type, node.enemyArchetypeId, node.id, node.enemyBuffs) }; // [2026-08-27] 敌人详情「战斗」按钮（程要求）
         } else if (node.type !== 'start') {
-            action = { label: '进入', onClick: () => onInteractCurrent(node) };
+            // [2026-10-05 · 方案 P1] 已用掉 ⇒ 不给「进入」，走下方"无动作"分支显示「已完成」
+            if (!isResolved) action = { label: '进入', onClick: () => onInteractCurrent(node) };
         }
     }
 
@@ -162,7 +169,7 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
                                 </div>
                             ) : (
                                 <p className="text-center text-xs font-mono text-gray-500 py-2">
-                                    {state === 'done' ? '已击败' : state === 'missed' ? '已错过' : state === 'locked' ? '未抵达的节点' : '无法互动'}
+                                    {state === 'done' ? '已击败' : isResolved ? '已完成' : state === 'missed' ? '已错过' : state === 'locked' ? '未抵达的节点' : '无法互动'}
                                 </p>
                             )}
                         </div>
@@ -274,6 +281,11 @@ const PlainSection: React.FC<{ type: RogueNodeType; metaColor: string; metaIcon:
         <div>
             <h2 className="text-2xl font-black text-white tracking-wider">{NODE_TITLE[type]}</h2>
             <p className="text-xs font-mono tracking-[0.2em] text-gray-400 mt-1">节点情报</p>
+            {/* [2026-10-05 莉莉子 · 方案 P1 残项] 事件节点：**进入前**先告知风险面
+                （命运事件不可离开；其余可随时安全退出）——避免"被骗进去"的挫败感 */}
+            {type === 'event' && (
+                <p className="text-xs text-gray-500 mt-2 leading-relaxed">多数事件可以安全离开；少数「命运事件」不可回避。</p>
+            )}
         </div>
     </>
 );

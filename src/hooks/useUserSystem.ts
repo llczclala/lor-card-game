@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { StorageUtils, STORAGE_KEYS } from '../utils/storageUtils';
 import {
     DEFAULT_SETTINGS,
@@ -8,6 +8,7 @@ import {
     INITIAL_USER_DECKS,
     createInitialProfile,
     STARTER_DECK_LYFE,
+    migrateStarterDecks,     // [2026-10-03] 存量号迁移：两套初始卡组 15 张 → 40 张
     DEV_ADMIN_UID,       // [新增] 导入唯一标识
     DEV_ADMIN_PROFILE    // [新增] 导入名片模板
 } from '../data/initialUserData';
@@ -17,11 +18,12 @@ import type { MissionDef } from '../data/missionData';
 import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局，用于任务奖励发货
 import { reloadHeroProgressionCache } from './useHeroProgression'; // [2026-09-04 莉莉子 修复] 切号后重载英雄养成缓存（模块级缓存不会自动跟随 USER_ID）
 import { reloadArmamentCache } from './useArmamentConfig'; // [2026-09-07] 切号后重载武装槽/品质档缓存
-import { reloadDivinityCache } from './useHeroDivinity'; // [2026-09-28 神格神经] 切号后重载节点解锁/悖论点银行
-import { computeAnalystLevels, ANALYST_LEVEL_REWARDS, type AnalystLevelupReward } from '../data/roguelike/analystProgression'; // [2026-08-29 通行证] 分析员升级
+import { reloadDivinityCache, peekShardWallet, peekHeroMaxed } from './useHeroDivinity'; // [2026-09-28 神格神经] 切号后重载节点解锁 · [2026-10-04] + 只读快照（开匣按**真源**算溢出，令界面与入账同源）
+import { computeAnalystLevels, ANALYST_FIXED_REWARD_MAX, getAnalystReward, type AnalystLevelupReward } from '../data/roguelike/analystProgression'; // [2026-08-29 通行证] 分析员升级 · [2026-10-04] 奖励取值收口到唯一出口 getAnalystReward
 import { computeAccountLevels, ACCOUNT_LEVEL_REWARD_DATA_GOLD, createAnalystPass, createEmptyBattleRecord } from '../data/accountProgression'; // [2026-09-04 账号等级]
 import { getArmamentDefs } from '../data/equipment'; // [2026-08-29 通行证] 卡包随机武装
-import { readArmStock, addArmStock, consumeArmStock, type ArmStockMap } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
+import { pickArmamentFromChest } from '../logic/armamentChestPool'; // [2026-10-04] 带库存判定的武装抽取（溢出 → 数据金）；预览侧仍走 getArmamentChestPool
+import { readArmStock, addArmStock, consumeArmStock, getArmamentOverflowDataGold, type ArmStockMap } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存 · [2026-10-04] + 溢出折算数据金
 import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-09-29] 万能碎片广播（解耦 useHeroDivinity）
 // [2026-09-29 程拍板] 奖励匣体系（开包 → 抽匣子 → 开匣子得道具）
 import {
@@ -53,6 +55,18 @@ export const useUserSystem = () => {
     const [decks, setDecks] = useState<SavedDeck[]>([]);
     const [activeDeckId, setActiveDeckId] = useState<string | null>(null);
     const [isReady, setIsReady] = useState(false);
+
+    // [2026-10-02 莉莉子 #19] 待打开卡包的**同步镜像**：state 是异步的，光靠 state 判据拦不住同帧双发
+    //   （同 BUG-20261002-02 的教训：锁必须是同步的）。持久化值一变就同步过来。
+    const pendingPacksRef = useRef(0);
+    useEffect(() => { pendingPacksRef.current = settings?.pendingPacks ?? 0; }, [settings?.pendingPacks]);
+
+    // [2026-10-04 ③] 31+ 里程碑领取的**同步互斥**（与上一行同一条教训：**锁必须是同步的**）。
+    //   为什么要它：发放动作在 `setSettings(prev => …)` 的幂等检查**之前**执行 ⇒
+    //   若同一渲染内被调两次（快速双击 / 调用方重入），会**各发一遍卡包**。
+    //   React 18 对 click 这类离散事件是同步 flush（第二次点击前已重渲染、水位已推进 ⇒ 会早退），
+    //   但"不依赖时序"才稳 —— 故加同步 ref；`finally` 释放，保证后续正常领取。
+    const postCapClaimingRef = useRef(false);
 
     // [新增] 用户列表状态
     const [userList, setUserList] = useState<UserSummary[]>([]);
@@ -182,6 +196,22 @@ export const useUserSystem = () => {
         if (!userDecks || userDecks.length === 0) {
             userDecks = INITIAL_USER_DECKS;
             StorageUtils.save(decksKey, userDecks);
+        } else {
+            // ==========================================
+            // [2026-10-03 程拍板] **存量号迁移：两套初始卡组 15 张 → 40 张**
+            // ── 为什么必须在这里做：`INITIAL_USER_DECKS` 只在**首次初始化**写入
+            //    （上面的 `if (!userDecks)` 分支）⇒ 卡组改成 40 张后，**已注册账号拿不到新版**，
+            //    卡组界面仍是 `15 / 40` +「等待构建卡组」（粉丝反馈的"没有完整新手卡组"）。
+            // ── 口径：**不补发新卡组，只就地升级已有的那两套**（按 id 认）；
+            //    玩家改过的只"补满"不替换、删除过的不复活 ⇒ 细则见 `initialUserData.migrateStarterDecks`。
+            // ── 幂等：迁移后卡组已是 40 张、不再匹配旧 15 张口径 ⇒ 下次加载原样返回（`!==` 判断不触发）。
+            // ==========================================
+            const migrated = migrateStarterDecks(userDecks);
+            if (migrated !== userDecks) {
+                userDecks = migrated;
+                StorageUtils.save(decksKey, userDecks);
+                console.log('[StarterDeck] 🔧 存量号迁移：初始卡组已升级到 40 张');
+            }
         }
         setDecks(userDecks);
 
@@ -388,8 +418,21 @@ export const useUserSystem = () => {
     // [2026-08-16] DEFAULT_SETTINGS 已加 :UserSettings 注解，去掉此前 as any 类型债兜底
     const resetSettings = () => {
         if (!userId) return;
-        setSettings({ ...DEFAULT_SETTINGS });
-        StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, { ...DEFAULT_SETTINGS });
+        // ==========================================
+        // [2026-10-04 独立审查 #3 修复] **恢复默认设置不得擦掉通行证的"领取记录"**
+        //   病根：`passClaimedRewards`(≤30 逐级) 与 `passClaimedUpTo`(31+ 水位) 都住在 settings 里，
+        //     而 DEFAULT_SETTINGS 不含它们 ⇒ 点一次「恢复默认」就全部归零
+        //     ⇒ **所有已达等级的奖励重新变成可领**；而发出去的东西（数据金→USER_ASSETS、
+        //       神格碎片→divinity 存档、卡包/武装→自身存档）**不会被回收**
+        //     ⇒ 反复点「恢复默认」= 无限刷通行证奖励（31+ 无限等级下尤其严重）。
+        //   口径：这两个字段是**进度**，不是"偏好设置" ⇒ 重置时原样保留。
+        // ==========================================
+        const keepClaimRecords: Partial<UserSettings> = {};
+        if (settings?.passClaimedRewards?.length) keepClaimRecords.passClaimedRewards = settings.passClaimedRewards;
+        if (settings?.passClaimedUpTo !== undefined) keepClaimRecords.passClaimedUpTo = settings.passClaimedUpTo;
+        const next: UserSettings = { ...DEFAULT_SETTINGS, ...keepClaimRecords };
+        setSettings(next);
+        StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, next);
     };
 
     // [核心修改] 切换档案模式
@@ -558,6 +601,10 @@ export const useUserSystem = () => {
                         const currentSkins = newCollection.ownedSkins[key] || [];
                         if (!currentSkins.includes(sid)) {
                             newCollection.ownedSkins[key] = [...currentSkins, sid];
+                        } else {
+                            // [2026-10-02 莉莉子 BUG-20261002-14 兜底] 已拥有却没带 convertedCurrency
+                            //   ⇒ 兜底转 1 比特金（与 rollSkin 的重复口径一致），**绝不静默丢弃**
+                            newCollection.resources.bitGold += 1;
                         }
                     }
                 } else if (res.type === 'cardBack') {
@@ -565,12 +612,18 @@ export const useUserSystem = () => {
                     const idx = res.key as number;
                     if (!newSettings.unlockedCardBacks.includes(idx)) {
                         newSettings.unlockedCardBacks = [...newSettings.unlockedCardBacks, idx];
+                    } else {
+                        // [2026-10-02 莉莉子 BUG-20261002-14 兜底] 见上方说明：重复卡背补转 5 比特金
+                        newCollection.resources.bitGold += 5;
                     }
                 } else if (res.type === 'desk') {
                     // 解锁牌桌
                     const idx = res.key as number;
                     if (!newSettings.unlockedDesks.includes(idx)) {
                         newSettings.unlockedDesks = [...newSettings.unlockedDesks, idx];
+                    } else {
+                        // [2026-10-02 莉莉子 BUG-20261002-14 兜底] 重复牌桌补转 5 比特金
+                        newCollection.resources.bitGold += 5;
                     }
                 }
             }
@@ -762,6 +815,8 @@ export const useUserSystem = () => {
         kind: ChestKind;
         rarity: ChestInstance['rarity'];
         armamentId?: string;
+        /** [2026-10-04 ②] 武装全部满库存时的折算数据金（有值 = 本次没发武装，发的是钱） */
+        overflowDataGold?: number;
         shardAmount?: number;
         shardDetail?: ShardDropDetail[];
         wallet?: ShardWallet;
@@ -783,19 +838,30 @@ export const useUserSystem = () => {
 
         // 2. 按大类结算内容
         if (chest.kind === 'armament') {
-            // 品质对应：优先抽**同品质**武装；同品质池为空则回退到全池（防某个品质没货）
-            const all = getArmamentDefs().filter(a => !a.consumable);
-            const sameRarity = all.filter(a => a.rarity === chest.rarity);
-            const pool = sameRarity.length ? sameRarity : all;
-            if (!pool.length) return { kind: chest.kind, rarity: chest.rarity };
-            const pick = pool[Math.floor(Math.random() * pool.length)];
-            grantArmament(pick.id);
-            return { kind: chest.kind, rarity: chest.rarity, armamentId: pick.id };
+            // [2026-10-02 莉莉子] 品质对应池走**共用函数**（同品质为空则回退全池）——
+            //   与「开匣详情预览」同一份逻辑，杜绝 UI 承诺 ≠ 实际产出。
+            // [2026-10-04 程拍板 ②] 改走 `pickArmamentFromChest`（多一维：**库存**）：
+            //   · 优先抽"还有余量"的 ⇒ 不会抽到已满的（否则开匣 = **空包**）
+            //   · 该品质**全部满库存** ⇒ 折算成**数据金**发给玩家，并回报 `overflowDataGold` 供 UI 说明
+            const stock = readArmStock(settings);
+            const { def, overflow } = pickArmamentFromChest(chest.rarity, stock);
+            if (!def) return { kind: chest.kind, rarity: chest.rarity };
+            if (overflow) {
+                const gold = getArmamentOverflowDataGold(def.rarity);
+                grantDataGold(gold);
+                console.log(`[开匣] 武装「${def.name}」库存已满 ⇒ 折算数据金 +${gold}`);
+                return { kind: chest.kind, rarity: chest.rarity, overflowDataGold: gold };
+            }
+            grantArmament(def.id);
+            return { kind: chest.kind, rarity: chest.rarity, armamentId: def.id };
         }
 
         // 碎片匣：总数来自品质档，每 5 片一组随机归属
         const amount = SHARD_CHEST_AMOUNT[chest.rarity];
-        const drop = dropShards(undefined, ROGUE_HEROES.map(h => h.key), amount);
+        // [2026-10-04 莉莉子 BUG修复] 传**真源钱包 + 练满判据** —— 让本函数算出的
+        //   `shardDetail[].overflow` 与真实入账（`applyShardDrop` 用真源逐笔重算）**同源**
+        //   ⇒ 界面的「溢出 +N 万能」不再恒为 0（此前传 undefined = 按空钱包算）。
+        const drop = dropShards(peekShardWallet(), ROGUE_HEROES.map(h => h.key), amount, Math.random, peekHeroMaxed);
         return {
             kind: chest.kind,
             rarity: chest.rarity,
@@ -803,7 +869,62 @@ export const useUserSystem = () => {
             shardDetail: drop.details,
             wallet: drop.wallet,
         };
-    }, [settings, grantArmament, userId]);
+    }, [settings, grantArmament, grantDataGold, userId]);
+
+    /**
+     * [2026-10-04 程拍板] **一键全开所有匣子**：一次性结算完 `pendingChests` 并清空队列。
+     *
+     * ⚠️ 为什么不能像卡包那样"循环调 `openChest(0)`"：
+     *   `openChest` 用**闭包里的 `settings`** 取 `list[index]`（807 行的函数式更新只负责**移除**），
+     *   而 React state 在本次渲染内不会变 ⇒ 连调会**反复开同一个匣子**（重复发道具）。
+     *   ⇒ 批量必须走本函数：**读一次全部 → 逐个结算 → 一次清空**。
+     *   结算口径与 `openChest` **完全一致**（武装走 `getArmamentChestPool`、碎片走 `dropShards`）。
+     */
+    const openAllChests = useCallback((): NonNullable<ReturnType<typeof openChest>>[] => {
+        const list = settings?.pendingChests ?? [];
+        if (list.length === 0) return [];
+
+        // ① 一次性清空队列（含落盘）
+        setSettings(prev => {
+            if (!prev) return prev;
+            const newSettings = { ...prev, pendingChests: [] };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
+            return newSettings;
+        });
+
+        // ② 逐个结算（与 openChest 同口径）
+        // [2026-10-04 ②] 批量时**必须维护一份滚动库存**：同批次连开 3 个同品质武装匣时，
+        //   state 在本次渲染内不会更新 ⇒ 不滚动就会把同一件抽 3 次、把库存算错（多发/误判溢出）。
+        let rollingStock = readArmStock(settings);
+        // [2026-10-04 莉莉子] 碎片同理要**滚动钱包**（见下方 dropShards 调用）
+        let rollingShardWallet = peekShardWallet();
+        return list.map(chest => {
+            if (chest.kind === 'armament') {
+                const { def, overflow } = pickArmamentFromChest(chest.rarity, rollingStock);
+                if (!def) return { kind: chest.kind, rarity: chest.rarity };
+                if (overflow) {
+                    const gold = getArmamentOverflowDataGold(def.rarity);
+                    grantDataGold(gold);
+                    return { kind: chest.kind, rarity: chest.rarity, overflowDataGold: gold };
+                }
+                grantArmament(def.id);
+                rollingStock = addArmStock(rollingStock, def.id, 1);
+                return { kind: chest.kind, rarity: chest.rarity, armamentId: def.id };
+            }
+            const amount = SHARD_CHEST_AMOUNT[chest.rarity];
+            // [2026-10-04 莉莉子] 批量开匣也必须**滚动钱包**（与上面的 rollingStock 同理）——
+            //   若每个匣子都按"开匣前"的钱包算，同批里第 2 个起的溢出会算错。
+            const drop = dropShards(rollingShardWallet, ROGUE_HEROES.map(h => h.key), amount, Math.random, peekHeroMaxed);
+            rollingShardWallet = drop.wallet;
+            return {
+                kind: chest.kind,
+                rarity: chest.rarity,
+                shardAmount: amount,
+                shardDetail: drop.details,
+                wallet: drop.wallet,
+            };
+        });
+    }, [settings, grantArmament, grantDataGold, userId]);
 
     /** [2026-08-29 通行证] 获得一个待打开卡包（打开时才随机武装） */
     const grantPendingPack = useCallback(() => {
@@ -818,20 +939,34 @@ export const useUserSystem = () => {
     /**
      * [2026-09-29 程拍板] 打开一个卡包 → **抽到一个奖励匣**（不再直接给武装）。
      * 流程：开包 → 匣子入库（pendingChests）→ 玩家随后打开匣子得到道具。
-     * @returns 抽到的匣子（供开箱演出展示"先看到匣子"）
+     *
+     * [2026-10-02 莉莉子 BUG修复 #19] 原实现是「**先发后扣**」：
+     *   第一次 setSettings **无条件把匣子入队**，第二次才扣 `pendingPacks` 且带 `>0` 守卫，
+     *   而函数**无论如何都 `return chest`** ⇒ 若在 `pendingPacks === 0` 时被调用，
+     *   会**凭空多发一个匣子且不扣数（白嫖）**。
+     *   三个入口当前都有 `pendingPacks > 0` 前置门，所以此前不可达 —— 属**缺守卫的潜在洞**。
+     *   现改为：**先同步判 + 同步预扣**，扣不到就直接 `return null`（调用方 `handleOpen` 已能处理 null）。
+     *   用同步 ref 而不是 state 做判据，是因为「state 是异步的、读到的可能是旧值」——
+     *   这与 BUG-20261002-02（回合末重入）踩的是同一个坑，修法也一致。
+     *
+     * @returns 抽到的匣子（供开箱演出展示"先看到匣子"）；**没有可开的卡包时返回 null**
      */
     const openPack = useCallback((): ChestInstance | null => {
+        // ① 同步判：无可开卡包 → 什么都不发
+        if (pendingPacksRef.current <= 0) return null;
+        // ② 同步预扣：同一帧内即使被连调两次，第二次也读不到额度
+        pendingPacksRef.current -= 1;
+
         const chest = rollRewardChest();
-        // 先入队（函数式），再扣待打开数（同样函数式）——两个函数式更新会正确累积，不会互相覆盖
         setSettings(prev => {
             if (!prev) return prev;
-            const newSettings = { ...prev, pendingChests: [...(prev.pendingChests ?? []), chest] };
-            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
-            return newSettings;
-        });
-        setSettings(prev => {
-            if (!prev || (prev.pendingPacks ?? 0) <= 0) return prev;
-            const newSettings = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) - 1 };
+            // 兜底：真被抢光了就不发（入队与扣数在**同一个更新里**完成，不再"先发后扣"）
+            if ((prev.pendingPacks ?? 0) <= 0) return prev;
+            const newSettings = {
+                ...prev,
+                pendingChests: [...(prev.pendingChests ?? []), chest],
+                pendingPacks: (prev.pendingPacks ?? 0) - 1,
+            };
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
             return newSettings;
         });
@@ -851,7 +986,11 @@ export const useUserSystem = () => {
 
     /** [2026-09-04 账号等级] 手动领取某等级通行证奖励（等级读 analystPass 独立键） */
     const claimPassReward = useCallback((level: number): boolean => {
-        const reward = ANALYST_LEVEL_REWARDS[level];
+        // [2026-10-04 程拍板 ④] **31+ 不走本函数**：那条线是"里程碑 + 水位、不许跳级"，
+        //   见 `claimPostCapPassRewards`。这里只负责 ≤30 的固定奖励表。
+        if (level > ANALYST_FIXED_REWARD_MAX) return false;
+        // [2026-10-04] 奖励改走**唯一出口** `getAnalystReward`（原先直接查表 —— 31+ 会漏）
+        const reward = getAnalystReward(level);
         if (!reward || !analystPass || level > analystPass.level) return false;
         if (reward.armamentId) grantArmament(reward.armamentId);
         if (reward.pack) grantPendingPack(); // 卡包进待打开队列
@@ -869,17 +1008,71 @@ export const useUserSystem = () => {
         return true;
     }, [analystPass, grantArmament, grantPendingPack, grantPassEnhancement, grantDataGold, userId]);
 
-    /** [2026-09-04 账号等级] 一键领取当前通行证等级所有未领取奖励（上限读 analystPass） */
+    /** [2026-09-04 账号等级] 一键领取当前通行证等级所有未领取奖励（**≤30 固定表**；上限读 analystPass） */
     const claimAllPassRewards = useCallback((): number => {
         if (!analystPass || !settings) return 0;
         let count = 0;
-        for (let lv = 1; lv <= analystPass.level; lv++) {
-            if (ANALYST_LEVEL_REWARDS[lv] && !(settings.passClaimedRewards ?? []).includes(lv)) {
+        // [2026-10-04] 顺手把循环上界钳到固定表上限：31+ 由水位那条线单独处理
+        const upto = Math.min(analystPass.level, ANALYST_FIXED_REWARD_MAX);
+        for (let lv = 1; lv <= upto; lv++) {
+            if (getAnalystReward(lv) && !(settings.passClaimedRewards ?? []).includes(lv)) {
                 if (claimPassReward(lv)) count++;
             }
         }
         return count;
     }, [analystPass, settings, claimPassReward]);
+
+    // ==========================================
+    // [2026-10-04 程拍板 ③④] 31+ 里程碑奖励（**水位 = 不许跳级**）
+    //   · 水位字段 `settings.passClaimedUpTo`，缺省 = 30（≤30 仍走上面的逐级数组）
+    //   · 领取 = 把水位推进到"当前等级"：途中的**里程碑各发 1 个卡包**，
+    //     非里程碑等级没有奖励（只推进水位）—— 结构上天然"不跳级"（只能往前走）
+    //   · 为什么不用数组：31+ 是无限等级，数组会无上限增长；水位是 O(1)
+    // ==========================================
+    /** 已领到第几级（含 31+ 水位；缺省 = 30） */
+    const passClaimedUpTo = Math.max(ANALYST_FIXED_REWARD_MAX, settings?.passClaimedUpTo ?? ANALYST_FIXED_REWARD_MAX);
+
+    /**
+     * 领取 31+ 的里程碑奖励（顺序、不跳级）。
+     * @returns `{ packs }` 本次发放的卡包数；`{ reachedLevel }` 推进到哪一级
+     */
+    const claimPostCapPassRewards = useCallback((): { packs: number; reachedLevel: number } => {
+        const rawLevel = analystPass?.level ?? 1;
+        // [2026-10-04 独立审查 #1 修复] 消毒：脏存档可能把等级写成 Infinity（`JSON.parse('1e999')`）
+        //   ⇒ 下面 `for (let lv = from + 1; lv <= level; lv++)` 会**永不终止**（客户端卡死）。
+        const level = Number.isFinite(rawLevel) ? Math.max(1, Math.floor(rawLevel)) : ANALYST_FIXED_REWARD_MAX;
+        const from = Math.max(ANALYST_FIXED_REWARD_MAX, settings?.passClaimedUpTo ?? ANALYST_FIXED_REWARD_MAX);
+        if (!settings || level <= from) return { packs: 0, reachedLevel: from };
+        // [2026-10-04 ③] 同步互斥：同一次渲染内重入直接早退
+        //   （发放段在 `setSettings` 幂等检查**之前**，不在它的保护范围内）
+        if (postCapClaimingRef.current) return { packs: 0, reachedLevel: from };
+        postCapClaimingRef.current = true;
+        try {
+            // 先**只数**要发多少个包（不逐个发），再与"水位"一起一次写入 —— 理由见下
+            let packs = 0;
+            for (let lv = from + 1; lv <= level; lv++) {
+                if (getAnalystReward(lv)?.pack) packs++;
+            }
+            // ==========================================
+            // [2026-10-04 独立审查 #7 修复] 卡包数与水位**必须落在同一次 settings 写入里**
+            //   原来：循环里逐个 `grantPendingPack()`（各一次 setSettings + 落盘），事后再单独写一次水位
+            //     ⇒ 两次写入之间若失败（quota / 异常被 `StorageUtils.save` 吞掉）就会出现
+            //       **"包到手了、水位没动"** ⇒ 重载后同一批里程碑**重发**。
+            //   现在：一次写入同时提交 `pendingPacks` 与 `passClaimedUpTo` ⇒ 要么都成、要么都不成。
+            //   （顺带把 N 次 localStorage 写压成 1 次。）
+            // ==========================================
+            setSettings(prev => {
+                if (!prev) return prev;
+                const next = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) + packs, passClaimedUpTo: level };
+                StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, next);
+                return next;
+            });
+            console.log(`[通行证 31+] 里程碑领取：水位 ${from} → ${level}，发放卡包 ${packs} 个`);
+            return { packs, reachedLevel: level };
+        } finally {
+            postCapClaimingRef.current = false;
+        }
+    }, [analystPass, settings, grantPendingPack, userId]);
 
     const grantMissionReward = useCallback((reward: MissionDef['reward']) => {
         if (!collection || !settings) return;
@@ -1004,10 +1197,13 @@ export const useUserSystem = () => {
         grantArmament,           // 解锁武装（加入已拥有集合）
         removeOwnedArmament,     // [2026-09-07 消耗品] 移除已拥有武装（用后消失）
         grantAnalystExp,         // 加分析员经验（升级，奖励由通行证手动领取）
-        claimPassReward,         // 领取某等级通行证奖励
-        claimAllPassRewards,     // 一键领取所有可领奖励
+        claimPassReward,         // 领取某等级通行证奖励（≤30 固定表）
+        claimAllPassRewards,     // 一键领取所有可领奖励（≤30）
+        passClaimedUpTo,         // [2026-10-04 ③] 已领到第几级（31+ 水位；缺省 30）
+        claimPostCapPassRewards, // [2026-10-04 ③④] 领取 31+ 里程碑奖励（顺序、不跳级；里程碑给卡包）
         grantPack,               // 直接给一个随机武装（内部用；面向玩家的入口请走 openPack）
         grantPendingPack,        // 获得待打开卡包
+        openAllChests,           // [2026-10-04 程拍板] 一键全开所有匣子（批量；openChest 不能循环调）
         openPack,                // 打开一个卡包（扣待打开数 + **抽到一个奖励匣**）[2026-09-29 改造]
         // [2026-09-29 程拍板] 奖励匣体系
         rollRewardChest,         // 随机抽一个匣子（不入库，仅预览/演出用）

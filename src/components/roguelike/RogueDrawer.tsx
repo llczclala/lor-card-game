@@ -7,7 +7,7 @@
 // ==========================================
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Swords, Sparkles } from 'lucide-react';
+import { X, Swords, Sparkles, MapPin } from 'lucide-react'; // [2026-10-08 批次3] MapPin：探路状态条
 import { CARD_DB } from '../../data/cards';
 import { getBuffById } from '../../data/roguelike/buffs'; // [2026-09-01] 改用全库查找，兼容天启共鸣等「不进玩家池但玩家持有」的强化
 import { RARITY_META } from './RarityIcon';
@@ -27,9 +27,11 @@ interface RogueDrawerProps {
     enhancements: string[]; // 迷宫强化 ids
     heroKey?: string;       // [2026-08-15] 当前天启者 key（悬停检视英雄卡挂武装）
     equippedCards?: Record<string, string[]>; // [2026-08-29] 本局装备映射（等级奖励随机挂到法术卡/单位的装备，检视一并渲染）
+    /** [2026-10-08 莉莉子 · 交互回响层 批次3] 探路状态（run.scout —— 此前全项目没有任何 UI 读它） */
+    scout?: { cardKey: string; remaining: number } | null;
 }
 
-export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, enhancements, heroKey, equippedCards }) => {
+export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, enhancements, heroKey, equippedCards, scout }) => {
     const [tab, setTab] = useState<DrawerTab>('cards');
     // [2026-08-10] 悬停大图检视（复用全局方案：useCardGaze + FloatingCardPreview）
     const { gazeTarget, bindGazeEvents, dismissGaze } = useCardGaze({ delay: 300 });
@@ -104,6 +106,19 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
                                         <X size={18} />
                                     </button>
                                 </div>
+
+                                {/* [2026-10-08 莉莉子 · 交互回响层 批次3] 探路状态常驻可见
+                                    ── 病根：派卡探路后卡只是从牌组"消失"，玩家不知道它去哪了、还要多久回来
+                                    ── 放在头部下方、内容区上方：两个 tab 都能看到 */}
+                                {scout && (
+                                    <div className="mx-3 mt-3 shrink-0 flex items-center gap-2 rounded-xl border border-emerald-400/35 bg-emerald-500/10 px-3 py-2">
+                                        <MapPin size={14} className="shrink-0 text-emerald-300" />
+                                        <span className="min-w-0 truncate text-[12px] font-bold text-emerald-200">
+                                            探路中：「{CARD_DB[scout.cardKey]?.name ?? scout.cardKey}」
+                                        </span>
+                                        <span className="ml-auto shrink-0 text-[11px] font-mono text-emerald-300/80">{scout.remaining} 节点后回归</span>
+                                    </div>
+                                )}
 
                                 {/* 内容滚动区 */}
                                 <div className="flex-1 overflow-y-auto p-3 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">

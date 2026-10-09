@@ -121,6 +121,10 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
 
         const armWatchdog = (ms: number, label: string) => {
             if (cancelled) return;
+            // [2026-10-05 莉莉子 BUG修复 · 20261005-11] **重新武装前先清旧计时器** ——
+            //   下面会先按兜底值武装、元数据回来后再"升级"成真实时长 + 余量；不清旧的会两个计时器并存
+            //   （先到期的那个会按兜底值提前把影片砍断）。
+            if (watchdog) clearTimeout(watchdog);
             watchdog = setTimeout(() => {
                 console.warn(`[ChampionLevelUp] ⏱️ ${card.key} 升级影片 ${label} 未结束，强制进入爆发展示`);
                 setPhase('burst');
@@ -141,6 +145,18 @@ export const ChampionLevelUp: React.FC<ChampionLevelUpProps> = ({ card, onPlayMo
             armWatchdog(WATCHDOG_FALLBACK_MS, `兜底 ${WATCHDOG_FALLBACK_MS / 1000}s`);
             return cleanup;
         }
+
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-11] **先按兜底值立即武装，元数据回来后再"升级"成真实时长**
+        // ── 病根：原实现要等 `probe.onloadedmetadata` 才设看门狗 ⇒ **元数据一旦等不到，这条链就
+        //    根本没有任何看门狗**，影片永远停在 `video` 阶段、`onEnd` 不来、升级队列死锁
+        //    —— 程实测的"影片卡死"正落在这一格。
+        // ── 这不是理论风险：本仓库**确实存在 2 个读不出时长(Duration=N/A)的 4K 影片**
+        //    （`里芙_level up/4k.webm`、`卜卜灵鉴_level up/4k.webm`，ffprobe 实测）——
+        //    画质=4K 时打到这两位升级，就正好命中"没有看门狗"的窗口。（本轮已重编资产，双保险。）
+        // ── 修法：**先立即武装兜底**（最坏 15s 也会强制推进），元数据真的回来时再换成 `时长 + 余量`。
+        // =====================================
+        armWatchdog(WATCHDOG_FALLBACK_MS, `兜底 ${WATCHDOG_FALLBACK_MS / 1000}s（元数据未回）`);
 
         // 读影片真实时长：blob 已在 spin 阶段预加载，元数据解析很快
         const probe = document.createElement('video');

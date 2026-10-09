@@ -12,14 +12,18 @@ import { Card } from '../../Card';
 import { EnhancementCard } from './EnhancementCard';
 import { CARD_DB } from '../../../data/cards';
 import { getEquipmentById } from '../../../data/equipment';
+import { bindArmamentGaze } from '../ArmamentPreview'; // [2026-10-02 莉莉子 BUG修复] 装备悬停浮出大卡（宝箱节点装备此前看不到效果）
 import { generateCardOffers, type ShopCardItem } from '../../../data/roguelike/shop';
 import { RARITY_META } from '../RarityIcon'; // [2026-09-06 莉莉子] 随机宝箱揭示强化品质色
+// [2026-10-03 莉莉子] 多卡/多强化并排的**统一间距口径**（唯一出口，见文件头注释）
+import { GAP_ENH, ENH_CARD } from '../uiSpacing';
 import { MAZE_ENHANCEMENTS, pickRandomEnhancementByRarity } from '../../../data/roguelike/enhancements';
 import {
     pickTreasureType, pickRandomTreasure, GOLD_TREASURE_AMOUNT,
-    CARD_TREASURE_COUNT, SACRIFICE_MAX_HP,
+    CARD_TREASURE_COUNT, SACRIFICE_MAX_HP, SURPRISE_BOX_TIERS, // [2026-10-08 难度分层] 惊喜档位随难度
     type TreasureType, type RandomTreasureResult,
 } from '../../../data/roguelike/treasure';
+import type { EnhancementRarity } from '../../../data/roguelike/buffs'; // [2026-10-08] 档位标签
 import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
 import { eventBus, GameEvents } from '../../../utils/eventBus';
 
@@ -42,12 +46,23 @@ const displayCard = (key: string): CardData => {
     return { ...base, id: `treasure_${key}`, strikeCount: 0, animState: 'idle', damageTaken: 0, buffs: { power: 0, health: 0 } } as CardData;
 };
 
+// [2026-10-02 莉莉子 BUG修复 · 宝箱节点装备显示异常]
+//   程实测反馈：「宝箱节点的装备很奇怪——位置和大小不是正常的右下角，而是跑到了右上角，
+//   且鼠标悬停也看不到具体是什么装备」。
+//   病根 ①位置/②尺寸：调用处硬写 `-top-2 -right-2` + `size=30/34`，
+//     而卡面标准装备 pips 是「右下角（right:15px, bottom:8px）+ 84px 基准」（见 Card.tsx renderEquipmentPips）。
+//   病根 ③悬停：本组件原先没有绑定 bindArmamentGaze，所以悬停不会浮出装备大卡。
+//   修法：接上 bindArmamentGaze（与 Card.tsx:1862 的标准 pips 同款），并由调用处改到右下角。
 const EquipHex: React.FC<{ equipId: string; size?: number }> = ({ equipId, size = 30 }) => {
     const def = getEquipmentById(equipId);
     if (!def) return null;
     const color = RARITY_COLOR[def.rarity] || '#9ca3af';
     return (
-        <div className="flex items-center justify-center" style={{ width: size, height: size * 1.14, clipPath: HEX, background: color, filter: `drop-shadow(0 0 5px ${color}66)` }}>
+        <div
+            {...bindArmamentGaze(equipId)} // [2026-10-02] 悬停浮出装备大卡（此前缺失 → 看不到装备效果）
+            className="flex items-center justify-center cursor-help"
+            style={{ width: size, height: size * 1.14, clipPath: HEX, background: color, filter: `drop-shadow(0 0 5px ${color}66)` }}
+        >
             <img src={def.icon} alt={def.name} draggable={false} className="w-[86%] h-[86%] object-cover" style={{ clipPath: HEX }} />
         </div>
     );
@@ -60,9 +75,14 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
 }) => {
     const [treasureType] = useState<TreasureType>(() => pickTreasureType());
     // [2026-09-25 莉莉子 装备不叠加] 卡牌宝箱候选卡不再佩戴"该卡已有"的装备
-    const [cardOffers] = useState<ShopCardItem[]>(() => generateCardOffers(CARD_TREASURE_COUNT, run.equippedCards));
+    // [2026-10-08 难度分层] 卡牌宝箱：难度 → 带装备概率 + 装备品质（卡本身无稀有度字段，分层只能落在装备上）
+    const [cardOffers] = useState<ShopCardItem[]>(() => generateCardOffers(CARD_TREASURE_COUNT, run.equippedCards, { difficulty: run.difficulty }));
     // 惊喜强化：2 优秀(绿) + 1 稀有 + 1 史诗（牺牲用）[2026-08-27] 原 common→uncommon（白品池空）
     // [2026-09-25 莉莉子 强化不叠加] ① 排除本局已拥有 ② 同批去重（此前两个"绿"可能抽到同一项，出现两张一样的卡）
+    // [2026-10-08 难度分层] 档位随难度：普通 绿绿蓝+紫 / 机密 绿蓝紫+金 / 绝密 蓝紫金+红
+    const surpriseTier = SURPRISE_BOX_TIERS[run.difficulty] ?? SURPRISE_BOX_TIERS.normal;
+    /** 品质 → 中文档位标签（避免档位提升后 UI 还写着死文案） */
+    const rLabel = (r: EnhancementRarity) => RARITY_META[r]?.label ?? r;
     const [surpriseEnh] = useState(() => {
         const picked: string[] = [];
         const pickOne = (rarity: Parameters<typeof pickRandomEnhancementByRarity>[0]) => {
@@ -71,9 +91,9 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
             return e;
         };
         return {
-            normals: [pickOne('uncommon'), pickOne('uncommon')].filter(Boolean),
-            rare: pickOne('rare'),
-            epic: pickOne('epic'),
+            normals: [pickOne(surpriseTier.normals[0]), pickOne(surpriseTier.normals[1])].filter(Boolean),
+            rare: pickOne(surpriseTier.rare),
+            epic: pickOne(surpriseTier.sacrifice), // 字段名沿用 epic（= 牺牲换的那一张），值随难度升档
         };
     });
     const [sacrificeMode, setSacrificeMode] = useState(false); // 惊喜宝箱：是否已点"牺牲换史诗"
@@ -95,10 +115,11 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                 const eqDef = r.equipId ? getEquipmentById(r.equipId) : undefined;
                 return (
                     <div className="flex flex-col items-center gap-2">
-                        {/* 完整卡面（带装备则叠 EquipHex） */}
+                        {/* 完整卡面（带装备则叠六边形） */}
                         <div className="relative">
                             <Card data={displayCard(r.cardKey)} location="deck-builder" isFaceUp />
-                            {eqDef && <div className="absolute -top-2 -right-2 z-10"><EquipHex equipId={r.equipId!} size={34} /></div>}
+                            {/* [2026-10-02 莉莉子 BUG修复] 由右上角(-top-2 -right-2, size 34)改为右下角 + 贴近标准尺寸 —— 对齐卡面正常装备 pips */}
+                            {eqDef && <div className="absolute bottom-1 right-2 z-10"><EquipHex equipId={r.equipId!} size={52} /></div>}
                         </div>
                         <div className="text-lg font-black text-cyan-300">
                             获得卡牌「{cardDef?.name ?? r.cardKey}」{eqDef ? `（带装备·${eqDef.name}）` : ''}
@@ -181,7 +202,8 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                                 <div key={item.cardKey} className="flex flex-col items-center gap-1.5">
                                     <div className="relative">
                                         <Card data={displayCard(item.cardKey)} location="deck-builder" isFaceUp />
-                                        {item.equipId && <div className="absolute -top-2 -right-2 z-10"><EquipHex equipId={item.equipId} size={30} /></div>}
+                                        {/* [2026-10-02 莉莉子 BUG修复] 同上：右上角 → 右下角，并贴近标准尺寸 */}
+                                        {item.equipId && <div className="absolute bottom-1 right-2 z-10"><EquipHex equipId={item.equipId} size={46} /></div>}
                                     </div>
                                     <button
                                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onPickCard(item.cardKey, item.equipId); onClose(); }}
@@ -200,12 +222,17 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                     <div className="flex flex-col items-center gap-4">
                         {!sacrificeMode ? (
                             <>
-                                <p className="text-gray-300">三选一：拿一张普通强化 / 拿一张稀有强化 / 或牺牲生命上限换史诗</p>
-                                <div className="flex gap-6 items-end">
+                                <p className="text-gray-300">三选一：拿一张{rLabel(surpriseTier.normals[0])}强化 / 拿一张{rLabel(surpriseTier.rare)}强化 / 或牺牲生命上限换{rLabel(surpriseTier.sacrifice)}</p>
+                                {/* [2026-10-03 莉莉子 BUG修复 · 强化相互重叠]
+                                    病根：每列硬写 `w-44`（176px），而强化卡本体是 **250×395**（modals/EnhancementCard）
+                                    ⇒ 每张卡比自己的列宽出 74px，相邻列只隔 24px ⇒ **重叠 ~50px**。
+                                    修法：列宽交给卡本体（不要再用比卡窄的容器包它），间距统一取 uiSpacing 的口径。
+                                    容量核对：3×250 + 2×24 = 798 ≤ 弹窗内容宽（900 − p-6×2 = 852）✓ */}
+                                <div className="flex flex-wrap items-end justify-center" style={{ gap: GAP_ENH }}>
                                     {surpriseEnh.normals.map((enh, i) => enh && (
-                                        <div key={`n${i}`} className="flex flex-col items-center gap-2 w-44">
+                                        <div key={`n${i}`} className="flex flex-col items-center gap-2 shrink-0">
                                             <EnhancementCard enhancement={enh} isSelected={false} onClick={() => {}} />
-                                            <span className="text-[10px] font-mono text-green-400">普通</span>
+                                            <span className="text-[10px] font-mono text-green-400">{rLabel(enh.rarity)}</span>
                                             <button
                                                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onPickEnhancement(enh.id); onClose(); }}
                                                 className="px-4 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 hover:scale-105 font-black transition-all"
@@ -213,9 +240,9 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                                         </div>
                                     ))}
                                     {surpriseEnh.rare && (
-                                        <div className="flex flex-col items-center gap-2 w-44">
+                                        <div className="flex flex-col items-center gap-2 shrink-0">
                                             <EnhancementCard enhancement={surpriseEnh.rare} isSelected={false} onClick={() => {}} />
-                                            <span className="text-[10px] font-mono text-blue-400">稀有</span>
+                                            <span className="text-[10px] font-mono text-blue-400">{rLabel(surpriseTier.rare)}</span>
                                             <button
                                                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onPickEnhancement(surpriseEnh.rare!.id); onClose(); }}
                                                 className="px-4 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-500 hover:scale-105 font-black transition-all"
@@ -227,17 +254,19 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSacrificeMode(true); }}
                                     className="mt-2 px-5 py-2 rounded-lg bg-red-600/30 border border-red-400/50 text-red-200 font-black hover:bg-red-600/50 transition-all"
                                 >
-                                    牺牲 <span className="text-red-300">-{SACRIFICE_MAX_HP} 生命上限</span>，换取史诗强化
+                                    牺牲 <span className="text-red-300">-{SACRIFICE_MAX_HP} 生命上限</span>，换取{rLabel(surpriseTier.sacrifice)}强化
                                 </button>
                             </>
                         ) : (
                             surpriseEnh.epic ? (
                                 <>
-                                    <p className="text-gray-300">牺牲 {SACRIFICE_MAX_HP} 生命上限（当前 {run.maxHp} → {Math.max(10, run.maxHp - SACRIFICE_MAX_HP)}），换取史诗强化：</p>
-                                    <div className="w-52">
+                                    <p className="text-gray-300">牺牲 {SACRIFICE_MAX_HP} 生命上限（当前 {run.maxHp} → {Math.max(10, run.maxHp - SACRIFICE_MAX_HP)}），换取{rLabel(surpriseTier.sacrifice)}强化：</p>
+                                    {/* [2026-10-03 莉莉子] 原 `w-52`(208px) 比强化卡本体 250px 还窄 ⇒ 卡面溢出、视觉偏心。
+                                        改为按卡体宽度占位（不要再用比卡窄的容器包它） */}
+                                    <div className="shrink-0" style={{ width: ENH_CARD.w }}>
                                         <EnhancementCard enhancement={surpriseEnh.epic} isSelected={false} onClick={() => {}} />
                                     </div>
-                                    <span className="text-[10px] font-mono text-purple-400">史诗</span>
+                                    <span className="text-[10px] font-mono text-purple-400">{rLabel(surpriseTier.sacrifice)}</span>
                                     <div className="flex gap-3">
                                         <button
                                             onClick={() => { eventBus.emit(GameEvents.UI_BACK); setSacrificeMode(false); }}
@@ -274,7 +303,7 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                                 <p className="text-gray-300">神秘的宝箱……里面会有什么呢？</p>
                                 <button
                                     className={ACTION_BTN}
-                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setRevealed(pickRandomTreasure({ unlockedPass: run.passUnlockedEnhancements, ownedEnhancements: run.enhancements, equippedCards: run.equippedCards })); }} // [2026-08-29 通行证] [2026-09-25] 不叠加：排除已拥有强化 / 该卡已有装备
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setRevealed(pickRandomTreasure({ unlockedPass: run.passUnlockedEnhancements, ownedEnhancements: run.enhancements, equippedCards: run.equippedCards, difficulty: run.difficulty, rarityBonus: run.rarityBonus })); /* [2026-10-08 难度分层] 补难度 + 等级加成（此前两个都没传）· [2026-08-29 通行证] [2026-09-25] 不叠加 */ }}
                                 >开启宝箱</button>
                             </>
                         )}

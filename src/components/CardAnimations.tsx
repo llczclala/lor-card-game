@@ -3,7 +3,7 @@ import { motion, AnimatePresence, type Variants, useMotionValue, useVelocity, us
 import { Check, RefreshCw, Crosshair } from 'lucide-react'; // [加回] 图标
 import type { CardData } from '../types';
 import { Card } from './Card';
-import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasPoetCaitlinAura, hasForgerTatianaAura } from '../utils/gameRules';
+import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasForgerTatianaAura, getEffectiveSpellCost } from '../utils/gameRules'; // [2026-10-08 第二波] 显示费用收口（凯特琳光环改由 getEffectiveSpellCost 内部处理）
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
 import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
@@ -136,9 +136,9 @@ const AnimatedHandCard = ({
                         playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
                         burnoutValue={(() => {
                             if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
-                            if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
-                            if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
-                            return undefined;
+                            // [2026-10-08 第二波] 显示费用**收口到统一查询**：凯特琳光环 / 莲台无垠 / **装备条件减费**一次算清
+                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                            return _effCost !== (c.cost || 0) ? _effCost : undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
                         cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isDragging={isDragging}
@@ -151,9 +151,9 @@ const AnimatedHandCard = ({
                         playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
                         burnoutValue={(() => {
                             if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
-                            if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
-                            if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
-                            return undefined;
+                            // [2026-10-08 第二波] 显示费用**收口到统一查询**：凯特琳光环 / 莲台无垠 / **装备条件减费**一次算清
+                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                            return _effCost !== (c.cost || 0) ? _effCost : undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
                         cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isDragging={isDragging}
@@ -166,9 +166,9 @@ const AnimatedHandCard = ({
                         playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
                         burnoutValue={(() => {
                             if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
-                            if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
-                            if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
-                            return undefined;
+                            // [2026-10-08 第二波] 显示费用**收口到统一查询**：凯特琳光环 / 莲台无垠 / **装备条件减费**一次算清
+                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                            return _effCost !== (c.cost || 0) ? _effCost : undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
                         cardBackUrl={cardBackUrl} cardBackVideoUrl={cardBackVideoUrl} isDragging={isDragging}
@@ -180,9 +180,9 @@ const AnimatedHandCard = ({
                     playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus}
                     burnoutValue={(() => {
                         if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
-                        if (hasPoetCaitlinAura(playerBench) && (c.type === 'spell-burst' || c.type === 'spell-fast')) return Math.max(0, c.cost - 1);
-                        if (c.key === 'Shalo_Golem_Glimpse' && game.playerMaxMana >= 10) return 0;
-                        return undefined;
+                        // [2026-10-08 第二波] 手牌显示费用**收口到统一查询**（同上）
+                        const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                        return _effCost !== (c.cost || 0) ? _effCost : undefined;
                     })()}
                     displayParams={(() => {
                         if (!c.type.includes('spell') || !c.effects || c.effects.length === 0) return undefined;
@@ -450,7 +450,11 @@ interface EnemyHandProps {
     onAnimComplete?: (cardId: string) => void; // [2026-07-22 莉莉子] 手牌离场动画完成回调
 }
 
-export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, cardBackVideoUrl, onAnimComplete }) => {
+// [2026-10-02 莉莉子 性能优化] 本体改名，边界处用 React.memo 导出（见组件 3 之前）。
+//   props：hand（数组引用）/ 卡背 URL（字符串）/ onAnimComplete（调用方已改为稳定引用）
+//   ⚠️ 本组件在渲染期写 prevHandRef / isNewFlagsRef 做"新牌"识别 —— memo 跳过渲染**不影响正确性**：
+//      这两份记忆只在 hand 真的变了时才需要推进，而 hand 变了 props 就不同、memo 必然放行。
+const EnemyHandInner: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, cardBackVideoUrl, onAnimComplete }) => {
     // ── 渲染时同步检测 isNew（和 PlayerHand 一致）──
     // ⚠️ 保持 isNewFlagsRef 持久化！参考 PlayerHand 的 isNewMapRef 红线注释。
     const prevHandRef = useRef<string[]>([]);
@@ -569,6 +573,11 @@ export const EnemyHand: React.FC<EnemyHandProps> = ({ hand, cardBackUrl, cardBac
         </div>
     );
 };
+
+// ══════════════════════════════════════════════════════════════
+// [2026-10-02 莉莉子 性能优化] EnemyHand 的 memo 导出
+// ══════════════════════════════════════════════════════════════
+export const EnemyHand = React.memo(EnemyHandInner);
 
 // --- 组件 3: 开局换牌阶段 (Opening Mulligan) ---
 interface OpeningMulliganProps {
@@ -1803,6 +1812,22 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [animPhase, setAnimPhase] = useState<'enter' | 'select' | 'exit'>('enter');
 
+    // [2026-10-04 莉莉子 · AI 停机保护性修复 · P5] 回调收进 ref —— 见下方 effect 注释
+    const onConfirmRef = useRef(onConfirm);
+    onConfirmRef.current = onConfirm;
+
+    // ⚠️ [2026-10-04 独立审查 #1 修复] 「退出阶段」的尾定时器**不能**交给下面那个 effect 的 cleanup。
+    //   病根（审查者指出、我复核成立）：`animPhase` 本身就是那个 effect 的依赖，
+    //   而 800ms 回调里先 `setAnimPhase('exit')`、随后才设尾定时器 —— React 19 自动批处理会把这次
+    //   state 更新**flush 在回调返回之后**，于是 cleanup 一定在"刚设好尾定时器"之后运行，
+    //   把 handle 清掉 ⇒ **AI 校准面板唯一的出口被自己的 cleanup 杀死**（面板卡住 + 45s 后 AI 被迫放弃校准）。
+    //   ⇒ 尾定时器改挂在本 ref 上，**只随组件真正卸载**清理。
+    const exitTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+    useEffect(() => () => {
+        exitTimersRef.current.forEach(t => clearTimeout(t));
+        exitTimersRef.current = [];
+    }, []);
+
     // 入场动画
     useEffect(() => {
         const timer = setTimeout(() => setAnimPhase('select'), 600);
@@ -1810,10 +1835,23 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
     }, []);
 
     // [2026-07-18] AI校准：自动选择 + 自动确认（带延迟，让玩家看到流程）
+    // [2026-10-04 莉莉子 · AI 停机保护性修复 · P5]
+    //   病根：本 effect 依赖里带着 `onConfirm`，而调用方（GameSession.tsx:2505）传的是
+    //   **内联箭头函数** `onConfirm={(id) => actions.confirmCalibrate(id)}` —— 每次渲染都是新函数。
+    //   ⇒ 父组件每重渲染一次，React 就会跑 cleanup 把这个 1500ms 定时器**清零重建**。
+    //   而 AI 校准期间父组件几乎必然高频重渲染（回合开始的法力"消耗→充能"动画每 150~200ms
+    //   一次 setState，GameSession.tsx:78-92；而木林这类校准正是"回合开始触发"）⇒
+    //   AI 的自动确认永远等不到 1.5s 的安静窗口。
+    //   偏偏这条定时器是**唯一出口**：AI 面板下玩家的「确定/选卡」被 isHidden 挡死（本文件 1852/1859），
+    //   同时 useAI 的闸门与主倒计时都被 calibratePending 冻结 ⇒ 三面封死。
+    //   修法：① 回调走 ref（依赖里不再有函数）—— 这一条就够了，不要顺手动定时器的归属；
+    //        ② 尾定时器挂 `exitTimersRef`（只随卸载清理），**绝不**交给本 effect 的 cleanup（见上方 ⚠️）。
     useEffect(() => {
         if (!isHidden || animPhase !== 'select') return;
 
         const selectTimer = setTimeout(() => {
+            // [2026-10-03 莉莉子 防御] 候选为空（牌库被抽空等极端情形）⇒ 直接放弃，避免 `cards[0].card` 崩
+            if (cards.length === 0) { onConfirmRef.current(undefined); return; }
             // 随机选一张
             const randomIdx = Math.floor(Math.random() * cards.length);
             const pickedId = cards[randomIdx].card.id;
@@ -1822,17 +1860,25 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
             // 再等一会自动确认
             const confirmTimer = setTimeout(() => {
                 setAnimPhase('exit');
-                setTimeout(() => onConfirm(pickedId), 500);
+                // 尾定时器挂 ref（**不要**改成由本 effect cleanup 管理 —— 见上方 ⚠️ #1）
+                const tail = setTimeout(() => onConfirmRef.current(pickedId), 500);
+                exitTimersRef.current.push(tail);
             }, 800);
 
             return () => clearTimeout(confirmTimer);
         }, 1500);
 
         return () => clearTimeout(selectTimer);
-    }, [isHidden, animPhase, cards, onConfirm]);
+    }, [isHidden, animPhase, cards]);
 
     // 退出动画
     const handleConfirm = () => {
+        // [2026-10-03 莉莉子 BUG修复] AI 校准时**玩家不得确认**
+        //   病根：此前只有"选卡"被 isHidden 挡住（toggleSelect 内 return），
+        //   但"确定"按钮照常渲染、handleConfirm 也不判 isHidden ⇒
+        //   玩家在 AI 自动选牌（1.5s）之前点确定 ⇒ onConfirm(undefined) ⇒ confirmCalibrate 走"放弃"分支
+        //   ⇒ **玩家能让 AI 跳过整次校准**（实测复现）。
+        if (isHidden) return;
         setAnimPhase('exit');
         setTimeout(() => onConfirm(selectedId || undefined), 500);
     };
@@ -1905,8 +1951,8 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
                                         <Card data={card} location="preview" isFaceUp={!isHidden} cardBackUrl={isHidden ? cardBackUrl : undefined} cardBackVideoUrl={isHidden ? cardBackVideoUrl : undefined} onViewArt={onViewArt} />
                                     </div>
 
-                                    {/* 选择/取消按钮 */}
-                                    {animPhase === 'select' && (
+                                    {/* 选择/取消按钮 · [2026-10-03] AI 校准时**不渲染**（此前只是"点了没反应"，看着仍可点 = 误导） */}
+                                    {animPhase === 'select' && !isHidden && (
                                         <motion.button
                                             initial={{ opacity: 0, y: -5 }}
                                             animate={{ opacity: 1, y: 10 }}
@@ -1927,8 +1973,10 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
                 </div>
             </div>
 
-            {/* 确定按钮 */}
-            {animPhase === 'select' && (
+            {/* 确定按钮 · [2026-10-03] AI 校准时**不渲染给玩家**
+                （AI 侧由上面的自动确认 useEffect 在 1.5s 选牌 + 0.8s 后自己调 onConfirm；
+                  玩家点这个按钮会让 AI 跳过校准 —— 已实测复现） */}
+            {animPhase === 'select' && !isHidden && (
                 <motion.button
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}

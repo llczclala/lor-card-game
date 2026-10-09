@@ -1,5 +1,7 @@
 // [核心重构] 导入标题页多分辨率 WebM
 import type { BgmKey } from './audio'; // [2026-08-16] BGM key 类型（getHallBgm 返回类型对齐 playBgm 参数）
+// [2026-10-05 莉莉子 BUG修复 · 20261005-11] 运行期"影片健康度"降档（弱机自动降画质）
+import { applyMovieResolutionBias } from '../utils/movieHealth';
 import title_bg_1k from '../movie/title/烬中焰火/1k.webm';
 import title_bg_2k from '../movie/title/烬中焰火/2k.webm';
 import title_bg_4k from '../movie/title/烬中焰火/4k.webm';
@@ -222,7 +224,9 @@ export const MOVIE_DB = {
 export const getRandomTitleMovie = (res: VideoResolution = '1k'): string => {
     const list = MOVIE_DB.title;
     const movie = list[Math.floor(Math.random() * list.length)];
-    return movie[res] || movie['1k']; // 兜底返回 1k
+    const biasRes = applyMovieResolutionBias(res); // [2026-10-05] 运行期降档（弱机自动用更低画质）
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-11] 先按"运行期健康度"降档，再逐级兜底
+    return movie[biasRes] || movie[res] || movie['1k']; // 兜底返回 1k
 };
 
 /**
@@ -230,7 +234,8 @@ export const getRandomTitleMovie = (res: VideoResolution = '1k'): string => {
  */
 export const getLevelUpMovie = (heroKey: string, res: VideoResolution = '1k'): string | null => {
     const movie = MOVIE_DB.levelup[heroKey];
-    return movie ? (movie[res] || movie['1k']) : null;
+    const biasRes = applyMovieResolutionBias(res);
+    return movie ? (movie[biasRes] || movie[res] || movie['1k']) : null;
 };
 
 /**
@@ -241,7 +246,8 @@ export const getVictoryMovie = (heroKeys: string[], res: VideoResolution = '1k')
         if (MOVIE_DB.win[key] && MOVIE_DB.win[key].length > 0) {
             const movies = MOVIE_DB.win[key];
             const movie = movies[Math.floor(Math.random() * movies.length)];
-            return movie[res] || movie['1k'];
+            const biasRes = applyMovieResolutionBias(res);
+            return movie[biasRes] || movie[res] || movie['1k'];
         }
     }
     return null;

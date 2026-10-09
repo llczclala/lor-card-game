@@ -263,7 +263,7 @@ const RecordEntry: React.FC<{ record: GameRecord; onCardClick: (key: string) => 
             <div className="flex items-start gap-2 py-2 px-3 rounded-xl hover:bg-white/5 transition-colors group">
                 <span className={`${dotColor} text-sm font-mono shrink-0 mt-2`}>{label}</span>
                 <span className="text-white/50 text-sm shrink-0 mt-2">
-                    {record.summary === '派出进攻' ? '⚔️' : '🛡️'}
+                    {record.summary === '发起进攻' ? '⚔️' : '🛡️'}
                 </span>
                 <div className="flex items-center gap-3 flex-wrap">
                     {record.entities!.map((entity, i) => (

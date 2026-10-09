@@ -12,10 +12,15 @@ import { Flame, ShoppingBag, HelpCircle, Gem, Flag, Sparkles, Trash2, Copy, MapP
 import type { RogueNodeType } from '../../../data/roguelike/mapLayout';
 import type { MazeEnhancement } from '../../../data/roguelike/enhancements';
 import { EnhancementCard } from './EnhancementCard';
-import { ROGUE_EVENT_TYPE_LABELS, type RogueEvent, type RogueEventEffect } from '../../../data/roguelike/events'; // [2026-08-28 事件]
+import { ConfirmDialog } from '../ConfirmDialog'; // [2026-10-08 交互回响层 批次2] 通用二次确认（净化删卡 / 派卡探路）
+// [2026-10-03 莉莉子] 多卡/多强化并排的**统一间距口径**（唯一出口，见该文件头注释）
+import { GAP_HAND, GAP_ENH_TILTED, CARD_ROW_GAP_Y } from '../uiSpacing';
+import { ROGUE_EVENT_TYPE_LABELS, ROGUE_EVENT_RARITY_LABELS, rarityOfEvent, resolveChoiceEffects, type RogueEvent, type RogueEventEffect } from '../../../data/roguelike/events'; // [2026-08-28 事件] · [2026-10-05 P2] +稀有度标签 · [2026-10-08 瓦尔基里大赛] +resolveChoiceEffects
+// [2026-10-05 莉莉子 · 方案 P3/P4] 提示与执行**同一份真源**；`apply*` 的返回值用于结果步骤
+import { previewEffects, type EventApplyResult } from '../../../data/roguelike/eventAppliers';
 import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun'; // [2026-08-28 事件] 删卡用
 import { CARD_DB } from '../../../data/cards'; // [2026-08-28 事件] 删卡名
-import { getDialogueBg } from '../../../data/roguelike/dialogueBg'; // [2026-08-29 事件] 随机背景图
+import { getDialogueBg, getEventCg } from '../../../data/roguelike/dialogueBg'; // [2026-08-29 事件] 随机背景图 · [2026-10-08 瓦尔基里大赛] +getEventCg（事件专属 CG）
 // [2026-08-31 莉莉子 开发者] 全量强化选择器依赖
 import type { MazeBuff, EnhancementRarity } from '../../../data/roguelike/buffs';
 import { getBattleEffects } from '../../../data/roguelike/buffs'; // [2026-09-29 莉莉子] 修：DevEnhBlock 用了它但漏了导入
@@ -36,7 +41,12 @@ interface NodeEventModalProps {
     // [2026-08-28 事件]
     run?: RoguelikeRunState; // 事件删卡子步骤读取牌组
     event?: RogueEvent;     // 当前事件（type='event' 时传入）
-    onEvent?: (eventId: string, choiceIndex: number, removePicks?: string[]) => void;
+    // [2026-10-05 · 方案 P3] 返回值 = "实际结果清单"（供结果步骤渲染）；`void` 兼容旧调用
+    onEvent?: (eventId: string, choiceIndex: number, removePicks?: string[]) => EventApplyResult[] | void;
+    /** [2026-10-08 莉莉子 · 交互回响层 批次3] 迎战类事件：结果步骤渲染「迎战」按钮 → 点击才切进战斗 */
+    onEventFight?: () => void;
+    /** [2026-10-05 · 方案 P4 §3] 「深层回响」结算：`layers` = 玩家最终带出的回声层数 */
+    onEventDeep?: (eventId: string, layers: number) => EventApplyResult[] | void;
     // [2026-08-29] 强化三选一刷新
     onRefresh?: () => void; // 刷新迷宫强化（消耗刷新次数）
     refreshCount?: number;  // 剩余刷新次数
@@ -172,7 +182,7 @@ const TITLES: Record<NodeEventModalProps['type'], { title: string; icon: React.R
     treasure: { title: '宝箱', icon: <Gem size={32} className="text-yellow-400" />, desc: '此地暂未开放，后续可获得免费强化 / 金币。' },
 };
 
-export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp, onRest, onClose, enhanceOptions, onEnhance, run, event, onEvent, onRefresh, refreshCount = 0, onRemoveCard, onAddCard, onStartScout, isDev, devPlayerPool, devEnemyPool, ownedEnhancements, onDevPick }) => {
+export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp, onRest, onClose, enhanceOptions, onEnhance, run, event, onEvent, onEventFight, onEventDeep, onRefresh, refreshCount = 0, onRemoveCard, onAddCard, onStartScout, isDev, devPlayerPool, devEnemyPool, ownedEnhancements, onDevPick }) => {
     const meta = TITLES[type];
     // [2026-08-10] 单选选中态：点击卡牌选中，底部确定生效
     const [selectedEnhanceId, setSelectedEnhanceId] = useState<string | null>(null);
@@ -186,21 +196,38 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
     // [2026-08-31] 敌方 Tab 预选当前已注入的敌方强化（run.devEnemyEnhancements），便于查看/增删注入组合
     const [devSelEnemy, setDevSelEnemy] = useState<Set<string>>(new Set(run?.devEnemyEnhancements ?? []));
     // [2026-08-28 事件] 事件交互：选项 → 删卡子步骤
-    const [eventStep, setEventStep] = useState<'choices' | 'remove'>('choices');
+    const [eventStep, setEventStep] = useState<'choices' | 'remove' | 'story' | 'result'>('choices');
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 选择后播出的**剧情文本**（只有带 `story` 的选项才用）
+    const [storyText, setStoryText] = useState('');
     const [pendingChoice, setPendingChoice] = useState(0);
+    // [2026-10-05 莉莉子 · 方案 P3] 「结果」步骤的内容：由 `onEvent` 回报的"实际发生了什么"
+    const [eventResult, setEventResult] = useState<EventApplyResult[]>([]);
+    // [2026-10-05 莉莉子 · 方案 P4 §3] 「深层回响」：当前层数 + 提示（失手时的说明）
+    const [deepLayer, setDeepLayer] = useState(0);
+    const [deepMsg, setDeepMsg] = useState('');
     const [removePicks, setRemovePicks] = useState<string[]>([]);
     // [2026-08-29 休整 v2] 篝火：菜单 / 选卡子步骤
     const [restStep, setRestStep] = useState<'menu' | 'select'>('menu');
     const [restMode, setRestMode] = useState<'remove' | 'copy' | 'scout'>('remove');
-    /** 休整选卡确认：按模式执行净化/复制/探路 */
+    // [2026-10-08 莉莉子 · 交互回响层 批次2] 不可逆动作的二次确认：
+    //   净化 = **永久删卡** · 探路 = 卡离队 2 个节点；复制卡**不确认**（无害、且是"获得"不是"失去"）
+    const [confirmPick, setConfirmPick] = useState<string | null>(null);
+    /** 休整选卡：净化/探路 → 先弹二次确认；复制 → 直接执行 */
     const handleRestPick = (cardKey: string) => {
+        if (restMode === 'remove' || restMode === 'scout') { setConfirmPick(cardKey); return; }
+        if (restMode === 'copy') onAddCard?.(cardKey);
+        onClose();
+    };
+    /** 二次确认通过后真正执行（结果回执由 App 侧 handler 负责，见 批次1） */
+    const executeRestPick = (cardKey: string) => {
         if (restMode === 'remove') onRemoveCard?.(cardKey);
-        else if (restMode === 'copy') onAddCard?.(cardKey);
-        else onStartScout?.(cardKey);
+        else if (restMode === 'scout') onStartScout?.(cardKey);
+        setConfirmPick(null);
         onClose();
     };
     // [2026-08-29 事件] 事件节点随机背景图（进弹窗固定一次，dialogue 图池）
-    const eventBg = useMemo(() => getDialogueBg(), []);
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **事件专属 CG 优先**（数据里指定），否则沿用一局内固定的随机背景
+    const eventBg = useMemo(() => getEventCg(event?.cg) ?? getDialogueBg(), [event?.cg]);
 
     useEffect(() => {
         const t = setTimeout(() => setAnimPhase('select'), 600);
@@ -208,35 +235,10 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
     }, []);
 
     // [2026-08-28 事件] 效果 → 简短提示（选项卡片右侧展示代价/收益）
-    const effectHints = (effects: RogueEventEffect[]): string => {
-        const parts: string[] = [];
-        for (const ef of effects) {
-            if (ef.gold) parts.push(`${ef.gold > 0 ? '+' : ''}${ef.gold} 金`);
-            if (ef.hp) parts.push(`${ef.hp > 0 ? '+' : ''}${ef.hp} 生命`);
-            if (ef.hpPct) parts.push(`${ef.hpPct > 0 ? '+' : ''}${ef.hpPct}% 生命`);
-            if (ef.maxHp) parts.push(`${ef.maxHp > 0 ? '+' : ''}${ef.maxHp} 上限`);
-            if (ef.revive) parts.push(`复活×${ef.revive}`);
-            if (ef.refresh) parts.push(`刷新×${ef.refresh}`);
-            if (ef.addRandomCard) parts.push('随机卡');
-            if (ef.addEquippedCard) parts.push('带装备卡');
-            if (ef.polluteDeck) parts.push('牌组污染');
-            if (ef.removeCards) parts.push(`删卡×${ef.removeCards}`);
-            if (ef.upgradeCard) parts.push('强化一张卡');
-            if (ef.addEnhancement) parts.push('迷宫强化');
-            if (ef.addEquipment) parts.push('装备');
-            if (ef.removeEquipment) parts.push('交出装备');
-            if (ef.gamble) parts.push(`赌注${Math.round(ef.gamble.prob * 100)}%`);
-            if (ef.forced) parts.push('随机结果');
-            if (ef.invest) {
-                if (ef.invest.kind === 'battleWinGold') parts.push(`投资→战斗胜+${ef.invest.value ?? 0}金`);
-                else if (ef.invest.kind === 'restHeal') parts.push('投资→休息翻倍');
-                else parts.push('投资→强化升级');
-            }
-            if (ef.fight) parts.push('触发战斗');
-            if (ef.fightDebuff) parts.push(`未来敌+${ef.fightDebuff.enemyHpBonus}命`);
-        }
-        return parts.join(' · ') || '……';
-    };
+    // [2026-10-05 莉莉子 · 方案 P3/P4 结构重构] 选项上的"预演"文案改为**调用注册表**：
+    //   提示与执行从此同一份真源（`data/roguelike/eventAppliers.previewEffects`）⇒ 不可能再各写一套、各漏一半。
+    // [2026-10-08 难度分层] 选项上的"预演"必须吃本局难度，否则文案与实际结算不一致
+    const effectHints = (effects: RogueEventEffect[]): string => previewEffects(effects, run?.difficulty);
 
     // [2026-08-28 事件] 点事件选项：含顶层 removeCards → 进删卡子步骤；否则直接回调
     const handleEventChoice = (i: number) => {
@@ -248,8 +250,19 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
             setEventStep('remove');
             return;
         }
-        onEvent(event.id, i);
-        onClose(); // [2026-08-29 修复] 选择后关闭事件弹窗（否则可无限触发效果）
+        // [2026-10-05 莉莉子 · 方案 P3] **执行后进「结果」步骤**（不再静默关窗）：
+        //   `onEvent` 回报"实际发生了什么"（抽到哪张卡/哪个强化/哪件装备），玩家当场就能看到。
+        // [2026-10-08 · 批次3] 所有路径都记下"选的是哪一项"（迎战按钮据此判断要不要显示）
+        setPendingChoice(i);
+        const res = onEvent(event.id, i) ?? [];
+        setEventResult(res);
+        // [2026-10-08 莉莉子 · 瓦尔基里大赛] **剧情步骤优先**：
+        //   程的流程是「选择 → 播出对应剧情 → 确定 → 返回地图」。
+        //   带 `story` 的选项走剧情步骤（确定即关窗回地图）；
+        //   不再走「结果」步骤 —— 因为这类事件的奖励改成了**打赢才发**（选择时无事可报）。
+        const story = event.choices[i]?.story;
+        if (story) { setStoryText(story); setEventStep('story'); return; }
+        setEventStep('result');
     };
     const removableDeck = run ? Array.from(new Set(run.deck.filter(k => !CARD_DB[k]?.isChampion))) : [];
     const removeNeeded = event?.choices[pendingChoice]?.effects.find(ef => ef.removeCards && !ef.forced)?.removeCards ?? 0;
@@ -440,7 +453,9 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
 
                     {/* 卡牌区域：并排 + 每张带角度 + 从下方升入 */}
                     <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '6vh' }}>
-                        <div className="flex gap-6">
+                        {/* [2026-10-03 莉莉子] 倾斜行的横向间距统一取 uiSpacing 口径：
+                            强化卡 250×395 倾斜 ±9° 后包围盒宽 +59px，原来写死的 gap-6(24) ⇒ 相邻卡角重叠 */}
+                        <div className="flex" style={{ gap: GAP_ENH_TILTED }}>
                             {opts.length > 0 ? (
                                 <AnimatePresence>
                                     {opts.map((opt, index) => {
@@ -551,10 +566,146 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 {ROGUE_EVENT_TYPE_LABELS[event.type]}事件
                             </span>
                             <h3 className="text-2xl font-black tracking-widest">{event.name}</h3>
+                            {/* [2026-10-05 莉莉子 · 方案 P2] 稀有度标签（由 weight 单一真源推导；普通档不显示以免噪音） */}
+                            {ROGUE_EVENT_RARITY_LABELS[rarityOfEvent(event)] && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
+                                    rarityOfEvent(event) === 'legend'
+                                        ? 'border-amber-400/50 bg-amber-500/10 text-amber-300'
+                                        : 'border-sky-400/40 bg-sky-500/10 text-sky-300'
+                                }`}>
+                                    {ROGUE_EVENT_RARITY_LABELS[rarityOfEvent(event)]}
+                                </span>
+                            )}
                         </div>
                         <p className="text-sm text-gray-300 leading-relaxed mb-6 min-h-[3rem]">{event.desc}</p>
 
-                        {eventStep === 'choices' ? (
+                        {eventStep === 'story' ? (
+                            /* [2026-10-08 莉莉子 · 瓦尔基里大赛] **剧情步骤**：选择后播出该选项对应的剧情，
+                               点「确定」即返回地图（该节点此时会变成战斗节点） */
+                            <div className="flex flex-col gap-5">
+                                <motion.p
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ duration: 0.45, ease: 'easeOut' }}
+                                    className="text-base text-gray-100 leading-loose whitespace-pre-line"
+                                >
+                                    {storyText}
+                                </motion.p>
+                                <button
+                                    onClick={() => onClose?.()}
+                                    className="mt-1 px-4 py-3 rounded-xl font-black tracking-widest transition-all border bg-white/5 hover:bg-white/15 border-white/10 text-gray-200"
+                                >
+                                    确定
+                                </button>
+                            </div>
+                        ) : eventStep === 'result' ? (
+                            /* [2026-10-05 莉莉子 · 方案 P3] 第 3 步：结果 —— 玩家不必再靠猜血条/金币判断拿到了什么 */
+                            <div className="flex flex-col gap-4">
+                                <h4 className={`text-lg font-black tracking-widest ${eventResult.some(r => r.kind === 'cost') ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                    {eventResult.some(r => r.kind === 'cost') ? '命运已定' : '所得入囊'}
+                                </h4>
+                                {(['gain', 'cost'] as const).map(k => {
+                                    const rows = eventResult.filter(r => r.kind === k);
+                                    if (!rows.length) return null;
+                                    return (
+                                        <div key={k}>
+                                            <div className="text-[11px] font-mono tracking-widest text-gray-500 mb-1.5">{k === 'gain' ? '获得' : '失去'}</div>
+                                            <div className="flex flex-col gap-1.5">
+                                                {rows.map((r, idx) => (
+                                                    <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${k === 'gain' ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200' : 'border-amber-400/30 bg-amber-500/10 text-amber-200'}`}>
+                                                        <span className="shrink-0">{r.icon}</span><span className="font-bold">{r.text}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {eventResult.filter(r => r.kind === 'info').length > 0 && (
+                                    <div className="flex flex-col gap-1">
+                                        {eventResult.filter(r => r.kind === 'info').map((r, idx) => (
+                                            <div key={`i${idx}`} className="text-xs text-gray-400">{r.icon} {r.text}</div>
+                                        ))}
+                                    </div>
+                                )}
+                                {eventResult.length === 0 && <p className="text-sm text-gray-500 italic">什么也没有发生。</p>}
+                                {(() => {
+                                    // [2026-10-08 莉莉子 · 交互回响层 批次3] 迎战类事件：结果步骤给「迎战」按钮
+                                    // [2026-10-08 莉莉子 · 瓦尔基里大赛 · 通用流程改动（程拍板 🅰️）]
+                                    //   ⚠️ **不再**在这里直接 `onEventFight()`（那会立刻切进战斗）——
+                                    //   改为关窗回地图：该节点已登记为「待战」，回地图后会显示成战斗节点，点它才打。
+                                    const willFight = !!onEventFight && !!event?.choices[pendingChoice]?.effects.some(ef => !!ef.fight);
+                                    return (
+                                        <button
+                                            onClick={() => onClose?.()}
+                                            className={`mt-1 px-4 py-3 rounded-xl font-black tracking-widest transition-all border ${willFight
+                                                ? 'bg-gradient-to-r from-red-600 to-orange-500 border-red-400/60 text-white hover:scale-[1.02]'
+                                                : 'bg-white/5 hover:bg-white/15 border-white/10 text-gray-200'}`}
+                                        >
+                                            {willFight ? '确定（回地图迎战）⚔️' : '继续'}
+                                        </button>
+                                    );
+                                })()}
+                            </div>
+                        ) : event.deepEcho ? (
+                            /* ═══ [2026-10-05 莉莉子 · 方案 P4 §3] 深层回响：一次进入内的 push-your-luck ═══
+                               信息完全公开（每层成功率 + 代价都写在按钮上）；随时可收手；失手保底 1 层。
+                               ⚠️ 全程在本弹窗内完成 ⇒ 不开任何"重复进入"的口子（反刷取红线） */
+                            (() => {
+                                const cfg = event.deepEcho;
+                                const nextIdx = deepLayer; // 下一层的下标（deepLayer = 已带出的层数）
+                                const hasNext = nextIdx < cfg.layers;
+                                const prob = hasNext ? (cfg.probByLayer[nextIdx] ?? 1) : 0;
+                                const costPct = hasNext ? (cfg.costPctByLayer[nextIdx] ?? 0) : 0;
+                                const paidPct = cfg.costPctByLayer.slice(0, deepLayer).reduce((s, n) => s + n, 0);
+                                const settle = (layers: number) => {
+                                    const res = onEventDeep?.(event.id, layers) ?? [];
+                                    setEventResult(res);
+                                    setEventStep('result');
+                                };
+                                return (
+                                    <div className="flex flex-col gap-4">
+                                        <div className="flex items-center gap-3 text-sm">
+                                            <span className="px-2 py-0.5 rounded-md bg-violet-500/15 border border-violet-400/40 text-violet-200 font-black">回声 ×{deepLayer}</span>
+                                            {deepLayer > 0 && <span className="text-amber-200/80">已付出：生命上限 −{paidPct}%</span>}
+                                        </div>
+                                        {deepMsg && <p className="text-sm text-amber-300 font-bold">{deepMsg}</p>}
+                                        {hasNext ? (
+                                            <div className="flex flex-col gap-3">
+                                                <button
+                                                    onClick={() => settle(Math.max(1, deepLayer))}
+                                                    className="px-4 py-3 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-gray-200 font-black tracking-widest transition-all"
+                                                >
+                                                    在此收手{deepLayer > 0 ? `（带走 ×${deepLayer}）` : ''}
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        if (Math.random() < prob) {
+                                                            setDeepLayer(deepLayer + 1);
+                                                            setDeepMsg('');
+                                                        } else {
+                                                            setDeepMsg('回声断了——这一层的东西全都散在了下面。');
+                                                            settle(1); // 失手：只保底第 1 层
+                                                        }
+                                                    }}
+                                                    className="px-4 py-3 rounded-xl font-black tracking-widest text-white transition-all hover:scale-[1.02]"
+                                                    style={{ background: 'linear-gradient(to right, #7c3aed, #a855f7)' }}
+                                                >
+                                                    再深入一层（成功 {Math.round(prob * 100)}% · 代价 −{costPct}% 生命）
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button
+                                                onClick={() => settle(deepLayer)}
+                                                className="px-4 py-3 rounded-xl font-black tracking-widest text-white transition-all hover:scale-[1.02]"
+                                                style={{ background: 'linear-gradient(to right, #7c3aed, #a855f7)' }}
+                                            >
+                                                已到底——结算回声 ×{deepLayer}
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })()
+                        ) : eventStep === 'choices' ? (
                             <div className="flex flex-col gap-3">
                                 {event.choices.map((ch, i) => (
                                     <button
@@ -565,7 +716,8 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                         <div className="flex items-center justify-between gap-3">
                                             <span className="font-bold text-white">{ch.label}</span>
                                             <span className="text-[11px] text-right shrink-0 text-gray-400 group-hover:text-violet-300">
-                                                {effectHints(ch.effects)}
+                                                {/* [2026-10-08 瓦尔基里大赛] 提示必须与执行同源：整档难度奖励走同一出口 */}
+                                                {effectHints(resolveChoiceEffects(ch, run?.difficulty))}
                                             </span>
                                         </div>
                                     </button>
@@ -585,7 +737,9 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 {removableDeck.length === 0 ? (
                                     <p className="text-gray-500 text-sm py-4 text-center">牌组没有可删的牌</p>
                                 ) : (
-                                    <div className="flex flex-wrap gap-3 justify-center">
+                                    /* [2026-10-03 莉莉子 BUG修复] 手牌卡右侧外挂的装备/武装图标是绝对定位（外扩 ~31px），
+                                       原来是 gap-3(12px) ⇒ 图标被邻卡压住。间距改取 uiSpacing 口径 */
+                                    <div className="flex flex-wrap justify-center" style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y }}>
                                         {removableDeck.map(key => {
                                             const isPick = removePicks.includes(key);
                                             return (
@@ -608,7 +762,11 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                     <button onClick={() => setEventStep('choices')} className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/15 font-bold text-gray-300 transition-all">返回</button>
                                     <button
                                         disabled={removePicks.length < removeNeeded}
-                                        onClick={() => { onEvent?.(event.id, pendingChoice, removePicks); onClose?.(); }} // [2026-08-29 修复] 删卡确认后也关闭弹窗
+                                        onClick={() => { // [2026-10-05 · 方案 P3] 删卡确认后同样进「结果」步骤
+                                            const res = onEvent?.(event.id, pendingChoice, removePicks) ?? [];
+                                            setEventResult(res);
+                                            setEventStep('result');
+                                        }}
                                         className={`px-5 py-2 rounded-lg font-black transition-all ${removePicks.length >= removeNeeded ? 'bg-red-600 hover:bg-red-500' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
                                     >
                                         确认删除
@@ -639,7 +797,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
             { key: 'copy', icon: <Copy size={20} className="text-blue-400" />, title: '复制卡牌', desc: '复制一张已有卡牌', color: 'border-blue-500/40 hover:border-blue-400' },
             { key: 'scout', icon: <MapPin size={20} className="text-emerald-400" />, title: '探路', desc: '派单位卡探路，2 节点后带装备回归', color: 'border-emerald-500/40 hover:border-emerald-400' },
         ] as const;
-        const restLabels: Record<string, string> = { remove: '净化 · 选择要移除的卡', copy: '复制 · 选择要复制的卡', scout: '探路 · 选择要派出的单位卡' };
+        const restLabels: Record<string, string> = { remove: '净化 · 选择要移除的卡', copy: '复制 · 选择要复制的卡', scout: '探路 · 选择要派遣的单位卡' };
         return (
             <AnimatePresence>
                 <div className="fixed inset-0 z-[700] flex items-center justify-center bg-black/80 backdrop-blur-sm">
@@ -661,21 +819,28 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                             <>
                                 <p className="text-sm text-amber-200/70 mb-4">旅途中的休整地，选择一个行动（当前 HP {hp}/{maxHp}）</p>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                    {restChoices.map(c => (
-                                        <button key={c.key}
-                                            onClick={() => {
-                                                if (c.key === 'rest') { onRest(); onClose(); }
-                                                else { setRestMode(c.key); setRestStep('select'); }
-                                            }}
-                                            className={`flex flex-col items-center gap-2 px-4 py-4 rounded-xl bg-white/5 border transition-all hover:scale-[1.02] ${c.color}`}
-                                        >
-                                            <div className="shrink-0">{c.icon}</div>
-                                            <div className="text-center">
-                                                <div className="font-black">{c.title}</div>
-                                                <div className="text-[11px] text-gray-400 mt-0.5 leading-snug">{c.desc}</div>
-                                            </div>
-                                        </button>
-                                    ))}
+                                    {restChoices.map(c => {
+                                        // [2026-10-08 莉莉子 · 交互回响层 批次2] 满血时「休整」= 白白用掉节点唯一机会
+                                        //   ⇒ 直接置灰（不弹确认框：这里要的是"劝住"，不是"再问一次"）
+                                        const blocked = c.key === 'rest' && hp >= maxHp;
+                                        return (
+                                            <button key={c.key}
+                                                disabled={blocked}
+                                                onClick={() => {
+                                                    if (blocked) return;
+                                                    if (c.key === 'rest') { onRest(); onClose(); }
+                                                    else { setRestMode(c.key); setRestStep('select'); }
+                                                }}
+                                                className={`flex flex-col items-center gap-2 px-4 py-4 rounded-xl bg-white/5 border transition-all ${blocked ? 'opacity-40 cursor-not-allowed border-white/10' : `hover:scale-[1.02] ${c.color}`}`}
+                                            >
+                                                <div className="shrink-0">{c.icon}</div>
+                                                <div className="text-center">
+                                                    <div className="font-black">{c.title}</div>
+                                                    <div className="text-[11px] text-gray-400 mt-0.5 leading-snug">{blocked ? '生命值已满' : c.desc}</div>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </>
                         ) : (
@@ -684,7 +849,8 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 {restFiltered.length === 0 ? (
                                     <p className="text-gray-500 text-sm py-4 text-center">牌组没有可选的卡</p>
                                 ) : (
-                                    <div className="flex flex-wrap gap-3 justify-center">
+                                    /* [2026-10-03 莉莉子 BUG修复] 同「事件删卡」：让开卡面右侧外挂的装备/武装图标 */
+                                    <div className="flex flex-wrap justify-center" style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y }}>
                                         {restFiltered.map(key => (
                                             <DeckPickCard
                                                 key={key}
@@ -697,6 +863,22 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 )}
                             </>
                         )}
+                    {/* [2026-10-08 莉莉子 · 交互回响层 批次2] 不可逆动作的二次确认（与节点弹窗同层，随 ScaleWrapper 缩放） */}
+                    {confirmPick && (
+                        <ConfirmDialog
+                            title={restMode === 'remove'
+                                ? `确定移除「${CARD_DB[confirmPick]?.name ?? confirmPick}」？`
+                                : `确定派「${CARD_DB[confirmPick]?.name ?? confirmPick}」去探路？`}
+                            desc={restMode === 'remove'
+                                ? '净化会把它从本局牌组中永久移除。'
+                                : '该单位会暂时离开牌组，2 个节点后带着一件随机装备回归。'}
+                            notes={restMode === 'remove' ? ['此操作不可撤销'] : ['离队期间无法使用这张卡']}
+                            confirmLabel={restMode === 'remove' ? '确认移除' : '确认派遣'}
+                            tone={restMode === 'remove' ? 'danger' : 'normal'}
+                            onConfirm={() => executeRestPick(confirmPick)}
+                            onCancel={() => setConfirmPick(null)}
+                        />
+                    )}
                     </motion.div>
                 </div>
             </AnimatePresence>

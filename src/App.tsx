@@ -1,4 +1,5 @@
 import React, { useState, useEffect,useRef } from 'react';
+import { SkipForward } from 'lucide-react'; // [2026-10-03 莉莉子] 胜利影片跳过按钮图标（与升级按钮同款）
 import { TitleScreen } from './components/TitleScreen';
 import { SplashScreen } from './components/SplashScreen'; // [哨兵] 免责启动画面
 import { ModeSelectScreen } from './components/ModeSelectScreen'; // [新增]
@@ -21,6 +22,9 @@ import { AnnouncementPanel } from './components/AnnouncementPanel'; // [2026-08-
 import { useMissionSystem } from './hooks/useMissionSystem'; // [核心新增] 引入军功大脑
 import { SettingsModal } from './components/SettingsModal';
 import { eventBus, GameEvents } from './utils/eventBus';
+// [2026-10-05 莉莉子 BUG修复 · 20261005-06] 全局音量快照：让"音量"变成**可读取的当前值**，
+//   而不是只能靠一次性事件推给当时的实例（`useVoice` 每场对局都会新挂，收不到那次推送）
+import { hydrateVolumes, normalizeVolumes, setVolumeSnapshot } from './utils/audioVolume';
 import { ScaleWrapper } from './components/ScaleWrapper'; // [新增]
 import { StandardGameWrapper } from './components/modes/StandardGameWrapper';
 import { TutorialModeSelect } from './components/Tutorial/TutorialModeSelect';
@@ -32,7 +36,7 @@ import type { BgConfig } from './components/GameLobby'; // [修复] 加入 type 
 import type { ExamCategoryId } from './data/tutorialStages';
 import { TUTORIAL_STAGES } from './data/tutorialStages'; // [新增]
 import { ENEMY_ARCHETYPES } from './data/enemies/archetypes'; // [新增]
-import { buildStandardEncounter, buildRoguelikeEncounter } from './logic/encounterBuilder'; // [新增] 标准模式 + 肉鸽敌人生成器
+import { buildStandardEncounter, buildRoguelikeEncounter, buildEncounterForHeroes } from './logic/encounterBuilder'; // [新增] 标准模式 + 肉鸽敌人生成器 · [2026-10-08 瓦尔基里大赛] +buildEncounterForHeroes（按天启者指定敌方卡组）
 import type { RogueNodeType } from './data/roguelike/mapLayout';
 import { useRoguelikeRun } from './hooks/useRoguelikeRun';
 import type { RoguelikeRunState } from './hooks/useRoguelikeRun'; // [2026-08-28 对局记录] 结算窗类型
@@ -43,28 +47,35 @@ import { ArmamentPreview } from './components/roguelike/ArmamentPreview'; // [20
 import { KeywordPreview } from './components/KeywordPreview'; // [2026-09-10 莉莉子] 关键词悬停大卡预览（全局监听，取代原生 title）
 import { RogueStageSelect } from './components/roguelike/RogueStageSelect'; // [2026-08-07 关卡选择界面]
 import { buildStarterDeck, getConfiguredStarterDeck } from './data/roguelike/rogueStarterDecks'; // [2026-08-07 肉鸽主界面] [2026-08-13 接个性化配置]
+import { readArmStock } from './data/roguelike/armamentStock'; // [2026-10-04 独立审查 #10] 开匣详情按库存标注（从唯一实例下发）
 import { ROGUE_DIFFICULTIES } from './data/roguelike/difficulties'; // [2026-08-07 难度解锁]
 import type { RogueDifficulty } from './data/roguelike/difficulties'; // [2026-08-07 难度]
 import { RogueMapScreen } from './components/roguelike/RogueMapScreen';
 import { RogueLeaveModal } from './components/roguelike/modals/RogueLeaveModal'; // [2026-08-28 对局记录] 返回二次确认（结算/暂离）
 import { RogueSettleModal } from './components/roguelike/modals/RogueSettleModal'; // [2026-08-28 对局记录] 中途结算窗
-import { generateRewardOptions, buildHeroRecruitOptions, type RewardCardOption, type HeroRecruitOption } from './data/roguelike/rewards'; // [2026-08-25] 胜利奖励生成；[2026-09-04] 首战天启者招募
+import { generateRewardOptions, buildHeroRecruitOptions, HERO_RECRUIT_HERO_COUNT, type RewardCardOption, type HeroRecruitOption } from './data/roguelike/rewards'; // [2026-08-25] 胜利奖励生成；[2026-09-04] 首战天启者招募；[2026-10-03] 招募本体张数唯一口径
 import { pickRandomEnhancements } from './data/roguelike/enhancements'; // [2026-08-28 事件] 随机强化
-import { generateCardOffers, getEquipmentPrice } from './data/roguelike/shop'; // [2026-08-28 事件] 带装备卡 · [2026-09-25] 装备单价（按实际生效件数计价）
+// [2026-10-05 莉莉子 · 方案 P3/P4] 事件效果注册表（提示与执行同源 + 回报实际结果）
+import { applyEffect, type EventApi, type EventApplyResult } from './data/roguelike/eventAppliers';
+import { getEquipmentPrice } from './data/roguelike/shop'; // [2026-08-28 事件] 带装备卡 · [2026-09-25] 装备单价（按实际生效件数计价）· [2026-10-05] generateCardOffers 已随注册表迁走
+import { equipWeightsFor, weightedPick } from './data/roguelike/difficultyTiers'; // [2026-10-08 难度分层]
 import { getEquipPoolForCard, getEquipmentById } from './data/equipment'; // [2026-08-29] 按卡筛装备池 · 探路回归提示
-import { ROGUE_EVENT_BY_ID, type RogueEventEffect } from './data/roguelike/events'; // [2026-08-28 事件系统]
+import { ROGUE_EVENT_BY_ID, resolveChoiceEffects, type RogueEventEffect } from './data/roguelike/events'; // [2026-08-28 事件系统] · [2026-10-08 瓦尔基里大赛] +resolveChoiceEffects
+import { EventBattleRewardModal } from './components/roguelike/modals/EventBattleRewardModal'; // [2026-10-08 瓦尔基里大赛] 迎战胜利·强化奖励弹窗（第一段）
 import { RogueGameWrapper } from './components/roguelike/RogueGameWrapper';
 import { useHeroProgression } from './hooks/useHeroProgression'; // [2026-08-12 天启者养成] 每英雄等级/经验
 import { getHeroLevelBonus } from './data/roguelike/heroProgression'; // [2026-08-12 天启者养成] 等级加成
 import { ACCOUNT_EXP_BY_MODE, ACCOUNT_LEVEL_REWARD_DATA_GOLD } from './data/accountProgression'; // [2026-09-04 账号等级系统]
 import { computeNodeExp, getNodeDepth, computeRunExpTotal, computeResourceExp, timeExpMult, DIFFICULTY_EXP_MULT, DIFFICULTY_PAR_MINUTES, CLEAR_EXP, type RogueSettleDetail } from './data/roguelike/rogueExp'; // [2026-08-29] 经验经济（局内渐进/时长/难度/共鸣）· [2026-09-07] 剩余资源折算
-import { RogueExpFeed, type ExpFeedItem } from './components/roguelike/RogueExpFeed'; // [2026-08-29] 局内经验横幅
+// [2026-08-29] 局内经验横幅 → [2026-10-08 莉莉子 · 交互回响层] 升级为**统一局内反馈层**（经验 + 节点交互回执）
+import { RogueExpFeed, type ExpFeedItem, type FeedbackTone } from './components/roguelike/RogueExpFeed';
+import { getBuffById } from './data/roguelike/buffs'; // [2026-10-08 交互回执] 强化名查询（商店买强化 / 宝箱强化 / 强化节点） // [2026-08-29] 局内经验横幅
+import { ReviveModal } from './components/roguelike/modals/ReviveModal'; // [2026-10-04 程拍板] 复活询问弹窗（本场失败 → 消耗 1 次复活重打本节点）
 import { EvaluationPanel } from './components/roguelike/EvaluationPanel'; // [2026-08-29 评估嘉勉] 分析员等级面板
 import { RogueMissionPanel } from './components/roguelike/RogueMissionPanel'; // [2026-08-29] 肉鸽专属任务面板
 import { useArmamentConfig } from './hooks/useArmamentConfig'; // [2026-08-29] 碳原子板武装快照
 import { useHeroDivinity } from './hooks/useHeroDivinity'; // [2026-09-28 神格神经] 节点解锁 + [2026-09-29] 神格碎片钱包
-import { dropShards, type ChestInstance } from './data/roguelike/divinityShards'; // [2026-09-29 程拍板] 结算碎片每5片一组随机归属 + 奖励匣
-import { ROGUE_HEROES } from './data/roguelike/rogueStarterDecks'; // [2026-09-29] 碎片可归属的天启者列表
+import { computeRunShards, type ChestInstance } from './data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣 · [2026-10-03] 结算碎片改走 divinity.grantUniversalShard · [2026-10-04] +computeRunShards（结算现算，不再回读 state）
 import { LevelUpToast } from './components/roguelike/LevelUpToast'; // [2026-08-12 天启者养成] 升级弹窗
 import { SACRIFICE_MAX_HP, type RandomTreasureResult } from './data/roguelike/treasure'; // [2026-08-12 宝箱节点]
 import { getHallBgmByIndex, getHallBgmByVideoUrl } from './data/movieData'; // [核心重构] 新增视频 URL 直查 BGM
@@ -125,6 +136,9 @@ export default function App() {
   const [rogueEventBattle, setRogueEventBattle] = useState<{ reward: 'enhancement' | 'choose2' } | null>(null); // [2026-08-28 事件] 事件战斗胜利奖励标志
   const [rogueReward, setRogueReward] = useState<{ gold: number; options: RewardCardOption[]; pendingPacks?: number } | null>(null); // [2026-08-15] 胜利奖励三选一（3 个候选卡）；[2026-08-25] 候选卡带 equipId；[2026-08-29] 胜利附带待打开卡包
   const [rogueHeroRecruit, setRogueHeroRecruit] = useState<{ options: HeroRecruitOption[]; subNote?: string } | null>(null); // [2026-09-04 首战大捷] 天启者招募三选一（一次性）
+  // [2026-10-08 莉莉子 · 瓦尔基里大赛] 事件战斗胜利的**第一段**奖励弹窗（强化/天启者卡）
+  //   关掉它之后才弹第二段（卡牌三选一），见 onClose 的处理
+  const [eventBattleReward, setEventBattleReward] = useState<{ results: EventApplyResult[]; thenCards: boolean } | null>(null);
   const [rogueBattleType, setRogueBattleType] = useState<RogueNodeType | null>(null);
   const [rogueBattleNodeId, setRogueBattleNodeId] = useState<string | null>(null); // [2026-08-10] 当前战斗节点 id（胜利后标记击败）
   const [rogueBattleArchetypeId, setRogueBattleArchetypeId] = useState<string | undefined>(undefined); // [2026-08-25 开发者] 进战斗的敌人流派 id（重开当前战斗重建遭遇用）
@@ -134,12 +148,40 @@ export default function App() {
   const [evaluationOpen, setEvaluationOpen] = useState(false); // [2026-08-29 评估嘉勉] 分析员等级面板开关
   const [rogueCodexOpen, setRogueCodexOpen] = useState(false); // [2026-08-20 逻辑研习] 肉鸽图鉴开关
   const [preBattleHpSnapshot, setPreBattleHpSnapshot] = useState<number | null>(null); // [2026-08-11 全局 HP 衔接] 进战斗前全局 HP 快照（中途退出回滚用）
+
+  // ==========================================
+  // [2026-10-03 莉莉子 BUG修复 · 进攻标识 / "同一方连续 2~3 个进攻回合"]
+  //   肉鸽战斗的「**先手方**」必须**一场只抽一次**。
+  //
+  // ── 病根：原先渲染处写的是**内联表达式**
+  //    `firstAttacker={Math.random() > 0.5 ? 'player' : 'enemy'}`
+  //    JSX 里的表达式会在 **App 每次渲染时重新求值** ⇒ 等于「**每重画一次就重抽一次签**」。
+  //    以前 `firstAttacker` **只在开局被用一次**（外层覆盖补偿）⇒ 后面重抽不影响轮换，所以一直没暴露；
+  //    但 2026-10-03 改成「**先手方占奇数回合**」后，它变成**每一回合都要读**的坐标系
+  //    （`useRoundLifecycle.startRound` → `calculateRoundStart(game, firstAttacker)`）
+  //    ⇒ 重抽**直接改轮换** ⇒ 同一方连着拿 2~3 个进攻回合。
+  //    📄 群里反馈：2026-10-03 20:15「打补丁之后继续进行暂离的迷宫，第一把我就连续获得了两个进攻回合」、
+  //       20:38「我也遇到了对面连着两个进攻回合」、20:59「连续三个进攻回合的几率更高了」。
+  //
+  // ── 修法：以 `rogue_${gameId}`（= **一场战斗**，见渲染处的 `key`）为界，每场**只抽一次**并存住。
+  //    用 ref 按 `gameId` 惰性初始化 ⇒ 同一场战斗内**幂等**（StrictMode 双调用也不会重抽），
+  //    `gameId` 变化（进入新战斗 / 重开当前战斗）时自动重新抽。
+  //    ⚠️ 与 PVE 侧口径一致（那边 `setFirstAttacker` 抽一次存进 state，见本文件 startPve 处）；
+  //       教程侧走剧本写死的值，不受影响。
+  // ==========================================
+  const rogueFirstAttackerRef = useRef<{ gameId: number; who: 'player' | 'enemy' }>({ gameId: -1, who: 'player' });
+  if (rogueFirstAttackerRef.current.gameId !== gameId) {
+      rogueFirstAttackerRef.current = { gameId, who: Math.random() > 0.5 ? 'player' : 'enemy' };
+  }
+  const rogueFirstAttacker = rogueFirstAttackerRef.current.who;
   const [rogueMapReveal, setRogueMapReveal] = useState(false); // [2026-08-28 莉莉子 推演开场] 本局首进地图播开场动画（播完复位，战斗返回不重播）
   // [2026-08-28 对局记录] 未结算对局：暂离存盘可继续 / 结算拿经验
   const [hasPendingRun, setHasPendingRun] = useState(false);          // 是否有未结算的肉鸽对局（大厅显示结算/继续，前往推演置灰）
   const [rogueLeaveConfirm, setRogueLeaveConfirm] = useState(false); // 返回二次确认弹窗开关（地图返回 / 大厅结算共用）
   const [rogueSettleInfo, setRogueSettleInfo] = useState<{ run: RoguelikeRunState; expGained: number; leveled: { fromLevel: number; toLevel: number } | null; detail: RogueSettleDetail } | null>(null); // 中途结算窗数据
   const [rogueRunEnd, setRogueRunEnd] = useState<RogueRunEndInfo | null>(null); // [2026-08-29] 通关/败亡结算（天启者经验动画）
+  // [2026-10-04 程拍板] 本场推演失败 → 是否消耗 1 次复活重打本节点（**弹窗询问**，不自动消耗）
+  const [rogueRevivePrompt, setRogueRevivePrompt] = useState(false);
   const rogueStatsRef = useRef({ elites: 0, enhancements: 0, events: 0 }); // [2026-08-29] 肉鸽任务对局统计（结算时入账）
   const leaveSourceRef = useRef<'map' | 'lobby'>('map'); // 返回确认弹窗来源（地图=暂离存盘；大厅=仅关闭）
 
@@ -208,14 +250,43 @@ export default function App() {
       currentMovie, isVisible, isLooping,
       playTitleMovie, playLevelUpMovie, playVictoryMovie, stopMovie,isImmediate,
       handleVideoEnded,playHallMovie,setMovieVolume,
-      prepareLevelUpMovie, prepareVictoryMovie
+      prepareLevelUpMovie, prepareVictoryMovie,
+      movieVolume, // [2026-10-05] 「过场」音量：此前**没被解构出来**，所以永远传不到播放器（滑块是装饰品）
+      skipMovie, movieKind // [2026-10-03 莉莉子] 胜利影片跳过：跳过动作 + 影片用途标记
   // [核心重构] 将玩家的画质设置作为神经信号注入调度大脑（默认兜底 1k）
   } = useMovie((userSystem.settings as any)?.videoResolution || '1k');
 
+  // ==========================================
+  // [2026-10-03 莉莉子] **胜利影片「跳过」按钮**
+  //   规格**逐项对齐**升级动画右上角那颗（`ChampionLevelUp.tsx:263-277`）：
+  //     · 功能 = 立即切断影片 + 推进流程（`skipMovie()` 内部会触发完成回调；升级那颗是
+  //              "停片 + 自己 setPhase('burst')" —— 两者都是"点一下就直接进下一步"）
+  //     · 位置 = **右上角**（`top-8 right-8`）
+  //     · 层级 = **`z-[9999]`**（压过下面 App 共享 `<VideoPlayer>` 的 `zIndex` 500）
+  //     · 样式 = 同款药丸按钮：半透明黑底 / 白描边 / 圆角 / `SKIP MOVIE` + SkipForward 图标
+  //   ⚠️ 只在**胜利**影片显示（`movieKind === 'victory'`）—— 标题/大厅是**循环**影片，不该给跳过。
+  //   ⚠️ 影片开始 **1 秒后**才出现，与升级按钮同款（`ChampionLevelUp.tsx:110-111`）。
+  // ==========================================
+  const [showVictorySkip, setShowVictorySkip] = useState(false);
+  useEffect(() => {
+      if (!(isVisible && movieKind === 'victory')) {
+          setShowVictorySkip(false);
+          return;
+      }
+      const t = setTimeout(() => setShowVictorySkip(true), 1000);
+      return () => clearTimeout(t);
+  }, [isVisible, movieKind]);
+
   // --- 初始化同步音量 ---
+  // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 这里先 **hydrate 全局音量快照**，再做原有推送。
+  //   病根回顾：音量原来只有"推"（下面那次 emit + 设三个 setter），而 `useVoice` 是**每场对局新挂实例**
+  //   （`GameSession.tsx:921`）⇒ 新实例收不到推送、用自己的默认 0.8 ⇒「一进新对局语音音量被重置，
+  //   必须在局内再拖一次滑块才恢复」（程实测：迷宫每次进新对局必现）。
+  //   现在快照在手 ⇒ **任何后挂的播放器实例 mount 时自取现值**；下面那次 emit 只负责"改正在播的那一条"。
+  //   ⚠️ 依赖仍只有 `isReady`：快照的存在让"只推一次"不再影响正确性（那个 500ms 延时也不再是正确性依赖）。
   useEffect(() => {
       if (userSystem.isReady && userSystem.settings) {
-          const v = userSystem.settings.volume;
+          const v = hydrateVolumes(userSystem.settings.volume);
           setBgmVolume(v.bgm);
           setSfxVolume(v.sfx);
           setMovieVolume(v.movie);
@@ -227,6 +298,8 @@ export default function App() {
 
   // --- 音量变更处理 ---
   const handleVolumeChange = (type: 'bgm' | 'sfx' | 'voice' | 'movie', value: number) => {
+      // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 先写全局快照 —— 它保证"之后新挂的实例"也拿得到现值
+      setVolumeSnapshot(type, value);
       if (type === 'bgm') setBgmVolume(value);
       if (type === 'sfx') setSfxVolume(value);
       if (type === 'movie') setMovieVolume(value);
@@ -526,6 +599,10 @@ export default function App() {
 
   /** 暂离：保存当前对局到 localStorage，回大厅可「继续」 */
   const handleRogueLeave = () => {
+    // [2026-10-08 莉莉子 · 交互回响层 批次3] 暂离即取消**未开打的「迎战」**
+    //   （批次3 把迎战改成"点按钮才切战斗"，于是这个标记可能停在待战态；
+    //    不清掉的话，回来后打普通战斗胜利会被误判成事件战斗。事件节点本身已 markNodeResolved，不受影响）
+    setRogueEventBattle(null);
     rogue.savePendingRun();
     setHasPendingRun(true);
     setRogueLeaveConfirm(false);
@@ -538,17 +615,27 @@ export default function App() {
     if (!rogue.loadPendingRun()) return; // 读回（幂等，已在启动时恢复则无副作用）
     rogue.resetStartedAt(); // [2026-08-29] 恢复对局重开计时（排除暂离离线时长，速通计时只算在场）
     setHasPendingRun(false);
+    setRogueEventBattle(null); // [2026-10-08 · 批次3] 存档里不含"待战"⇒ 恢复时一并清零，杜绝误判
     setAppState('rogue_map');
   };
 
   // ═══ [2026-08-29 经验重构] 局内渐进经验 + 结算经验 ═══
 
-  /** 局内经验/升级轻量横幅（2.5s 自动消失，最多保留 4 条） */
-  const pushExpFeed = (text: string, tone: 'exp' | 'level' = 'exp') => {
+  /**
+   * [2026-08-29] 局内经验/升级轻量横幅（2.5s 自动消失，最多保留 4 条）
+   * [2026-10-08 莉莉子 · 交互回响层 批次0] 升级为局内**唯一反馈出口**：经验/升级 与 节点交互回执共用一条队列。
+   *   tone：exp/level（沿用，z-300）· gain 获得 / cost 付出 / info 一般（z-950，盖过节点弹窗）
+   *   ⚠️ 文案一律在**执行点**产出（下面各 handler 内），UI 只负责渲染 —— 提示与执行同源。
+   */
+  const pushExpFeed = (text: string, tone: FeedbackTone = 'exp') => {
     const id = ++expFeedIdRef.current;
     setExpFeed(prev => [...prev.slice(-3), { id, text, tone }]);
     setTimeout(() => setExpFeed(prev => prev.filter(f => f.id !== id)), 2500);
   };
+  // [2026-10-08 莉莉子 · 交互回响层] 名字取用统一口径（卡名去换行；强化/装备查库；查不到退回 id 原文）
+  const nameOfCard = (key: string) => CARD_DB[key]?.name?.replace(/\n/g, '') ?? key;
+  const nameOfEnh = (id: string) => getBuffById(id)?.name ?? id;
+  const nameOfEquip = (id: string) => getEquipmentById(id)?.name ?? id;
 
   /** [2026-09-04 账号等级/战绩] 标准 PvE / 教程 真实对局结算：账号经验 + 战绩（由 GameOverScreen 一次性上抛）
    *  迷宫不在这里计（整局在 settleRun 结算一次，避免逐节点重复）。 */
@@ -578,7 +665,10 @@ export default function App() {
 
   /** 整局结算：经验差额（节点已发部分不重复入账；时长/效率/共鸣/通关在此补入）+ 倍率明细（结算窗展示）
    *  [2026-09-15 程拍板] 结局三态，判定完全分开：victory 通关 / defeat 败北 / abandon 中途放弃（完全不算一局） */
-  const settleRun = (opts: { outcome: 'victory' | 'defeat' | 'abandon' }): { bonus: number; detail: RogueSettleDetail } => {
+  // [2026-10-04 莉莉子 BUG修复] 新增 battleHp：本场**战斗结束时**的剩余水晶。
+  //   病根：settleRun 读的是**本次渲染的闭包** rogue.run（见下方若干处 stale 注释），
+  //   而 battleHp（原 playerNexus）是战斗中实时值、不经 state ⇒ 只能由调用方显式传进来。
+  const settleRun = (opts: { outcome: 'victory' | 'defeat' | 'abandon'; battleHp?: number }): { bonus: number; detail: RogueSettleDetail } => {
     if (!rogue.run) return { bonus: 0, detail: { durationMin: 0, timeMult: 1, diffMult: 1, ratePct: 0, resonance: false, clearExp: 0 } };
     const run = rogue.run;
     const won = opts.outcome === 'victory';
@@ -593,14 +683,19 @@ export default function App() {
     }
     // [2026-09-15 程拍板] 碳原子板只在通关时发挥（翻倍 + 消耗）：玩家带它是奔着赢去的，败北本就经验少，
     //   再扣一件消耗品 = 赔了夫人又折兵。未通关一律不消耗、不翻倍，原封不动留到下一局。
-    const resonanceHeld = (run.armaments ?? []).includes('arm_resonance_crystal');
+    // [2026-10-06 莉莉子 · 审计收口 · **模式 C**] 原先靠**硬编码 id** `'arm_resonance_crystal'` 认碳原子板 ——
+    //   而它声明的 `runBonus.doubleRunExp` **全项目零消费者** ⇒ 改 id / 加同类会**静默失效**。
+    //   现改为**按声明字段读**（数据即真源）；下面卸槽/扣库存那两处同理。
+    const resonanceHeld = (run.armaments ?? []).some(id => !!getEquipmentById(id)?.runBonus?.doubleRunExp);
     const resonance = won && resonanceHeld; // 仅通关真正生效（消耗 / 翻倍 / 结算演出全部由此派生）
     const ratePct = run.expRateBonus ?? 0;
     const rate = 1 + ratePct / 100;
     const reso = resonance ? 2 : 1;
     // [2026-09-08 莉莉子] 剩余资源折算天启者经验：仅通关（won）才转换，中途退出/失败不转换。
     // 防"开局即结算刷等级"（原为通关/败北/中途一律折算；死亡剩血按 0 特判随语义一并收敛）。吃效率加成与共鸣翻倍，不吃速通时长。
-    const aliveHp = run.status === 'dead' ? 0 : run.hp;
+    // [2026-10-04 莉莉子 BUG修复] 同因：setHp 也是 setRun 异步（见 handleRogueVictory），
+    //   这里的 run.hp 是**战前 HP**，不是战斗结束时的剩余水晶 ⇒ 优先用调用方显式传入的 battleHp。
+    const aliveHp = run.status === 'dead' ? 0 : (opts.battleHp ?? run.hp);
     const resourceRaw = won ? computeResourceExp({ hp: aliveHp, gold: run.gold, revive: run.reviveCount, refresh: run.refreshCount }) : null;
     const resourceExp = resourceRaw ? Math.round(resourceRaw.exp * rate * reso) : 0;
     // [2026-09-08 程拍板] 重修申请·难度档消耗品：通关按难度定目标档（普通→史诗 / 机密→传说 / 绝密→神话），
@@ -612,10 +707,13 @@ export default function App() {
       const targetTier = run.difficulty === 'topsecret' ? 3 : run.difficulty === 'secret' ? 2 : 1;
       const slotsBefore = armamentConfig.getArmament(run.heroKey); // 改动前快照（防升档/卸槽互相干扰定位）
       slotsBefore.forEach((v, i) => {
-        if (i >= unlockN || v !== 'arm_retrain') return;
+        // [2026-10-06 莉莉子 · 审计收口 · 模式 C] 同上：按 `runBonus.retrainUpgrade` 认重修申请（不再硬编码 id），
+        //   消耗时也用槽里那件的**实际 id**。
+        if (i >= unlockN || !v) return;
+        if (!getEquipmentById(v)?.runBonus?.retrainUpgrade) return;
         if (armamentConfig.upgradeQualityTo(run.heroKey, i, targetTier)) {
           armamentConfig.setArmamentSlot(run.heroKey, i, null); // 该份发挥后卸槽
-          userSystem.removeOwnedArmament('arm_retrain', 1);     // 库存 -1（不足则忽略）
+          userSystem.removeOwnedArmament(v, 1);                 // 库存 -1（不足则忽略）
           retrainFiredSlots.push(i);
         }
       });
@@ -630,9 +728,12 @@ export default function App() {
     //（共鸣为整局型单次效果，同英雄限装 1 份，见武装界面 stockOf 约束）
     let resoSlotFired = -1;
     if (resonance) {
-      const slotIdx = armamentConfig.getArmament(run.heroKey).indexOf('arm_resonance_crystal');
+      // [2026-10-06 莉莉子 · 审计收口 · 模式 C] 同上：按 `runBonus.doubleRunExp` 认碳原子板所在槽（不再硬编码 id）
+      const heldIds = armamentConfig.getArmament(run.heroKey);
+      const slotIdx = heldIds.findIndex(id => !!getEquipmentById(id ?? '')?.runBonus?.doubleRunExp);
       if (slotIdx >= 0) {
-        userSystem.removeOwnedArmament('arm_resonance_crystal', 1);
+        const resoId = heldIds[slotIdx]; // ⚠️ 必须在卸槽**之前**取出（setArmamentSlot 会改这份配置）
+        if (resoId) userSystem.removeOwnedArmament(resoId, 1);
         armamentConfig.setArmamentSlot(run.heroKey, slotIdx, null);
         resoSlotFired = slotIdx;
       }
@@ -662,12 +763,26 @@ export default function App() {
     const accExp = Math.round(ACCOUNT_EXP_BY_MODE.rogue[won ? 'win' : 'lose'] * diffRewardMult);
     const accLeveled = userSystem.grantAccountExp(accExp);
     userSystem.recordBattle({ won, mode: 'rogue', heroKeys: [run.heroKey] });
-    // [2026-09-29 程拍板] 悖论点已废弃 → 本局结算发**神格碎片**，直接入碎片钱包
+    // [2026-09-29 程拍板] 悖论点已废弃 → 本局结算发碎片，直接入碎片钱包
+    // [2026-10-03 程拍板] 由「随机归属的**专属**碎片」改为「**万能**碎片」并按难度分档
+    //   （普通 5 / 机密 10 / 绝密 15，见 divinityShards.RUN_SETTLE_UNIVERSAL）
+    //   理由：原来走 dropShards(undefined, 全体天启者, 60) = 每 5 片随机归属，
+    //   想练的那位期望只拿 60/6 = 10 片/局且不可定向；万能可全额替代专属 ⇒ 能全投给她。
     //   唯一收口在 settleRun（通关/败北各一次；中途放弃在上方早返回，不产出）
-    //   碎片「每 5 片为一组」随机归属某位天启者（与碎片匣同口径），各自的 200 片封顶溢出转万能
-    if (run.settledShards > 0) {
-      const drop = dropShards(undefined, ROGUE_HEROES.map(h => h.key), run.settledShards);
-      divinity.applyShardDrop(drop);
+    // ═══ [2026-10-04 莉莉子 BUG修复 · 结算碎片永不到账] ═══
+    //   原写法：`if (run.settledShards > 0) divinity.grantUniversalShard(run.settledShards)`
+    //   → **恒不执行**，碎片从未发放（粉丝：「胜利结算给的万能碎片没入库」，但结算窗显示 +N）。
+    //   病根 = 读了自己刚写的 state：settledShards 是**同一 tick**里 advanceAct() 通过 setRun
+    //   写入的（见 handleRogueVictory：先 advanceAct() 再 settleRun()），React 批处理下新值
+    //   要等下一次渲染才可见，而 settleRun 读的是**本次渲染的闭包** rogue.run ⇒ 拿到旧值 0。
+    //   而结算窗 RunEndModal 读的是重渲染后的新 state ⇒「界面显示 +N、钱包没加」两头不一致。
+    //   修法：按 outcome **现算**（与 advanceAct 写入同源同函数 computeRunShards），彻底避开
+    //   闭包时序；UI 仍读 run.settledShards，两者都由 computeRunShards 派生，口径一致。
+    //   ⚠️ 回归防线：开发者账号碎片恒显 9999（useHeroDivinity.isDevAccount），
+    //      **用 dev 账号验收永远看不到这个 bug**，必须用普通账号验。
+    const settleShards = won ? computeRunShards(true, run.difficulty) : 0;
+    if (settleShards > 0) {
+      divinity.grantUniversalShard(settleShards);
     }
     pushExpFeed(`账号经验 +${accExp}`);
     if (accLeveled.leveled.length > 0) {
@@ -756,7 +871,9 @@ export default function App() {
     const cardDef = heroKey ? CARD_DB[heroKey] : undefined;
     if (!cardDef) return undefined;
     const pool = getEquipPoolForCard(cardDef, rogue.run?.equippedCards?.[heroKey!]);
-    return pool.length ? pool[Math.floor(Math.random() * pool.length)].id : undefined;
+    // [2026-10-08 难度分层] 事件发放的装备改按难度品质权重（原来全池均匀抽 ⇒ 普通也能开出红装）
+    const equipTable = equipWeightsFor(rogue.run?.difficulty);
+    return weightedPick(pool, e => equipTable[e.rarity] ?? 0)?.id;
   };
 
   const handleRogueVictory = (playerNexus?: number, ovType?: RogueNodeType, ovNodeId?: string) => {
@@ -766,31 +883,49 @@ export default function App() {
     const battleNodeId = ovNodeId ?? rogueBattleNodeId;
     // [2026-08-28 事件] 战斗胜利投资回报（播种希望）：任何战斗胜利都结算
     const goldInvs = rogue.consumeInvestments('battleWinGold');
-    if (goldInvs.length) for (const g of goldInvs) rogue.addGold(g.value ?? 0);
+    if (goldInvs.length) {
+      let invGold = 0;
+      for (const g of goldInvs) { rogue.addGold(g.value ?? 0); invGold += g.value ?? 0; }
+      // [2026-10-08 莉莉子 · 交互回响层 批次1] HUD 徽章只说"有投资在等"，**兑现这一刻**才是玩家想知道的
+      if (invGold > 0) pushExpFeed(`🌱 投资兑现 · 数据金 +${invGold}`, 'gain');
+    }
     // [2026-09-25 莉莉子 武装线/强化线] 战斗结束结算（凯旋之匣：天启者存活 +金币 / 拾荒：水晶达标 +金币）。
     //   放在事件战斗早返回之前，两条路径都能吃到；playerNexus 是战斗结束时的剩余水晶
     rogue.settleArmamentBattleEnd(playerNexus);
 
     // [2026-08-28 事件] 事件战斗胜利 → 事件奖励（不结算节点）
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **奖励两段式**（程的流程）：
+    //   第一段 = 强化 / 固定天启者卡（本块执行 + 弹 `EventBattleRewardModal`）
+    //   第二段 = 卡牌三选一（关掉第一段后弹 `BattleRewardModal`，见下方渲染处的 onClose）
     if (rogueEventBattle) {
-      // [2026-09-25 莉莉子 不叠加] 强化排除已拥有；装备改从"英雄卡还能挂的新装备"里抽
-      const enh = pickRandomEnhancements(1, undefined, { rare: 0, epic: 60, legendary: 40 }, rogue.run.passUnlockedEnhancements, rogue.run.enhancements)[0]; // [2026-08-29 通行证]
-      if (enh) { rogue.applyEnhancement(enh.id); recordCodexUnlock('enhancement', enh.id); }
-      if (rogueEventBattle.reward === 'choose2') {
-        const equipId = pickNewEquipForHero();
-        if (equipId) {
-          rogue.addEquippedCard(rogue.run.heroKey, equipId);
-          recordCodexUnlock('equipment', equipId);
+      const pending = battleNodeId ? rogue.run.pendingBattles?.[battleNodeId] : undefined;
+      const rewardResults: EventApplyResult[] = [];
+      // ① 执行**选择时扣下**的奖励（指定强化 / 天启者卡）—— 程：「赢了之后才会获得」
+      for (const ef of pending?.rewards ?? []) rewardResults.push(...applyEventEffects(ef));
+      // ② 旧 fight 事件（ev_ambush / ev_arena）没有 rewards ⇒ 沿用原来的"随机强化"，**老行为零变化**
+      if ((pending?.rewards?.length ?? 0) === 0 && rogueEventBattle.reward === 'enhancement') {
+        // [2026-09-25 莉莉子 不叠加] 强化排除已拥有
+        // [2026-10-08 难度分层] 原第二参写死 `undefined`（假参与）⇒ 现传本局难度
+        const enh = pickRandomEnhancements(1, rogue.run.difficulty, { rare: 0, epic: 60, legendary: 40 }, rogue.run.passUnlockedEnhancements, rogue.run.enhancements)[0]; // [2026-08-29 通行证]
+        if (enh) {
+          rogue.applyEnhancement(enh.id);
+          recordCodexUnlock('enhancement', enh.id);
+          rewardResults.push({ kind: 'gain', icon: '🧬', text: `迷宫强化「${nameOfEnh(enh.id)}」` });
         }
       }
+      for (const r of rewardResults) if (r.kind === 'gain') pushExpFeed(`⚔️ 迎战胜利 · ${r.text}`, 'gain');
       rogue.setHp(playerNexus ?? rogue.run.hp);
       setRogueEventBattle(null);
+      // [2026-10-08 莉莉子 · 瓦尔基里大赛] 待战节点已打完 ⇒ 清掉标记（该节点不再要求战斗）
+      if (battleNodeId) rogue.clearPendingBattle(battleNodeId);
       playBgm('deck_builder'); // [2026-08-28 莉莉子] 事件战斗胜利返回地图：恢复备战曲
       setPreBattleHpSnapshot(null);
       setRogueBattleType(null);
       setRogueBattleNodeId(null);
       setRogueEncounter(null);
       setAppState('rogue_map');
+      // ③ 弹**第一段**：强化奖励（`choose2` 时关掉它再弹卡牌三选一）
+      setEventBattleReward({ results: rewardResults, thenCards: (pending?.reward ?? rogueEventBattle.reward) === 'choose2' });
       return;
     }
     // [2026-08-10] 标记当前战斗节点已击败（地图红叉）
@@ -817,7 +952,8 @@ export default function App() {
       // [2026-08-29 经验重构] 整局通关 → 结算经验（节点已发 + 通关大额 + 时长/效率/共鸣倍率）
       const heroKey = rogue.run.heroKey;
       const before = heroProgression.getHeroProgress(heroKey); // [2026-08-29] 结算前快照（动画起点）
-      const { bonus: gained, detail } = settleRun({ outcome: 'victory' });
+      // [2026-10-04 莉莉子 BUG修复] 显式传本场剩余水晶：settleRun 内的 run.hp 是战前 HP（stale 闭包）
+      const { bonus: gained, detail } = settleRun({ outcome: 'victory', battleHp: playerNexus });
       const leveled = heroProgression.addHeroExp(heroKey, gained);
       const after = heroProgression.getHeroProgress(heroKey);
       setRogueRunEnd({ won: true, heroKey, fromLevel: before.level, fromExp: before.exp, toLevel: after.level, toExp: after.exp, expGained: gained, detail });
@@ -875,26 +1011,33 @@ export default function App() {
       pushExpFeed(`🗺️ ${cardName} 探路归来${equipName ? `，获得装备「${equipName}」` : ''}`, 'level');
     }
   };
+  // [2026-10-08 莉莉子 · 交互回响层 批次1] 休整三个动作此前**做完什么都不说**（弹窗直接关，连横幅都没有）
   /** 休整·净化：免费移除一张卡 */
-  const handleRogueRestRemove = (cardKey: string) => { if (rogue.run) rogue.removeCard(cardKey); };
+  const handleRogueRestRemove = (cardKey: string) => {
+    if (!rogue.run) return;
+    rogue.removeCard(cardKey);
+    pushExpFeed(`🗑️ 已移除「${nameOfCard(cardKey)}」`, 'cost');
+  };
   /** 休整·复制：复制一张卡进牌组 */
-  const handleRogueRestCopy = (cardKey: string) => { if (rogue.run) rogue.addCard(cardKey); };
+  const handleRogueRestCopy = (cardKey: string) => {
+    if (!rogue.run) return;
+    rogue.addCard(cardKey);
+    pushExpFeed(`🃏 「${nameOfCard(cardKey)}」+1 已入牌组`, 'gain');
+  };
   /** 休整·探路：派出单位卡（暂时移出牌组，2 节点后回归带装备） */
-  const handleRogueRestScout = (cardKey: string) => { rogue.startScout(cardKey); };
+  const handleRogueRestScout = (cardKey: string) => {
+    rogue.startScout(cardKey);
+    // 探路没有可看的"进行中"界面（探路状态只存在于 run.scout）⇒ 至少把"谁出发了、多久回来"讲清楚
+    pushExpFeed(`🗺️ 「${nameOfCard(cardKey)}」已出发 · 2 个节点后带装备回归`, 'gain');
+  };
 
-  const handleRogueDefeat = (_playerNexus?: number) => {
-    // [2026-08-28 事件] 事件战斗失败 → 不死亡，扣 30% 当前命返回地图（可选挑战的代价）
-    if (rogueEventBattle) {
-      if (rogue.run) rogue.setHp(rogue.run.hp - Math.floor(rogue.run.maxHp * 0.3));
-      setRogueEventBattle(null);
-      playBgm('deck_builder'); // [2026-08-28 莉莉子] 事件战斗失败返回地图：恢复备战曲
-      setPreBattleHpSnapshot(null);
-      setRogueBattleType(null);
-      setRogueBattleNodeId(null);
-      setRogueEncounter(null);
-      setAppState('rogue_map');
-      return;
-    }
+  /**
+   * [2026-10-04 程拍板] 整局失败的**唯一结算出口** —— 三条路都汇到这里：
+   *   ① 复活次数已耗尽 ② 玩家在复活弹窗里选「放弃并结算」 ③ 消耗失败兜底
+   * （原实现直接写在 handleRogueDefeat 体内；抽出来，是为了让"询问复活"那条路
+   *   能先落子、再由玩家决定要不要真的结算。）
+   */
+  const handleRogueFinalDefeat = () => {
     rogue.completeBattle(false); // → dead，回地图显示死亡结算（败北不写回 HP）
     // [2026-08-29 经验重构] 整局败北 → 结算经验（节点已发 + 时长/效率/共鸣差额）
     if (rogue.run) {
@@ -913,6 +1056,80 @@ export default function App() {
     setRogueBattleNodeId(null);
     setRogueEncounter(null);
     setAppState('rogue_map');
+  };
+
+  const handleRogueDefeat = (_playerNexus?: number) => {
+    // [2026-08-28 事件] 事件战斗失败 → 不死亡，扣 30% 当前命返回地图（可选挑战的代价）
+    if (rogueEventBattle) {
+      // [2026-10-08 莉莉子 · 交互回响层 批次1] 此前是**零反馈**：扣完 30% 生命直接把玩家甩回地图
+      const lostHp = Math.floor((rogue.run?.maxHp ?? 0) * 0.3);
+      if (rogue.run) rogue.setHp(rogue.run.hp - lostHp);
+      pushExpFeed(`⚔️ 迎战失败 · 生命值 −${lostHp}`, 'cost');
+      setRogueEventBattle(null);
+      playBgm('deck_builder'); // [2026-08-28 莉莉子] 事件战斗失败返回地图：恢复备战曲
+      setPreBattleHpSnapshot(null);
+      setRogueBattleType(null);
+      setRogueBattleNodeId(null);
+      setRogueEncounter(null);
+      setAppState('rogue_map');
+      return;
+    }
+
+    // ═══ [2026-10-04 程拍板] 还有复活次数 → 回地图**弹窗询问**，不直接判败北 ═══
+    //   —— 补齐 08-16 手册缺口 #5「败北时无复活重打逻辑」。
+    //   为什么先回地图再问：①「重打本节点」本来就是地图上的动作
+    //   ② 询问期间**本局状态完全不动**（不 completeBattle / 不结算 / 不扣次数）
+    //      ⇒ 玩家选完才落子；将来若要改成"自动消耗"，把这里换成直接调 accept 即可。
+    //   ⚠️ 刻意**不**设 status='dead'：那会让地图进"已死亡"态、还可能让结算窗抢跑；
+    //      这里保持 active，把决定权交给弹窗。
+    //   📌 范围：本改动**只接"被打死"这条路**；投降（handleSurrender）的既有行为一字未动。
+    if (rogue.run && (rogue.run.reviveCount ?? 0) > 0) {
+      if (preBattleHpSnapshot !== null) rogue.setHp(preBattleHpSnapshot); // HP 回滚到进战前（复活尚未消耗）
+      playBgm('deck_builder');
+      setPreBattleHpSnapshot(null);
+      setRogueBattleType(null);
+      setRogueBattleNodeId(null);
+      setRogueEncounter(null);
+      setRogueEventBattle(null);
+      setAppState('rogue_map');
+      setRogueRevivePrompt(true);
+      return;
+    }
+
+    // 复活次数已耗尽 → 整局败北（先给一条横幅，说明为什么这次没有询问）
+    pushExpFeed('♻️ 复活次数已耗尽 —— 本局按失败结算', 'level');
+    handleRogueFinalDefeat();
+  };
+
+  /** [2026-10-04 程拍板] 复活弹窗 · **使用复活**：消耗 1 次 → 退回地图、**仍停在当前节点**可重打 */
+  const handleRogueReviveAccept = () => {
+    eventBus.emit(GameEvents.UI_CLICK);
+    setRogueRevivePrompt(false);
+    if (!rogue.consumeRevive()) {
+      // 兜底：弹窗只在 >0 时开，理论上到不了这里；真到了就按失败收场，**绝不白给**
+      handleRogueFinalDefeat();
+      return;
+    }
+    // ⚠️ 此处读到的 reviveCount 是本渲染的旧值（consumeRevive 的 setRun 是异步的）⇒ 用 -1 推导剩余
+    const left = Math.max(0, (rogue.run?.reviveCount ?? 1) - 1);
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **待战节点在复活后作废** ——
+    //   程的要求：「复活后可以**继续推进迷宫**，而不是被**卡在这个节点**」。
+    //   事件战斗打输 ⇒ 该节点不再要求玩家打（奖励输了就没了，但**不堵路**）。
+    const nid = rogue.run?.currentNodeId;
+    if (nid && rogue.run?.pendingBattles?.[nid]) {
+      rogue.clearPendingBattle(nid);
+      rogue.markNodeResolved(nid);
+      pushExpFeed('⚔️ 本场迎战已结束 · 该节点不再要求战斗，可继续推进', 'level');
+    } else {
+      pushExpFeed(`♻️ 消耗 1 次复活 · 剩余 ${left} 次 —— 回到本节点重新挑战`, 'level');
+    }
+  };
+
+  /** [2026-10-04 程拍板] 复活弹窗 · **放弃并结算** */
+  const handleRogueReviveDecline = () => {
+    eventBus.emit(GameEvents.UI_CLICK);
+    setRogueRevivePrompt(false);
+    handleRogueFinalDefeat();
   };
 
   // [2026-08-26 莉莉子] 逻辑研习·图鉴解锁记录：获得强化/装备时写入 settings（开发者账号全解锁不记录）
@@ -935,26 +1152,38 @@ export default function App() {
       rogue.addEquippedCard(cardKey, equipId);
       recordCodexUnlock('equipment', equipId); // [2026-08-26] 图鉴解锁
     }
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 领奖回执（此前关窗后无从确认是否真的进牌组）
+    pushExpFeed(`🃏 「${nameOfCard(cardKey)}」已加入牌组${equipId ? ` · 附装备「${nameOfEquip(equipId)}」` : ''}`, 'gain');
     setRogueReward(null);
   };
   /** [2026-08-29] 跳过卡牌奖励：放弃三选一，只拿金币 */
-  const handleRewardSkip = () => setRogueReward(null);
-  // [2026-09-04 首战招募] 选定天启者 → 本体卡 + 随行 2 张阵营卡入队；有装备则穿在英雄本体卡上
+  const handleRewardSkip = () => {
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 跳过也要有回执（否则玩家分不清"跳过了"和"没发生过"）
+    pushExpFeed(`已跳过卡牌奖励 · 数据金 +${rogueReward?.gold ?? 0} 已入账`, 'info');
+    setRogueReward(null);
+  };
+  // [2026-09-04 首战招募] 选定天启者 → 本体卡 ×HERO_RECRUIT_HERO_COUNT + 随行 2 张阵营卡入队；有装备则穿在英雄本体卡上
+  // [2026-10-03 程拍板 · BUG-20261002-21] 本体由 ×1 改 ×2（只增加一张天启者，随行卡不变）——
+  //   一张本体在局内死一次就再也用不上这位天启者的法术；两张才能持续使用。
   const handleHeroRecruitPick = (heroKey: string) => {
     if (!rogue.run) { setRogueHeroRecruit(null); return; }
     const opt = rogueHeroRecruit?.options.find(o => o.heroKey === heroKey);
     if (!opt) { setRogueHeroRecruit(null); return; }
-    rogue.addCard(heroKey);
+    for (let i = 0; i < HERO_RECRUIT_HERO_COUNT; i++) rogue.addCard(heroKey);
     (opt.companionKeys ?? []).forEach(k => rogue.addCard(k));
     if (opt.equipId) {
       rogue.addEquippedCard(heroKey, opt.equipId);
       recordCodexUnlock('equipment', opt.equipId); // [2026-08-26] 图鉴解锁
     }
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 入队回执（本体张数 + 随行卡数一次说清）
+    pushExpFeed(`⚡ 「${nameOfCard(heroKey)}」已入队（本体 ×${HERO_RECRUIT_HERO_COUNT} + 阵营卡 ×${(opt.companionKeys ?? []).length}）`, 'gain');
     rogue.markHeroRecruited();
     setRogueHeroRecruit(null);
   };
   /** [2026-09-04 首战招募] 跳过招募（放弃英雄，金币保留）；标记已结算防止后续战斗重复触发 */
   const handleHeroRecruitSkip = () => {
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 放弃英雄要有回执
+    pushExpFeed('已放弃本次天启者招募（数据金保留）', 'info');
     rogue.markHeroRecruited();
     setRogueHeroRecruit(null);
   };
@@ -985,12 +1214,27 @@ export default function App() {
     if (!rogue.run) return;
     // [2026-08-28 事件] 牺牲祝福：本局休息回血翻倍（一次性投资结算）
     const restInv = rogue.consumeInvestments('restHeal');
-    const pct = restInv.length ? 0.6 : 0.3;
-    rogue.heal(Math.floor(rogue.run.maxHp * pct));
+    // [2026-10-05 莉莉子 · 方案 P4 残项] 支持 `restHeal` 的**倍率**（value）：
+    //   value 缺省 = 2（旧行为：回血翻倍）；牺牲祝福的小档给 1.5 ⇒ 回血 ×1.5
+    const restMult = restInv.length ? (restInv[0].value ?? 2) : 0;
+    const pct = restMult > 0 ? 0.3 * restMult : 0.3;
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 此前只有 HUD 血条数字会变；满血时更是白白消耗掉节点
+    const hpBefore = rogue.run.hp;
+    const wantHeal = Math.floor(rogue.run.maxHp * pct);
+    const healed = Math.max(0, Math.min(rogue.run.maxHp, hpBefore + wantHeal) - hpBefore);
+    rogue.heal(wantHeal);
+    pushExpFeed(
+      healed > 0
+        ? `❤️ 生命值 +${healed}（休整${restMult > 0 ? ` · 祝福 ×${restMult}` : ''}）`
+        : '⚠️ 生命值已满 · 本次休整没有回复生命值',
+      healed > 0 ? 'gain' : 'cost',
+    );
   };
 
   const handleRogueEnhance = (key: string) => {
-    rogue.applyEnhancement(key); // [2026-08-05] 迷宫强化：选择并应用效果
+    rogue.applyEnhancement(key);
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 选定回执（此前卡片飞走后什么都没说，玩家只能自己去抽屉翻）
+    pushExpFeed(`🧬 已获得「${nameOfEnh(key)}」· 可在左下角头像抽屉查看`, 'gain'); // [2026-08-05] 迷宫强化：选择并应用效果
     recordCodexUnlock('enhancement', key); // [2026-08-26] 图鉴解锁
     rogueStatsRef.current.enhancements++; // [2026-08-29 肉鸽任务] 获得强化统计
   };
@@ -1014,12 +1258,16 @@ export default function App() {
       rogue.addEquippedCard(cardKey, equipId); // 带装备的卡：装备附加到该卡所有副本
       recordCodexUnlock('equipment', equipId); // [2026-08-26] 图鉴解锁
     }
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 购买回执（金额 + 到手物；店铺内原本只有按钮变「已购」）
+    pushExpFeed(`🃏 「${nameOfCard(cardKey)}」已入牌组${equipId ? ` · 附装备「${nameOfEquip(equipId)}」` : ''} · 数据金 −${price}`, 'gain');
     return true;
   };
   const handleRogueBuyEnhancement = (enhancementId: string, price: number) => {
     if (!rogue.spendGold(price)) return false;
     rogue.applyEnhancement(enhancementId); // 即时型生效 / 战斗型进 enhancements
     recordCodexUnlock('enhancement', enhancementId); // [2026-08-26] 图鉴解锁
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 购买回执
+    pushExpFeed(`🧬 已获得「${nameOfEnh(enhancementId)}」· 数据金 −${price}`, 'gain');
     return true;
   };
   // [2026-09-10 莉莉子] 装备页签改批量：先选天启者、再多选装备，点购买一次性扣总价并全部挂到该英雄身上（不受武装槽位限制）
@@ -1035,52 +1283,76 @@ export default function App() {
       rogue.addEquippedCard(heroKey, equipmentId); // 装备挂到所选天启者卡
       recordCodexUnlock('equipment', equipmentId); // [2026-08-26] 图鉴解锁
     }
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 批量装备回执（件数多时不逐件刷屏）
+    const equipNames = applicable.map(nameOfEquip);
+    pushExpFeed(`⚔️ 「${nameOfCard(heroKey)}」已装备 ${equipNames.length === 1 ? `「${equipNames[0]}」` : `${equipNames.length} 件`} · 数据金 −${price}`, 'gain');
     return true;
   };
   const handleRogueRemoveCard = (cardKey: string, price: number) => {
     if (!rogue.spendGold(price)) return false;
     rogue.removeCard(cardKey);
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 删卡回执
+    pushExpFeed(`🗑️ 已移除「${nameOfCard(cardKey)}」· 数据金 −${price}`, 'cost');
     return true;
   };
-  const handleRogueShopRefresh = () => rogue.useRefresh();
+  const handleRogueShopRefresh = () => {
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 刷新回执（此前只有按钮上的数字静默 −1）
+    const refreshBefore = rogue.run?.refreshCount ?? 0;
+    if (!rogue.useRefresh()) return false;
+    pushExpFeed(`🔄 商品已刷新 · 剩余刷新 ${Math.max(0, refreshBefore - 1)} 次`, 'info');
+    return true;
+  };
 
   // ==========================================
   // [2026-08-12 宝箱节点] 宝箱领取 handlers
   // ==========================================
-  const handleRogueTreasureGold = (amount: number) => { rogue.addGold(amount); };
+  const handleRogueTreasureGold = (amount: number) => {
+    rogue.addGold(amount);
+    pushExpFeed(`💰 数据金 +${amount}`, 'gain'); // [2026-10-08 莉莉子 · 交互回响层 批次1]
+  };
   const handleRogueTreasureCard = (cardKey: string, equipId: string | undefined) => {
     rogue.addCard(cardKey);
     if (equipId) {
       rogue.addEquippedCard(cardKey, equipId); // 带装备的卡：装备附加到该卡
       recordCodexUnlock('equipment', equipId); // [2026-08-26] 图鉴解锁
     }
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 领奖回执
+    pushExpFeed(`🃏 「${nameOfCard(cardKey)}」已入牌组${equipId ? ` · 附装备「${nameOfEquip(equipId)}」` : ''}`, 'gain');
   };
   const handleRogueTreasureEnhancement = (enhancementId: string) => {
     rogue.applyEnhancement(enhancementId);
     recordCodexUnlock('enhancement', enhancementId); // [2026-08-26] 图鉴解锁
+    pushExpFeed(`🧬 已获得「${nameOfEnh(enhancementId)}」`, 'gain'); // [2026-10-08 交互回响层 批次1]
   };
   const handleRogueTreasureSacrifice = (enhancementId: string) => {
+    // [2026-10-08 莉莉子 · 交互回响层 批次1] 代价（生命上限）此前完全静默就扣掉了，回执要**先说代价再说所得**
+    const maxBefore = rogue.run?.maxHp ?? 0;
+    const maxAfter = Math.max(10, maxBefore - SACRIFICE_MAX_HP); // 与 adjustMaxHp 的下限口径一致
     rogue.adjustMaxHp(-SACRIFICE_MAX_HP); // 牺牲 -10 生命上限
     rogue.applyEnhancement(enhancementId); // 换取史诗强化
     recordCodexUnlock('enhancement', enhancementId); // [2026-08-26] 图鉴解锁
+    pushExpFeed(`🫀 生命上限 −${maxBefore - maxAfter}（现为 ${maxAfter}）· 换取「${nameOfEnh(enhancementId)}」`, 'cost');
   };
   const handleRogueTreasureRandom = (result: RandomTreasureResult) => {
     switch (result.kind) {
-      case 'gold': rogue.addGold(result.amount); break;
+      // [2026-10-08 莉莉子 · 交互回响层 批次1] 随机宝箱：揭示步骤已有，但「领取」这一下也要留回执（结果落袋为准）
+      case 'gold': rogue.addGold(result.amount); pushExpFeed(`💰 数据金 +${result.amount}`, 'gain'); break;
       case 'card':
         rogue.addCard(result.cardKey);
         if (result.equipId) {
           rogue.addEquippedCard(result.cardKey, result.equipId);
           recordCodexUnlock('equipment', result.equipId); // [2026-08-26] 图鉴解锁
         }
+        pushExpFeed(`🃏 「${nameOfCard(result.cardKey)}」已入牌组${result.equipId ? ` · 附装备「${nameOfEquip(result.equipId)}」` : ''}`, 'gain');
         break;
       case 'enhancement':
         rogue.applyEnhancement(result.enhancementId);
         recordCodexUnlock('enhancement', result.enhancementId); // [2026-08-26] 图鉴解锁
+        pushExpFeed(`🧬 已获得「${nameOfEnh(result.enhancementId)}」`, 'gain');
         break;
-      case 'maxHp': rogue.adjustMaxHp(result.amount); break;
-      case 'revive': rogue.addRevive(result.amount); break;
-      case 'refresh': rogue.addRefresh(result.amount); break;
+      case 'maxHp': rogue.adjustMaxHp(result.amount); pushExpFeed(`🫀 生命上限 +${result.amount}`, 'gain'); break;
+      case 'revive': rogue.addRevive(result.amount); pushExpFeed(`♻️ 复活 +${result.amount}`, 'gain'); break;
+      case 'refresh': rogue.addRefresh(result.amount); pushExpFeed(`🔄 刷新 +${result.amount}`, 'gain'); break;
     }
   };
 
@@ -1098,99 +1370,147 @@ export default function App() {
 
   /** [2026-08-28 事件] 效果执行器：即时资源 / 卡牌 / 强化 / 装备 / 赌注 / 强制随机 / 投资 / 未来强化
    *  removeCards 在 forced 内为随机删（强制型）；顶层 removeCards 由弹窗自选（removePicks 在 handleRogueEvent 处理） */
-  const applyEventEffects = (ef: RogueEventEffect) => {
-    if (!rogue.run) return;
-    if (ef.gold) rogue.addGold(ef.gold);
-    if (ef.hp) { if (ef.hp > 0) rogue.heal(ef.hp); else rogue.setHp(rogue.run.hp + ef.hp); }
-    if (ef.hpPct) {
-      const amt = Math.floor(rogue.run.maxHp * ef.hpPct / 100);
-      if (amt > 0) rogue.heal(amt); else rogue.setHp(rogue.run.hp + amt);
-    }
-    if (ef.maxHp) rogue.adjustMaxHp(ef.maxHp);
-    if (ef.revive) rogue.addRevive(ef.revive);
-    if (ef.refresh) rogue.addRefresh(ef.refresh);
-    if (ef.addRandomCard) { const k = randomCollectibleCard(); if (k) rogue.addCard(k); }
-    if (ef.addEquippedCard) {
-      // [2026-09-25 莉莉子 装备不叠加] 带装备卡：装备候选排除该卡已有装备
-      const offer = generateCardOffers(1, rogue.run.equippedCards)[0];
-      rogue.addCard(offer.cardKey);
-      if (offer.equipId) { rogue.addEquippedCard(offer.cardKey, offer.equipId); recordCodexUnlock('equipment', offer.equipId); }
-    }
-    if (ef.polluteDeck) { const k = randomJunkCard(); if (k) rogue.addCard(k); }
-    if (ef.upgradeCard) {
-      const nonHero = rogue.run.deck.filter(k => !CARD_DB[k]?.isChampion);
-      // [2026-09-25 莉莉子 装备不叠加] 只挑"还能挂上新装备"的卡（排除各卡已有装备）；全挂满就作罢，不再发无效升级
-      const eqMap = rogue.run.equippedCards ?? {};
-      const upgradable = nonHero.filter(k => getEquipPoolForCard(CARD_DB[k], eqMap[k]).length > 0);
-      if (upgradable.length) {
-        const cardKey = upgradable[Math.floor(Math.random() * upgradable.length)];
-        const equipPool = getEquipPoolForCard(CARD_DB[cardKey], eqMap[cardKey]); // [2026-08-29] 按卡筛：法术只配减费装备
-        const equip = equipPool[Math.floor(Math.random() * equipPool.length)];
-        rogue.addEquippedCard(cardKey, equip.id);
-        recordCodexUnlock('equipment', equip.id);
-      }
-    }
-    if (ef.removeCards) {
-      for (let i = 0; i < ef.removeCards; i++) {
-        const deck = rogue.run.deck;
-        if (!deck.length) break;
-        rogue.removeCard(deck[Math.floor(Math.random() * deck.length)]);
-      }
-    }
-    if (ef.addEnhancement) {
-      // [2026-09-25 莉莉子 强化不叠加] 排除本局已拥有
-      const enh = pickRandomEnhancements(1, undefined, rogue.run.rarityBonus, rogue.run.passUnlockedEnhancements, rogue.run.enhancements)[0]; // [2026-08-29 通行证]
-      if (enh) { rogue.applyEnhancement(enh.id); recordCodexUnlock('enhancement', enh.id); }
-    }
-    if (ef.addEquipment) {
-      // [2026-09-25 莉莉子 装备不叠加] 改从"英雄卡还能挂的新装备"里抽（原为全库随机，会抽到已挂的）
-      const equipId = pickNewEquipForHero();
-      if (equipId) {
-        rogue.addEquippedCard(rogue.run.heroKey, equipId);
-        recordCodexUnlock('equipment', equipId);
-      }
-    }
-    if (ef.removeEquipment) rogue.removeRandomEquipment();
-    if (ef.gamble) {
-      const won = Math.random() < ef.gamble.prob;
-      for (const sub of (won ? ef.gamble.win : ef.gamble.lose)) applyEventEffects(sub);
-    }
-    if (ef.forced && ef.forced.length) {
-      for (const sub of ef.forced[Math.floor(Math.random() * ef.forced.length)]) applyEventEffects(sub);
-    }
-    if (ef.invest) rogue.addInvestment(ef.invest);
-    if (ef.fightDebuff) rogue.addFightDebuff(ef.fightDebuff);
+  // [2026-10-05 莉莉子 · 方案 P3/P4 结构重构] **事件效果执行收口到注册表**
+  //   （`data/roguelike/eventAppliers.ts`：提示与执行同源、并回报"实际发生了什么"）
+  //   这里只负责把 App 的能力注入进去：`rogue.*` + 三个 App 内工具（随机卡 / 污染卡 / 英雄新装备）。
+  const buildEventApi = (): EventApi => ({
+    run: rogue.run!,
+    difficulty: rogue.run!.difficulty, // [2026-10-08 难度分层] 事件奖励按难度分层
+    addGold: (n) => rogue.addGold(n),
+    heal: (n) => rogue.heal(n),
+    setHp: (n) => rogue.setHp(n),
+    adjustMaxHp: (n) => rogue.adjustMaxHp(n),
+    addRevive: (n) => rogue.addRevive(n),
+    addRefresh: (n) => rogue.addRefresh(n),
+    addCard: (k) => rogue.addCard(k),
+    addEquippedCard: (k, e) => rogue.addEquippedCard(k, e),
+    removeCard: (k) => rogue.removeCard(k),
+    removeRandomEquipment: () => rogue.removeRandomEquipment(),
+    applyEnhancement: (id) => rogue.applyEnhancement(id),
+    addInvestment: (inv) => rogue.addInvestment(inv),
+    addFightDebuff: (d) => rogue.addFightDebuff(d),
+    recordCodexUnlock: (t, id) => recordCodexUnlock(t, id),
+    randomCollectibleCard,
+    randomJunkCard,
+    pickNewEquipForHero,
+  });
+
+  const applyEventEffects = (ef: RogueEventEffect): EventApplyResult[] => {
+    if (!rogue.run) return [];
+    return applyEffect(ef, buildEventApi()); // 递归（gamble / forced）在注册表内部完成
   };
 
-  /** [2026-08-28 事件] 事件选项回调：先删卡（removePicks 自选）→ 执行效果 → 战斗型触发事件战斗 */
-  const handleRogueEvent = (eventId: string, choiceIndex: number, removePicks?: string[]) => {
-    if (!rogue.run) return;
+  /** [2026-08-28 事件] 事件选项回调：先删卡（removePicks 自选）→ 执行效果 → 战斗型触发事件战斗
+   *  [2026-10-05 · 方案 P3] **返回"实际结果清单"** ⇒ 事件弹窗据此渲染「结果」步骤 */
+  const handleRogueEvent = (eventId: string, choiceIndex: number, removePicks?: string[]): EventApplyResult[] => {
+    const results: EventApplyResult[] = [];
+    if (!rogue.run) return results;
     rogueStatsRef.current.events++; // [2026-08-29 肉鸽任务] 完成事件统计
     const ev = ROGUE_EVENT_BY_ID[eventId];
-    if (!ev) return;
+    if (!ev) return results;
     const choice = ev.choices[choiceIndex];
-    if (!choice) return;
-    for (const k of removePicks ?? []) rogue.removeCard(k);
+    if (!choice) return results;
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-13] **事件已结算 ⇒ 记下"这个节点做过了"**
+    //   粉丝反馈：右键事件节点可反复进入、每次抽新事件刷奖励 ⇒ 用这条记录把"右键面板的进入"挡掉。
+    //   记在"做出选择之后"（此处）而不是"打开弹窗时" —— 没结算就走人不该算完成。
+    if (rogue.run.currentNodeId) rogue.markNodeResolved(rogue.run.currentNodeId);
+    for (const k of removePicks ?? []) {
+      const nm = CARD_DB[k]?.name?.replace(/\n/g, '') ?? k;
+      rogue.removeCard(k);
+      results.push({ kind: 'cost', icon: '🗑️', text: `移除卡牌「${nm}」` }); // [P3] 手选删卡也要出现在结果里
+    }
     let shouldFight = false;
     let fightReward: 'enhancement' | 'choose2' = 'enhancement';
-    for (const ef of choice.effects) {
-      if (ef.fight) { shouldFight = true; fightReward = ef.fight.reward; continue; }
-      if (ef.removeCards && (removePicks?.length ?? 0) > 0) {
-        const { removeCards: _rc, ...rest } = ef;
-        applyEventEffects(rest as RogueEventEffect);
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 收集"打谁 + 敌方持有强化"（由选择决定）
+    let fightOpponents: string[] | undefined;
+    let fightEnemyEnh: string[] = [];
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **必须走唯一出口** `resolveChoiceEffects` ——
+    //   整档难度奖励（`effectsByDifficulty`）的取用要与「选项提示」(NodeEventModal:689) **完全同源**，
+    //   否则又是"选项写一套、实际给另一套"（eventAppliers.ts 头注释记过的老病）。
+    const diffEffects = resolveChoiceEffects(choice, rogue.run.difficulty);
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **奖励延后**：程的规格是「每个战斗都是**赢了之后**会获得」
+    //   ⇒ 本选项若会进战斗，则把"奖励类"效果（指定强化 / 天启者卡）**扣下不发**，
+    //     存进 `pendingBattle.rewards`，等打赢了再执行（输了一并作废）。
+    const willFight = diffEffects.some(ef => !!ef.fight);
+    const deferredRewards: RogueEventEffect[] = [];
+    const isBattleReward = (ef: RogueEventEffect) => !!(ef.addEnhancementFrom || ef.grantHeroCard);
+
+    for (const ef of diffEffects) {
+      if (ef.fight) {
+        shouldFight = true;
+        fightReward = ef.fight.reward;
+        fightOpponents = ef.fight.opponentHeroKeys;
+        fightEnemyEnh = ef.fight.enemyEnhancements ?? [];
+        results.push({ kind: 'info', icon: '⚔️', text: '迎战' });
         continue;
       }
-      applyEventEffects(ef);
+      if (willFight && isBattleReward(ef)) { deferredRewards.push(ef); continue; }
+      if (ef.removeCards && (removePicks?.length ?? 0) > 0) {
+        const { removeCards: _rc, ...rest } = ef;
+        results.push(...applyEventEffects(rest as RogueEventEffect));
+        continue;
+      }
+      results.push(...applyEventEffects(ef));
     }
-    // 事件战斗：切换到战斗（胜利走 handleRogueVictory 事件奖励分支）
-    if (shouldFight) {
-      setRogueEventBattle({ reward: fightReward });
-      const encounter = buildRoguelikeEncounter('elite', rogue.run.act, rogue.run.difficulty, undefined, undefined);
-      setRogueEncounter(encounter);
-      setPreBattleHpSnapshot(rogue.run.hp);
-      stopMovie();
-      setAppState('loading');
+    // 事件战斗：[2026-10-08 莉莉子 · 交互回响层 批次3] **不再立即切 loading**
+    //   病根：原来 setAppState('loading') 与弹窗的 setEventStep('result') 落在同一批更新里，
+    //   地图屏当帧卸载 ⇒ 「结果」步骤**根本来不及渲染**，玩家既看不到拿到了什么、也没有"我要迎战"的确认。
+    //   现在只登记"待战"，真正进战斗交给结果步骤的「迎战」按钮 → handleRogueEventFightStart。
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **通用流程改动（程拍板 🅰️）**：
+    //   事件战斗**不再立即切进战斗**，而是把该节点登记为「**待战节点**」——
+    //   玩家看到剧情、点确定后**回地图**，那个节点会显示成战斗节点，**点它才开打**。
+    //   ⚠️ 这条对**所有 `fight` 类事件**生效（含旧的 ev_ambush / ev_arena），是有意的统一。
+    if (shouldFight && rogue.run.currentNodeId) {
+      rogue.setPendingBattle(rogue.run.currentNodeId, {
+        opponentHeroKeys: fightOpponents,
+        enemyEnhancements: fightEnemyEnh,
+        reward: fightReward,
+        rewards: deferredRewards, // 打赢才发（见上方说明）
+      });
     }
+    return results; // [P3] 交给事件弹窗渲染「结果」步骤（玩家不必再靠猜血条/金币）
+  };
+
+  /** [2026-10-08 莉莉子 · 瓦尔基里大赛] 事件「迎战」：**改由地图的待战节点触发**。
+   *  改用 `pendingBattles[currentNodeId]` 作为唯一配置来源（不再依赖弹窗内的即时切换）。
+   *  ⚠️ 兼容旧的 `onEventFight`（弹窗内按钮）：两者都走这里，配置都从 pendingBattles 读。
+   *  （旧的即时切换相比，唯一差别是"晚一步"——但它让结果步骤有机会被看见） */
+  const handleRogueEventFightStart = () => {
+    if (!rogue.run) return;
+    const nid = rogue.run.currentNodeId;
+    const pending = nid ? rogue.run.pendingBattles?.[nid] : undefined;
+    if (!pending) return;
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **按选择指定敌方卡组 + 注入敌方持有强化**
+    //   · `opponentHeroKeys` 非空 ⇒ 走"按天启者构建"（单人反查流派 / 双人**合成混合流派**）
+    //   · 缺省（旧的 fight 事件，如 ev_ambush / ev_arena）⇒ 沿用原来的随机流派，**老行为零变化**
+    const encounter = pending.opponentHeroKeys?.length
+      ? buildEncounterForHeroes(pending.opponentHeroKeys, 'elite', rogue.run.difficulty, pending.enemyEnhancements)
+      : buildRoguelikeEncounter('elite', rogue.run.act, rogue.run.difficulty, undefined, pending.enemyEnhancements);
+    setRogueEncounter(encounter);
+    setRogueEventBattle({ reward: pending.reward }); // 保留：胜利时据此走"事件战斗奖励"分支
+    setRogueBattleNodeId(nid ?? null);               // 让胜利时能 clearPendingBattle(battleNodeId)
+    setPreBattleHpSnapshot(rogue.run.hp);
+    stopMovie();
+    setAppState('loading');
+  };
+
+  /** [2026-10-05 莉莉子 · 方案 P4 §3] 「深层回响」结算：
+   *  代价 = 已进入各层的 costPct 之和（% 上限生命）；奖励 = 每层 1 件装备，≥3 层时其中 1 件换成迷宫强化。
+   *  ⚠️ 走的是**同一套注册表**（`applyEventEffects`）⇒ 结果文案与其它事件完全一致。 */
+  const handleRogueEventDeep = (eventId: string, layers: number): EventApplyResult[] => {
+    const results: EventApplyResult[] = [];
+    if (!rogue.run) return results;
+    const cfg = ROGUE_EVENT_BY_ID[eventId]?.deepEcho;
+    if (!cfg) return results;
+    if (rogue.run.currentNodeId) rogue.markNodeResolved(rogue.run.currentNodeId); // 与其它事件同口径：结算即"用掉"
+    const taken = Math.max(1, Math.min(layers, cfg.costPctByLayer.length)); // 保底 1 层
+    const totalPct = cfg.costPctByLayer.slice(0, taken).reduce((s, n) => s + n, 0);
+    results.push(...applyEventEffects({ hpPct: -totalPct }));
+    for (let i = 0; i < taken; i++) {
+      const isLast = i === taken - 1;
+      results.push(...applyEventEffects(isLast && taken >= 3 ? { addEnhancement: true } : { addEquipment: true }));
+    }
+    return results;
   };
 
   const handleRogueRunEnd = () => {
@@ -1201,6 +1521,7 @@ export default function App() {
     setPreBattleHpSnapshot(null); // [2026-08-11] 整局结束，快照失效
     setRogueEncounter(null);
     setRogueReward(null);
+    setRogueEventBattle(null); // [2026-10-08 · 批次3] 整局结束 ⇒ 清掉可能滞留的「迎战」待战标记
     setRogueBattleType(null);
     setRogueBattleNodeId(null);
     setRogueRunEnd(null); // [2026-08-29] 结算信息清空
@@ -1243,25 +1564,16 @@ export default function App() {
   // ══════════════════════════════════════════════════════════
   const [surrenderSignal, setSurrenderSignal] = useState(0); // 递增 → GameSession 把本场以战败收场
 
-  /** 投降（认输）：肉鸽消耗一次复活；标准 / 地下清理按失败流程结算 */
+  /**
+   * 投降（认输）
+   * [2026-10-04 程拍板] 肉鸽里**与「被打死」走同一条路** —— `handleRogueDefeat` 已完整包含三段：
+   *   ① 事件战斗 → 扣 30% 生命回地图 ② 还有复活 → 弹**复活确认窗**（使用 / 放弃）③ 耗尽 → 整局败北。
+   *   ⚠️ 原先投降是"自己消费一次复活就回地图"、**不弹确认窗** —— 与"打死了才弹"不一致（程指出这是漏的）。
+   */
   const handleSurrender = () => {
     eventBus.emit(GameEvents.UI_CLICK);
     if (appState === 'rogue_game') {
-      // 肉鸽：投降 = 死亡一次
-      if (rogue.consumeRevive()) {
-        // 还有复活次数 → HP 回滚到战前、回地图、**仍停在这个节点**可重复挑战（不标记击败）
-        if (preBattleHpSnapshot !== null) rogue.setHp(preBattleHpSnapshot);
-        setPreBattleHpSnapshot(null);
-        setRogueBattleType(null);
-        setRogueBattleNodeId(null);
-        setRogueEncounter(null);
-        setRogueEventBattle(null);
-        playBgm('deck_builder');
-        setAppState('rogue_map');
-        return;
-      }
-      // 复活次数已耗尽 → 按肉鸽失败结算
-      handleRogueDefeat();
+      handleRogueDefeat(); // ← 唯一入口：本场失败的全部处置（含复活确认）都在里面
       return;
     }
     // 标准 / 地下清理：请求本场以战败收场（GameSession 收到后清零水晶 → 走既有失败结算）
@@ -1282,7 +1594,7 @@ export default function App() {
 
   /** 投降确认窗里的后果说明（按模式给出，玩家一眼知道会发生什么） */
   const surrenderNote = appState === 'rogue_game'
-    ? `· 本场视作死亡一次，消耗 1 次复活（当前剩余 ${rogue.run?.reviveCount ?? 0} 次）\n· 还有复活次数：返回悖论迷宫地图，仍停在这个节点，可重复挑战本关\n· 复活次数耗尽：本局按失败结算`
+    ? `· 本场视作死亡一次（与战败走同一套流程）\n· 还有复活次数：会弹出确认，可选择「使用复活」重打本关，或「放弃并结算」\n· 复活已耗尽：本局直接按失败结算`
     : '· 本场视作认输，按「战败」流程结算（战绩与经验均按失败计）\n· 该操作不可撤销';
 
   // 背景视频切换
@@ -1303,6 +1615,12 @@ export default function App() {
           if (rogueCodexOpen) {
               e.preventDefault(); e.stopImmediatePropagation();
               setRogueCodexOpen(false);
+              return;
+          }
+          // [2026-10-04] 复活弹窗开着时吞掉 ESC —— 它是**必须二选一**的窗（没有关闭按钮）；
+          //   若放行，玩家能把它关掉，留下"战斗已结束、本局却没落子"的悬空状态
+          if (rogueRevivePrompt) {
+              e.preventDefault(); e.stopImmediatePropagation();
               return;
           }
           // [2026-08-15 莉莉子] 有返回按钮的界面：ESC 等同点击该界面的返回按钮 → 返回上一界面，而非打开设置
@@ -1393,10 +1711,17 @@ export default function App() {
         playBgm('deck_builder');
         stopMovie(); // 备战界面通常不需要视频背景，或者看您设计
     }
-    else if (appState === 'game') {
+    else if (appState === 'game' || appState === 'rogue_game') {
         // 游戏内：BGM 由 GameSession 内部触发 playBgm('battle')，这里不干涉
         // 这样每次进入 GameSession 都会触发它的 useEffect，从而重新随机
-        // [新增] 进入游戏时，再次广播一下当前的语音音量，确保 GameSession 里的 useVoice 能收到
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 语音音量的补偿广播
+        // ── 这条补偿**原来只挂 `appState === 'game'`** ⇒ **迷宫（`'rogue_game'`）永远走不到**
+        //    ⇒ 每个战斗节点新挂的 `useVoice`（`GameSession.tsx:921`）一直用默认 0.8
+        //    = 程实测的「迷宫里每次进新对局语音音量都被重置，得在局内再拖一次滑块」。
+        // ── 现在正确性已由全局音量快照（`utils/audioVolume`）兜底（新实例 mount 时自取现值），
+        //    这里补上 `rogue_game` 只是让"正在播的那一条"也能被即时校正（双保险，不是唯一依赖）。
+        // =====================================
         if (userSystem.isReady && userSystem.settings) {
             setTimeout(() => {
                 eventBus.emit(GameEvents.SET_VOICE_VOLUME, userSystem.settings.volume.voice);
@@ -1735,6 +2060,26 @@ export default function App() {
           />
       )}
 
+      {/* [2026-10-08 莉莉子 · 瓦尔基里大赛] 迎战胜利 · **第一段**奖励弹窗（强化 / 天启者卡）
+          程的流程是「先弹强化奖励，再弹卡牌奖励」⇒ 关掉它才弹第二段（卡牌三选一） */}
+      {eventBattleReward && rogue.run && (
+          <EventBattleRewardModal
+              results={eventBattleReward.results}
+              onClose={() => {
+                  const thenCards = eventBattleReward.thenCards;
+                  setEventBattleReward(null);
+                  if (!thenCards) return;
+                  // 第二段：卡牌三选一（事件战斗不发金币 ⇒ gold 0；走现有的 BattleRewardModal）
+                  const options = generateRewardOptions(rogue.run!.act, 3, {
+                      difficulty: rogue.run!.difficulty,
+                      equipRarityBonus: rogue.run!.equipRarityBonus ?? 0,
+                      equippedCards: rogue.run!.equippedCards,
+                  });
+                  setRogueReward({ gold: 0, options });
+              }}
+          />
+      )}
+
       {/* [新增] 6d. 悖论迷宫：地图（核心枢纽） */}
       {appState === 'rogue_map' && rogue.run && (
           <RogueMapScreen
@@ -1763,10 +2108,26 @@ export default function App() {
               onDevWin={userSystem.userId === 'dev_full_admin' ? handleRogueNodeDevWin : undefined} // [2026-08-29] 开发者一键胜利
               pendingPacks={userSystem.settings?.pendingPacks ?? 0} // [2026-08-29] 通关结算卡包
               pendingChests={(userSystem.settings?.pendingChests ?? []) as ChestInstance[]} // [2026-09-29] 通关结算开匣
+              // [2026-10-04 独立审查 #10 修复] ⚡ 一键开匣 + 武装库存：**从本处这个唯一实例下发**
+              //   （此前 RunEndModal 自己 new 了第二个 useUserSystem ⇒ settings 是独立快照、互不同步
+              //     ⇒ 一边一键全开清空队列后，另一边仍按旧快照列出 ⇒ **匣子可被重复开（双发）**）
+              onOpenAllChests={() => userSystem.openAllChests?.() ?? []}
+              armamentStock={readArmStock(userSystem.settings)}
               onOpenChest={(i: number) => userSystem.openChest?.(i) ?? null} // [2026-09-29] 打开匣子
               onShardDrop={(res: any) => { // [2026-09-29] 碎片入账（divinity 是钱包真源）
-                if (res?.wallet) divinity.applyShardDrop({ wallet: res.wallet, details: res.shardDetail ?? [], totalOverflow: 0 });
+                // [2026-10-02 莉莉子 BUG修复 #18] 判据由 `res?.wallet` 改为 `res?.kind === 'shard'` ——
+                //   碎片该不该入账，原来被绑在一个**与业务无关的返回字段**上
+                //   （openChest 传的正是 `dropShards(undefined, …)`，就是「吞碎片」那条的同一个坏味道）。
+                //   一旦 dropShards 哪天不再返回 wallet，碎片就会被**静默丢弃**（数据丢失）。
+                //   `applyShardDrop` 内部已改为按 details 逐笔入账、且**忽略传入的 wallet**，
+                //   所以这里只需要正确回答"该不该发"。
+                if (res?.kind !== 'shard') return;
+                const details = res.shardDetail ?? [];
+                const totalOverflow = details.reduce((s: number, d: any) => s + (d?.overflow > 0 ? d.overflow : 0), 0);
+                divinity.applyShardDrop({ wallet: res.wallet, details, totalOverflow });
               }}
+              // [2026-10-02 莉莉子 BUG修复 #17] 局中「评估嘉勉」入口（此前只有肉鸽大厅有，局中无处开匣子）
+              onOpenEvaluation={() => setEvaluationOpen(true)}
               onRunEndConfirm={handleRogueRunEnd}
               onBuyCard={handleRogueBuyCard}
               onBuyEnhancement={handleRogueBuyEnhancement}
@@ -1779,6 +2140,9 @@ export default function App() {
               onTreasureSacrifice={handleRogueTreasureSacrifice}
               onTreasureRandom={handleRogueTreasureRandom}
               onEvent={handleRogueEvent} // [2026-08-28 事件系统]
+              onEventFight={handleRogueEventFightStart} // [2026-10-08 · 批次3] 迎战：结果步骤点按钮才进战斗
+              onEventDeep={handleRogueEventDeep} // [2026-10-05 · 方案 P4 §3] 深层回响结算
+              onMarkNodeResolved={rogue.markNodeResolved} // [2026-10-05 · 方案 P1] 节点服务已用掉（防右键反复进入刷取）
               onConsumeEnhancementRank={() => rogue.consumeInvestments('enhancementRank')} // [2026-08-28] 托付遗物投资消费
               isDev={userSystem.userId === 'dev_full_admin'} // [2026-08-31 莉莉子 开发者] 开发者走任意选强化
               onDevPick={handleRogueDevPick} // [2026-08-31 莉莉子 开发者] 多选确认
@@ -1808,7 +2172,7 @@ export default function App() {
               heroDynamic={(userSystem.settings as any)?.heroDynamic || false} // [2026-08-16] 动态卡面
               spellDynamic={(userSystem.settings as any)?.spellDynamic || false} // [2026-09-26] 动态法术/单位卡面
               missionSystem={missionSystem}
-              firstAttacker={Math.random() > 0.5 ? 'player' : 'enemy'}
+              firstAttacker={rogueFirstAttacker} // [2026-10-03 莉莉子 BUG修复] 原为内联 Math.random() ⇒ 每次渲染重抽 ⇒ 同一方连攻；现改为**一场战斗抽一次**（见上方 rogueFirstAttackerRef 注释）
               onOpenSettings={() => setIsSettingsOpen(true)} // [2026-08-30 莉莉子] 暂停层齿轮 → 设置面板
               onQuitGame={handleQuitGame} onSurrender={handleSurrender} onRestartBattle={handleRestartBattle} surrenderNote={surrenderNote} surrenderSignal={surrenderSignal}
               isSettingsOpen={isSettingsOpen} // [2026-08-30 莉莉子] 暂停 ESC 协调
@@ -1820,7 +2184,10 @@ export default function App() {
           <SettingsModal
               isOpen={isSettingsOpen}
               onClose={() => setIsSettingsOpen(false)}
-              volumes={userSystem.settings.volume}
+              // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 归一化：补上长期缺失的 `movie` 通道并夹紧越界值
+              //   （原来直接传 `settings.volume` —— 而它的类型/默认值里都**没有 movie**，
+              //    滑块初值是 `undefined`，拖动之前 UI 与逻辑都不干净）
+              volumes={normalizeVolumes(userSystem.settings.volume)}
               onVolumeChange={handleVolumeChange}
               videoResolution={(userSystem.settings as any)?.videoResolution || '1k'}
               onResolutionChange={(res) => userSystem.updateSettings({ videoResolution: res } as any)}
@@ -1950,6 +2317,15 @@ export default function App() {
       {/* [2026-08-29 经验重构] 局内渐进经验/升级轻量横幅 */}
       <RogueExpFeed feed={expFeed} />
 
+      {/* [2026-10-04 程拍板] 复活询问弹窗 —— 本场推演失败且仍有复活次数时弹出（**必须二选一**，ESC 已被吞掉） */}
+      {appState === 'rogue_map' && rogueRevivePrompt && rogue.run && (
+          <ReviveModal
+              remaining={rogue.run.reviveCount ?? 0}
+              onAccept={handleRogueReviveAccept}
+              onDecline={handleRogueReviveDecline}
+          />
+      )}
+
       {/* [2026-08-12 天启者养成] 升级弹窗 */}
       {levelUpInfo && (
           <LevelUpToast
@@ -1965,10 +2341,28 @@ export default function App() {
                 isVisible={isVisible}
                 isLoop={isLooping}
                 onEnded={handleVideoEnded}
+                // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 接上「过场」音量（此前这条通道完全没接 ⇒ 滑块是装饰品）
+                volume={movieVolume}
                 // [核心修复] 将 shop 加入白名单
                 zIndex={(appState === 'title' || appState === 'lobby' || appState === 'mode_select' || appState === 'gacha' || appState === 'shop') ? 0 : 500}
                 noFade={isImmediate}
             />
+
+      {/* [2026-10-03 莉莉子] 胜利影片 · 跳过按钮（功能/位置/样式/层级 逐项对齐升级动画右上角那颗） */}
+      <AnimatePresence>
+          {isVisible && movieKind === 'victory' && showVictorySkip && (
+              <motion.button
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  onClick={(e) => { e.stopPropagation(); skipMovie(); }}
+                  className="fixed top-8 right-8 z-[9999] flex items-center gap-2 px-6 py-3 bg-black/60 hover:bg-white/20 border border-white/20 hover:border-white/50 rounded-full text-white font-mono tracking-widest text-sm backdrop-blur-md transition-all pointer-events-auto group"
+              >
+                  <SkipForward size={16} className="group-hover:translate-x-1 transition-transform" />
+                  SKIP MOVIE
+              </motion.button>
+          )}
+      </AnimatePresence>
         </div>
     </ScaleWrapper>
   );

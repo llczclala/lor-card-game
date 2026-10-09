@@ -31,16 +31,21 @@ interface MapNodeProps {
     size?: number; // [2026-08-04] 自定义节点尺寸（px），供地图编辑器调节
     onPreview?: () => void; // [2026-08-11] 右键预览回调（任何状态可触发，不受 isClickable 限制）
     revealDelay?: number; // [2026-08-28 莉莉子] 推演开场：该节点从暗弹出的延迟秒数（不传则无动画，地图编辑器不受影响）
+    /** [2026-10-08 莉莉子 · 瓦尔基里大赛] 该节点已登记「**待战**」⇒ 渲染成**战斗节点**（事件结算后它会变成战斗） */
+    pendingBattle?: boolean;
 }
 
-export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate, enemyKey, size, onPreview, revealDelay }) => {
-    const meta = NODE_META[type];
+export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate, enemyKey, size, onPreview, revealDelay, pendingBattle }) => {
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **待战节点用"精英战斗"的元信息渲染**（图标/配色/敌人头像位）
+    //   —— 它原本是事件节点，事件结算 + 选择后"变成战斗节点"（程的设计）
+    const effectiveType: RogueNodeType = pendingBattle ? 'elite' : type;
+    const meta = NODE_META[effectiveType];
     const isClickable = state === 'available' || state === 'current';
     const isCurrent = state === 'current';
     const isDiamond = type === 'enhance'; // [2026-08-04] 迷宫强化节点：菱形而非圆形
     const nodeSize = size ?? (isCurrent ? 64 : 44);
     // [2026-08-10] 战斗节点（战斗/精英/Boss）优先显示预分配敌人头像，替代通用图标
-    const isCombatNode = type === 'battle' || type === 'elite' || type === 'boss';
+    const isCombatNode = effectiveType === 'battle' || effectiveType === 'elite' || effectiveType === 'boss';
     const showEnemyAvatar = isCombatNode && !!enemyKey; // [2026-08-04] 编辑器可自定义尺寸
     // [2026-08-26 莉莉子] 当前节点：蓝色高光包裹白色核心——白色描边 + 外层蓝色光晕（霓虹管效果）
     const nodeStyle = isCurrent ? { boxShadow: '0 0 22px rgba(59,130,246,0.85)' } : undefined;

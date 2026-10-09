@@ -138,38 +138,64 @@ const QUALITY_MAX: Record<RogueDifficulty, EquipmentRarity> = {
 const QUALITY_WEIGHTS: Record<EquipmentRarity, number> = { common: 15, uncommon: 45, rare: 25, epic: 10, legendary: 4, mythic: 1 };
 
 /**
- * [2026-08-30 程拍板] 敌人随机装备：按难度挑单位卡佩戴随机装备。
- *  带装备卡数：普通 1~2 / 机密 2~3 / 绝密 3~4（baseCount 普通1/机密2/绝密3 + 精英+1/Boss+2）
- *  品质上限：普通无紫金 / 机密无红 / 绝密全红；品质加权抽（白绿为主，高档渐稀）。
+ * [2026-10-08 程拍板 · 口径变更] 敌人随机装备：**每一个单位卡 key 都挂装备**，件数按难度递增。
+ *
+ *  ── 旧口径（**已废**）：整副牌组里只挑 count 张卡各挂 1 件（普通难度仅 1 张）
+ *     ⇒ 程判定「对手就太弱了」，改为下述新口径。
+ *  ── 新口径：**牌组里所有"有可用装备池"的非天启者卡**都挂，每张挂 `件数` 件：
+ *        件数 = 难度基础（普通 1 / 机密 2 / 绝密 3） + 节点追加（精英 +1 / Boss +2）
+ *  ── 品质仍按难度：上限 普通≤蓝 / 机密≤金 / 绝密全红，且按固定权重加权（白绿为主，高档渐稀）。
+ *
+ *  ⚠️ 装备按 **卡 key** 挂载（`Record<cardKey, string[]>`），同 key 的副本共享 ⇒
+ *     「每张卡都挂」在实现上 = 「每个不同的单位卡 key 都挂」（副本无法分开配装）。
+ *  ⚠️ **量级口径（程 2026-10-08 指正）**：衡量标准是「**平均每张卡携带几件**」，**不是**「整副牌组总共几件」。
+ *     因为装备按卡 key 挂、同类副本共享 ⇒ 用"去重件数"看会严重失真：
+ *     · 单位类别多的流派 ⇒ 去重件数 = 类别数 × p（看着很多）
+ *     · **只有 1 个单位类别的流派 ⇒ 去重件数只有 p 件（看着像"个位数"）**，但它的每一张单位卡照样携带 p 件
+ *     ⇒ 正确的量 = **每个单位卡 key 恰好 p 件 ⇒ 每张单位卡携带 p 件**（与类别数、副本数无关）。
+ *     实测（`.tmp/probe4-percard.mjs`）：每个 key 实挂件数恒为 p，零短缺。
+ *  ✅ [2026-10-08 程拍板] **法术卡也已纳入配装**：单位卡 → 通用装备池；**法术卡 → spellOnly 专属池**
+ *     （速记草稿 / 誊抄副本 / 加急誊本 / 连锁引信）。四件全是**静态修饰**（`costMod` / `keywords`），
+ *     `attachEquipment` 写入即生效；【回响】Echo 由 `useSpellSystem.ts:957-969` 结算后处理，且**按方分 player/enemy 手牌** ⇒ 对敌方能真生效。
+ *     修复前：整副牌组零单位卡的纯法术流派（倒计时7回合 / 鬼影森森）一件装备都拿不到。
+ *  🎛️ 程调整处：只改下面两个常量即可整体升降档，不必动逻辑。
  */
-const rollEnemyEquipments = (deck: string[], nodeType: 'battle' | 'elite' | 'boss', difficulty: RogueDifficulty): Record<string, string[]> => {
-    const baseCount = difficulty === 'topsecret' ? 3 : difficulty === 'secret' ? 2 : 1;
-    const extraCount = nodeType === 'boss' ? 2 : nodeType === 'elite' ? 1 : 0;
-    const count = baseCount + extraCount;
+const EQUIP_PIECES: Record<RogueDifficulty, number> = { normal: 1, secret: 2, topsecret: 3 };
+const NODE_EXTRA_PIECES: Record<'battle' | 'elite' | 'boss', number> = { battle: 0, elite: 1, boss: 2 };
 
-    // 只给单位卡（非天启者）配装备，去重后洗牌挑 count 张
-    const unitKeys = Array.from(new Set(deck.filter(k => {
+const rollEnemyEquipments = (deck: string[], nodeType: 'battle' | 'elite' | 'boss', difficulty: RogueDifficulty): Record<string, string[]> => {
+    const pieces = (EQUIP_PIECES[difficulty] ?? 1) + (NODE_EXTRA_PIECES[nodeType] ?? 0);
+
+    // [2026-10-08 程拍板] 可配装的卡 = 牌组里**所有有可用装备池的非天启者卡**（不再抽样挑卡）：
+    //   · 单位卡 → 通用装备池（getEquipPoolForCard 自动只给非 spellOnly）
+    //   · **法术卡 → spellOnly 专属池**（速记草稿/誊抄副本/加急誊本/连锁引信）
+    //   ⚠️ 旧实现写死 `c.type === 'unit'` ⇒ 纯法术流派裸奔（见上方文档注释）
+    const equipableKeys = Array.from(new Set(deck.filter(k => {
         const c = CARD_DB[k];
-        return c && c.type === 'unit' && !c.isChampion;
+        if (!c || c.isChampion) return false;
+        return getEquipPoolForCard(c).length > 0; // 池空（如无适用装备）则跳过，避免挂空
     })));
-    const shuffled = unitKeys.sort(() => Math.random() - 0.5);
-    const picked = shuffled.slice(0, Math.min(count, unitKeys.length));
 
     const maxRank = RARITY_RANK[QUALITY_MAX[difficulty]];
     const result: Record<string, string[]> = {};
-    for (const key of picked) {
+    for (const key of equipableKeys) {
         const card = CARD_DB[key];
-        const pool = getEquipPoolForCard(card).filter(e => RARITY_RANK[e.rarity] <= maxRank);
-        if (!pool.length) continue;
-        const weights = pool.map(e => QUALITY_WEIGHTS[e.rarity] ?? 5);
-        const total = weights.reduce((s, w) => s + w, 0);
-        let roll = Math.random() * total;
-        let chosen = pool[0];
-        for (let i = 0; i < pool.length; i++) {
-            roll -= weights[i];
-            if (roll <= 0) { chosen = pool[i]; break; }
+        const chosen: string[] = [];
+        for (let i = 0; i < pieces; i++) {
+            // excludeIds = 本张卡已选的件（不重复挂同一件）
+            const pool = getEquipPoolForCard(card, chosen).filter(e => RARITY_RANK[e.rarity] <= maxRank);
+            if (!pool.length) break;
+            const weights = pool.map(e => QUALITY_WEIGHTS[e.rarity] ?? 5);
+            const total = weights.reduce((s, w) => s + w, 0);
+            let roll = Math.random() * total;
+            let pick = pool[0];
+            for (let j = 0; j < pool.length; j++) {
+                roll -= weights[j];
+                if (roll <= 0) { pick = pool[j]; break; }
+            }
+            chosen.push(pick.id);
         }
-        result[key] = [chosen.id];
+        if (chosen.length) result[key] = chosen;
     }
     return result;
 };
@@ -209,6 +235,54 @@ export const buildRoguelikeEncounter = (nodeType: 'battle' | 'elite' | 'boss', _
         enemyBuffs: finalEnemyBuffs, // [2026-08-27 莉莉子] 敌方迷宫强化：优先节点预分配（mapLayout roll 子集，与地图预览一致）；兜底流派配置库（旧调用兼容）
         enemyNexusHp: ENEMY_NEXUS_BASE[difficulty] + sumNexusBoost(finalEnemyBuffs), // [2026-08-28 莉莉子] 敌方水晶初始血量
         enemyEquipments,
+    };
+};
+
+/**
+ * [2026-10-08 莉莉子 · 瓦尔基里大赛] **按指定天启者构建遭遇**（事件战斗的"打谁"专用）。
+ *
+ * 与 `buildRoguelikeEncounter` 的区别：那个按**流派**（archetypeId）指定；本函数按**天启者 key**。
+ *   · **单人** ⇒ 反查该英雄的流派（`fenny` → `fenny_pressure` / `lyfe` → `lyfe_blitz`）
+ *   · **双人** ⇒ **动态合成一个混合流派** —— 现有流派数据里**没有**"里芙+芬妮"这种跨阵营组合，
+ *     故把两个流派的 `coreCards` 与 `preferredPool` 取并集后交给 `fillDeckToSize` 补满 40 张。
+ *   · 找不到对应流派的天启者 ⇒ **静默跳过该英雄**（不崩）；一个都没匹配上 ⇒ 退回通用构建
+ *   · `extraBuffs` 与流派自带的 `rogueBuffs` **合并**（敌方持有强化：事件按难度逐档写死的那批）
+ *   · ⚠️ 双人时 `heroConfig` 只能填**一个**英雄（卡组只有一个"英雄位"），
+ *     另一位的卡作为**牌组内容**出现 —— 与"既有芬妮又有里芙的卡组"的语义一致。
+ */
+export const buildEncounterForHeroes = (
+    heroKeys: string[],
+    nodeType: 'battle' | 'elite' | 'boss',
+    difficulty: RogueDifficulty = 'normal',
+    extraBuffs: string[] = [],
+): EncounterData => {
+    const all = Object.values(ENEMY_ARCHETYPES);
+    const found = heroKeys
+        .map(k => all.find(a => a.champion === k))
+        .filter((a): a is NonNullable<typeof a> => !!a);
+
+    // 一个都没匹配上 ⇒ 退回通用构建（保证不空手）
+    if (found.length === 0) return buildRoguelikeEncounter(nodeType, 1, difficulty, undefined, extraBuffs);
+
+    const coreCards = found.flatMap(a => parseCoreCards(a.coreCards));
+    const preferredPool = Array.from(new Set(found.flatMap(a => a.preferredPool ?? [])));
+    const fullDeck = coreCards.length >= 40
+        ? coreCards.sort(() => Math.random() - 0.5)
+        : fillDeckToSize(coreCards, preferredPool, 40);
+
+    const primary = found[0];
+    const customName = found.length > 1 ? found.map(a => a.name).join(' · ') : primary.name;
+    const buffs = Array.from(new Set([...(primary.rogueBuffs ?? []), ...extraBuffs]));
+
+    return {
+        deck: fullDeck,
+        heroConfig: { heroKey: primary.champion, customName },
+        passiveEffects: [],
+        aiPersonality: primary.aiPersonality,
+        enemyCardBackIndex: primary.cardBackIndex ?? 0,
+        enemyBuffs: buffs,
+        enemyNexusHp: ENEMY_NEXUS_BASE[difficulty] + sumNexusBoost(buffs),
+        enemyEquipments: rollEnemyEquipments(fullDeck, nodeType, difficulty),
     };
 };
 

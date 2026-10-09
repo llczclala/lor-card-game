@@ -1,6 +1,7 @@
-import { processEffect, relayEffectEvents, processOnGetAttackToken } from '../logic/effectProcessor';
+import { processEffect, relayEffectEvents, processOnGetAttackToken, buildCalibrateDraw } from '../logic/effectProcessor';
+import { runSummonEntry } from '../logic/summonEntry'; // [2026-10-06 程拍板 · A 方案] 「入场」门铃唯一实现
 import type { EffectContext } from '../logic/effectProcessor';
-import { EFFECT_DB } from '../data/effectRegistry';
+import { EFFECT_DB, isEntryTiming, isPlayFromHandTiming } from '../data/effectRegistry';
 import { useSpellSystem } from './useSpellSystem'; // [2026-08-16] 移除未使用的 waitForStrikeComplete 导入（TS6133）
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { CardData, GameState, GameRecordCategory, SpellStackItem, RecordEntity, Keyword } from '../types';
@@ -8,18 +9,26 @@ import { createCard, CARD_DB } from '../data/cards';
 import {  calculateNewMana, getLeveledUpCard, getEffectiveSpellCost, upgradeAcaciaHand } from '../utils/gameRules';
 import { resolveSingleCombat, resolveDoubleStrikeCombat, type DoubleStrikeCombatResult } from '../logic/combat'; // [新增] 引入真实血量探针
 import { combatHasFlyingSword, getFlyingSwordOwner, getDefensiveSide, getExtraAttackOwner, combatHasExtraAttack } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具 · [2026-09-26 T17] 额外攻击判定
-import { canAfford } from '../logic/core';
+import { canAfford, grantExtraAttackTurn } from '../logic/core'; // [2026-10-03] 追加进攻权唯一出口（备战的唯一入口）
+// [2026-10-03 莉莉子 · P0 收口] "等升级播完"的唯一实现（原先本文件与 useSpellSystem 各一份）
+import { awaitLevelUpDrain as awaitLevelUpDrainCore, makeLevelUpDrainBudget } from '../utils/levelUpDrain';
 import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { applyChannelOnSummon, applyEchoOnPlay, getPower, getHealth } from '../logic/keywords'; // [2026-09-22 修复] getHealth 统一有效血量口径 // [2026-08-06 莉莉子] Echo 回响
-import { checkCardLevelUp, accumulateMauxirDamage, bumpBeaconDeaths, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide, assembleBeaconCard } from '../utils/gameRules';
+import { checkCardLevelUp, accumulateMauxirDamage, applyBeaconDeaths, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide, assembleBeaconCard, grantBeaconRespawnEffect, hasLiveMarian, canPlayerRetractBlocker, collectFieldUnits, sideOfUnit, setNexusMaxSnapshot, isNexusImmune, setSpellCostDownAllSnapshot, applySpellCostDownToNewCard, resetSpellCastState } from '../utils/gameRules';
 import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
-import { bumpAnimProgress, animGuard, ANIM_STALL_MS } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
+import { bumpAnimProgress, animGuard, ANIM_STALL_MS, LEVELUP_STALL_GRACE_MS } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳 · [2026-10-05] + 升级链宽限阈值
 import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
+// [2026-10-05 莉莉子 BUG修复 · 20261005-03] 【无法攻击】归零/还原的**唯一出口**（模块级账本，hook 与纯逻辑层共用）
+import { applyCantAttackZeroPower, restoreCantAttackPower } from '../utils/cantAttackLedger';
+// [2026-10-05 莉莉子 BUG修复 · 20261005-12] 「unit_die 强化已派发」账本（与 `isDead` 解耦；见文件头注释）
+import { markUnitDieDispatched, hasUnitDieDispatched } from '../utils/deathLedger';
+// [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔升级进度：真源账本 + 幂等贴值（含交战区）
+import { applyMauxirProgress, applyMauxirProgressToField, resetMauxirProgress } from '../utils/mauxirProgress';
 import { useRoundLifecycle } from './useRoundLifecycle'; // [核心新增] 引入剥离的回合生命周期引擎
 import { getRogueDefs, flashRogueBuff, applyPermanentBuff, applyStatBalance, getEquipTriggers, isStrikeTargetAlive } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发（分发已收编 rogueTrigger）· [2026-09-15] isStrikeTargetAlive 打击成长的存活判据
-import { runRogueTrigger, commitSlicePatch, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
+import { runRogueTrigger, commitSlicePatch, getSpellCostDownAll, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
 import { executeEquipmentOnPlay } from '../logic/equipment'; // [2026-08-12] 装备系统：打出时效果执行
 import { attachEquipment, getArmamentNexusCost, getEquipmentById } from '../data/equipment'; // [2026-08-12] 装备挂载 · [2026-09-25] 遗嘱转移 / Pact 水晶代价
 // [2026-09-25 莉莉子 三线任务化框架] 任务进度中枢：推进 / 判定 / 兑现查询
@@ -32,7 +41,7 @@ const createFullCard = (key: string): CardData => {
     const base = createCard(key);
     // 强制断言 base 为 Partial<CardData> 以便与后续属性合并
     // 或者直接构建完整对象并断言为 CardData
-    return {
+    return applySpellCostDownToNewCard('player', {
         ...base,
         id: Math.random().toString(36).substr(2, 9),
         strikeCount: 0,
@@ -46,7 +55,7 @@ const createFullCard = (key: string): CardData => {
         // [能力] 初始化运行时状态：在牌库/手牌中时隐藏，上场后由 playCard 设为 breathing
         abilityState: (base as any).ability ? 'hidden' as const : undefined,
         abilityCharges: (base as any).ability?.maxCharges,
-    } as CardData;
+    } as CardData);
 };
 
 // [修正] 定义 shuffleDeck 函数 (解决 TS2552, TS2304)
@@ -86,6 +95,13 @@ export interface TutorialInitState {
 
 // 1. 接收 initialDeck 参数，默认为空数组
 export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boolean = false, disableMulligan: boolean = false, tutorialInit?: TutorialInitState, firstAttacker: 'player' | 'enemy' = 'player', initialPlayerNexus?: number, playerNexusMax?: number, rogueEnhancements: string[] = [], rogueEquipments: Record<string, string[]> = {}, enemyEnhancements: string[] = [], initialEnemyNexus?: number, enemyEquipments: Record<string, string[]> = {}) => {
+    // ── [2026-10-04 程拍板] 同步「水晶生命上限」快照 ──
+    //   芬妮升级口径已改为「任一方水晶 ≤ **其自身上限**的一半」，判定（combat.ts）与 UI 进度（Card.tsx）
+    //   都拿不到 game.playerNexusMax / enemyNexusMax，靠 props 层层下传必漏（历史病：漏一处那处静默退回 20）。
+    //   上限在**一局之内不变**，所以在对局初始化这里同步一次即可（快照定义见 gameRules.ts）。
+    //   ⚠️ 纯模块级赋值、幂等 ⇒ 与 useRoguelikeRun 的 `runRef.current = run` 同款，StrictMode 重复执行无副作用。
+    setNexusMaxSnapshot(playerNexusMax ?? 20, initialEnemyNexus ?? 20);
+
     // --- 1. 状态定义 ---
     // [2026-09-26 T17 猎影标记] 补 `isExtraAttack` —— 法术装配的「额外攻击」战线标记
     //   （归位时不消耗进攻标识 / 强制进入格挡阶段，见 passTurn 守卫与 runResolveCombatAnimation）
@@ -272,67 +288,88 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     }, [game.questProgress, game.rogueEnhancements]);
     // 👇 [新增] 微队列缓冲区 (Micro-Queue Buffer)
     const pendingActionsRef = useRef<{ type: string; payload?: any }[]>([]);
-    // 👇 [CantAttack] 保存各单位进入战场前的原始攻击力，用于撤回时恢复（含 buffs/roundBuffs）
-    const cantAttackOrigPowerRef = useRef<Map<string, { power: number; buffsPower: number; roundBuffsPower: number }>>(new Map());
-
     // ==========================================
-    // [2026-09-19 BUG修复] 「无法进攻」单位进入战场 → 攻击力归零（**唯一口径**）
-    // ── 为什么必须收成一个函数：这条规则此前被内联抄在两处（攻击者上场 / 玩家主动格挡），
-    //    而**三条挑战·拉取路径漏抄了** ⇒ 逻辑上攻击力确实是 0（战斗结算读它，所以打人不掉血），
-    //    但卡面仍显示被 BUFF 过的攻击力 ⇒「暴露拉取的信标攻击力没归零」的视觉 BUG。
-    // ── 记账进 cantAttackOrigPowerRef，撤回时由 recallBlocker / 上场撤回按 id 还原。
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 【无法攻击】归零/还原已抽成**唯一出口**
+    // ── 病根（程实测）：主动用「臆莲基座」进攻 → 攻击力归零 → 结算完回备战席，攻击力没还原。
+    //    原实现是本地 ref + 内联函数，回席出口只接了 3 条（撤回进攻 / 撤回格挡 / 战斗收尾），
+    //    而"回备战席"另有 4 条出口**没接账本**：应急归位（combatRecovery）、异常/残留收尾、
+    //    「召回」、千莲叠绽换位 ⇒ 任何一条走到，单位就带着 0 攻回席。
+    // ── 现改为模块级账本（`utils/cantAttackLedger`）——hook 与纯逻辑层共用同一份：
+    //    进场 `applyCantAttackZeroPower` · 回席 `restoreCantAttackPower`，且**记账幂等**（真值不被覆盖）。
     // ==========================================
-    const applyCantAttackZeroPower = (unit: CardData): CardData => {
-        if (!(unit.keywords || []).includes('CantAttack')) return unit;
-        cantAttackOrigPowerRef.current.set(unit.id, {
-            power: unit.power || 0,
-            buffsPower: unit.buffs?.power || 0,
-            roundBuffsPower: unit.roundBuffs?.power || 0,
-        });
-        return {
-            ...unit,
-            power: 0,
-            buffs: unit.buffs ? { ...unit.buffs, power: 0 } : undefined,
-            roundBuffs: unit.roundBuffs ? { ...unit.roundBuffs, power: 0 } : undefined,
-        };
-    };
-    // [2026-07-30] 追踪进攻标识变化，检测 mid-round rally → 触发 ON_GET_ATTACK_TOKEN
-    const prevAttackTokenRef = useRef<{ player: 'normal' | 'rally' | null; enemy: 'normal' | 'rally' | null }>({ player: null, enemy: null });
+    // [2026-07-30] 追踪进攻标识变化 → 触发 ON_GET_ATTACK_TOKEN（安卡「获得进攻标识时」）
+    // [2026-10-06 程拍板 · 序号去重] **判据从"标识值 / 时间窗"改成"授予账本"** ——
+    //   ── 病根（程实测）：**格挡回合**打出「灵轨月轮·扩散」→ 侦察给出标识（`null → 'rally'`）
+    //      ⇒ 场上的安卡希雅**没有**生成下一张灵轨月轮。
+    //      ∵ 旧判据是 `curr === 'rally' && prev !== 'rally' && prev !== null`（原注自称
+    //        「normal→rally 升级检测器」），而回合初那一份归 `useRoundLifecycle` 的**块 B**
+    //        ⇒ **"本来没标识、回合内被补一个 rally"两个派发点都不管**。
+    //      ⚠️ 而单纯去掉 `prev !== null` 会**双发** —— 块 B 是在 **+100ms 定时器里读「实时」状态**的
+    //        （边界**不是**提交批次）⇒ 落在那个窗口里的授予会被两边各发一次。
+    //   ── 现口径（**与时序无关**）：`grantExtraAttackTurn` 是「追加进攻权」的**唯一出口**，
+    //      每次真正授予都写 `tokenGrantSeq[side]++`；本检测器与块 B 都按
+    //      「`seq > handled` 才派发、派发后把 `handled` 追平」去重 ⇒ **一次授予 = 一次派发**。
+    //      这也终于满足 `processOnGetAttackToken` 自己的文档承诺：「**任何**获得进攻标识的场景」。
 
     // [2026-09-19 莉莉子 茉莉安·信标] 引爆幂等的两枚钉子（声明位置对齐 pendingActionsRef：
     //   下方 UNIT_DIED 分支与「引爆对账器」都要用，必须早于二者声明）
     //   exploded = 已真正引爆过的信标 id（钉在引爆动作上，杜绝任何来源的二次引爆）
     //   ticketed = 对账器补过票的 id
     const beaconExplodedRef = useRef<Set<string>>(new Set());
-    const beaconTicketedRef = useRef<Set<string>>(new Set());
+    const reconcileTicketedRef = useRef<Set<string>>(new Set());
+    // [2026-10-06 独立审查修复 · StrictMode / 同 tick 重入] 账本只在**提交之后**才起去重作用，
+    //   而 React 严格模式会把 effect 连调两次（两次读到同一份**未提交**状态）⇒ 判据会连过两次。
+    //   用 ref 立刻钉住"本次已派发的授予序号"，跨提交由 `tokenGrantHandled` 兜底。
+    const tokenDispatchRef = useRef<{ player: number; enemy: number }>({ player: 0, enemy: 0 });
     useEffect(() => {
-        const prev = prevAttackTokenRef.current;
-        const curr = game.attackToken;
+        // 换牌 / 开局首帧：一律不派发（回合初那一份由块 B 负责）
+        if (game.phase === 'mulligan' || game.round <= 0) return;
 
-        // 如果仍在换牌或开局首帧，跳过检测，防止与生命周期扫描叠加
-        if (game.phase === 'mulligan' || game.round <= 0) {
-            prevAttackTokenRef.current = { player: curr.player, enemy: curr.enemy };
-            return;
-        }
-
-        ['player', 'enemy'].forEach(side => {
-            const sideKey = side as 'player' | 'enemy';
-            // 增加 phase 门禁，避免回合初（startRound 刚切 main 时）与 useRoundLifecycle 块 B 扫描重复
-            if (curr[sideKey] === 'rally' && prev[sideKey] !== 'rally' && prev[sideKey] !== null) {
-                const tokenResult = processOnGetAttackToken(sideKey, {
-                    game, playerBench, enemyBench, playerHand, enemyHand,
-                    playerDeck, enemyDeck: enemyDeckState,
-                    combatField,
-                });
-                if (tokenResult.playerHand) setPlayerHand(tokenResult.playerHand);
-                if (tokenResult.enemyHand) setEnemyHand(tokenResult.enemyHand);
-                if (tokenResult.game !== game) setGame(tokenResult.game);
-                if (tokenResult.playerBench !== playerBench) setPlayerBench(tokenResult.playerBench);
-                if (tokenResult.enemyBench !== enemyBench) setEnemyBench(tokenResult.enemyBench);
-            }
+        (['player', 'enemy'] as const).forEach(sideKey => {
+            const grantSeq = game.tokenGrantSeq?.[sideKey] ?? 0;
+            const handledSeq = Math.max(
+                game.tokenGrantHandled?.[sideKey] ?? 0,
+                tokenDispatchRef.current[sideKey] ?? 0,
+            );
+            if (grantSeq <= handledSeq) return; // 该侧没有"尚未派发"的授予
+            tokenDispatchRef.current[sideKey] = grantSeq; // 立刻钉住（防同 tick / 严格模式二次进入）
+            const tokenResult = processOnGetAttackToken(sideKey, {
+                game, playerBench, enemyBench, playerHand, enemyHand,
+                playerDeck, enemyDeck: enemyDeckState,
+                combatField,
+                // [2026-10-06 程拍板 · 新增强化「霜锋乘势」] 传入建卡工厂 ⇒ 该入口同时派发
+                //   迷宫强化的 `on_get_attack_token`（与块 B 同源）
+                createFullCard,
+            });
+            if (tokenResult.playerHand) setPlayerHand(tokenResult.playerHand);
+            if (tokenResult.enemyHand) setEnemyHand(tokenResult.enemyHand);
+            if (tokenResult.playerBench !== playerBench) setPlayerBench(tokenResult.playerBench);
+            if (tokenResult.enemyBench !== enemyBench) setEnemyBench(tokenResult.enemyBench);
+            // [2026-10-06] 迷宫派发可能改牌库 / 交战区（如未来的减费、落场类效果）⇒ 一并提交
+            if (tokenResult.playerDeck && tokenResult.playerDeck !== playerDeck) setPlayerDeck(tokenResult.playerDeck);
+            if (tokenResult.enemyDeck && tokenResult.enemyDeck !== enemyDeckState) setEnemyDeckState(tokenResult.enemyDeck);
+            if (tokenResult.combatField && tokenResult.combatField !== combatField) setCombatField(tokenResult.combatField);
+            setGame(prevGame => {
+                // [2026-10-06 独立审查修复 · 陈旧底稿] **不能拿 `tokenResult.game` 当底** ——
+                //   它派生于**效果闭包里的旧快照**：直接铺开会把同批其它提交（例如结算刚打的授予序号、
+                //   或另一侧刚写的 handled）一起回滚。⇒ 以**队列最新状态**为底，只把"效果**真正改动**的键"
+                //   打补丁进去，再合并本侧的 handled 标记。
+                const patch: Record<string, unknown> = {};
+                if (tokenResult.game && tokenResult.game !== game) {
+                    for (const k of Object.keys(tokenResult.game)) {
+                        if ((tokenResult.game as any)[k] !== (game as any)[k]) patch[k] = (tokenResult.game as any)[k];
+                    }
+                }
+                return {
+                    ...prevGame,
+                    ...patch,
+                    tokenGrantHandled: { player: 0, enemy: 0, ...(prevGame.tokenGrantHandled ?? {}), [sideKey]: grantSeq },
+                } as GameState;
+            });
         });
-        prevAttackTokenRef.current = { player: curr.player, enemy: curr.enemy };
-    }, [game.attackToken.player, game.attackToken.enemy, game.phase, game.round]);
+    }, [game.attackToken.player, game.attackToken.enemy, game.phase, game.round,
+        game.tokenGrantSeq?.player, game.tokenGrantSeq?.enemy,
+        game.tokenGrantHandled?.player, game.tokenGrantHandled?.enemy]);
     useEffect(() => {
         stateRef.current = { game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck: enemyDeckState };
     }, [game, combatField, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeckState]);
@@ -404,7 +441,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         recordAction,
         captureSnapshot,
         // [2026-08-14 武装] 秘法回响：玩家挂载则回合开始恢复全部法术法力
-        armamentManaRestore: Object.values(rogueEquipments || {}).some(list => list.includes('arm_spell_mana')),
+        // [2026-10-06 莉莉子 · 审计收口 · **模式 C（硬编码 id 暗接线）**] 原先靠**硬编码 id** `'arm_spell_mana'` 认，
+        //   而它数据里声明的 `onRoundStart.class = 'RESTORE_SPELL_MANA'` **全项目零消费者** ⇒
+        //   改 id / 复制一件同类武装都会**静默失效**（类型检查也拦不住）。现改为**按声明字段读**。
+        //   ⚠️ 与本次「碳原子板 / 重修申请」两处收口是同一口径：**数据即真源，代码不写 id**。
+        armamentManaRestore: Object.values(rogueEquipments || {})
+            .some(list => list.some(id => getEquipmentById(id)?.onRoundStart?.class === 'RESTORE_SPELL_MANA')),
     });
 
     // --- 3. 基础操作 ---
@@ -435,7 +477,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         wait,
         // [2026-08-16 莉莉子] 删除多余传参 waitForStrikeComplete：useRoundLifecycle 内部自带同名局部函数（L18），接口无此字段
         triggerShake,
-        onComplete: () => {} // useGameState 内部直接调用引擎，不需要处理 UI 层的完成回调
+        onComplete: () => {}, // useGameState 内部直接调用引擎，不需要处理 UI 层的完成回调
+        // [2026-10-04 莉莉子 BUG修复 · I3a] 法术回库生成的英雄副本要带装备/武装 ⇒ 把两张表交给法术系统
+        //   （程口径：「法术回库生成的英雄副本应该要带装备」）
+        playerEquipments: rogueEquipments,
+        enemyEquipments,
     });
 
     useEffect(() => {
@@ -467,7 +513,46 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         return () => eventBus.off('spell_effect_record', onSpellEffect);
     }, []);
 
+    // ==========================================
+    // [2026-10-08 莉莉子 · 对局记录补齐] 监听「能力效果」事件 —— 统一入库入口
+    //   ── 病根：记录系统是**操作驱动**的（埋点全挂在"有人点了什么"处），而
+    //      基座扫射 / 信标引爆 / 亡语 / 光环这类**效果结算的副产物**没有对应的"操作"
+    //      ⇒ 此前一律不进对局记录（基座伤害出问题时无从回查）。
+    //   ── 本监听是这类事件的唯一入口（语义对齐上面的 `spell_effect_record`）：
+    //      逻辑层只管 `eventBus.emit('ability_record', {...})`，入库统一走这里 ——
+    //      避免以后每加一个能力就到处补埋点（"需要监控所有路径"的设计迟早会漏）。
+    // ==========================================
     useEffect(() => {
+        const onAbilityRecord = (payload: {
+            owner: 'player' | 'enemy';
+            summary: string;
+            cardKey?: string;
+            detail?: string;
+            entities?: RecordEntity[];
+        }) => {
+            recordAction('ability_effect', payload.owner, payload.summary, {
+                cardKey: payload.cardKey,
+                detail: payload.detail,
+                entities: payload.entities,
+            });
+        };
+        eventBus.on('ability_record', onAbilityRecord);
+        return () => eventBus.off('ability_record', onAbilityRecord);
+    }, []);
+
+    useEffect(() => {
+        // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 新对局开局：猫汐尔进度账本清零
+        //   ⚠️ 必须放在**沙盒早退之前** —— 沙盒分支会提前 return
+        //      （独立审查回执 R.5：放在早退之后 ⇒ 进出 Studio 沙盒会**继承上一局的账本**）。
+        //   ⚠️ 建局入口有**两处**（本初始构建 effect + `resetGame`），两处都要清
+        //      —— 与装备/武装"两个建局入口"同源（2026-08-25 正是漏了一处才出事）。
+        resetMauxirProgress();
+        // [2026-10-06 莉莉子 BUG修复 · 莲台无垠] 「全法术 −N」快照（**建卡之前**就要设好）——
+        //   查询口径 `getEffectiveSpellCost` 据此给**所有**法术减费（含战斗中生成的），
+        //   不再依赖"开局那一刻改数据"（那正是它原先漏掉生成法术的原因）。
+        setSpellCostDownAllSnapshot(getSpellCostDownAll(rogueEnhancements), getSpellCostDownAll(enemyEnhancements));
+        resetSpellCastState(); // [2026-10-08 第二波] 施法计数快照（条件减费判据）每局重设
+
         // [新增] 沙盒模式拦截：不自动发牌，不洗牌，直接进入主阶段，给足 99 费用
         if (isSandbox) {
             setGame(prev => ({
@@ -478,6 +563,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 playerMana: 10, playerMaxMana: 10, playerSpellMana: 3,
                 enemyMana: 10, enemyMaxMana: 10, enemySpellMana: 3,
                 attackToken: { player: 'normal', enemy: null },
+                // [2026-10-06 独立审查修复 · 跨局泄漏] 沙盒走的是"铺 prev + 直接写 round:1"，
+                //   不会经过 `calculateRoundStart` 的 round-0 清零 ⇒ 在这里显式清授予账本。
+                tokenGrantSeq: { player: 0, enemy: 0 },
+                tokenGrantHandled: { player: 0, enemy: 0 },
                 consecutivePasses: 0
             }));
             return;
@@ -751,14 +840,68 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
                 // [2026-09-19 莉莉子 BUG修复] 与另两条召唤路径统一走公共装配器
                 //   （开局时 beaconMaxHealthMod 必为 0，此处为同一类洞的预防性收口）
-                bench.push({ ...assembleBeaconCard(ctx.createFullCard(summonKey), ctx.game.beaconMaxHealthMod), animState: 'summoning' });
+                const summonedBeacon = { ...assembleBeaconCard(ctx.createFullCard(summonKey), ctx.game.beaconMaxHealthMod), animState: 'summoning' as const };
+                bench.push(summonedBeacon);
                 eventBus.emit(GameEvents.SFX_SUMMON); // [2026-09-19] 同上：开局库效也走直建，需自行发召唤音
                 ctx.dirty.bench.add(landSide);
+                // =====================================
+                // [2026-10-06 程拍板 · A 方案] ④库效开局召唤同样补响「入场」门铃
+                //   （此前也是直建直塞 ⇒ 召唤物拿不到入场效果 / `on_summon` 类强化）
+                // =====================================
+                const entry = runSummonEntry(summonedBeacon.id, landSide, {
+                    game: ctx.game,
+                    playerBench: ctx.playerBench,
+                    enemyBench: ctx.enemyBench,
+                    playerHand: ctx.playerHand,
+                    enemyHand: ctx.enemyHand,
+                    playerDeck: ctx.playerDeck,
+                    enemyDeck: ctx.enemyDeck,
+                    combatField: ctx.combatField,
+                }, ctx.createFullCard);
+                if (entry.applied) {
+                    ctx.game = entry.game;
+                    ctx.playerBench = entry.playerBench;
+                    ctx.enemyBench = entry.enemyBench;
+                    ctx.playerHand = entry.playerHand;
+                    ctx.enemyHand = entry.enemyHand;
+                    if (entry.playerDeck) ctx.playerDeck = entry.playerDeck;
+                    if (entry.enemyDeck) ctx.enemyDeck = entry.enemyDeck;
+                    if (entry.combatField) { ctx.combatField = entry.combatField; ctx.dirty.field = true; }
+                    // 保守起见全量标脏（重复提交无害；漏标会丢改动）
+                    ctx.dirty.game = true;
+                    ctx.dirty.bench.add('player');
+                    ctx.dirty.bench.add('enemy');
+                    ctx.dirty.hand.add('player');
+                    ctx.dirty.hand.add('enemy');
+                    ctx.dirty.deck.add('player');
+                    ctx.dirty.deck.add('enemy');
+                }
                 console.log(`[GameStart] ④库效：【${carrier.name}】发动 → 在 ${landSide} 备战席召唤「${summonKey}」`);
             });
 
             if (ctx.dirty.bench.has('player')) setPlayerBench(ctx.playerBench);
             if (ctx.dirty.bench.has('enemy')) setEnemyBench(ctx.enemyBench);
+            // =====================================
+            // [2026-10-03 莉莉子 BUG修复] **同步回写 stateRef**（备战席）
+            // ── 症状（粉丝实测）：开局时 茉莉安神格 ②「猎场哨戒」/④「猎场锁定」
+            //    对**敌方备战席上的獠牙信标**既不贴【暴露】也不造成伤害。
+            // ── 根因：**同一 tick 内的 stateRef 竞态**。
+            //    `GameSession:542-543`（及 :564-565）是**紧挨着**调用的：
+            //      ① triggerGameStartGenerate() —— 上面的④库效把信标 push 进 `ctx.enemyBench`，
+            //         然后只调了 `setEnemyBench(...)`（React 排队更新）。
+            //      ② triggerFirstRoundRogueEnhance() —— **下一行**，它内部
+            //         `runRoundStartRogueEnhancements` 从 **`stateRef.current`** 重建 ctx
+            //         （useRoundLifecycle:640-641）。
+            //    而 `stateRef.current` 只在 **render 后**刷新（本文件 :339）⇒ 排队中的信标看不见
+            //    ⇒ 神格拿到的敌方备战席是**空的**。
+            // ── 后果放大点：`EXPOSE_AND_DAMAGE`（rogueTrigger:663-664）空池**直接 return**
+            //    ⇒ 既不暴露、也不造成伤害、连闪光都没有 —— 与实测逐字吻合。
+            // ── 修法：与 useRoundLifecycle:1502 / 本文件 :584 同款既有手法 —— 同步回写 stateRef，
+            //    让下一行的 round_start 强化能看见刚落场的单位（信标）。
+            // ⚠️ 只回写备战席：这是本次坐实的缺口；手牌/牌库/交战区的同类滞后**未动**（不扩大改动面）。
+            // =====================================
+            if (ctx.dirty.bench.has('player')) stateRef.current.playerBench = ctx.playerBench;
+            if (ctx.dirty.bench.has('enemy')) stateRef.current.enemyBench = ctx.enemyBench;
             if (ctx.dirty.field) setCombatField(ctx.combatField);
             if (ctx.dirty.hand.has('player')) commitSlicePatch(playerHandSeed, ctx.playerHand, fn => setPlayerHand(fn));
             if (ctx.dirty.hand.has('enemy')) commitSlicePatch(enemyHandSeed, ctx.enemyHand, fn => setEnemyHand(fn));
@@ -797,10 +940,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     // --- 2. 英雄卡变形逻辑 (Champion Spell Transformation) ---
     useEffect(() => {
         // 通用变形处理函数
+        // [2026-10-04 莉莉子 BUG修复] 新增 `equipsByKey`：该方"按卡 key 的装备/武装表"。
+        //   为什么必须按方传入：装备/武装只在"开局构建"那两处挂（初始构建 / resetGame），
+        //   而**双方**都用本函数做变形 ⇒ 重建出来的英雄卡都得各自补挂自己那一方的装备表
+        //   （玩家 = rogueEquipments：局内购装 + 局外武装；敌方 = enemyEquipments：难度分级随机装备）。
+        //   标准 / 教程模式两张表都为空 ⇒ 零影响。
         const processHandTransformation = (
             currentHand: CardData[],
             unitsOnBoard: CardData[],
-            leveledChampions: string[]
+            leveledChampions: string[],
+            equipsByKey: Record<string, string[]> | undefined
         ): { changed: boolean, hand: CardData[] } => {
             // 提取场上英雄的 Key 集合
             const championKeysOnBoard = new Set(
@@ -836,11 +985,45 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 if (card.associatedChampionKey && !championKeysOnBoard.has(card.associatedChampionKey) && (card as any).isTransformed) {
                     const originalKey = (card as any).originalBaseKey || card.associatedChampionKey;
 
-                    // 检查该英雄是否已升级
-                    let championData = CARD_DB[originalKey];
+                    // [2026-10-04 莉莉子 BUG修复 · 独立审查 I4] 重建基座改用 `createFullCard`（= 开局构建的**真**口径）：
+                    //   原来直接用 `CARD_DB[originalKey]`，而 `CARD_DB` 的条目**不含实例字段**
+                    //   （`strikeCount` / `customProgress` / `abilityState`·`abilityCharges` / `buffs` / `roundBuffs` / `roundStrikes`
+                    //     —— 见 `createFullCard` `:33-52` 与 `cards.ts:4` 的类型定义）。
+                    //   后果（可玩可见）：`strikeCount` 成了 `undefined`，而 `combat.ts:86` 做
+                    //   `attacker.strikeCount + 1` ⇒ **NaN**；`gameRules.ts:258` 的里芙升级判据
+                    //   `card.strikeCount >= 2` **没有兜底** ⇒ **变回来的里芙永远无法升级**。
+                    //   （既有缺陷，本次顺带修掉：既然是"变回一张新卡"，就该与开局构建逐字段等价。）
+                    let championData: CardData = createFullCard(originalKey);
                     if (leveledChampions.includes(originalKey)) {
-                        championData = getLeveledUpCard(championData as CardData);
+                        championData = getLeveledUpCard(championData);
                     }
+
+                    // ==========================================
+                    // [2026-10-04 莉莉子 BUG修复] 变回英雄时**必须重新挂载该方的装备 / 武装**
+                    //   病根（程报）：装备/武装**只在"开局构建"那两处挂**
+                    //     —— `:499-506`（初始构建）与 `:1601-1604`（resetGame）。
+                    //     （`:1034` 的「遗嘱」也挂装备，但那是**战斗内转移给友军**，不是本卡的来源。）
+                    //   ⇒ 肉鸽里她阵亡后、手牌中的关联法术变回她本人时，`card.equipment` 是空的：
+                    //     卡面 pip 没了、武装的静态修饰（+1/+1 / 减费标记 / 关键词）也没了
+                    //     ⇒ **"其身上的武装和装备都会丢失"**。
+                    //   修法：照抄开局构建的**同一口径**（按 key 查装备表，逐个 `attachEquipment`）。
+                    //   ⚠️ 用 `originalKey` 而不是 `card.key`：变形卡当前的 key 是**法术**的 key。
+                    //   ⚠️ 标准 / 教程模式两张表都为空 ⇒ 零影响。
+                    // ==========================================
+                    // ⚠️ [独立审查 I1 · **当前是 no-op，别当成已完成的行为**] 敌方那半查不到任何东西：
+                    //   `enemyEquipments` 只由 `rollEnemyEquipments` 产出，而它**只挑非天启者单位**
+                    //   （`encounterBuilder.ts:151-154`）⇒ 表里永远没有天启者 key，而本分支的 `originalKey`
+                    //   恒为天启者 key ⇒ 永远查不到、不挂。管道留着是为了"两侧同一口径"；
+                    //   若将来要让**敌方天启者也带装备**，改动点在 `rollEnemyEquipments` 的过滤条件（**不是这里**）。
+                    const heroEquips = equipsByKey?.[originalKey];
+                    if (championData && heroEquips?.length) {
+                        // [独立审查 I6] `championData` 判空：`equippedCards` 是持久化存档，
+                        //   若遇上过期存档导致 key 失效，`attachEquipment(undefined, …)` 会在 effect 的
+                        //   `.map` 里抛 TypeError（渲染级崩溃）。加一道廉价护栏。
+                        for (const eid of heroEquips) championData = attachEquipment(championData, eid);
+                        console.log(`[变形] ${originalKey} 变回天启者：重新挂载装备/武装 [${heroEquips.join(', ')}]`);
+                    }
+
                     hasChanged = true;
                     // 变回英雄
                     return {
@@ -884,7 +1067,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             ...combatField.filter(f => f.owner === 'player').map(f => f.attacker),
             ...combatField.filter(f => f.blocker && f.owner === 'enemy').map(f => f.blocker!)
         ];
-        const pResult = processHandTransformation(playerHand, playerUnits, stateRef.current.game.leveledChampions);
+        // [2026-10-04] 玩家侧：装备表 = rogueEquipments（局内购装 + 局外武装）；
+        //   升级判据 = **按方**列表（原先传全局 `leveledChampions` ⇒ 镜像对局里会读到敌方的升级，
+        //   于是"变回 Lv2 卡 / 取 Lv2 关联法术"跨侧串味）
+        const pResult = processHandTransformation(playerHand, playerUnits, stateRef.current.game.leveledChampionsBySide?.player ?? [], rogueEquipments);
         if (pResult.changed) setPlayerHand(pResult.hand);
 
         // 2. 处理敌方 (Enemy) [本次修复的核心]
@@ -893,10 +1079,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             ...combatField.filter(f => f.owner === 'enemy').map(f => f.attacker),
             ...combatField.filter(f => f.blocker && f.owner === 'player').map(f => f.blocker!)
         ];
-        const eResult = processHandTransformation(enemyHand, enemyUnits, stateRef.current.game.leveledChampions);
+        // [2026-10-04] 敌方侧：装备表 = enemyEquipments；升级判据同样**按方**（见上）
+        const eResult = processHandTransformation(enemyHand, enemyUnits, stateRef.current.game.leveledChampionsBySide?.enemy ?? [], enemyEquipments);
         if (eResult.changed) setEnemyHand(eResult.hand);
 
-    }, [playerBench, enemyBench, combatField, playerHand, enemyHand, game.leveledChampions]); // [关键] 依赖列表包含双方状态 + 全局升级标记（升级时自动重跑变形）
+    }, [playerBench, enemyBench, combatField, playerHand, enemyHand, game.leveledChampions, game.leveledChampionsBySide]); // [关键] 依赖列表包含双方状态 + 升级标记（升级时自动重跑变形）；[2026-10-04] 补分阵营表（变形已改读它）
 
        // [升级版] 全局死亡监测 (Death Check System) - 黄金 1.1 秒法则
     // 监听备战席单位，赋予法术/技能击杀充足的特效播放时间
@@ -964,18 +1151,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     console.log(`[DeathCheck] ${u.name} died in bench. Initiating shatter VFX.`);
                     eventBus.emit(GameEvents.UNIT_DIE, u);
 
-                    // ── [2026-09-25 莉莉子 三线任务化框架 · 装备线·新机制] 遗嘱：阵亡时把身上其他装备转给随机存活友军 ──
-                    //   ① 遗嘱自身不参与传递（否则链式无限传承）；② attachEquipment 自带去重，友军已有的装备自然跳过
-                    if (dieSide === 'player' && (u.equipment ?? []).some(id => getEquipmentById(id)?.onOwnerDie?.class === 'TRANSFER_EQUIPMENT')) {
-                        const inherits = (u.equipment ?? []).filter(id => getEquipmentById(id)?.onOwnerDie?.class !== 'TRANSFER_EQUIPMENT');
-                        const heirs = newBench.filter(c => c.id !== u.id && c.animState !== 'dying' && c.animState !== 'ephemeral_dying' && getHealth(c) > 0);
-                        if (inherits.length > 0 && heirs.length > 0) {
-                            const heir = heirs[Math.floor(Math.random() * heirs.length)];
-                            let upgraded: CardData = { ...heir };
-                            for (const id of inherits) upgraded = attachEquipment(upgraded, id);
-                            setPlayerBench(prev => prev.map(c => c.id === heir.id ? upgraded : c));
-                        }
-                    }
+                    // ── [2026-09-25 莉莉子 三线任务化框架 · 装备线·新机制] 遗嘱 ──
+                    //   🔴 [2026-10-06 莉莉子 · 审计收口] **已搬走**：原实现挂在这里（只覆盖**备战席**死亡），
+                    //   而单位进攻/格挡时已离开备战席 ⇒ 死在交战区永远不触发。
+                    //   现统一挂在 `UNIT_DIED`（全项目唯一死亡出口，四条开票口都汇进去）—— 见 `flushMicroQueue`。
 
                     // ── [2026-09-25 莉莉子 任务化框架 · 武装线] 我方单位阵亡 → 广播给 run 层记账 ──
                     //   ① unit_die：亡者低语等整局任务计数 ② ROGUE_HERO_DIED：凯旋之匣判定"英雄是否活到最后"
@@ -985,8 +1164,23 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     }
 
                     // 迷宫强化 unit_die：同一份工作快照上串行触发（死亡侧强化；非全复活强化仅救本批首个）
-                    unitCtx.info.deadUnit = u;
-                    runRogueTrigger(unitCtx, dieEnh, 'unit_die');
+                    // [2026-10-05 莉莉子 BUG修复 · 20261005-12 · **第三轮审查·5**] 这条**原本没有前置判重**
+                    //   （只在事后记账）：而 `effectProcessor:442/449` 会把尸体 `animState` 就地改成 `'hit'`、
+                    //   `keywords.ts:68` 会重置成 `'idle'` ⇒ 尸体**重新满足本函数的判死条件**（`:980` 只看 animState）
+                    //   ⇒ 同一死亡再派发一次。⇒ 加上账本前置判重（认"这次死亡的强化已发过"）。
+                    if (hasUnitDieDispatched(u)) {
+                        console.log(`[DeathLedger] ${u.name}(${u.key}) 的 unit_die 已派发过（尸体被改写/克隆后重新满足判死）→ 跳过，防重复`);
+                    } else {
+                        unitCtx.info.deadUnit = u;
+                        runRogueTrigger(unitCtx, dieEnh, 'unit_die');
+                        // [2026-10-05 莉莉子 BUG修复 · 20261005-12] 记账：这只单位的 unit_die 已派发
+                        //   （备战席这条**本就在同一趟里派发**，不受盖章影响；记账是为了让"补派发"那趟与回合末收口不重复发）
+                        markUnitDieDispatched(u);
+                        // ⚠️ 上面 `u` 是**广播用的原对象**，而真正落席的是 `newBench` 里 `{ ...unit, animState: 'dying' }`
+                        //    那个**新对象** ⇒ 必须把落席那张也记上，否则账本与"场上那张卡"对不上（后续消费者会重复发）。
+                        const committed = newBench.find(c => c.id === u.id);
+                        if (committed) markUnitDieDispatched(committed);
+                    }
                     if (unitCtx.dirty.bench.has('player')) setPlayerBench(unitCtx.playerBench);
                     if (unitCtx.dirty.bench.has('enemy')) setEnemyBench(unitCtx.enemyBench);
                     if (unitCtx.dirty.field) setCombatField(unitCtx.combatField);
@@ -1130,8 +1324,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     // 监听水晶血量及场上人员变化。一旦满足条件（如芬妮的半血觉醒），立刻强制触发升级队列！
     // ==========================================
     useEffect(() => {
-        // 防止在结算动画或换牌期间乱入触发，造成 UI 撕裂
-        if (game.phase === 'animating' || game.phase === 'mulligan' || game.gameResult !== null) return;
+        // [2026-10-03 莉莉子 · A] 允许在**战斗演出期间**升级：程拍板「升级影片可以在战斗演出期间插播，
+        //   并暂停战斗演出直到升级动画播完再继续」⇒ 扫描不再因 `phase === 'animating'` 整段跳过
+        //   （旧实现跳过演出期 ⇒ 她在场上达成条件也看不见 ⇒ 只能等战斗结束回备战席才升 = 反馈的"升级延迟"）。
+        //   仍保留换牌期 / 对局结束的拦截（那两段不该插播）。
+        if (game.phase === 'mulligan' || game.gameResult !== null) return;
 
         let hasLeveledUp = false;
         const leveledHeroes: CardData[] = [];
@@ -1151,32 +1348,36 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         //
         // 现改为查询「该方」的标记，敌我彻底分开。
         // ══════════════════════════════════════════════════════════════════
-        const scanAndLevelUp = (bench: CardData[], side: 'player' | 'enemy') => {
-            bench.forEach(card => {
-                if (card.isChampion && card.level === 1) {
-                    // [2026-07-31 安卡希雅] 场下升级：朔望之期已标记升级 → 打出安卡直接 Lv2
-                    // 对齐猫汐尔"场下达成条件、打出后升级"；已升级实例(level 2)会被 level===1 挡在外，不会重复升级
-                    const alreadyMarked = isLeveledUpForSide(game, side, card.key);
-                    const statusMet = checkCardLevelUp(card, game.playerNexus, game.enemyNexus);
-                    if (alreadyMarked || statusMet) {
-                        hasLeveledUp = true;
-                        const leveled = { ...getLeveledUpCard(card), id: card.id };
-                        // 严防死守：死人禁止诈尸升级
-                        if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
-                            leveledHeroes.push(leveled);
-                            leveledSides.push(side);
-                        }
-                    }
-                }
-            });
-        };
-
-        scanAndLevelUp(playerBench, 'player');
-        scanAndLevelUp(enemyBench, 'enemy');
+        // ==========================================
+        // [2026-10-03 莉莉子 · 系统性收口 + A] **扫描范围：从"只扫两个备战席"改为"全场"**
+        //   ── 病根：旧实现只 `scanAndLevelUp(playerBench/enemyBench)` ⇒ 天启者**在交战区**达成条件时
+        //      扫描根本看不见她 ⇒ 要等她回到备战席才入队升级（程：「明明已经达成目标了…要等战场所有对战
+        //      结束、天启者回到备战席时，才会播放升级动画升级」）。
+        //   ── 现在统一走 `collectFieldUnits`（备战席 + 交战区攻守两侧，含归属戳）⇒ 她在哪儿都能被扫到。
+        //   ── 归属：备战席用数组侧（升级标记按方写，敌我必须分开）；交战区照旧按攻守推导。
+        // ==========================================
+        collectFieldUnits({ playerBench, enemyBench, combatField }).forEach(({ side, card }) => {
+            if (!(card.isChampion && card.level === 1)) return;
+            // [2026-07-31 安卡希雅] 场下升级：朔望之期已标记升级 → 打出安卡直接 Lv2
+            // 对齐猫汐尔"场下达成条件、打出后升级"；已升级实例(level 2)会被 level===1 挡在外，不会重复升级
+            const alreadyMarked = isLeveledUpForSide(game, side, card.key);
+            const statusMet = checkCardLevelUp(card, game.playerNexus, game.enemyNexus);
+            if (!alreadyMarked && !statusMet) return;
+            hasLeveledUp = true;
+            const leveled = { ...getLeveledUpCard(card), id: card.id };
+            // 严防死守：死人禁止诈尸升级
+            if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
+                leveledHeroes.push(leveled);
+                leveledSides.push(side);
+            }
+        });
 
         if (hasLeveledUp && leveledHeroes.length > 0) {
             // [2026-07-31 安卡希雅] 升级后手牌法术替换：剑舞→重锋、扩散/集束→月镰剑势（战斗升级等通用路径）
-            if (leveledHeroes.some(h => h.key === 'acacia_chrono_echo')) {
+            // [2026-10-04 莉莉子 BUG修复 · I5] 按方过滤：升级扫描是**双方共用**的，
+            //   而这段只改**玩家**的手牌/牌库 ⇒ 必须要求"升级的那位是玩家侧的安卡"，
+            //   否则镜像对局里敌方安卡升级会把我方手牌也换成重锋（跨侧泄漏）
+            if (leveledHeroes.some((h, i) => h.key === 'acacia_chrono_echo' && leveledSides[i] === 'player')) {
                 setPlayerHand(prev => upgradeAcaciaHand(prev));
                 setPlayerDeck(prev => upgradeAcaciaHand(prev)); // [2026-07-31] 牌库副本同步升级，抽到即 Lv2（否则变形系统会变出剑舞）
                 console.log(`[安卡希雅] 升级扫描：手牌+牌库法术替换完成`);
@@ -1205,7 +1406,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 	            // 确保卡牌数据升级与影片播放时机一致，避免教程暂停升级时卡面已提前升级
         }
     // [关键依赖] 水晶血量变化、备战席人员变化，都会唤醒这套扫描引擎！
-    }, [game.playerNexus, game.enemyNexus, playerBench, enemyBench, game.phase, game.gameResult]);
+    // [2026-10-03 莉莉子 · A] **必须补 `combatField`** —— 扫描范围已放宽到交战区，
+    //   否则"她只在战场上发生变化"时这个 effect 不会重跑 ⇒ 又变成延迟升级。
+    }, [game.playerNexus, game.enemyNexus, playerBench, enemyBench, combatField, game.phase, game.gameResult]);
 
 
         // [修复] 升级影片开始时再替换卡牌数据（解决教程暂停升级导致卡面提前升级的问题）
@@ -1529,6 +1732,17 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     };
 
     const resetGame = () => {
+        // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔进度账本清零。
+        // ⚠️ 诚实标注（独立审查回执 R.4）：`resetGame` **当前全仓库没有调用者**（可能是历史遗留），
+        //    真正的清零发生在上面那个初始构建 effect（App 用 `key` 递增重挂 GameSession 时触发）。
+        //    这里**保留**为防御性第二入口：将来若有人接上 resetGame，账本不会漏清。
+        resetMauxirProgress();
+        // [2026-10-06 莲台无垠] 同一道理：法术减费快照也必须跟着重设（否则跨局残留）
+        setSpellCostDownAllSnapshot(
+            getSpellCostDownAll(stateRef.current.game?.rogueEnhancements),
+            getSpellCostDownAll(stateRef.current.game?.enemyEnhancements),
+        );
+        resetSpellCastState(); // [2026-10-08 第二波] 同上（跨局残留防护）
         // [修复] 替换未定义的 initDeck 函数，使用正规的解析与洗牌流程
         const pDeck = shuffleDeck(deck.filter(key => CARD_DB[key]).map(key => {
             // [2026-08-12 天启者养成] 开局装备：把 run 记录的装备挂到对应卡（目前等级解锁的装备挂起始英雄卡）
@@ -1683,7 +1897,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                             combatField: tempCombatField, // 传递当前战况供处理器修改（包含空降与防爆机制）
                             // [核心修复] 动态抓取当前发起攻击的真实阵营！
                             owner: fight.owner,
-                            sourceCard: fight.attacker // [新增] 把本体传给结算引擎，充当复印机的扫描源头！
+                            sourceCard: fight.attacker, // [新增] 把本体传给结算引擎，充当复印机的扫描源头！
+                            // [2026-10-05 莉莉子 BUG修复] 补传 `createFullCard` ——
+                            //   `FLYING_SWORD`（玛格丽特「飞剑突袭」飞剑2）正是挂在本 ON_ATTACK_DECLARE 站点上，
+                            //   而飞剑补跑 `on_summon` 时需要它来构造 RogueTriggerCtx；不传则整段被跳过、
+                            //   飞剑静默吃不到任何"召唤时"强化（详因见 effectProcessor 的 FLYING_SWORD 分支）。
+                            createFullCard,
                         };
 
                         // [核心] 调用正规效果处理器
@@ -1823,6 +2042,18 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 info: {},
                 dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
             };
+            // =====================================
+            // [2026-10-05 莉莉子 · BUG-20261005-14 取证日志]（查完可删）
+            //   实测：卜卜「①镜爻随征/③万象镜身」（on_attack_declare 神格）不召唤，而**英雄自身的镜爻照常**
+            //   ⇒ 本站点本身是通的，问题在这条神级分发**读到的数据**上 ⇒ 一次复现即可定位：
+            //     declOwner（交战区第一条阵营）· 本次强化表条数 · 卜卜神格是否在表里 · 备战席可复制单位数
+            {
+                const ownEnh = declOwner === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements;
+                const bubuNodes = (ownEnh ?? []).filter(id => id.startsWith('divfx_bubu_'));
+                const benchNow = declOwner === 'player' ? tempPlayerBench : tempEnemyBench;
+                const aliveBench = benchNow.filter(c => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying').length;
+                console.log(`[RogueDecl] owner=${declOwner} 强化数=${(ownEnh ?? []).length} divfx共${(ownEnh ?? []).filter(id => id.startsWith('divfx_')).length}条 卜卜神格=[${bubuNodes.join(',')}] 可复制备战席=${aliveBench}`);
+            }
             runRogueTrigger(
                 declCtx,
                 declOwner === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements,
@@ -1842,7 +2073,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         const blockTurnOwner = firstOwner === 'player' ? 'enemy' : 'player';
 
         // [2026-07-21 对局记录] 进攻宣告
-        recordAction('combat_declare', firstOwner, '派出进攻', {
+        recordAction('combat_declare', firstOwner, '发起进攻', {
             entities: currentCombatField.map(f => ({
                 cardKey: f.attacker.key,
                 owner: f.owner,
@@ -1965,12 +2196,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         const playerBlockers = blockField.filter(f => f.blocker && f.owner === 'enemy');
         const enemyBlockers = blockField.filter(f => f.blocker && f.owner === 'player');
         if (playerBlockers.length > 0) {
-            recordAction('combat_declare', 'player', '派出格挡', {
+            recordAction('combat_declare', 'player', '指派格挡', {
                 entities: playerBlockers.map(f => ({ cardKey: f.blocker!.key, owner: 'player', snapshot: captureSnapshot(f.blocker!) }))
             });
         }
         if (enemyBlockers.length > 0) {
-            recordAction('combat_declare', 'enemy', '派出格挡', {
+            recordAction('combat_declare', 'enemy', '指派格挡', {
                 entities: enemyBlockers.map(f => ({ cardKey: f.blocker!.key, owner: 'enemy', snapshot: captureSnapshot(f.blocker!) }))
             });
         }
@@ -1996,13 +2227,30 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         let changed = false;
         const newlyDead: CardData[] = [];
 
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-02] 「已宣判」判据补第二条：**尸体已入墓地 ⇒ 亡语早已结算过**
+        //   病根：另两条判死路径不写 `isDead`（备战席 processDeaths 只写 animState；交战区由对账器补票），
+        //   而本函数的去重首句恰恰只看 `isDead` ⇒ 尸体留在场上那段时间（备战席 ~2.5s / 交战区到收尾清场），
+        //   任何一次 judgeLifeAndDeath（每路战斗后 / 回合末 / 每次施法…）都会给同一具尸体**再开一张死亡票**
+        //   ⇒ 亡语结算两遍（珍馐绵羊：一次亡语给 2 张梦莲无人机，程实测拿到 4 张）。
+        //   ⚠️ 只在 `animState === 'dying'` 时查墓地：复活体重新入场是 `summoning` 且 RESURRECT 显式写
+        //      `isDead:false` ⇒ 它的"第二次死亡"不会被这条误拦。
+        const inGraveyard = (id: string): boolean =>
+            (stateRef.current.game.playerGraveyard || []).some(g => g.id === id)
+            || (stateRef.current.game.enemyGraveyard || []).some(g => g.id === id);
+
         const judgeUnit = (c: CardData): CardData => {
             if (c.isDead) return c; // 已宣判，跳过
+            // ⚠️ [2026-10-05 追加] 幻象态（`ephemeral_dying`）也要查墓地 —— 梵音小队/飞剑这批幻象的
+            //   消散演出态会被上面的"尸体盖章"刻意保留，若只认 `dying` 就会漏掉它们这一格。
+            if ((c.animState === 'dying' || c.animState === 'ephemeral_dying') && inGraveyard(c.id)) return c; // 票已开过且亡语已结算 ⇒ 绝不开第二张
             const hp = (c.health || 0) + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0); // [2026-07-31] 补上本回合临时血，优先被扣
             const isDead = hp <= 0 || c.animState === 'ephemeral_dying';
             if (isDead) {
                 changed = true;
                 const deadUnit = { ...c, isDead: true, animState: 'dying' as const };
+                // [2026-10-05 莉莉子 BUG修复 · 20261005-12 · 独立审查发现] 判死同样**造新对象** ⇒ 账本要跟着搬，
+                //   否则"已派发过的尸体"换个身份又变成"没派发过"⇒ 补派发那趟重复触发一次。
+                if (hasUnitDieDispatched(c)) markUnitDieDispatched(deadUnit);
                 newlyDead.push(deadUnit);
                 return deadUnit;
             }
@@ -2010,18 +2258,63 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         };
 
         // ① 扫描 playerBench
-        const newPlayerBench = playerBench.map(judgeUnit);
+        // [2026-10-02 莉莉子 -15] const → let：下面要给"交战区常规阵亡"补发 unit_die 强化，
+        //   而强化可能改备战席（RESURRECT 补复活体）⇒ 需要能就地更新这三个工作数组
+        let newPlayerBench = playerBench.map(judgeUnit);
         // ② 扫描 enemyBench
-        const newEnemyBench = enemyBench.map(judgeUnit);
+        let newEnemyBench = enemyBench.map(judgeUnit);
         // ③ 扫描 combatField (attacker + blocker)
-        const newCombatField = combatField.map(entry => ({
+        let newCombatField = combatField.map(entry => ({
             ...entry,
             attacker: entry.attacker ? judgeUnit(entry.attacker) : null,
             blocker: entry.blocker ? judgeUnit(entry.blocker) : null,
         }));
 
         // 推入微队列触发亡语
-        newlyDead.forEach(unit => {
+        // [2026-10-02 莉莉子 BUG修复 · -15] 交战区常规阵亡的 unit_die 强化 ctx（按 owner 每批共享一个）
+        const fieldDeathCtx: Partial<Record<'player' | 'enemy', RogueTriggerCtx>> = {};
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-12] **已盖章尸体的"补派发"**（程实测：飞剑阵亡不再触发 unit_die）
+        // ── 病根：`isDead` 被当成两件事用 —— 它既是"亡语已结算"（`stampCorpse`，本文件 :2833），
+        //    又成了"unit_die 已派发"的替身（`judgeUnit` 首句 `if (c.isDead) return c`，本文件 :2090）
+        //    ⇒ 尸体进不了 `newlyDead` ⇒ 挂在 `newlyDead` 上的"**交战区**补发 unit_die"永不执行。
+        //    （1.0.18.3 之所以反而能触发：那时没盖章，`judgeUnit` 还会把幻象态改写成 `'dying'`，
+        //      恰好绕过了 `!isEphemeralDeath` 守卫 —— 歪打正着。）
+        // ── 修法：把"已派发"独立成 `utils/deathLedger` 的账本，并把**交战区里已盖章但未派发**的尸体
+        //    纳入下面这一趟（`fresh: false` ⇒ **只派发，不重发 UNIT_DIE** —— 重发会再开一张死亡票）。
+        // ── 只收交战区：备战席与回合末幻象各有自己的派发点（`processDeaths` / `useRoundLifecycle`），
+        //    而"在交战区被打死"正是被掐断的那条路。
+        // =====================================
+        const stampedCorpses: CardData[] = [];
+        {
+            const seen = new Set<CardData>();
+            const collect = (c: CardData | null | undefined) => {
+                if (!c || seen.has(c)) return;
+                seen.add(c);
+                if (!(c.isDead || c.animState === 'dying' || c.animState === 'ephemeral_dying')) return;
+                // [2026-10-05 · 独立审查·6] 「消亡替换」不算阵亡 —— 对齐本文件 :2528-2531 的既有口径
+                if (c.deathType === 'ELIMINATED') return;
+                if (hasUnitDieDispatched(c)) return;
+                stampedCorpses.push(c);
+            };
+            // [2026-10-05 · 独立审查·2] 备战席也要收：尸体若先被盖章，`judgeUnit`（:2101/:2104）
+            //   与 `processDeaths`（:980 的 `dying` 守卫）会**双双挡住**它 ⇒ 没人派发。
+            newPlayerBench.forEach(collect);
+            newEnemyBench.forEach(collect);
+            newCombatField.forEach(f => {
+                collect(f.attacker as CardData | null);
+                collect(f.blocker as CardData | null);
+            });
+        }
+        if (stampedCorpses.length > 0) {
+            console.log(`[DeathLedger] 补派发 unit_die：${stampedCorpses.length} 具（${stampedCorpses.map(c => c.name).join(' / ')}）`);
+        }
+        const deathEntries: { unit: CardData; fresh: boolean }[] = [
+            ...newlyDead.map(u => ({ unit: u, fresh: true })),
+            ...stampedCorpses.map(u => ({ unit: u, fresh: false })),
+        ];
+
+        deathEntries.forEach(({ unit, fresh }) => {
             // [2026-09-19 莉莉子 BUG修复] 归属推导补全「格挡方」分支。
             // ── 病根：此前只认进攻方（attacker 属 f.owner），凡不在备战席、又不是进攻方的，
             //    一律掉进最后的 `: 'player'` 兜底。而獠牙信标是 CantAttack 单位，
@@ -2030,31 +2323,117 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // ── 正解与 recallBlocker(格挡撤回) / SPREAD_DAMAGE 收集段 同口径：
             //      进攻方 = 发起方 f.owner；格挡方 = 发起方的【对面】。
             // [2026-09-19 莉莉子 方向一] 有归属戳 → 查表，一步到位（信标等召唤物走这条）
-            const owner = unit.unitOwner ?? (newPlayerBench.some(c => c.id === unit.id) ? 'player'
-                : newEnemyBench.some(c => c.id === unit.id) ? 'enemy'
-                : (() => {
-                    const f = newCombatField.find(f => f.attacker?.id === unit.id || f.blocker?.id === unit.id);
-                    if (!f) return 'player';                                    // 未知来源：保留旧兜底
-                    return f.attacker?.id === unit.id
-                        ? f.owner                                                // 进攻方 = 发起方
-                        : (f.owner === 'player' ? 'enemy' : 'player');           // 格挡方 = 发起方的对面
-                })());
-            console.log(`[NecroDebug] judgeLifeAndDeath 推送 UNIT_DIED: ${unit.name}(${unit.key}) id=${unit.id} owner=${owner} 来源=${unit.animState === 'ephemeral_dying' ? '幻象死亡' : '血量归零'}`);
-            eventBus.emit(GameEvents.UNIT_DIE, unit);
-            // [2026-09-19 莉莉子 BUG修复] 去重：上面那次 emit 会唤醒 handleUnitDeath，它会为同一张卡再开一张票
-            //   （本段是「先 emit 再 push」，故监听器的票永远先落袋）。同一次死亡只能结算一遍亡语 ——
-            //   否则信标连炸两次、第二遍把玩家方也炸了。
-            //   ⚠️ 已开过票时不 push 新票，而是【就地覆写】：本函数是在即将提交的
-            //      newPlayerBench/newEnemyBench/newCombatField 上当场判决的，归属口径最准；
-            //      监听器那份读的是 stateRef 快照，可能滞后。让权威的一票生效。
-            const dupIdx = pendingActionsRef.current.findIndex(
-                a => a.type === 'UNIT_DIED' && a.payload?.unit?.id === unit.id
-            );
-            if (dupIdx >= 0) {
-                console.log(`[NecroDebug] ${unit.name}(${unit.key}) id=${unit.id} 已有死亡票，覆写归属为 ${owner}（不重复开票）`);
-                pendingActionsRef.current[dupIdx] = { type: 'UNIT_DIED', payload: { unit, bench: owner } };
-            } else {
-                pendingActionsRef.current.push({ type: 'UNIT_DIED', payload: { unit, bench: owner } });
+            // ── [2026-10-03 莉莉子 · P1 归属口径收口 · 第一步] 整段推导**迁移到唯一出口**。
+            //    口径**逐字不变**：戳优先 → 备战席（玩家席在前）→ 交战区攻守反推 → 兜底 'player'。
+            //    目的：消掉本文件里的第 N 份"交战区归属"拷贝，与 `collectFieldUnits` 共用同一份知识。
+            //    ⚠️ 必须传**工作数组**（本次提交后的 new*），不能传 stateRef 快照。
+            const owner = sideOfUnit(unit, {
+                playerBench: newPlayerBench,
+                enemyBench: newEnemyBench,
+                combatField: newCombatField,
+            });
+            // =====================================
+            // [2026-10-02 莉莉子 BUG修复 · BUG-20261002-15] 交战区的【常规阵亡】也要触发 unit_die 强化
+            // ── 病根：unit_die 强化的触发站点只有两处，**都不是"交战区的常规阵亡"**：
+            //    ① `processDeaths`（本文件 :1018）—— **只扫两个备战席**，交战区永远进不去；
+            //    ② `useRoundLifecycle:1458` 那段 —— **只处理幻象阵亡**（`ephemeral_dying`），
+            //       且显式排除 RESURRECT（防"飞剑死了又活"的循环）。
+            //    ⇒ 常规（血量归零）阵亡**发生在交战区**时，**全部 12 处 unit_die 强化/神格零联动**：
+            //      亡灵军团 / 不死军团 / 英魂传承 / 献祭仪式 / 余烬 / 返祖 / 献祭回响 /
+            //      芬妮⑥聚光灯不落 / 卜卜②卜骨遗响 / 卜卜④龟甲承魂 / 安卡②残月·拾遗 / 安卡④朔望·减耗。
+            //   粉丝原话（-15）：「对面进攻**碰死两个**（战场）**没触发**」「我用法术打死**备战席的触发了**」
+            //    —— 逐字对应这个缺口。
+            // ── 为什么放这里：本函数是**唯一同时扫备战席 + 交战区**的判决点，
+            //    且 `judgeUnit` 打上 `isDead` 后同一死者不会再判一次 ⇒ **天然去重**，
+            //    不会像"再新开一个触发站点"那样重复触发。
+            // ── 分工保持不变（三条死亡路径各管一段，互不重叠）：
+            //    幻象阵亡 → useRoundLifecycle 那段；常规·备战席 → processDeaths；**常规·交战区 → 本段**。
+            // ── 批次语义：同一 owner 在本批共享一个 ctx ⇒ 保住「非全复活强化每批每侧只救首个」。
+            // =====================================
+            {
+                const isFieldCorpse = newCombatField.some(f => f.attacker?.id === unit.id || f.blocker?.id === unit.id);
+                // [2026-10-05 莉莉子 BUG修复 · 20261005-12] 原判据 `!isEphemeralDeath` 改由**独立账本**承担：
+                //   它俩想防的是同一件事（与回合末幻象收口重复派发），但原写法把"**战斗中被打死**的飞剑"
+                //   一起挡掉了 —— 那批尸体**到不了回合末**（会被清场移除）⇒ 两条路都没派发（程实测的正是这条）。
+                //   账本按"这次死亡是否已派发"判重，与幻象态无关 ⇒ 该发的发、绝不多发。
+                //   ⚠️ [独立审查·2] **不再要求"在交战区"** —— 备战席的死者若在这里被新判死，
+                //      `processDeaths`（`:980` 的 `dying` 守卫）之后就再也看不上它了 ⇒ 谁也发不了。
+                //      判重完全交给账本（`processDeaths` 派发时会记账 ⇒ 不会撞车）。
+                if (!hasUnitDieDispatched(unit)) {
+                    let fctx = fieldDeathCtx[owner];
+                    if (!fctx) {
+                        fctx = {
+                            game: { ...stateRef.current.game },
+                            playerBench: [...newPlayerBench],
+                            enemyBench: [...newEnemyBench],
+                            combatField: [...newCombatField],
+                            playerHand: [...stateRef.current.playerHand],
+                            enemyHand: [...stateRef.current.enemyHand],
+                            playerDeck: [...stateRef.current.playerDeck],
+                            enemyDeck: [...stateRef.current.enemyDeck],
+                            owner,
+                            trigger: 'unit_die',
+                            createFullCard,
+                            info: { resurrectedSide: undefined },
+                            dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+                        };
+                        fieldDeathCtx[owner] = fctx;
+                    }
+                    fctx.info.deadUnit = unit;
+                    const fieldDieEnh = owner === 'player'
+                        ? stateRef.current.game.rogueEnhancements
+                        : stateRef.current.game.enemyEnhancements;
+                    // [2026-10-05 · 独立审查·3 二轮] **幻象单位一律不复活**（按 `Ephemeral` 关键词判定，不按 animState）：
+                    //   与回合末幻象收口同口径（`useRoundLifecycle:1550` 排除 RESURRECT，理由：量产幻象复活会
+                    //   形成"死了又活"的循环）。⚠️ 用 animState 判定不够 —— 它一被克隆/改写成 `'dying'` 就失效；
+                    //   而 `keywords.includes('Ephemeral')` 是这套体系里判"这是幻象"的既有唯一口径（对比 `:1444`）。
+                    //   普通单位不受影响 ⇒ 亡灵军团 / 不死军团照常生效。
+                    const isEphemeralUnit = (unit.keywords || []).includes('Ephemeral');
+                    // [2026-10-05 · 独立审查·4 二轮] `changed` 必须在**派发之前**置位：
+                    //   否则 `runRogueTrigger` 一旦抛异常，末尾 `if (changed)` 不提交 ⇒ 整批尸体的改动全丢。
+                    changed = true;
+                    try {
+                        runRogueTrigger(fctx, fieldDieEnh, 'unit_die', isEphemeralUnit ? (ec) => ec !== 'RESURRECT' : undefined);
+                    } catch (err) {
+                        // 单条强化的异常不该拖垮整条死亡管线（后面还有别的尸体要处理）
+                        console.error(`[unit_die] 强化派发异常（${unit.name} / owner=${owner}）：`, err);
+                    }
+                    // 就地回写本批的工作数组（RESURRECT 会给备战席补一个复活体、DEATH_GIFT 会改手牌…）
+                    newPlayerBench = fctx.playerBench as CardData[];
+                    newEnemyBench = fctx.enemyBench as CardData[];
+                    if (fctx.combatField) newCombatField = fctx.combatField as any[];
+                    if (fctx.dirty.hand.has('player')) setPlayerHand(fctx.playerHand);
+                    if (fctx.dirty.hand.has('enemy')) setEnemyHand(fctx.enemyHand);
+                    if (fctx.dirty.deck.has('player')) setPlayerDeck(fctx.playerDeck);
+                    if (fctx.dirty.deck.has('enemy')) setEnemyDeckState(fctx.enemyDeck);
+                    if (fctx.dirty.game) commitDirtyGame(fctx.game, stateRef.current.game);
+                    console.log(`[DeathCheck] ${unit.name} 在${isFieldCorpse ? '【交战区】' : '备战席'}${fresh ? '常规阵亡' : '已盖章尸体补派发'} → 派发 unit_die 强化触发（owner=${owner}）`);
+                    markUnitDieDispatched(unit); // [2026-10-05 · 20261005-12] 记账：这次死亡的 unit_die 已派发
+                    // （`changed` 已在派发**之前**置位 —— 见上方 :2251 的注释；这里不再重复置位）
+                }
+            }
+
+            // [2026-10-05 莉莉子 BUG修复 · 20261005-12] `fresh` 才走"死亡广播 + 开票"：
+            //   补派发的那批尸体**亡语早已结算过**，再 emit 一次 UNIT_DIE 会唤醒监听者**再开一张死亡票**
+            //   ⇒ 亡语又结算一遍（正是今天刚修掉的病）✗ ⇒ 它们的这一趟**只派发强化，不碰事件与票**。
+            if (fresh) {
+                console.log(`[NecroDebug] judgeLifeAndDeath 推送 UNIT_DIED: ${unit.name}(${unit.key}) id=${unit.id} owner=${owner} 来源=${unit.animState === 'ephemeral_dying' ? '幻象死亡' : '血量归零'}`);
+                eventBus.emit(GameEvents.UNIT_DIE, unit);
+                // [2026-09-19 莉莉子 BUG修复] 去重：上面那次 emit 会唤醒 handleUnitDeath，它会为同一张卡再开一张票
+                //   （本段是「先 emit 再 push」，故监听器的票永远先落袋）。同一次死亡只能结算一遍亡语 ——
+                //   否则信标连炸两次、第二遍把玩家方也炸了。
+                //   ⚠️ 已开过票时不 push 新票，而是【就地覆写】：本函数是在即将提交的
+                //      newPlayerBench/newEnemyBench/newCombatField 上当场判决的，归属口径最准；
+                //      监听器那份读的是 stateRef 快照，可能滞后。让权威的一票生效。
+                const dupIdx = pendingActionsRef.current.findIndex(
+                    a => a.type === 'UNIT_DIED' && a.payload?.unit?.id === unit.id
+                );
+                if (dupIdx >= 0) {
+                    console.log(`[NecroDebug] ${unit.name}(${unit.key}) id=${unit.id} 已有死亡票，覆写归属为 ${owner}（不重复开票）`);
+                    pendingActionsRef.current[dupIdx] = { type: 'UNIT_DIED', payload: { unit, bench: owner } };
+                } else {
+                    pendingActionsRef.current.push({ type: 'UNIT_DIED', payload: { unit, bench: owner } });
+                }
             }
         });
 
@@ -2088,14 +2467,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         let nextPlayerDeck = stateRef.current.playerDeck ? [...stateRef.current.playerDeck] : undefined;
         let nextEnemyDeck = stateRef.current.enemyDeck ? [...stateRef.current.enemyDeck] : undefined;
 
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-12 · 第二轮审查] 克隆卡时必须把「unit_die 已派发」账本一起搬
+        //   （账本按对象身份记 ⇒ 任何 `{ ...c }` 都会让标记丢失 ⇒ 同一次死亡被再派发一次）
+        const cloneWithLedger = (src: CardData, next: CardData): CardData => {
+            if (hasUnitDieDispatched(src)) markUnitDieDispatched(next);
+            return next;
+        };
+
         const updateCardProgress = (c: CardData) => {
             if (c.key === 'pupu_specular_soul' && c.level === 1) {
                 const newProgress = (c.customProgress || 0) + 1;
-                const updatedCard = { ...c, customProgress: newProgress };
+                const updatedCard = cloneWithLedger(c, { ...c, customProgress: newProgress });
 
                 if (checkCardLevelUp(updatedCard, nextGame.playerNexus, nextGame.enemyNexus)) {
                     hasLeveledUp = true;
-                    const leveled = { ...getLeveledUpCard(updatedCard), id: updatedCard.id };
+                    const leveled = cloneWithLedger(updatedCard, { ...getLeveledUpCard(updatedCard), id: updatedCard.id });
                     // [核心] 阵亡隔离锁：死者严禁入队升级！
                     if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
                         leveledHeroes.push(leveled);
@@ -2106,9 +2492,101 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
             // 2. [新增] 伊莉斯的记账逻辑：只要目睹打击，充能直接设为 1 (最大 1 层)
             if (c.key === 'Chongye_Squad_Elice') { // 请确保 key 与 cards.ts 中伊莉斯的 key 一致
-                return { ...c, customProgress: 1 };
+                return cloneWithLedger(c, { ...c, customProgress: 1 });
             }
             return c;
+        };
+
+        // ==========================================
+        // [2026-10-06 莉莉子 BUG修复 · 审计 P0] 强化触发的**结果回收器**
+        // ── 病根：`on_nexus_strike` 站点只调 `runRogueTrigger`、**从不回收结果**（全站无 dirty 提交）⇒
+        //    ① `ctx.game` 是快照副本，写入全丢 ⇒ 卜卜⑥「镜阵回响」记账的 `questProgress` 永远落不了地
+        //       （`rogueTrigger.ts:793-795` 写、`:799` 的 `times <= 0` 直接 return）⇒ **整条传说节点从不兑现**。
+        //    ② 牌库同理且更隐蔽：本函数尾部（setPlayerBench/…/setEnemyHand）里**没有** setPlayerDeck
+        //       ⇒ 牌库灌注的 +1/+1 白写（同 2026-09-19 茉莉安那次"牌库副本写完就丢"的教训）。
+        // ── 为什么**不**用 `commitDirtyGame`：它内部 `setGame(…)` 会被本函数尾部的
+        //    `setGame(nextGame)`（值式写）**后写覆盖**。故这里只把差异并进工作对象 `nextGame`，
+        //    由尾部**单点提交**（唯一出口）。
+        // ── `questProgress` 单独处理：它是**多站点共写的记录表**（同一批里 advanceEnhQuests /
+        //    runGearQuestStep 也会写它）⇒ 按键做**三方合并**（只采纳 ctx 真正改过的键），
+        //    既不吞掉别人的进度、也不被别人的新值盖掉。
+        // ==========================================
+        // [2026-10-06 · 三轮审查 Q2] 把"id 级 diff"折叠成**本批新基线**（同 id 换对象 / 新增 / 移除；
+        //   顺序 = 基线顺序 + 新增追加）。与 `commitSlicePatch`（rogueTrigger.ts:107）同一套 diff 语义，
+        //   区别只是这里要"算出来的数组"、而不是发 setState。
+        const foldSliceDiff = (seed: CardData[], result: CardData[]): CardData[] => {
+            const byId = new Map(result.map(c => [c.id, c] as const));
+            const seedIds = new Set(seed.map(c => c.id));
+            const out: CardData[] = [];
+            for (const c of seed) {
+                const r = byId.get(c.id);
+                if (r) out.push(r); // 同 id ⇒ 采纳新对象（未变则同一个对象）
+            }
+            for (const c of result) if (!seedIds.has(c.id)) out.push(c); // 新增
+            return out;
+        };
+
+        const absorbRogueCtx = (ctx: RogueTriggerCtx, seed: GameState, deckSeed?: { player?: CardData[]; enemy?: CardData[] }) => {
+            // ① bench / field / hand：handler 是**原地写**（`updateUnitById` rogueTrigger.ts:137-161、`hand.push`），
+            //    且这三项在 ctx 里是 nextXxx 的**直接引用** ⇒ 通常无需搬运；
+            //    仍做一次引用回写，兜住"整体替换数组"型的 handler。
+            if (ctx.dirty.bench.has('player')) nextPlayerBench = ctx.playerBench;
+            if (ctx.dirty.bench.has('enemy')) nextEnemyBench = ctx.enemyBench;
+            if (ctx.dirty.field) nextCombatField = ctx.combatField;
+            if (ctx.dirty.hand.has('player')) nextPlayerHand = ctx.playerHand;
+            if (ctx.dirty.hand.has('enemy')) nextEnemyHand = ctx.enemyHand;
+
+            // ② game：差异合并进 nextGame（尾部 setGame(nextGame) 统一提交）
+            if (ctx.dirty.game) {
+                const mutable = nextGame as unknown as Record<string, unknown>;
+                for (const k of Object.keys(ctx.game) as (keyof GameState)[]) {
+                    if (ctx.game[k] === seed[k]) continue; // 这条键 handler 没改
+                    if (k === 'questProgress') {
+                        // 🔴 [2026-10-06 · 独立审查 Q1 反例] 必须做**增量累加**，不能"绝对值覆盖"：
+                        //   同一批里同侧水晶可能受击 **≥2 次**（多个 NEXUS_STRIKED action），
+                        //   而每个 ctx 的差分基都是**本批入队前的**快照 ⇒ 绝对值写法会让后一次
+                        //   把前一次的结果盖掉（卜卜⑥ 的记账会变成 old+1 而不是 old+N）。
+                        const seedQ = (seed.questProgress ?? {}) as Record<string, number>;
+                        const ctxQ = (ctx.game.questProgress ?? {}) as Record<string, number>;
+                        const merged: Record<string, number> = { ...(nextGame.questProgress ?? {}) };
+                        for (const qk of Object.keys(ctxQ)) {
+                            const delta = (ctxQ[qk] ?? 0) - (seedQ[qk] ?? 0);
+                            if (delta !== 0) merged[qk] = (merged[qk] ?? 0) + delta;
+                        }
+                        mutable.questProgress = merged;
+                    } else if (nextGame[k] === seed[k]) {
+                        mutable[k as string] = ctx.game[k]; // 本批没人动过 → 采纳
+                    } else {
+                        console.log(`[RogueCtx] 站点结果回收：跳过 ${String(k)}（本批已有更新的写入，不覆盖）`);
+                    }
+                }
+            }
+
+            // ③ 牌库：尾部清单**没有** setPlayerDeck / setEnemyDeckState ⇒ 必须在**这里**提交。
+            //    🔴 [2026-10-06 · 独立审查 Q2 反例] 用仓库既有的 **id 级 diff 补丁** `commitSlicePatch`：
+            //       它只贴**真的被动过的卡**（同 id 换对象 / 新增 / 移除），并发改动全部保留。
+            //       ⚠️ 我第一版用"整份 ctx 数组建 Map 覆盖"是错的 —— 那会把**本 ctx 没改过**的卡
+            //          也换成陈旧副本（弱于既有路径）；而且它连"增卡/删卡"都表达不了。
+            //       ⚠️ 种子（deckSeed）必须是**改动前**的数组 ⇒ 站点构造 ctx 时传的是**副本**，
+            //          否则写手原地改数组会把种子一起改掉，diff 恒为空、等于没提交。
+            //    🔴 [三轮审查 Q2/Q1-b 反例] patch 之后**必须把结果折回基线**（`foldSliceDiff`）：
+            //       否则同一批里第二笔同侧水晶受击仍以"入队前"为基 ⇒ 算出与第一笔**等值**的补丁
+            //       ⇒ 覆盖式丢更新（牌库顶只 +1/+1，而按"每次受击 +1/+1"应为 +2/+2）。
+            //       我上一版注释写的"同批后续 diff 会自然为空、幂等"是**错的**，已删。
+            //    ⚠️ 残留（已记档 · 未扩大）：本批里其它**值式**写牌库的站点（如信标结算）若在本站点
+            //       之后才提交，仍会用它的陈旧数组整体覆盖本补丁 —— 既有裂缝，与本改动无关。
+            if (ctx.dirty.deck.has('player') && deckSeed?.player) {
+                commitSlicePatch(deckSeed.player, ctx.playerDeck, fn => setPlayerDeck(fn));
+                const folded = foldSliceDiff(deckSeed.player, ctx.playerDeck);
+                nextPlayerDeck = folded;
+                stateRef.current.playerDeck = folded;
+            }
+            if (ctx.dirty.deck.has('enemy') && deckSeed?.enemy) {
+                commitSlicePatch(deckSeed.enemy, ctx.enemyDeck, fn => setEnemyDeckState(fn));
+                const folded = foldSliceDiff(deckSeed.enemy, ctx.enemyDeck);
+                nextEnemyDeck = folded;
+                stateRef.current.enemyDeck = folded;
+            }
         };
 
         // 按顺序结算所有条子
@@ -2154,7 +2632,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 //   ⚠️ 本 action 在批次末尾用 setGame(nextGame) 整体提交，故**不能**调用 runGearQuest
                 //      （它内部的 setGame 会被末尾的直接值覆盖掉）→ 必须就地写进三份工作快照。
                 if (struckSide === 'player') {
-                    const gCards = [...nextPlayerBench, ...nextCombatField.filter(f => f.owner === 'player').map(f => f.attacker)];
+                    // [2026-10-06 程拍板 · 审计收口] **全域参与** —— 进度是"我方水晶累计受伤"这种
+                    //   **对局级全局事实**，不该只看备战席/交战区：卡在**手牌/牌库**时同样要累加、
+                    //   同样要吃奖励（否则「血债账簿：此卡费用降为 0」会在卡已上场、费用已付之后才生效＝毫无意义）。
+                    const gCards = [
+                        ...nextPlayerBench,
+                        ...nextPlayerHand,
+                        ...(nextPlayerDeck ?? []),
+                        ...nextCombatField.flatMap(f => (f.owner === 'player' ? [f.attacker, f.blocker] : [])),
+                    ].filter(Boolean) as CardData[];
                     const nexusMax = stateRef.current.game.playerNexusMax ?? 20;
                     // 水晶余量取两份快照的较小值：本批是否已扣血取决于 action 先后，取小即可覆盖两种时序
                     const nexusNow = Math.min(stateRef.current.game.playerNexus ?? nexusMax, nextGame.playerNexus ?? nexusMax);
@@ -2168,12 +2654,20 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                             const gById = new Map(gStep.hits.map(h => [h.cardId, h.reward]));
                             const gApply = (c: CardData) => { const r = gById.get(c.id); return r ? applyGearQuestReward(c, r) : c; };
                             nextPlayerBench = nextPlayerBench.map(gApply);
+                            nextPlayerHand = nextPlayerHand.map(gApply);
                             nextCombatField = nextCombatField.map(f => {
                                 let n = f;
                                 if (n.attacker) { const a = gApply(n.attacker); if (a !== n.attacker) n = { ...n, attacker: a }; }
                                 if (n.blocker) { const b = gApply(n.blocker); if (b !== n.blocker) n = { ...n, blocker: b }; }
                                 return n;
                             });
+                            // 牌库那一份**必须就地提交**（本函数尾部清单里没有 setPlayerDeck）——
+                            //   否则"以后抽到也是 0 费"落不了地。
+                            if (nextPlayerDeck) {
+                                nextPlayerDeck = nextPlayerDeck.map(gApply);
+                                setPlayerDeck(nextPlayerDeck);
+                                stateRef.current.playerDeck = nextPlayerDeck;
+                            }
                         }
                     }
                 }
@@ -2185,15 +2679,20 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 // [2026-09-09 莉莉子 重构] 收编统一串行触发引擎：直接引用 nextXxx 工作数组（该 action 尾部统一提交）
                 // ==========================================
                 if (struckSide === 'enemy' && stateRef.current.game.rogueEnhancements) {
+                    // [2026-10-06 莉莉子 BUG修复 · 审计 P0] 记下发车前的快照 —— 供 `absorbRogueCtx` 做**差异回收**
+                    const nSeedP = stateRef.current.game;
+                    // [审查 Q2] 牌库 diff 的**种子**必须是"改动前"的数组 ⇒ 下面给 ctx 传**副本**
+                    const nSeedPD = nextPlayerDeck ?? [];
+                    const nSeedED = stateRef.current.enemyDeck ?? [];
                     const nCtx: RogueTriggerCtx = {
-                        game: { ...stateRef.current.game },
+                        game: { ...nSeedP },
                         playerBench: nextPlayerBench,
                         enemyBench: nextEnemyBench,
                         combatField: nextCombatField,
                         playerHand: [...stateRef.current.playerHand],
                         enemyHand: [...stateRef.current.enemyHand],
-                        playerDeck: nextPlayerDeck ?? [],
-                        enemyDeck: [...stateRef.current.enemyDeck],
+                        playerDeck: [...nSeedPD],
+                        enemyDeck: [...nSeedED],
                         owner: 'player',
                         trigger: 'on_nexus_strike',
                         createFullCard,
@@ -2201,18 +2700,25 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
                     };
                     runRogueTrigger(nCtx, stateRef.current.game.rogueEnhancements, 'on_nexus_strike');
+                    // [2026-10-06 BUG修复 · 审计 P0] **回收结果**（本站点此前从不回收 ⇒ 牌库灌注 / 卜卜⑥ 写完就丢）
+                    absorbRogueCtx(nCtx, nSeedP, { player: nSeedPD, enemy: nSeedED });
                 }
                 // [2026-08-27] 敌方迷宫强化：我方水晶被打 → 随机敌方单位 +1/+1（连击之势）
                 if (struckSide === 'player' && stateRef.current.game.enemyEnhancements) {
+                    // [2026-10-06 莉莉子 BUG修复 · 审计 P0] 同上：快照 + 结果回收
+                    const nSeedE = stateRef.current.game;
+                    // [审查 Q2] 同上：种子取改动前的数组，ctx 拿副本
+                    const nSeedPD2 = stateRef.current.playerDeck ?? [];
+                    const nSeedED2 = stateRef.current.enemyDeck ?? [];
                     const nCtx: RogueTriggerCtx = {
-                        game: { ...stateRef.current.game },
+                        game: { ...nSeedE },
                         playerBench: nextPlayerBench,
                         enemyBench: nextEnemyBench,
                         combatField: nextCombatField,
                         playerHand: [...stateRef.current.playerHand],
                         enemyHand: [...stateRef.current.enemyHand],
-                        playerDeck: [...stateRef.current.playerDeck],
-                        enemyDeck: [...stateRef.current.enemyDeck],
+                        playerDeck: [...nSeedPD2],
+                        enemyDeck: [...nSeedED2],
                         owner: 'enemy',
                         trigger: 'on_nexus_strike',
                         createFullCard,
@@ -2220,6 +2726,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
                     };
                     runRogueTrigger(nCtx, stateRef.current.game.enemyEnhancements, 'on_nexus_strike');
+                    absorbRogueCtx(nCtx, nSeedE, { player: nSeedPD2, enemy: nSeedED2 });
                 }
             }
             // =====================================
@@ -2281,8 +2788,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                                 if (res.enemyBench) nextEnemyBench = res.enemyBench;
                                 if (res.playerHand) nextPlayerHand = res.playerHand;
                                 if (res.enemyHand) nextEnemyHand = res.enemyHand;
-                                if (res.playerDeck) nextPlayerDeck = res.playerDeck;
-                                if (res.enemyDeck) nextEnemyDeck = res.enemyDeck;
+                                // [2026-10-06 莉莉子 · 既有裂缝④收口] 本站点此前把牌库结果**只写局部变量**，
+                                //   而本函数（flushMicroQueue）的尾部提交清单里**没有** setPlayerDeck/setEnemyDeckState
+                                //   ⇒ `processEffect` 产出的牌库改动**写完就丢**（与 P0 那两条同一个病）。
+                                //   这里按同族兄弟站点（亡语 / 信标）的写法就地提交，并同步 stateRef。
+                                if (res.playerDeck) { nextPlayerDeck = res.playerDeck; setPlayerDeck(res.playerDeck); stateRef.current.playerDeck = res.playerDeck; }
+                                if (res.enemyDeck) { nextEnemyDeck = res.enemyDeck; setEnemyDeckState(res.enemyDeck); stateRef.current.enemyDeck = res.enemyDeck; }
                                 if (res.combatField) nextCombatField = res.combatField;
 
                                 console.log(`[MicroQueue] ${damagedUnit.name} 受伤存活，触发 ON_DAMAGE_SURVIVE 效果: ${def.name}`);
@@ -2406,6 +2917,30 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 }
 
                 // =====================================
+                // [2026-09-25 莉莉子 三线任务化框架 · 装备线] 遗嘱：阵亡时把身上其他装备转给随机存活友军
+                //   ① 遗嘱自身不参与传递（否则链式无限传承）② attachEquipment 自带去重，友军已有的装备自然跳过
+                // 🔴 [2026-10-06 莉莉子 · 审计收口] **本段从 `processDeaths` 搬到这里** ——
+                //   原实现挂在"**备战席**死亡清算"上，而单位**进攻/格挡时已经离开备战席** ⇒
+                //   **死在交战区就永远不触发**（那恰恰是最常见的死法，粉丝侧的观感就是"这装备没反应"）。
+                //   而 `UNIT_DIED` 是**全项目唯一的死亡结算出口**（四条开票口都汇到这里）⇒
+                //   搬来即备战席 + 交战区**两条路径全覆盖**，且天然幂等（一张票只结算一次）。
+                //   ⚠️ 本函数全程操作工作数组、尾部统一提交 ⇒ 这里直接改 `nextPlayerBench`，不再调 setState。
+                // =====================================
+                if (owner === 'player' && (unit.equipment ?? []).some(id => getEquipmentById(id)?.onOwnerDie?.class === 'TRANSFER_EQUIPMENT')) {
+                    const inherits = (unit.equipment ?? []).filter(id => getEquipmentById(id)?.onOwnerDie?.class !== 'TRANSFER_EQUIPMENT');
+                    const heirs = nextPlayerBench.filter(c =>
+                        c.id !== unit.id && c.animState !== 'dying' && c.animState !== 'ephemeral_dying' && getHealth(c) > 0
+                    );
+                    if (inherits.length > 0 && heirs.length > 0) {
+                        const heir = heirs[Math.floor(Math.random() * heirs.length)];
+                        let upgraded: CardData = { ...heir };
+                        for (const id of inherits) upgraded = attachEquipment(upgraded, id);
+                        nextPlayerBench = nextPlayerBench.map(c => c.id === heir.id ? upgraded : c);
+                        console.log(`[Will] 遗嘱触发：${unit.name} 把 ${inherits.length} 件装备转给 ${heir.name}`);
+                    }
+                }
+
+                // =====================================
                 // [2026-09-16 1.0.16 茉莉安 · T07] 獠牙信标被破坏 → 累计茉莉安的升级进度
                 // ── 归属推导：信标【只会被召唤到召唤者的对面】（库效/本体/支援技三者皆然），
                 //    所以「它倒在哪一侧」就等价于「它由对面召唤」—— 这是构造性结论，不是猜测。
@@ -2415,47 +2950,55 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 if (unit.key === 'Marian_Wolf_Tooth_Beacon') {
                     // [2026-09-19 莉莉子 方向一] 有归属戳 → 查表；无戳才回落到「倒在敌方 → 由玩家召唤」的推论
                     const summonerIsPlayer = (unit.unitOwner ?? owner) === 'enemy'; // 倒在敌方 → 由玩家召唤
+                    const summonerSide: 'player' | 'enemy' = summonerIsPlayer ? 'player' : 'enemy';
+
+                    // =====================================
+                    // [2026-10-02 莉莉子 C1 · 改为全局进度] 权威值单一自增 + 幂等贴到各区域
+                    // ── 旧实现：**每个区域各自 +1**。而计数挂在茉莉安身上，她同一时刻只在一个区域
+                    //    ⇒ 漏扫她当时所在区域 = 本次进度静默丢失（09-23 / 09-27 两次事故的本质）。
+                    // ── 新实现：真源 = `game.beaconDeaths[召唤者侧]`（本次**唯一**一次自增），
+                    //    再把那个**绝对值**贴到各区域副本上（同值重复贴不会累加）。
+                    //    即使某区域漏扫，也只是短暂显示旧值，**绝不丢进度**。
+                    // =====================================
+                    const nextBeaconDeaths = (nextGame.beaconDeaths?.[summonerSide] ?? 0) + 1;
+                    nextGame.beaconDeaths = { ...(nextGame.beaconDeaths || {}), [summonerSide]: nextBeaconDeaths };
+
                     // [2026-09-19 BUG修复] 牌库那份必须【就地提交】：
                     //   微队列的收尾提交清单（setPlayerBench/…/setEnemyHand）里**没有** setPlayerDeck，
                     //   只改局部 nextPlayerDeck 等于写完就丢 ⇒ 牌库面板/左侧进度弹窗永远显示 0。
-                    //   写法对齐本分支里亡语抽卡的既有做法（同样就地 setPlayerDeck + 回写 stateRef）。
                     if (summonerIsPlayer) {
-                        nextPlayerBench = bumpBeaconDeaths(nextPlayerBench);
-                        nextPlayerHand = bumpBeaconDeaths(nextPlayerHand);
+                        nextPlayerBench = applyBeaconDeaths(nextPlayerBench, nextBeaconDeaths);
+                        nextPlayerHand = applyBeaconDeaths(nextPlayerHand, nextBeaconDeaths);
                         if (nextPlayerDeck) {
-                            nextPlayerDeck = bumpBeaconDeaths(nextPlayerDeck);
+                            nextPlayerDeck = applyBeaconDeaths(nextPlayerDeck, nextBeaconDeaths);
                             setPlayerDeck(nextPlayerDeck);
                             stateRef.current.playerDeck = nextPlayerDeck;
                         }
                     } else {
-                        nextEnemyBench = bumpBeaconDeaths(nextEnemyBench);
-                        nextEnemyHand = bumpBeaconDeaths(nextEnemyHand);
+                        nextEnemyBench = applyBeaconDeaths(nextEnemyBench, nextBeaconDeaths);
+                        nextEnemyHand = applyBeaconDeaths(nextEnemyHand, nextBeaconDeaths);
                         if (nextEnemyDeck) {
-                            nextEnemyDeck = bumpBeaconDeaths(nextEnemyDeck);
+                            nextEnemyDeck = applyBeaconDeaths(nextEnemyDeck, nextBeaconDeaths);
                             setEnemyDeckState(nextEnemyDeck);
                             stateRef.current.enemyDeck = nextEnemyDeck;
                         }
                     }
 
-                    // [2026-09-27 莉莉子 BUG修复] 交战区实例必须一并累计 ——
-                    //   病根：单位一宣告进攻，toggleAttacker 就把它**移出备战席**（只存在于 combatField）；
-                    //   而信标最主要的死法正是「我方进攻 N 个单位 → 信标 −N」⇒ 它被打爆那一刻，
-                    //   茉莉安正在交战区，bench/hand/deck 三处一份副本都没有 ⇒ 进度一点没加；
-                    //   战斗结束归位带回来的又是交战区那份旧实例 ⇒ 之前的累计一并丢失。
-                    //   ⇒ 症状：打爆多少次信标，她都停在 Lv1（「不需要在场也计入」反而在战斗中失效）。
+                    // [2026-09-27 莉莉子 BUG修复] 交战区实例必须一并同步 ——
+                    //   单位一宣告进攻，toggleAttacker 就把它**移出备战席**（只存在于 combatField）；
+                    //   若她此刻正在交战区，bench/hand/deck 三处一份副本都没有 ⇒ 进度看起来没加。
                     //   归属口径：attacker 属 f.owner，blocker 属发起方的对面（与判死 / 亡语分摊同源）。
                     {
-                        const bumpField = (field: any[], side: 'player' | 'enemy') => field.map(f => {
+                        const syncField = (field: any[], side: 'player' | 'enemy') => field.map(f => {
                             const atkSide: 'player' | 'enemy' = f.owner;
                             const blkSide: 'player' | 'enemy' = f.owner === 'player' ? 'enemy' : 'player';
-                            const nextA = (f.attacker && atkSide === side) ? bumpBeaconDeaths([f.attacker])[0] : f.attacker;
-                            const nextB = (f.blocker && blkSide === side) ? bumpBeaconDeaths([f.blocker])[0] : f.blocker;
+                            const nextA = (f.attacker && atkSide === side) ? applyBeaconDeaths([f.attacker], nextBeaconDeaths)[0] : f.attacker;
+                            const nextB = (f.blocker && blkSide === side) ? applyBeaconDeaths([f.blocker], nextBeaconDeaths)[0] : f.blocker;
                             return (nextA === f.attacker && nextB === f.blocker) ? f : { ...f, attacker: nextA, blocker: nextB };
                         });
-                        const marianSide: 'player' | 'enemy' = summonerIsPlayer ? 'player' : 'enemy';
-                        nextCombatField = bumpField(nextCombatField, marianSide);
+                        nextCombatField = syncField(nextCombatField, summonerSide);
                     }
-                    console.log(`[BeaconDebug] 獠牙信标被破坏：召唤者=${summonerIsPlayer ? 'player' : 'enemy'}，已累计茉莉安升级进度`);
+                    console.log(`[BeaconDebug] 獠牙信标被破坏：召唤者=${summonerSide}，全局进度=${nextBeaconDeaths}`);
                 }
 
                 // =====================================
@@ -2507,8 +3050,32 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     }
                 }
 
-                if (unit.effects && unit.effects.length > 0) {
-                    unit.effects.forEach(effId => {
+                // =====================================
+                // [2026-10-02 莉莉子 信标亡语化] 「信标重生光环」：只要茉莉安**活着在场**，
+                //   敌方信标就带「重生亡语」——在**亡语派发这一刻动态判定**。
+                //   🔑 [程当晚更正 · 光环下放到 Lv1] **不再要求 Lv2**，原因有二（缺一都会永久断档）：
+                //     ① Lv1 若只在入场贴一次，补出来的新信标不带亡语 ⇒ 第 2 枚被打死后再无信标；
+                //     ② **致死的那一击永远吃不到 Lv2 光环** —— 升级标记 markLeveledUp 写在死亡批次**末尾**，
+                //        而本处亡语派发在同一批次**更早** ⇒ 那一击看到的仍是"她还没升级"。
+                //     ⇒ 等级无关后，两条根因一并消失（程：「反正 LV1 击杀两个信标后就升级了，也没什么区别」）。
+                //   · 与"给她贴一次就记住"相比，动态判定天然覆盖**任意时刻新召唤出来的信标** ⇒ 链不会断。
+                //   · 补挂的两条效果顺序 = [召唤, 补刀]（见 BEACON_RESPAWN_EFFECTS），
+                //     排在原本的「分摊爆炸」之后 ⇒ 先爆炸、再补新信标、再补刀。
+                // =====================================
+                let lastBreathEffects: string[] = unit.effects || [];
+                if (unit.key === 'Marian_Wolf_Tooth_Beacon') {
+                    const beaconSummonerSide: 'player' | 'enemy' = (unit.unitOwner ?? owner) === 'enemy' ? 'player' : 'enemy';
+                    if (hasLiveMarian(beaconSummonerSide, nextPlayerBench, nextEnemyBench, nextCombatField)) {
+                        const granted = grantBeaconRespawnEffect({ ...unit, effects: lastBreathEffects } as CardData);
+                        lastBreathEffects = granted.effects || lastBreathEffects;
+                        console.log('[信标亡语化] 重生光环生效 → 本枚信标按「重生亡语」结算');
+                    } else {
+                        console.log('[信标亡语化] 召唤者侧没有存活茉莉安 → 本枚信标不重生（她下次入场会再埋一枚）');
+                    }
+                }
+
+                if (lastBreathEffects.length > 0) {
+                    lastBreathEffects.forEach(effId => {
                         const def = EFFECT_DB[effId];
                         // 从字典中核实该效果的 timing 是否为亡语
                         if (def && def.timing.includes('LAST_BREATH')) {
@@ -2603,95 +3170,72 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                             }
 
                             // 伤害敌方水晶
-                            if (enemyPlayer === 'player') {
+                            // [2026-10-06 莉莉子 · 审计收口] 补查**水晶免疫**（不死之身）—— 本处此前是 7 处漏点之一
+                            if (isNexusImmune(nextGame, enemyPlayer)) {
+                                console.log(`[丁型] 泰坦物质爆炸：${enemyPlayer} 水晶免疫伤害，跳过 2 点扣除`);
+                            } else if (enemyPlayer === 'player') {
                                 nextGame.playerNexus = Math.max(0, (nextGame.playerNexus || 20) - 2);
                             } else {
                                 nextGame.enemyNexus = Math.max(0, (nextGame.enemyNexus || 20) - 2);
                             }
 
-                            eventBus.emit('unit_damage', { id: `nexus_${enemyPlayer}`, amount: 2 });
-                            eventBus.emit(GameEvents.NEXUS_STRIKED, { target: enemyPlayer, amount: 2 });
-                            console.log(`[丁型] 泰坦物质爆炸！对敌方全体造成 2 点伤害`);
+                            // [2026-10-06 程拍板 · 审计收口] 免疫时**飘字也归零**（不留"打了却没掉血"的假数字）
+                            const titanNexusDmg = isNexusImmune(nextGame, enemyPlayer) ? 0 : 2;
+                            eventBus.emit('unit_damage', { id: `nexus_${enemyPlayer}`, amount: titanNexusDmg });
+                            eventBus.emit(GameEvents.NEXUS_STRIKED, { target: enemyPlayer, amount: titanNexusDmg });
+                            console.log(`[丁型] 泰坦物质爆炸！对敌方全体造成 ${titanNexusDmg} 点伤害`);
                         }
                     });
                 }
 
                 // =====================================
-                // [2026-09-19 1.0.16 茉莉安] 信标被击败 → 补兵（两套规则，**按她的等级二选一**）
-                // [2026-10-01 莉莉子] ⚠️ A / B **互斥**（不再写作"Lv2 优先"）：已升级只走 A、未升级只走 B。
-                //    原实现是 if / else-if 穿透 ⇒ A 判不中或本回合已用完时会掉进 B，白烧掉 Lv1 的补兵券。
-                // ── 规则 A 【Lv2 · 每回合首次】：每回合只触发一次（round 节流）
-                // ── 规则 B 【Lv1 · 补兵券兑现】：她入场时发一张欠条（见 effectProcessor SUMMON 分支），
-                //    此处兑现 —— **要求她本人活着在场**（程 2026-09-19 拍板）
-                // ── 共同口径：① 落点备战席满(6) / 落点已有存活信标 → 不补，且**券不消耗**（留着下次）
-                //    ② 先结算爆炸、再补新信标 ③ 补出的一律走 assembleBeaconCard（吃虹彩上限修正）
-                // ── 为什么挂在这里：本分支是【所有】死亡路径的必经之地（今日刚收口成漏斗），
-                //    且位置已在亡语结算【之后】⇒ 天然满足②，不必逐条通路去接。
-                // ── 落点：信标永远站在召唤者对面 ⇒ 它倒在哪一侧，就补回哪一侧。
+                // [2026-10-02 莉莉子 信标亡语化 —— 旧补兵机制已整体删除]
+                // ── 删除内容：规则 A（Lv2 每回合首次补兵）/ 规则 B（Lv1 补兵券兑现）/
+                //    `marianBeaconVoucher` 欠条 / `marianBeaconRespawnRound` 节流。
+                // ── 为什么删：这套机制要在**死亡漏斗里集中兑现**，本质要求"监控所有信标死亡路径"。
+                //    连续三次事故（09-23 不计数 / 09-27 交战区实例 / 10-01 补兵根治）都是这个监控漏了某条路。
+                // ── 现在谁负责重生：**信标自己的亡语**（effect_marian_beacon_respawn），
+                //    授予方式是**等级无关的光环** ⇒ 见本文件上方 hasLiveMarian 分支（亡语派发处动态补挂）。
+                //    ⇒ 死亡漏斗**不再需要知道信标的事**，也就没有"漏路径"可言了。
+                // ⚠️ 刻意保留「引爆对账器」（sbaPendingRef / reconcileTicketedRef）：它不只是补兵的一环，
+                //    更是**亡语引爆**的兜底补票；BUG-20261002-20（信标死亡没触发 AOE）未查清前不动它。
                 // =====================================
-                if (unit.key === 'Marian_Wolf_Tooth_Beacon') {
-                    const landSide: 'player' | 'enemy' = owner; // 倒在哪侧 → 补回哪侧
-                    const summonerSide: 'player' | 'enemy' = owner === 'player' ? 'enemy' : 'player';
-                    const landBench = landSide === 'player' ? nextPlayerBench : nextEnemyBench;
-                    const summonerBench = summonerSide === 'player' ? nextPlayerBench : nextEnemyBench;
-                    const isLiveUnit = (c: CardData | null | undefined) =>
-                        !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
 
-                    // =====================================
-                    // [2026-10-01 莉莉子 BUG修复] 「她是否已升级」改用【分阵营升级标记】
-                    // ── 病根：规则 A 此前要求实例 `c.level === 2`，而 Lv2 变形发生在
-                    //    `game.levelUpCard` 触发的那个 effect（本文件的 upgradeFn）里，
-                    //    **晚于本次死亡结算** ⇒ 触发升级的那一次死亡永远判不中 A。
-                    // ── 更根本的是口径分叉：项目里「某方某英雄是否已升级」的权威判据是
-                    //    `isLeveledUpForSide`（`scanLibrarySummon` / `scanAndLevelUp` 都用它），
-                    //    其注释已写明「实例 level 未必同步」—— 补兵此前用的是**不可靠的那一套**。
-                    //    同一个问题两套口径 ⇒ 必有一处判错。
-                    // ── 统一后：A 认标记、B 只在未升级时兑现（见下方 if/else 链，两规则互斥）。
-                    // =====================================
-                    const marianLv2 = isLeveledUpForSide(nextGame, summonerSide, 'marian');
-
-                    /** 召唤者侧是否有【活着在场】的茉莉安（备战席或交战区皆可；与等级无关） */
-                    const marianAlive = (): boolean => {
-                        const hit = (c: CardData | null | undefined) =>
-                            !!c && c.key === 'marian' && isLiveUnit(c);
-                        return summonerBench.some(hit)
-                            || (nextCombatField || []).some(f => [f.attacker, f.blocker].some(hit));
+                // =====================================
+                // [2026-10-05 莉莉子 BUG修复 · 20261005-02] **亡语幂等的第二道钉**：票被消费 ⇒ 立刻给场上那具尸体盖章
+                // ── 为什么必须盖：`isDead` 是"已宣判"的唯一判据（`judgeUnit` 首句 `if (c.isDead) return c`），
+                //    而另两条判死路径并不写它（备战席 processDeaths 只写 animState；交战区由对账器补票）
+                //    ⇒ 尸体在场上停留期间会被**再次判死 → 再开一张票** ⇒ 亡语结算两遍
+                //    （珍馐绵羊：2 张梦莲无人机 → 4 张）。
+                // ── 位置刻意选在**亡语结算之后**：与信标的「引爆幂等钉」同思路（钉在真正结算的那一刻）。
+                //    复活路径会显式写 `isDead:false`（RESURRECT / rogueTrigger）⇒ 不误伤复活体的第二次死亡。
+                // ── 顺带收益：0 血尸体从此带 isDead ⇒ 索敌/存在性判定不再把尸体当活人。
+                // ⚠️ [2026-10-05 追加] `animState` **只在不是死亡态时才改写**：幻象（梵音小队/飞剑等）的
+                //    `ephemeral_dying` 是"消散"专属演出态，强行改成 `dying` 会把它演成普通碎裂
+                //    —— 保留原态即可（`isDead` 已经足够让 judgeUnit 跳过、让清理过滤器命中）。
+                // =====================================
+                const stampCorpse = (c: CardData): CardData => {
+                    if (!c || c.id !== unit.id) return c;
+                    const stamped: CardData = {
+                        ...c,
+                        isDead: true,
+                        animState: (c.animState === 'ephemeral_dying' ? 'ephemeral_dying' : 'dying') as CardData['animState'],
                     };
-
-                    const voucherCount = nextGame.marianBeaconVoucher?.[summonerSide] || 0;
-                    const canLand = landBench.length < 6
-                        && !landBench.some(c => c.key === 'Marian_Wolf_Tooth_Beacon' && isLiveUnit(c));
-
-                    const summonReplacement = (reason: string) => {
-                        const reborn = {
-                            ...assembleBeaconCard(createFullCard('Marian_Wolf_Tooth_Beacon'), nextGame.beaconMaxHealthMod),
-                            animState: 'summoning' as const,
-                        };
-                        if (landSide === 'player') nextPlayerBench = [...nextPlayerBench, reborn];
-                        else nextEnemyBench = [...nextEnemyBench, reborn];
-                        eventBus.emit(GameEvents.SFX_DROP_BENCH);
-                        console.log(`[茉莉安补兵] ${reason} → 在 ${landSide} 备战席补一个新信标（${reborn.health}/${reborn.maxHealth}）`);
-                    };
-
-                    if (!canLand) {
-                        console.log(`[茉莉安补兵] ${landSide} 落点不可用（满员或已有存活信标）→ 本次不补，补兵券不消耗`);
-                    } else if (marianLv2 && marianAlive() && nextGame.marianBeaconRespawnRound !== nextGame.round) {
-                        // 规则 A（Lv2 · 每回合首次）
-                        nextGame.marianBeaconRespawnRound = nextGame.round;
-                        summonReplacement('Lv2 每回合首次信标被击败');
-                    } else if (!marianLv2 && marianAlive() && voucherCount > 0) {
-                        // 规则 B（Lv1 欠条兑现，要求她活着在场）
-                        // ── [2026-10-01 莉莉子 BUG修复] **两规则互斥**：她已升级（marianLv2）时
-                        //    绝不再走这条 —— 否则规则 A 判不中/本回合用完后会一路穿透到这里，
-                        //    把本该留给 Lv1 的补兵券白烧掉（券只有 1 张，烧完 = 永久断档）。
-                        //    口径（程 2026-10-01 拍板）：Lv1 = 入场后只补一次；Lv2 = 每回合都补。
-                        const voucherMap = { ...(nextGame.marianBeaconVoucher || {}) };
-                        voucherMap[summonerSide] = voucherCount - 1;
-                        nextGame.marianBeaconVoucher = voucherMap;
-                        summonReplacement(`兑现补兵券（${summonerSide} 侧剩 ${voucherMap[summonerSide]} 张）`);
-                    } else {
-                        console.log(`[茉莉安补兵] 条件不足 → 不补（她不在场=${!marianAlive()} / 已升级=${marianLv2} / 券=${voucherCount} / 本回合已补过=${nextGame.marianBeaconRespawnRound === nextGame.round}）`);
-                    }
+                    // [2026-10-05 莉莉子 BUG修复 · 20261005-12 · **独立审查抓到的重复派发反例**]
+                    //   盖章会**造一个新对象** ⇒ 必须把「unit_die 已派发」账本一起搬过来。
+                    //   否则补派发那趟会把这张新对象当成"没派发过"再发一遍 ——
+                    //   **凡"先由 SBA(judgeLifeAndDeath) 派发、后被票据盖章"的死亡必中**（法术击杀 / 回合末）。
+                    if (hasUnitDieDispatched(c)) markUnitDieDispatched(stamped);
+                    return stamped;
+                };
+                nextPlayerBench = nextPlayerBench.map(stampCorpse);
+                nextEnemyBench = nextEnemyBench.map(stampCorpse);
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map((f: any) => ({
+                        ...f,
+                        attacker: f.attacker ? stampCorpse(f.attacker) : f.attacker,
+                        blocker: f.blocker ? stampCorpse(f.blocker) : f.blocker,
+                    }));
                 }
             }
         });
@@ -2763,13 +3307,17 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     // ── 幂等四重保险（缺一不可）：
     //    ① 已在墓地 ⇒ 正常流程已开过票（票处理器会写墓地）→ 跳过，绝不重复引爆
     //    ② 票已在微队列里 ⇒ 正常流程已开票但还没结算 → 不重复开（复用 hasDeathTicket）
-    //    ③ 本对账器补过的 id 记入 beaconTicketedRef → 不再补
+    //    ③ 本对账器补过的 id 记入 reconcileTicketedRef → 不再补
     //    ④ 消亡替换（deathType='ELIMINATED'）⇒ 按设计不触发亡语 → 跳过
     // ── 边界：回手 / 退回牌库 / 被移除的信标不带死亡标记，天然不会被本器误爆。
     // ── 节拍：无依赖数组的 useEffect（每次提交后跑）。声明位置刻意排在 stateRef 同步 effect 之后，
     //    保证读到的是本次提交后的新快照 —— 这正是 judgeLifeAndDeath 在全项目里唯一"读到新快照"的调用点。
     // ==========================================
-    const BEACON_KEY = 'Marian_Wolf_Tooth_Beacon';
+    // ==========================================
+    // [2026-10-03 莉莉子 · 系统性收口] 本器已从「**信标专用引爆对账器**」升级为
+    //   「**全场收尸＋亡语结算兜底**」：不再按 `BEACON_KEY` 过滤（那个常量已随本次放宽删除），
+    //   任何单位"血归零却未判死 / 已判死却无人开票"都在这里被兜住。
+    // ==========================================
     const sbaPendingRef = useRef(false);
 
     useEffect(() => {
@@ -2785,38 +3333,52 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         const hpOf = (c: CardData) =>
             (c.health || 0) + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
 
-        // ① 全场盘点：本拍所有信标（备战席 + 交战区，死活都要）
-        const board: { side: 'player' | 'enemy'; card: CardData }[] = [];
-        const take = (c: CardData | null | undefined, side: 'player' | 'enemy') => {
-            if (!c || c.key !== BEACON_KEY) return;
-            board.push({ side: c.unitOwner ?? side, card: c }); // 有归属戳以戳为准（方向一）
-        };
-        playerBench.forEach(c => take(c, 'player'));
-        enemyBench.forEach(c => take(c, 'enemy'));
-        combatField.forEach(f => {
-            take(f.attacker, f.owner);                                   // 进攻方属发起方
-            take(f.blocker, f.owner === 'player' ? 'enemy' : 'player');  // 格挡方属发起方的对面
-        });
+        // ① 全场盘点：[2026-10-03 莉莉子 · 系统性收口] **从"只收信标"放宽到"全场"** ——
+        //    原来这里 `if (c.key !== BEACON_KEY) return` ⇒ 唯一那个"每拍补判"的兜底只认信标，
+        //    于是被信标炸到 0 血的**普通单位**没人判死 ⇒「0 血单位赖在场上」（粉丝报的 `-22`）。
+        //    现在统一走 `collectFieldUnits`（备战席 + 交战区全覆盖，含归属戳）⇒
+        //    **任何单位**血归零却没人判死，都在这一拍被兜住。
+        const board: { side: 'player' | 'enemy'; card: CardData }[] =
+            collectFieldUnits({ playerBench, enemyBench, combatField }).map(u => ({ side: u.side, card: u.card }));
 
-        // ② 【一级·补判决】有信标血已归零却没判死 ⇒ 这一拍漏了 SBA，补跑一次（隔拍结算）
+        // ② 【一级·补判决】有单位血已归零却没判死 ⇒ 这一拍漏了 SBA，补跑一次（隔拍结算）
         if (board.some(({ card }) => !isDowned(card) && hpOf(card) <= 0)) {
-            console.log('[BeaconDebug] 对账器：检出信标血量已归零却未判死 → 补跑一次生死判决（下一拍结算亡语）');
+            console.log('[DeathReconcile] 对账器：检出血量已归零却未判死的单位 → 补跑一次生死判决（下一拍结算亡语）');
             sbaPendingRef.current = true;
             judgeLifeAndDeath();
             return;
         }
 
-        // ③ 【二级·补票】躺下了 + 没人开过票 → 当场补票（「第一时间引爆」的兑现处）
+        // ③ 【二级·补票】躺下了 + 没人开过票 → 当场补票（「第一时间引爆/收尸」的兑现处）
+        //    ⚠️ 范围同样放宽到全场，但**排除幻象死亡**（`ephemeral_dying` 由回合引擎那段单独处理，
+        //       否则同一次死亡会被两边各触发一遍亡语）；ELIMINATED 消亡替换照旧不触发。
         board.filter(({ card }) => isDowned(card)).forEach(({ side, card }) => {
-            if (beaconTicketedRef.current.has(card.id)) return;              // ③ 本器已补过
+            if (card.animState === 'ephemeral_dying') return;                // 幻象：归回合引擎管，别双触发
+            // =====================================
+            // [2026-10-05 莉莉子 BUG修复 · 20261005-05] **已宣判 ⇒ 绝不补票**（幻象/梵音双触发的兜底）
+            // ── `isDead: true` 全项目只有两个写入者：
+            //      ① `judgeUnit`（一判死就盖章 —— 同时也是"死亡票已开"的那一刻）
+            //      ② `UNIT_DIED` 处理器末尾的「尸体盖章」（票被消费、亡语已结算时盖章）
+            //    ⇒ 看到 `isDead` 就等于"这张票已经开过 / 已经结算过"，再补一张就是**亡语结算两遍**。
+            // ── 为什么非加不可：本器上一句的幻象豁免靠 `animState === 'ephemeral_dying'` 识别，
+            //    而 `judgeUnit` 会把幻象**改写成 `'dying'`** ⇒ **豁免失效**；此时幻象尸体只要
+            //    "墓地判据"没兜住（旧快照写回覆盖等），就会被本器**补第二张票** ⇒ 亡语跑两遍
+            //    （珍馐绵羊 / 梵音小队同源症状）。
+            // ── 安全性：全项目只有 `flushMicroQueue` 取出票据时清空队列（`pendingActionsRef.current = []`，
+            //    仅此一处、且取出即全量处理）⇒ 不存在"已宣判却永远无人结算"的丢票场景。
+            // ⚠️ 保留"只有 animState 死亡态、没有 isDead"这一格给本器继续兜底 —— 那才是它存在的意义
+            //    （交战区/备战席被标 `dying` 却没人开票的情形）。
+            // =====================================
+            if (card.isDead) return;                                         // 已开票 / 已结算 ⇒ 不补
+            if (reconcileTicketedRef.current.has(card.id)) return;              // ③ 本器已补过
             if (card.deathType === 'ELIMINATED') return;                     // ④ 消亡替换不触发亡语
             if (hasDeathTicket(pendingActionsRef.current, card.id)) return;  // ② 票已在队列 → 不重复开
             const inGrave = (game.playerGraveyard || []).some(c => c.id === card.id)
                 || (game.enemyGraveyard || []).some(c => c.id === card.id);
             if (inGrave) return;                                             // ① 正常流程已开票并引爆过
 
-            beaconTicketedRef.current.add(card.id);
-            console.log(`[BeaconDebug] 对账器补票：信标(id=${card.id}) 已阵亡却无人开票 → 当场补助引爆（阵营=${side}）`);
+            reconcileTicketedRef.current.add(card.id);
+            console.log(`[DeathReconcile] 对账器补票：${card.name}(id=${card.id}) 已阵亡却无人开票 → 当场补结算（阵营=${side}）`);
             pendingActionsRef.current.push({ type: 'UNIT_DIED', payload: { unit: card, bench: side } });
             flushMicroQueue();                                               // 立刻结算
         });
@@ -2876,7 +3438,28 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         return () => clearTimeout(timer);
     }, [game.pendingChain]);
 
+    // ==========================================
+    // [2026-10-03 莉莉子 · P0 收口] **"等升级播完"的唯一实现已提到 `utils/levelUpDrain.ts`**
+    //   （原先 useGameState 与 useSpellSystem 各抄一份）。这里只做"接线"：
+    //   把本 hook 的 stateRef / setGame / wait 传进去，并支持传入"本场战斗累计预算"。
+    // ==========================================
+    const awaitLevelUpDrain = (tag: string, budget?: { used: number; limit: number }) =>
+        awaitLevelUpDrainCore({
+            readPending: () => {
+                const g = stateRef.current.game;
+                const queueLen = (g.pendingLevelUps || []).length;
+                return { isPending: g.levelUpCard !== null || queueLen > 0, queueLen };
+            },
+            clearLevelUp: () => setGame(prev => ({ ...prev, levelUpCard: null, pendingLevelUps: [] })),
+            wait,
+            tag,
+            budget,
+        });
+
     const runResolveCombatAnimation = async () => {
+        // [2026-10-03 莉莉子 · P0] 本场战斗的**升级等待累计预算**（每一路战斗后的刹车共享它）
+        //   —— 防止"队列被反复填充"时按"单次 20s × 最多 6 路"叠加成分钟级卡顿。
+        const levelUpBudget = makeLevelUpDrainBudget();
         // [2026-09-18 BUG修复] 先让 React 把宣告阶段的 setBench 同步进 stateRef。
         //   进攻宣言的「引爆倒计时」可能把信标打死，但那批 setBench 尚未落到 stateRef，
         //   此处若立刻判死，读到的还是旧快照（信标"还没死"）→ 亡语被推迟到很晚才结算。
@@ -2960,6 +3543,29 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // ==========================================
             // [2026-08-19 莉莉子 连击双段] 单路战斗内每击伤害飘字（含 Mauxir 累积）
             // ==========================================
+            // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01 · **旁支① A 方向**（程 2026-10-06 拍板）]
+            //   记账必须**按实际归属方**：谁的召唤体系打出伤害，就记到**谁**的猫汐尔账上。
+            //   ── 旧写法一律写 `stateRef.current.playerBench` ⇒ **敌方召唤系造成的伤害被记进我方猫汐尔**。
+            //      （卡面文案是「**友方**召唤者和召唤物累计造成 30 点伤害」，友方 = 自己这一方。）
+            //   ── 可达性（已核实）：敌方卡池里有 champion = 猫汐尔的流派
+            //      `new_archetype_1783818542422`「摆完挂机」（6 张猫汐尔 + 图征小队三人，
+            //      `data/enemies/archetypes.ts:172-186`），其召唤系衍生物（珍馐绵羊 / 搜救阿努比斯 /
+            //      清泉医疗鳄，race 均为 `summon`）一动手就会串账。
+            //   ── ⚠️ 既定代价（程已确认）：敌方那张猫汐尔**也会开始正常攒进度**。
+            //   归属推导：`currentFight.owner` = **进攻方**；格挡者属其**对面**（与全项目既有读法一致）。
+            // ⚠️ 本次只覆盖**交战区这三处**（C-1 / C-2 / C-3）。另外几条记账点
+            //   （埋点 A / B-1 / B-2 / 群体 BUFF / 斯瓦莉 +3）仍保留 `owner === 'player'` 门
+            //   ⇒ 敌方猫汐尔目前**只从肉搏攒进度**，不从那些来源攒。**未动，留档**。
+            const accumulateMauxirForSide = (side: 'player' | 'enemy', amount: number) => {
+                if (side === 'player') {
+                    accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, amount, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck, 'player');
+                } else {
+                    accumulateMauxirDamage(stateRef.current.enemyBench, stateRef.current.combatField, amount, setEnemyBench, stateRef.current.enemyHand, setEnemyHand, stateRef.current.enemyDeck, setEnemyDeckState, 'enemy');
+                }
+                // 交战区贴值（该函数已按各自归属方贴各自的值）
+                setCombatField(prev => applyMauxirProgressToField(prev) ?? prev);
+            };
+
             const emitStrikeDamage = (atkDmg: number, blkDmg: number) => {
                 if (atkDmg > 0 && result.updatedFight.attacker) {
                     // [2026-09-19] fromCombat：战斗打击已有专属打击音，默认受击音据此跳过，避免双响
@@ -2967,7 +3573,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     // [修改] 埋点 C-2：防守者造成伤害 (进攻者挨打，说明是防守者造成的物理伤害)
                     if (currentFight.blocker && isSummonerOrSummon(currentFight.blocker)) {
                         const dmg = currentFight.blocker.key === 'Soline_Anubis' ? atkDmg * 2 : atkDmg;
-                        accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, dmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
+                        // 格挡者属「进攻方的对面」
+                        accumulateMauxirForSide(currentFight.owner === 'player' ? 'enemy' : 'player', dmg);
                     }
                 }
                 if (blkDmg > 0 && result.updatedFight.blocker) {
@@ -2975,7 +3582,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     // [修改] 埋点 C-1：进攻者造成伤害 (防守者挨打，说明是进攻者造成的物理伤害)
                     if (isSummonerOrSummon(currentFight.attacker)) {
                         const dmg = currentFight.attacker.key === 'Soline_Anubis' ? blkDmg * 2 : blkDmg;
-                        accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, dmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
+                        // 进攻者属 `currentFight.owner`
+                        accumulateMauxirForSide(currentFight.owner === 'player' ? 'player' : 'enemy', dmg);
                     }
                 }
             };
@@ -3111,9 +3719,17 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // [2026-09-05 莉莉子] 见 commitAttack：STAT_BALANCE 攻击宣言即生效（程拍板），此处跳过防二次触发/闪烁
             // [2026-09-09 莉莉子 重构] 收编统一串行触发引擎：BUFF_SELF handler 直接改写 result.updatedFight 对应侧，
             // 末尾按需单次 setCombatField 提交（替换 index i），删掉原先每 def 一次散装 set。
+            // [2026-10-06 莉莉子] 下面这段「强化成长」与紧随其后的「装备成长」共用这三个事实 ⇒ 提到块外声明
+            const atkUnitId = currentFight.attacker?.id;
+            const blkUnitId = currentFight.blocker?.id;
+            // [2026-10-06 莉莉子 · 审查 Q4 反例] 判据改用**引擎自己的事实** `blockerDidStrike`：
+            //   拿 `attackerDamage > 0` 当代理会**假阳**（荆棘反伤，阻挡者没挥击也 >0）
+            //   也会**假阴**（反击被坚韧减到 0 / 被屏障吸收）⇒ 四支的开关必须读这个事实。
+            const blockerStruck = result.blockerDidStrike === true;
             {
+                const strikeGameSeed = stateRef.current.game; // [既有裂缝①] 差异合并的基线
                 const strikeCtx: RogueTriggerCtx = {
-                    game: { ...stateRef.current.game },
+                    game: { ...strikeGameSeed },
                     playerBench: [...stateRef.current.playerBench],
                     enemyBench: [...stateRef.current.enemyBench],
                     combatField: [],
@@ -3129,30 +3745,45 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 };
                 const preAtk = result.updatedFight.attacker;
                 const preBlk = result.updatedFight.blocker;
-                // 我方攻击者打击后（以战养战）
-                if (currentFight.owner === 'player') {
-                    strikeCtx.owner = 'player';
-                    strikeCtx.trigger = 'after_attack';
-                    runRogueTrigger(strikeCtx, stateRef.current.game.rogueEnhancements, 'after_attack', c => c === 'BUFF_SELF');
+                // ==========================================
+                // [2026-10-06 莉莉子 · 程拍板]**本块重构为「四支对称」**
+                //   口径②：「被打击」= 当阻挡者挨打 **或** 进攻被反击
+                //   旁支②：**阻挡者的反击也算「打击」**
+                //   旁支①：**敌我两侧一视同仁**（原装备侧按"我方"写死 ⇒ 敌方成长装形同装饰）
+                //   ⚠️ 派发必须带 `info.subject` 告诉 handler「**这次是谁**」——
+                //      同一个 trigger 现在有两个可能主体，靠 owner 反推会 buff 到对面单位。
+                // ==========================================
+                const stOwner: 'player' | 'enemy' = currentFight.owner === 'player' ? 'player' : 'enemy';
+                const stOther: 'player' | 'enemy' = stOwner === 'player' ? 'enemy' : 'player';
+                const enhOf = (s: 'player' | 'enemy') =>
+                    (s === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements);
+                const dispatchStrikeEnh = (
+                    side: 'player' | 'enemy',
+                    subject: 'attacker' | 'blocker',
+                    trigger: 'after_attack' | 'after_attacked',
+                ) => {
+                    strikeCtx.owner = side;
+                    strikeCtx.trigger = trigger;
+                    strikeCtx.info = { fight: result.updatedFight, subject };
+                    runRogueTrigger(strikeCtx, enhOf(side), trigger, c => c === 'BUFF_SELF');
+                };
+                // ① 攻击者：**打击**（发起进攻必算）
+                //    [2026-10-06 既有裂缝②收口] 收紧为**存活才发**（被法术预杀 / 僵尸缴械的攻击者没挥击）。
+                //    ⚠️ 诚实标注：handler 与装备侧本来都有存活门 ⇒ 这是**行为等价的写法收紧**，
+                //       不是修一个玩家可见缺陷（收口的意义是"派发点写准，省后人排查")。
+                if (isStrikeTargetAlive(result.updatedFight.attacker)) {
+                    dispatchStrikeEnh(stOwner, 'attacker', 'after_attack');
                 }
-                // 敌方攻击者打击后（狂怒印记）
-                if (currentFight.owner === 'enemy') {
-                    strikeCtx.owner = 'enemy';
-                    strikeCtx.trigger = 'after_attack';
-                    runRogueTrigger(strikeCtx, stateRef.current.game.enemyEnhancements, 'after_attack', c => c === 'BUFF_SELF');
-                }
-                // 我方阻挡者被打击后（以守为攻）：敌方进攻打到我方 blocker
-                if (currentFight.owner === 'enemy' && currentFight.blocker) {
-                    strikeCtx.owner = 'player';
-                    strikeCtx.trigger = 'after_attacked';
-                    runRogueTrigger(strikeCtx, stateRef.current.game.rogueEnhancements, 'after_attacked', c => c === 'BUFF_SELF');
-                }
-                // 敌方阻挡者被打击后（铁壁反击）
-                if (currentFight.owner === 'player' && currentFight.blocker) {
-                    strikeCtx.owner = 'enemy';
-                    strikeCtx.trigger = 'after_attacked';
-                    runRogueTrigger(strikeCtx, stateRef.current.game.enemyEnhancements, 'after_attacked', c => c === 'BUFF_SELF');
-                }
+                // ② 攻击者：**被反击**（真的挨了才算 —— 先攻秒杀 / 对方 0 攻时不发）
+                if (currentFight.blocker && blockerStruck) dispatchStrikeEnh(stOwner, 'attacker', 'after_attacked');
+                // ③ 阻挡者：**被打击**（维持原口径：有 blocker 即算，未额外收紧"必须掉血"）
+                if (currentFight.blocker) dispatchStrikeEnh(stOther, 'blocker', 'after_attacked');
+                // ④ 阻挡者：**反击 = 打击**（旁支②；只有真的挥出才发）
+                if (currentFight.blocker && blockerStruck) dispatchStrikeEnh(stOther, 'blocker', 'after_attack');
+                // [2026-10-06 既有裂缝①收口] 本站点此前**从不回收 `strikeCtx.game`** ⇒
+                //   挂在 after_attack / after_attacked 上的 `oncePerBattle` 账本（`used:` 键）写完即丢。
+                //   按仓库既有写法差异合并提交（与 unit_die 站点 1089 同一出口）。
+                if (strikeCtx.dirty.game) commitDirtyGame(strikeCtx.game, strikeGameSeed);
                 // BUFF_SELF 改写了 updatedFight 对应侧 → 单次提交 index i 处
                 if (result.updatedFight.attacker !== preAtk || result.updatedFight.blocker !== preBlk) {
                     setCombatField(prev => {
@@ -3165,44 +3796,61 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             // ==========================================
             // [2026-08-20 莉莉子] 成长装备 after_attack / after_attacked：打击后/被打击后永久成长
-            // 目标 = 触发单位自身（磨砺之锋：我方攻击者打击后；愈战愈勇：我方阻挡者被打击后）
-            // 须在场存活才成长（与程确认的"装备卡必须在场"语义一致）
+            // [2026-10-06 莉莉子] 与强化侧**同口径、同四支、同归属**（旁支①：补齐敌方两侧）
+            //   ⚠️ 多个事件 / 多件装备必须**合并累加、单次提交**：老写法是每件各
+            //      `applyPermanentBuff(原始对象)` + 各调一次 setCombatField
+            //      ⇒ 同一张卡挂两件成长装时**只有最后一件生效**（模式 A：顶掉）。
+            //      攻击者侧上一批已修；本批把**阻挡者侧**一并修掉（独立审查 Q7-a 反例）。
             // ==========================================
+            const applyEquipGrowth = (
+                unit: CardData | null | undefined,
+                id: string | undefined,
+                events: ('after_attack' | 'after_attacked')[],
+                slot: 'attacker' | 'blocker',
+            ) => {
+                if (!unit || !id || !isStrikeTargetAlive(unit) || events.length === 0) return;
+                // [2026-09-15 莉莉子 BUG修复] 存活判据叠加真实血量（防"被这一击打死仍吃到成长"的变相复活）
+                const growth = events.flatMap(ev => getEquipTriggers(unit, ev)).filter(t => t.target === 'self');
+                if (growth.length === 0) return;
+                const buffed = growth.reduce((acc, t) => applyPermanentBuff(acc, t.power, t.health), unit);
+                setCombatField(prev => prev.map(f =>
+                    (slot === 'attacker' ? f.attacker?.id === id : f.blocker?.id === id)
+                        ? { ...f, [slot]: buffed }
+                        : f));
+            };
+            // ① 攻击者：打击（必有） ＋ 被反击（真的挨了才算）
+            applyEquipGrowth(
+                result.updatedFight.attacker, atkUnitId,
+                currentFight.blocker && blockerStruck ? ['after_attack', 'after_attacked'] : ['after_attack'],
+                'attacker',
+            );
+            // ② 阻挡者：被打击（有 blocker 即算） ＋ 反击（真的挥出才算）
+            if (currentFight.blocker) {
+                applyEquipGrowth(
+                    result.updatedFight.blocker, blkUnitId,
+                    blockerStruck ? ['after_attacked', 'after_attack'] : ['after_attacked'],
+                    'blocker',
+                );
+            }
+            // ── [2026-09-25 莉莉子 任务化框架] 下列任务线**按设计只算我方**，故仍保留"我方"门（未随旁支①放开）──
             if (currentFight.owner === 'player' && result.updatedFight.attacker) {
-                const atkId = currentFight.attacker.id;
-                // [2026-09-15 莉莉子 BUG修复] 与迷宫强化同口径：存活判据叠加真实血量，防"被这一击打死仍吃到成长"的变相复活
-                const atkAlive = isStrikeTargetAlive(result.updatedFight.attacker);
-                getEquipTriggers(result.updatedFight.attacker, 'after_attack').forEach(t => {
-                    if (!atkAlive || !result.updatedFight.attacker || t.target !== 'self') return;
-                    const buffed = applyPermanentBuff(result.updatedFight.attacker, t.power, t.health);
-                    setCombatField(prev => prev.map(f => f.attacker?.id === atkId ? { ...f, attacker: buffed } : f));
-                });
-                // ── [2026-09-25 莉莉子 任务化框架 · 装备线] 此卡打击后推进任务进度；跨过阈值即当场兑现 ──
-                //   ① unit_attack＝本次打击本身 ② unit_kill＝本次打击击杀了单位（result.killedUnits 非空）
-                if (atkAlive) {
+                const atkAliveForQuest = isStrikeTargetAlive(result.updatedFight.attacker);
+                // ① unit_attack＝本次打击本身 ② unit_kill＝本次打击击杀了单位（result.killedUnits 非空）
+                if (atkAliveForQuest) {
                     runGearQuest(result.killedUnits.length > 0 ? ['unit_attack', 'unit_kill'] : 'unit_attack', [result.updatedFight.attacker]);
                 }
                 // ── [2026-09-25 莉莉子 任务化框架 · 武装线] 天启者打击 → 广播给 run 层记账 ──
-                //   整局任务要跨战斗累积；useGameState 拿不到 useRoguelikeRun 的 state → 走事件总线单向广播
                 if (result.updatedFight.attacker?.isChampion) {
                     eventBus.emit(GameEvents.ROGUE_QUEST_EVENT, { event: 'hero_attack' });
-                    // 天启者把伤害打到敌方水晶 → 破晓号令的任务事件（两件事独立计数，故分两次广播）
                     if (result.nexusDamage && result.nexusDamage.target === 'enemy') {
                         eventBus.emit(GameEvents.ROGUE_QUEST_EVENT, { event: 'hero_hit_nexus' });
                     }
                 }
             }
             if (currentFight.owner === 'enemy' && currentFight.blocker && result.updatedFight.blocker) {
-                const blkId = currentFight.blocker.id;
-                const blkAlive = isStrikeTargetAlive(result.updatedFight.blocker); // [2026-09-15 莉莉子 BUG修复] 同口径叠加真实血量
-                getEquipTriggers(result.updatedFight.blocker, 'after_attacked').forEach(t => {
-                    if (!blkAlive || !result.updatedFight.blocker || t.target !== 'self') return;
-                    const buffed = applyPermanentBuff(result.updatedFight.blocker, t.power, t.health);
-                    setCombatField(prev => prev.map(f => f.blocker?.id === blkId ? { ...f, blocker: buffed } : f));
-                });
                 // [2026-09-25 莉莉子 任务化框架 · 装备线] 我方 blocker 挡下一次进攻 → 推进 card_block 任务（誓约之盾）
                 //   语义：能站住接这一击 = 成功格挡一次（被打死的不算）
-                if (blkAlive) runGearQuest('card_block', [result.updatedFight.blocker]);
+                if (isStrikeTargetAlive(result.updatedFight.blocker)) runGearQuest('card_block', [result.updatedFight.blocker]);
             }
             console.log(`[CombatDebug] 第${i+1}/${totalFights}路战斗结束: A=${result.updatedFight.attacker?.key}(HP=${result.updatedFight.attacker ? getHealth(result.updatedFight.attacker) : '—'} state=${result.updatedFight.attacker?.animState})` +
                 ` B=${result.updatedFight.blocker?.key||'无'}(HP=${result.updatedFight.blocker ? getHealth(result.updatedFight.blocker) : '—'} state=${result.updatedFight.blocker?.animState||'—'})` +
@@ -3212,17 +3860,23 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             if (result.nexusDamage) {
                 // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：飘字 amount 同步实际伤害（下方 setGame 扣血已减 1；仅改飘字，内部目睹/强化只看 target）
                 const combatNexusTough = result.nexusDamage.target === 'player' ? !!stateRef.current.game?.playerNexusTough : !!stateRef.current.game?.enemyNexusTough;
-                const combatFinalAmount = combatNexusTough ? Math.max(0, result.nexusDamage.amount - 1) : result.nexusDamage.amount;
-                eventBus.emit(GameEvents.NEXUS_STRIKED, { target: result.nexusDamage.target, amount: combatFinalAmount, fromCombat: true }); // [2026-09-19] 战斗已播水晶打击音，音效层据此跳过
+                // [2026-10-06 程拍板 · 审计收口] **免疫时飘字也归零** —— 不留"打了它却没掉血"的假数字
+                const combatNexusImmune = isNexusImmune(stateRef.current.game, result.nexusDamage.target);
+                const combatFinalAmount = combatNexusImmune ? 0 : (combatNexusTough ? Math.max(0, result.nexusDamage.amount - 1) : result.nexusDamage.amount);
+                if (combatFinalAmount > 0) {
+                    eventBus.emit(GameEvents.NEXUS_STRIKED, { target: result.nexusDamage.target, amount: combatFinalAmount, fromCombat: true }); // [2026-09-19] 战斗已播水晶打击音，音效层据此跳过
+                }
 
                 // ==========================================
                 // [修改] 埋点 C-3：肉搏战水晶伤害统计 (必定是进攻者打水晶)
                 // 无论是空门直击还是碾压溢出，对水晶造成伤害的永远是发起冲锋的 Attacker
                 // ==========================================
                 const nexusSource = currentFight.attacker;
-                if (nexusSource && isSummonerOrSummon(nexusSource)) {
+                // [2026-10-06 程拍板] 免疫 ⇒ **这一笔伤害根本没发生** ⇒ 也不计入召唤系伤害进度（猫汐尔）
+                if (!combatNexusImmune && nexusSource && isSummonerOrSummon(nexusSource)) {
                     const nexusDmg = nexusSource.key === 'Soline_Anubis' ? result.nexusDamage.amount * 2 : result.nexusDamage.amount;
-                    accumulateMauxirDamage(stateRef.current.playerBench, stateRef.current.combatField, nexusDmg, setPlayerBench, stateRef.current.playerHand, setPlayerHand, stateRef.current.playerDeck, setPlayerDeck);
+                    // [2026-10-06 · 旁支① A 方向] 打水晶的永远是发起冲锋的 attacker ⇒ 归属 = `currentFight.owner`
+                    accumulateMauxirForSide(currentFight.owner === 'player' ? 'player' : 'enemy', nexusDmg);
                 }
             }
 
@@ -3511,8 +4165,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 const { target, amount } = result.nexusDamage || { target: 'none', amount: 0 };
                 setGame(prev => {
                     // [2026-08-30 程拍板] 固若金汤坚韧：水晶受击伤害永久 -1（先于屏障应用）
+                    // [2026-10-06 莉莉子 · 审计收口] **不死之身：水晶免疫任何伤害** —— 本站点是
+                    //   "玩家普通进攻 / 碾压溢出"打水晶的**主战斗路径**，此前**完全没查免疫标记** ⇒
+                    //   该 mythic 强化的核心机制（"玩家打不动，只能靠它每回合自扣 5 熬死"）形同虚设。
+                    //   ⚠️ 唯一合法豁免是 NEXUS_SELF_DAMAGE（回合结束自扣，types.ts:294 明文）。
+                    const nexusImmune = target === 'player' ? isNexusImmune(prev, 'player') : target === 'enemy' ? isNexusImmune(prev, 'enemy') : false;
                     const isNexusTough = target === 'player' ? !!prev.playerNexusTough : target === 'enemy' ? !!prev.enemyNexusTough : false;
-                    const toughReduced = isNexusTough ? Math.max(0, amount - 1) : amount;
+                    const toughReduced = nexusImmune ? 0 : (isNexusTough ? Math.max(0, amount - 1) : amount);
                     // [2026-08-27] 固若金汤屏障先挡伤害（屏障值=可挡伤害总量，累积）
                     const barrier = target === 'player' ? (prev.playerNexusBarrier || 0) : target === 'enemy' ? (prev.enemyNexusBarrier || 0) : 0;
                     const blocked = Math.min(barrier, toughReduced);
@@ -3538,8 +4197,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 const { target, amount } = result.nexusDamage;
                 setGame(prev => {
                     // [2026-08-30 程拍板] 固若金汤坚韧：水晶受击伤害永久 -1（先于屏障应用）
+                    // [2026-10-06 莉莉子 · 审计收口] **不死之身：水晶免疫任何伤害** —— 本站点是
+                    //   "玩家普通进攻 / 碾压溢出"打水晶的**主战斗路径**，此前**完全没查免疫标记** ⇒
+                    //   该 mythic 强化的核心机制（"玩家打不动，只能靠它每回合自扣 5 熬死"）形同虚设。
+                    //   ⚠️ 唯一合法豁免是 NEXUS_SELF_DAMAGE（回合结束自扣，types.ts:294 明文）。
+                    const nexusImmune = target === 'player' ? isNexusImmune(prev, 'player') : target === 'enemy' ? isNexusImmune(prev, 'enemy') : false;
                     const isNexusTough = target === 'player' ? !!prev.playerNexusTough : target === 'enemy' ? !!prev.enemyNexusTough : false;
-                    const toughReduced = isNexusTough ? Math.max(0, amount - 1) : amount;
+                    const toughReduced = nexusImmune ? 0 : (isNexusTough ? Math.max(0, amount - 1) : amount);
                     // [2026-08-27] 固若金汤屏障先挡伤害（屏障值=可挡伤害总量，累积）
                     const barrier = target === 'player' ? (prev.playerNexusBarrier || 0) : target === 'enemy' ? (prev.enemyNexusBarrier || 0) : 0;
                     const blocked = Math.min(barrier, toughReduced);
@@ -3615,6 +4279,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             //   judgeLifeAndDeath 是幂等的（`if (c.isDead) return c` 已宣判即跳过），重复调用安全；
             //   它的亡语分支是同步 processEffect，所以在这里调用 = 亡语当场结算。
             judgeLifeAndDeath();
+
+            // ==========================================
+            // [2026-10-03 莉莉子 · A] **每一路战斗后都刹车等升级播完**
+            //   程拍板：「升级影片可以在战斗演出期间插播，而且会**暂停当前的战斗演出**，
+            //   直到天启者升级动画（包括影片）完整播放完毕，再接着播放战斗演出。」
+            //   旧实现把刹车片放在**整场战斗的末尾**（循环外）⇒ 中途达成的升级要等所有对战打完，
+            //   正好就是程说的"要等战场所有对战结束…才播放升级动画升级"。
+            //   ⇒ 现在挪进循环内：本路结算（含上面刚判的亡语/升级）后立刻刹车，播完再进下一路。
+            // ==========================================
+            await awaitLevelUpDrain('resolveCombatAnimation:每路战斗后', levelUpBudget);
         }
 
         // 3. 战斗结束清理
@@ -3649,22 +4323,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 任何机制导致的升级，都会体现为 pendingLevelUps 队列中有号或 levelUpCard 正在播放。
         // 主程序在此必须死锁挂起，绝对不准摧毁交战区 DOM，给足 UI 部门抓取物理卡牌演出的时间！
         // ==========================================
-        // [2026-08-30 莉莉子 死锁护栏] 刹车片加超时上限，杜绝升级影片挂起导致的无限死锁
-        const levelUpQueueLen = (stateRef.current.game.pendingLevelUps || []).length;
-        const levelUpWaitLimit = Math.max(20000, levelUpQueueLen * 12000); // 单英雄20s，每多一个英雄+12s
-        let levelUpWaitMs = 0;
-        while (
-            stateRef.current.game.levelUpCard !== null ||
-            (stateRef.current.game.pendingLevelUps && stateRef.current.game.pendingLevelUps.length > 0)
-        ) {
-            if (levelUpWaitMs >= levelUpWaitLimit) {
-                console.warn(`[resolveCombatAnimation] ⏱️ 升级等待超时(${levelUpWaitLimit}ms)，强制清空升级队列放行，防止死锁`);
-                setGame(prev => ({ ...prev, levelUpCard: null, pendingLevelUps: [] }));
-                break;
-            }
-            await wait(200);
-            levelUpWaitMs += 200;
-        }
+        // [2026-10-03 莉莉子 · 收口] 抽成共用函数 `awaitLevelUpDrain`（原先这段在 useGameState 与
+        //   useSpellSystem 各抄了一份）⇒ 以后"等升级播完"只有一处实现。
+        await awaitLevelUpDrain('resolveCombatAnimation:整场收尾', levelUpBudget);
 
         // ✨ [2026-07-16] 等待 BUFF 特效动画播放完毕再归位
         if (stateRef.current.combatField.some(f =>
@@ -3685,25 +4346,13 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         ));
 
         finalField.forEach(f => {
-            // [新增] 辅助函数：处理 CantAttack 单位的攻击力恢复与内存清理
+            // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 【无法攻击】账本收尾 → 统一走唯一出口
+            //   · 幸存者：带真实面板回归备战席
+            //   · 战死者：只销账（还原值不用 —— 尸体照样按阵亡处理），账本绝不能留
             const processCantAttack = (unit: CardData, isSurvivor: boolean): CardData => {
-                if (unit.keywords.includes('CantAttack')) {
-                    const orig = cantAttackOrigPowerRef.current.get(unit.id);
-                    if (orig) {
-                        if (isSurvivor) {
-                            // 若存活，归还真实的攻击力面板
-                            unit = {
-                                ...unit,
-                                power: orig.power,
-                                buffs: unit.buffs ? { ...unit.buffs, power: orig.buffsPower } : undefined,
-                                roundBuffs: unit.roundBuffs ? { ...unit.roundBuffs, power: orig.roundBuffsPower } : undefined,
-                            };
-                        }
-                        // 无论生死，打完架都要销毁账本，绝不留内存泄漏隐患！
-                        cantAttackOrigPowerRef.current.delete(unit.id);
-                    }
-                }
-                return unit;
+                if (!(unit.keywords || []).includes('CantAttack')) return unit;
+                const restored = restoreCantAttackPower(unit);
+                return isSurvivor ? restored : unit;
             };
 
             // [关键修复] 严防死守：普通死亡和瞬息死亡都绝对不能进入幸存者名单！
@@ -3794,9 +4443,20 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // [剥离裁判权] 胜负判定已交由全局的”智能裁判(useEffect)”处理，确保多单位进攻时能爽快地鞭尸！
 
         // 归位
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-15] **标识结算必须读"本次战斗的快照"，不能读 stateRef**
+        // ── 症状（程实测）：仅卜卜进攻时进攻标识**不被消耗** ⇒ 可以无限进攻。
+        // ── 病根：下面这个 `setGame(prev => …)` 的**回调被 React 延迟到渲染时才执行**，
+        //     而本函数末尾（战斗收尾 `:4188/:4204`）会**同步**执行 `setCombatField([])` 与
+        //     `stateRef.current.combatField = []`（2026-10-05 为修「归零还原」加的手动同步）
+        //     ⇒ 等回调真正跑时 `stateRef.current.combatField` **已是空数组**
+        //     ⇒ `attackerOwner = null` ⇒ **"消耗标识"整段被跳过** ⇒ 标识留着 ⇒ 同一回合可反复进攻。
+        // ── 修法：在**清空之前**先抓一份参战快照，回调里只读快照（数组元素本身没被改动，取引用即可）。
+        // =====================================
+        const combatSnapshotForSettle = [...stateRef.current.combatField];
         setGame(prev => {
             // [修正] 战斗后只消耗发起进攻一方的 Token
-            const currentFights = stateRef.current.combatField;
+            const currentFights = combatSnapshotForSettle;
             const attackerOwner = currentFights.length > 0 ? currentFights[0].owner : null;
 
             const nextAttackToken = { ...prev.attackToken };
@@ -3807,20 +4467,61 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             //      与额外攻击落进同一场结算）会照常消耗标识，这才是对的。
             //   ⚠️ 标识原本为 null 时不「恢复」⇒ 不会凭空白送一个进攻权。
             let keepAttackInitiative = false;
+            let scoutUsed = false; // [2026-10-03] 本次结算是否用掉了「侦察·每回合首次」→ 折进返回对象统一落库
+            // [2026-10-06 独立审查修复 · 序号泄漏] 本次结算要落库的**授予账本**。
+            //   ⚠️ 旧写法（我刚写的那版）只把 `granted.attackToken` 抄回来，**`tokenGrantSeq` 被丢弃** ⇒
+            //      账本永远看不到这次授予 ⇒ 检测器不发、块 B 又只管 normal ⇒ **0 次派发**
+            //      —— 正是程报的那条（格挡回合侦察给标识 → 安卡不给月轮）。
+            const tokenGrantSeqOut = { player: 0, enemy: 0, ...(prev.tokenGrantSeq ?? {}) };
             if (attackerOwner) {
                 const allExtraAttacks = currentFights.every(f =>
                     f.attacker?.key === 'Acacia_Flying_Sword' || f.attacker?.key === 'Acacia_Great_Sword'
                     || !!f.isExtraAttack
                 );
+                // ==========================================
+                // [2026-10-03 莉莉子 · 进攻标识三层分离 ③④]
+                //   ③ 额外攻击（飞剑 / 猎影标记 / 丁型异化人）：**不消耗**标识 → 保留原样、且**不新增**
+                //   ④ 侦察（`Scout`：每回合首次仅用侦察单位进攻 ⇒ 进攻后再获得一次进攻机会）：
+                //      · **额外攻击也算"使用侦察单位进攻"** ⇒ 同样能触发（R4，程 2026-10-03 拍板）
+                //      · 「每回合首次」改用**显式标记** `scoutUsedThisRound`，不再拿 token 值当代理指标
+                //        （老实现判 `token === 'normal'` ⇒ 备战把 token 改写成 `rally` 后，
+                //          侦察的额外机会会被**误判成"已用过"而吞掉**）
+                // ==========================================
+                const allScout = currentFights.every(f => f.attacker?.keywords?.includes('Scout'));
+                const scoutFresh = allScout && !stateRef.current.game.scoutUsedThisRound?.[attackerOwner];
+                scoutUsed = scoutFresh; // 交给下方返回对象落库（⚠️ 不可在 updater 内再调 setState）
+                // =====================================
+                // [2026-10-05 莉莉子 · BUG 取证日志]（查完可删）
+                //   程实测：**仅卜卜进攻时进攻标识不被消耗 ⇒ 可无限进攻**
+                //   本行把"标识结算"的输入与判定一次性打出来，复现一次即可定案：
+                //     参战条数 / 各条 key+是否额外攻击 / allExtraAttacks / allScout / 消耗前后的标识
+                console.log(`[AttackTokenSettle] 参战=${currentFights.length} [${currentFights.map(f => `${f.attacker?.key}${f.isExtraAttack ? '(extra)' : ''}`).join(' | ')}] allExtra=${allExtraAttacks} allScout=${allScout} scoutFresh=${scoutFresh} tokenBefore=${prev.attackToken[attackerOwner] ?? 'null'}`);
+                // =====================================
                 if (allExtraAttacks) {
                     keepAttackInitiative = true; // [修复] 额外攻击：保留进攻权 → 攻击方继续行动
                     // 额外攻击：保留进攻标识不变
-                    console.log(`[额外攻击] 本次结算全为额外攻击（飞剑/猎影标记），保留进攻标识 ${nextAttackToken[attackerOwner]}`);
+                    console.log(`[额外攻击] 本次结算全为额外攻击（飞剑/猎影标记/异化人），保留进攻标识 ${nextAttackToken[attackerOwner]}`);
+                    if (scoutFresh) {
+                        const granted = grantExtraAttackTurn({ ...prev, attackToken: nextAttackToken }, attackerOwner, '额外攻击·侦察');
+                        nextAttackToken.player = granted.attackToken.player;
+                        nextAttackToken.enemy = granted.attackToken.enemy;
+                        // [审查修复] 授予序号一并带回（否则这次授予对账本不可见）
+                        if (granted.tokenGrantSeq) {
+                            tokenGrantSeqOut.player = granted.tokenGrantSeq.player;
+                            tokenGrantSeqOut.enemy = granted.tokenGrantSeq.enemy;
+                        }
+                    }
                 } else {
                     // 正常战斗：消耗进攻标识
-                    const allScout = currentFights.every(f => f.attacker?.keywords?.includes('Scout'));
-                    if (allScout && nextAttackToken[attackerOwner] === 'normal') {
-                        nextAttackToken[attackerOwner] = 'rally';
+                    if (scoutFresh) {
+                        const granted = grantExtraAttackTurn({ ...prev, attackToken: nextAttackToken }, attackerOwner, '侦察');
+                        nextAttackToken.player = granted.attackToken.player;
+                        nextAttackToken.enemy = granted.attackToken.enemy;
+                        // [审查修复] 同上：这是**程报的那条**路径（侦察给标识），序号绝不能丢
+                        if (granted.tokenGrantSeq) {
+                            tokenGrantSeqOut.player = granted.tokenGrantSeq.player;
+                            tokenGrantSeqOut.enemy = granted.tokenGrantSeq.enemy;
+                        }
                     } else {
                         nextAttackToken[attackerOwner] = null;
                     }
@@ -3828,8 +4529,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
 
             // [核心新增] 结算并下发战斗中因词条触发的【备战】(Rally) 令牌
+            // [2026-10-06 程拍板 · 序号去重] 这是**绕过唯一出口**（`grantExtraAttackTurn`）的另一处 rally 写入
+            //   ⇒ 也要打授予序号；否则"战斗中因词条触发的备战"不会派发 ON_GET_ATTACK_TOKEN（安卡不给月轮）。
+            // [2026-10-06 独立审查修复] 与唯一出口**同口径**：**已有标识 ⇒ 不算"获得"** ——
+            //   ① 不改写类型（旧的无条件写 `'rally'` 会把 `'normal'` 覆盖掉，正是 10-03「三层分离①」
+            //      要根治的"污染侦察判据"）；② 不打序号（没有"获得时"可触发，否则会二次派发）。
             ralliedOwners.forEach(owner => {
+                if (nextAttackToken[owner]) return; // 已持标识 ⇒ 既不改写、也不计数
                 nextAttackToken[owner] = 'rally';
+                tokenGrantSeqOut[owner] = (tokenGrantSeqOut[owner] ?? 0) + 1;
             });
 
             return {
@@ -3850,6 +4558,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     return otherSide; // 对方仍持剑→对方；双方无剑→常规让渡进攻方对手
                 })(),
                 attackToken: nextAttackToken,
+                // [2026-10-06 程拍板 · 序号去重] 本次结算产生的授予序号（侦察 / 额外攻击·侦察 / 战斗备战）
+                tokenGrantSeq: tokenGrantSeqOut,
+                // [2026-10-03 莉莉子 · ④] 侦察「每回合首次」标记落库（回合边界由 calculateRoundStart 清零）
+                ...(scoutUsed && attackerOwner
+                    ? { scoutUsedThisRound: { ...(prev.scoutUsedThisRound ?? { player: false, enemy: false }), [attackerOwner]: true } }
+                    : {}),
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now()
             };
@@ -3862,9 +4576,29 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             console.log(`[LILITH-DEBUG][SURVIVOR] 镜爻卜卜作为幸存者回归备战席! P=${mirP.length} E=${mirE.length}`);
         }
 
-        setPlayerBench(prev => [...prev, ...buffedSurvivorsP]);
-        setEnemyBench(prev => [...prev, ...buffedSurvivorsE]);
+        // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] **归位这一刻必须再贴一次值**：
+        //   猫汐尔本人在交战区打完回来时，带回来的是**交战区那份实例**，
+        //   它的 `mauxirDamage` 镜像可能还是旧的 ⇒ 不贴这一次，进度就会一直停在旧值
+        //   （旧实现里这一笔是**永久丢失**：交战区从不被扫 + 归位覆盖回旧实例）。
+        setPlayerBench(prev => applyMauxirProgress([...prev, ...buffedSurvivorsP], 'player') as CardData[]);
+        setEnemyBench(prev => applyMauxirProgress([...prev, ...buffedSurvivorsE], 'enemy') as CardData[]);
         setCombatField([]);
+
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-03] **归位后立刻手动同步 stateRef**（本条 BUG 的根因位）
+        // ── 病根：上面三句 setState 是**异步入队**，而外层 `resolveCombatAnimation` 的 `finally`
+        //    紧接着**同步**执行、靠 `stateRef.current.game.phase === 'animating'` 判断"要不要应急归位"。
+        //    那一刻 stateRef 还是**提交前**的旧快照（phase=animating、交战区还挂着整场人）
+        //    ⇒ 应急归位**每次战斗都会触发**：`recoverCombatSurvivors` 拿旧交战区里的卡片对象
+        //    （【无法攻击】单位是**已归零**的那一份）覆盖式写回备战席
+        //    —— 其 `filter(去掉同 id) + append` 恰好把刚刚还原好的幸存者按 id 顶掉
+        //    ⇒「攻击力还原」被静默抹回 0（程实测：基座主动进攻 → 结算完成 → 回备战席仍是 0）。
+        //    ⚠️ 顺带被抹掉的还有战斗中产生的面板变化（POST_COMBAT buff 等），同源。
+        // ── 修法就是项目里既有的惯例：**手动同步 stateRef**（与 resolveChoice 那处同类注释一致）。
+        //    只同步 finally 判定所需的两项，最小改动面。
+        // =====================================
+        stateRef.current.game = { ...stateRef.current.game, phase: 'main' as const };
+        stateRef.current.combatField = [];
     };
 
     // ==========================================
@@ -3906,7 +4640,7 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             }
             // [新增] 法术堆栈非空时，只能打出法术响应，不能出单位
             if (stateRef.current.game.spellStack.length > 0 && card.type.includes('unit')) {
-                setMessage("法术响应中，无法派出单位！");
+                setMessage("法术响应中，无法打出单位！");
                 return;
             }
             // [2026-07-16 修复] 战斗阶段不能打出单位卡牌（安全兜底）
@@ -3914,11 +4648,28 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const isCombatPhase = stateRef.current.game.phase === 'attack_declare' || stateRef.current.game.phase === 'block_declare' || stateRef.current.game.phase === 'react_to_block';
             if (isCombatPhase) {
                 if (card.type.includes('unit')) {
-                    setMessage("战斗阶段无法派出单位！");
+                    setMessage("战斗阶段无法打出单位！");
                     return;
                 }
                 if (card.type === 'spell-slow') {
                     setMessage("战斗阶段无法施放慢速法术！");
+                    return;
+                }
+            }
+            // [2026-10-02 莉莉子 BUG修复] 慢速法术的**回合归属**缺失 ⇒ 越权施放。
+            //   病根：原守卫只查「是不是战斗阶段」，没查「是不是自己的回合」。
+            //   于是玩家可以在**对方的回合主阶段**打出慢速法术，甚至能在对方打出快速/慢速法术、
+            //   堆栈还没结算时跟着甩一张慢速法术 —— 与「极速 > 快速 > 慢速」的时序设计相悖。
+            //   粉丝原话：「慢速只能在自己回合用」/「你这慢速法术就是可以跟对面的慢速法术一起用的」/
+            //             「我甚至能在对面放快速法术的时候放慢速法术」。
+            //   ⚠️ 本守卫位于 `owner === 'player'` 分支内，AI（enemy）施法路径不受影响。
+            if (card.type === 'spell-slow') {
+                if (stateRef.current.game.turnOwner !== owner) {
+                    setMessage("慢速法术只能在自己回合施放！");
+                    return;
+                }
+                if (stateRef.current.game.spellStack.length > 0) {
+                    setMessage("法术响应中，无法施放慢速法术！");
                     return;
                 }
             }
@@ -3937,7 +4688,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             );
             const hasLv2 = champBench.some(c => c.key === champKey && c.level === 2)
                 || champCombat
-                || stateRef.current.game.leveledChampions.includes(champKey);
+                // [2026-10-04 莉莉子 BUG修复 · I5] 按方判定：原先读全局 `leveledChampions`
+                //   ⇒ 镜像对局里"敌方英雄练到 Lv2"会把我方同名英雄法术的大招一并解锁（跨侧泄漏）
+                || isLeveledUpForSide(stateRef.current.game, owner, champKey);
 
             // [修改 1：拔剑留鞘修复] 在弹窗瞬间，立刻把这张 0 费英雄法术从手牌里没收暂存！
             if (owner === 'player') {
@@ -3953,7 +4706,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     cardId: card.id,
                     step: 'choose_mode',
                     targets: [],
-                    isHeroLeveled: hasLv2 // [关键] 告知 UI 英雄是否已升级，用于锁定大招显示
+                    isHeroLeveled: hasLv2, // [关键] 告知 UI 英雄是否已升级，用于锁定大招显示
+                    // [2026-10-02 莉莉子 BUG修复] 显式记录抉择归属方。
+                    //   此前 UI 用 `turnOwner === 'enemy'` 猜"这是不是 AI 的抉择"，
+                    //   而玩家可在对方优先权阶段（如玩家进攻→格挡阶段）打出极速抉择法术，
+                    //   导致玩家自己的弹窗被锁死（点不动/取消不掉）⇒ 卡死。
+                    choiceOwner: owner
                 }
             }));
             setMessage(hasLv2 ? "请选择要施放的法术模式" : "选择法术施放（升级后可解锁大招）");
@@ -3995,10 +4753,19 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         // 修复：双重扣费BUG
         // 只有【单位卡】在这里立即扣费并更新状态。
         if (isUnit) {
+            // [2026-10-04 莉莉子 · AI 停机保护性修复 · P6] 原用**闭包里的 game** 取法力，而调用方
+            //   （AI 侧）可能持有 1.5s 前的 game/actions 快照 ⇒ 这期间新涨的法力会被下面那句
+            //   绝对赋值 `Math.min(maxMana, newMana)` 直接覆盖掉（AI 静默少费 / 多扣）。
+            //   改为读 stateRef 里的最新快照 ⇒ **跨 commit 的陈旧**被消除。
+            //   ⚠️ 但这仍是"在 updater 之外算好的绝对值"（2026-10-04 独立审查 #13）：
+            //      同一批次里若还有别的法力写入，仍会被这一句覆盖；且 stateRef 本身由 effect 刷新，
+            //      也不是严格意义的"当下真值"。彻底根治要把计算挪进 updater —— 属更大改动，本次不做，
+            //      已记入 技术手册/现状-敌人AI停机排查 的缺口表。
+            const manaNow = stateRef.current.game;
             const { newMana, newSpellMana } = calculateNewMana(
                 card.cost,
-                owner === 'player' ? game.playerMana : game.enemyMana,
-                owner === 'player' ? game.playerSpellMana : game.enemySpellMana,
+                owner === 'player' ? manaNow.playerMana : manaNow.enemyMana,
+                owner === 'player' ? manaNow.playerSpellMana : manaNow.enemySpellMana,
                 true // isUnit = true
             );
 
@@ -4121,10 +4888,16 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             (pulsedCard as any).pulseValue = totalPulse; // 用于 +N 飘字显示
 
             // 门：直送交战区
+            // [2026-10-03 莉莉子 · 进攻标识三层分离 ③ · R3] 「额外攻击」语义 = **不看、也不消耗**进攻标识。
+            //   老实现是 `attackToken: { ...prev.attackToken, player: 'normal' }` —— 那是"**白送一个普通标识**"，
+            //   于是**非奇偶方**也能靠它抢攻、且**不需要任何备战** ⇒ 粉丝报的"没有备战也会连续进攻"的来源之一。
+            //   现在改为给战线打 `isExtraAttack`：回合末结算走 `allExtraAttacks ⇒ keepAttackInitiative`（**不消耗**原标识），
+            //   与猎影标记 / 飞剑完全同一条口径。
             setCombatField(prev => [...prev, {
                 attacker: pulsedCard as CardData,
                 blocker: null,
                 owner: 'player',
+                isExtraAttack: true,
             }]);
 
             // 切换到攻击宣告阶段，让玩家选择挑战目标
@@ -4133,7 +4906,6 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 phase: 'attack_declare' as const,
                 turnOwner: 'player' as const,
                 activeCard: null,
-                attackToken: { ...prev.attackToken, player: 'normal' as const },
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now(),
             }));
@@ -4186,10 +4958,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
             // 直送交战区（带预选挑战目标）
             // [2026-09-19 BUG修复] 预选格挡者若是「无法进攻」单位，同样归零（第三条漏网路径）
+            // [2026-10-03 莉莉子 · R3] 同玩家侧：额外攻击**不看也不消耗**标识 ⇒ 打 `isExtraAttack`，不再白送 normal
             setCombatField(prev => [...prev, {
                 attacker: pulsedCard as CardData,
                 blocker: chosenBlocker ? applyCantAttackZeroPower(chosenBlocker) : null,
                 owner: 'enemy',
+                isExtraAttack: true,
             }]);
 
             setGame(prev => ({
@@ -4197,7 +4971,6 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 phase: 'block_declare' as const,
                 turnOwner: 'player' as const,
                 activeCard: null,
-                attackToken: { ...prev.attackToken, enemy: 'normal' as const },
                 consecutivePasses: 0,
                 lastActionTimestamp: Date.now(),
             }));
@@ -4300,7 +5073,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
                 // [2026-08-11 莉莉子] 迷宫强化 打出单位三时机（on_summon 机不可失/暗影双生、on_play_unit 军势鼓舞/传承武备/锋锐补给/万夫莫敌、on_first_play_unit 先锋之锐）
                 // [2026-08-19 莉莉子] 预存"本回合是否首个打出单位"（先锋之锐用，避免被暗影双生改写标记后失效）
-                const isFirstUnitPlayedThisRound = !tempGame.rogueFirstSummonDone;
+                // [2026-10-06 程拍板 · 审计收口 · 模式 B] **按打出方读**：这个闸门是"**该侧**本回合首个打出单位"
+                //   （原先读共用布尔 ⇒ 玩家先出单位那回合，敌方的「斩杀协议」就吃不到）
+                const isFirstUnitPlayedThisRound = !tempGame.rogueFirstSummonDone?.[owner];
                 // [2026-09-09 莉莉子 重构] 收编进统一串行触发引擎：同一份工作快照（tempXxx）上按 owner 串行跑三个 trigger。
                 // bench/field 直接引用 temp 数组（尾部统一 setX 提交）；hand/deck 为副本，脏即单独 setX；
                 // 暗影双生改写 rogueFirstSummonDone → 收尾把 playCtx.game 同步回 tempGame。
@@ -4323,7 +5098,33 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     };
                     runRogueTrigger(playCtx, enhList, 'on_summon');
                     runRogueTrigger(playCtx, enhList, 'on_play_unit');
-                    if (isFirstUnitPlayedThisRound) runRogueTrigger(playCtx, enhList, 'on_first_play_unit');
+                    if (isFirstUnitPlayedThisRound) {
+                        // [2026-10-05 莉莉子 BUG修复 · 20261005-09] **补上 `on_first_summon` 的分发**
+                        //   ── 病根（查本条时连带查出）：「暗影双生」用的就是这个 trigger（`buffs.ts:175`），
+                        //      而全项目**从来没有任何地方分发过它** ⇒ 这条传说强化**一次都没生效过**。
+                        //      它同时也是 `rogueFirstSummonDone` 的**唯一写入者** —— 正是下一条症状的成因。
+                        runRogueTrigger(playCtx, enhList, 'on_first_summon');
+                        runRogueTrigger(playCtx, enhList, 'on_first_play_unit');
+                        // =====================================
+                        // [2026-10-05 莉莉子 BUG修复 · 20261005-09] **必须消费掉"本回合首个打出单位"这个时机**
+                        // ── 程实测：芬妮神格①「聚光灯下」+2/+0 / ③「全场焦点」+4/+0【碾压】、强化「先锋之锐」+2/+0
+                        //    （以及敌方「斩杀协议」）卡面写的是"每回合**首个**打出的单位"，实际却
+                        //    **每回合每个打出的单位都吃加成**。
+                        // ── 病根：上面那个闸门读 `game.rogueFirstSummonDone`，而此前**只有暗影双生的处理器会写它**
+                        //    （而它又从不触发，见上）⇒ 不持有暗影双生时该标记**整回合恒为 false**
+                        //    ⇒ `isFirstUnitPlayedThisRound` 对每一个打出的单位都成立。
+                        // ── 修法：分发完就无条件把时机标记为已消费。判定值用的是上面**预存**的那个
+                        //    （顺序与语义都不动）⇒ **本回合首个单位该吃的加成照吃**，第二个起才不再吃。
+                        // ── 字段语义由此明确为「本回合的『首个打出单位』时机是否已消费」——
+                        //    暗影双生卡面写的也正是"每回合首次**打出的**单位"，二者本就同源（见 `types.ts` 注释）。
+                        // =====================================
+                        if (!playCtx.game.rogueFirstSummonDone?.[owner]) {
+                            playCtx.game = {
+                                ...playCtx.game,
+                                rogueFirstSummonDone: { ...(playCtx.game.rogueFirstSummonDone || {}), [owner]: true },
+                            };
+                        }
+                    }
                     // 同步回局部变量（CLONE/RANDOM 等已原地改写 temp 数组元素）
                     tempPlayerBench = playCtx.playerBench;
                     tempEnemyBench = playCtx.enemyBench;
@@ -4343,10 +5144,15 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     }
                     card.effects.forEach(effId => {
                         const def = EFFECT_DB[effId];
+                        // [2026-10-06 程拍板 · 时机口径统一] 这里是**从手牌打出**的路径 ⇒
+                        //   两条时机都放行：「入场」(`ON_PLAY`) **和**「打出时」(`ON_PLAY_FROM_HAND`)。
+                        //   （而"被召唤到战场"的路径只该放行「入场」——见 `isEntryTiming` 的注释。）
+                        //   ⚠️ 旧写法 `def.timing.includes('ON_PLAY')` 是子串匹配，会把两条混在一起。
+                        const onPlayMatched = isEntryTiming(def?.timing) || isPlayFromHandTiming(def?.timing);
                         if (card.key === 'Spirit_Squad_Snenika') {
-                            console.log(`[SpiritDebug]  检查效果 ${effId}: timing=${def?.timing}, 匹配ON_PLAY=${def?.timing?.includes('ON_PLAY')}`);
+                            console.log(`[SpiritDebug]  检查效果 ${effId}: timing=${def?.timing}, 匹配ON_PLAY=${onPlayMatched}`);
                         }
-                        if (def && def.timing.includes('ON_PLAY')) {
+                        if (def && onPlayMatched) {
                             const ctx: EffectContext = {
                                 game: tempGame,
                                 playerBench: tempPlayerBench,
@@ -4357,7 +5163,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                                 enemyDeck: stateRef.current.enemyDeck,   // [新增] 把敌方牌库喂进去！
                                 combatField: tempCombatField, // [核心修正] 这里也要改为用 tempCombatField，确保连环战吼数据一致
                                 owner: owner,
-                                sourceCard: card // [关键] 把登场单位作为源卡牌传进去，供复印机或条件扫描器识别
+                                sourceCard: card, // [关键] 把登场单位作为源卡牌传进去，供复印机或条件扫描器识别
+                                // [2026-10-05 莉莉子 BUG修复] 补传 `createFullCard`（露米「时序加速」飞剑2 走这里）——
+                                //   否则飞剑补跑的 `on_summon` 整段被跳过（同 :1764 站点）
+                                createFullCard,
                             };
 
 
@@ -4470,8 +5279,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 }
 
                 // [能力] 触发 ON_PLAY 类能力的闪光
+                //   [2026-10-06 程拍板 · 时机口径统一] 本块位于**从手牌打出**的路径 ⇒
+                //   「入场」(`on_play`) 与「打出时」(`on_play_from_hand`) 的能力都要闪。
                 const flashOnPlay = (bench: any[]) => bench.map((c: any) => {
-                    if (c.ability && c.ability.trigger === 'on_play' && c.abilityState === 'breathing') {
+                    if (c.ability && (c.ability.trigger === 'on_play' || c.ability.trigger === 'on_play_from_hand') && c.abilityState === 'breathing') {
                         const updated = { ...c, abilityState: 'flashing' as const };
                         // 动画后转入终态
                         setTimeout(() => {
@@ -4501,7 +5312,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     const ownerHand = owner === 'player'
                         ? stateRef.current.playerHand
                         : stateRef.current.enemyHand;
-                    const echoResult = applyEchoOnPlay(card, ownerHand, owner);
+                    // [2026-10-08 第二波 · Q5] 单位侧同口径：复制品继承装备（玩家=rogueEquipments / 敌方=enemyEquipments）
+                    const echoResult = applyEchoOnPlay(card, ownerHand, owner, (owner === 'player' ? rogueEquipments : enemyEquipments)?.[card.key]);
                     if (echoResult.echoedCards.length > 0) {
                         if (owner === 'player') {
                             setPlayerHand(echoResult.hand);
@@ -4522,9 +5334,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     }
                 }
 
-                // [2026-08-12 装备系统] 打出时装备效果：对敌方备战席所有单位造成伤害（装备3·备战爆破）
-                const equipEnemyBench = executeEquipmentOnPlay(tempEnemyBench, card);
-                if (equipEnemyBench) tempEnemyBench = equipEnemyBench;
+                // [2026-08-12 装备系统] 打出时装备效果：对**敌方**备战席所有单位造成伤害（装备「备战爆破」）
+                // [2026-10-04 莉莉子 BUG修复] 原实现**硬编码传 `tempEnemyBench`** —— 而这里是
+                //   玩家与 AI **共用**的通用 ON_PLAY 路径 ⇒ **AI 打出时炸的是它自己那侧**
+                //   （粉丝：「AI 的单位自己携带这个装备时，都会打自己」）。
+                //   现改为传「双方席位 + owner」，目标侧由 executeEquipmentOnPlay 内部按 owner 推导
+                //   ⇒ 「打哪一侧」的判断**只此一处**，两个调用点都不再有机会传错。
+                const equipStruck = executeEquipmentOnPlay(
+                    { playerBench: tempPlayerBench, enemyBench: tempEnemyBench },
+                    card,
+                    owner,
+                );
+                if (equipStruck) {
+                    if (equipStruck.side === 'player') tempPlayerBench = equipStruck.bench;
+                    else tempEnemyBench = equipStruck.bench;
+                }
 
                 // 3. 统一将上场与战吼的结果拍板，下发给 React 渲染层
                 setPlayerBench(tempPlayerBench);
@@ -4562,6 +5386,17 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const passTurn = () => {
         const g = stateRef.current.game; // [2026-07-16 修复] 用 stateRef 避免闭包陷阱
         console.log(`[passTurn] 被调用 — spellStack=${g.spellStack.length} consecutivePasses=${g.consecutivePasses} phase=${g.phase} turnOwner=${g.turnOwner}`);
+        // ==========================================
+        // [2026-10-03 莉莉子 BUG修复 · BUG-20261002-26] 校准面板未确认 ⇒ 禁止推进回合 / 翻转优先权
+        //   · 病根：`calibratePending` 此前只被「主倒计时暂停」（GameSession）与「AI 自身校准」两处认了，
+        //     **回合推进这条线完全没认** ⇒ 面板还开着，回合被推过去 ⇒ 对手直接开始行动。
+        //   · 这里补的正是缺失的那一处 —— 与倒计时**同口径**（同一语义只留一处判据：面板开着就是全局阻塞）。
+        //   · 不会死锁：面板必有出口（玩家确认 / AI 面板 1.5s+0.8s 自动确认）。
+        // ==========================================
+        if (g.calibratePending) {
+            console.log('[passTurn][校准守卫] 校准面板未确认，passTurn 无效');
+            return;
+        }
         // [2026-08-24 莉莉子 飞剑竞态根治] 交战区仍有飞剑时，passTurn 绝不推进回合/翻转优先权/结束回合。
         // 飞剑是"额外攻击"，其生命周期（召唤→格挡→打击→归位）内回合结束检测不得介入。
         // [2026-09-26 T17 猎影标记] 同构扩展：法术装配的额外攻击（战线上 `isExtraAttack`）走同一条守卫 ——
@@ -4666,6 +5501,24 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             setCombatField(prev => [...prev, { attacker: finalCard, blocker: null, owner: 'player' }]);
         } else {
             eventBus.emit(GameEvents.SFX_RECALL_BLOCK);
+
+            // =====================================
+            // [2026-10-02 莉莉子 BUG修复 · 🔥恶性] 撤回进攻时必须**先把 blocker 退回它自己的半场**
+            // ── 病根：原实现 `prev.filter(c => c.attacker.id !== card.id)` 把**整条 fight** 滤掉，
+            //    blocker 一起被丢弃。而被【挑战者】/【暴露】拉来的单位**此时已被移出备战席**
+            //    （见 challengeEnemy / aiChallengeUnit 的 setBench filter）
+            //    ⇒ 撤回进攻 = 那个单位**凭空消失**（程报的恶性 BUG）。
+            // ── 修法：复用 `recallBlocker`（撤回格挡的既有正确逻辑：按 combat.owner 决定退回哪一侧、
+            //    并还原 CantAttack 被归零的攻击力）。**不另写一份** —— 两条撤回路径各写各的，
+            //    正是这个 BUG 的成因。
+            // ── 为什么"我方挑战敌人后撤回进攻"看起来正常、而暴露场景会消失：两者其实是同一条路径，
+            //    差别只在用户点的是"撤回格挡"（走 recallBlocker ✓）还是"撤回进攻"（走本分支 ✗）。
+            // =====================================
+            const fightIndex = combatField.findIndex(c => c.attacker.id === card.id);
+            if (fightIndex !== -1 && combatField[fightIndex].blocker) {
+                recallBlocker(fightIndex);
+            }
+
             setCombatField(prev => {
                 const nextField = prev.filter(c => c.attacker.id !== card.id);
                 // [Case 1 自动推进] 撤回单位后，检查战场是否已空。若空且处于进攻宣告期，自动退回主阶段
@@ -4675,24 +5528,9 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 }
                 return nextField;
             });
-            // [CantAttack] 撤回备战席时恢复原始攻击力
-            if (card.keywords.includes('CantAttack')) {
-                const orig = cantAttackOrigPowerRef.current.get(card.id);
-                if (orig) {
-                    const restoredCard = {
-                        ...card,
-                        power: orig.power,
-                        buffs: card.buffs ? { ...card.buffs, power: orig.buffsPower } : undefined,
-                        roundBuffs: card.roundBuffs ? { ...card.roundBuffs, power: orig.roundBuffsPower } : undefined,
-                    };
-                    cantAttackOrigPowerRef.current.delete(card.id);
-                    setPlayerBench(prev => [...prev, restoredCard]);
-                } else {
-                    setPlayerBench(prev => [...prev, card]);
-                }
-            } else {
-                setPlayerBench(prev => [...prev, card]);
-            }
+            // [无法攻击] 撤回备战席 → 还原真实攻击力（唯一出口，幂等：没记过账就原样返回）
+            // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 原实现自己查 ref 再分两支，现统一走共享账本
+            setPlayerBench(prev => [...prev, restoreCantAttackPower(card)]);
         }
     };
 
@@ -4759,6 +5597,14 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const recallBlocker = (fightIndex: number) => {
         const combat = combatField[fightIndex];
         if (combat && combat.blocker) {
+            // [2026-10-02 莉莉子 BUG修复] 引擎侧收口：**被敌方挑战/暴露拉走的我方单位不许撤回**。
+            //   放在引擎而不是只放 UI —— 点击与拖拽是两条 UI 路径，只堵一条必然漏另一条
+            //   （程的原话：「我们此前修复过，但是当时修复的好像是可以点击撤回」）。
+            if (!canPlayerRetractBlocker(combat)) {
+                console.log('[挑战守卫] 该 blocker 是被对方拉走的（owner=enemy + isChallenged）→ 拒绝撤回');
+                setMessage('被挑战的单位无法撤回！');
+                return;
+            }
             let blockerCard = combat.blocker;
 
             eventBus.emit(GameEvents.SFX_RECALL_BLOCK);
@@ -4775,34 +5621,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             if (combat.owner === 'player') {
                 setEnemyBench(prev => [...prev, blockerCard]);
             } else {
-                
-
-                // [2026-06-27 CantAttack] 格挡者撤回时恢复原始攻击力
-
-                if (blockerCard.keywords.includes('CantAttack')) {
-
-                	const orig = cantAttackOrigPowerRef.current.get(blockerCard.id);
-
-                	if (orig) {
-
-                		blockerCard = {
-
-                			...blockerCard,
-
-                			power: orig.power,
-
-                			buffs: blockerCard.buffs ? { ...blockerCard.buffs, power: orig.buffsPower } : undefined,
-
-                			roundBuffs: blockerCard.roundBuffs ? { ...blockerCard.roundBuffs, power: orig.roundBuffsPower } : undefined,
-
-                		};
-
-                		cantAttackOrigPowerRef.current.delete(blockerCard.id);
-
-                	}
-
-                }
-setPlayerBench(prev => [...prev, blockerCard]);
+                // [无法攻击] 我方格挡者撤回 → 还原真实攻击力（唯一出口，幂等）
+                // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 原实现是内联查 ref + 手工拼对象，现统一走共享账本
+                blockerCard = restoreCantAttackPower(blockerCard);
+                setPlayerBench(prev => [...prev, blockerCard]);
             }
         }
     };
@@ -4881,7 +5703,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
 
         setEnemyBench(prev => {
             const newBench = prev.filter(c => c.id !== enemyId);
-            if (oldBlocker) newBench.push(oldBlocker);
+            // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 被顶掉的旧格挡者同样要**还原真实攻击力**
+            //   —— 原来"回备战席"的出口清单里漏了这一条 ⇒ 它带着 0 攻回席
+            if (oldBlocker) newBench.push(restoreCantAttackPower(oldBlocker));
             return newBench;
         });
 
@@ -4914,7 +5738,8 @@ setPlayerBench(prev => [...prev, blockerCard]);
 
         setPlayerBench(prev => {
             const newBench = prev.filter(c => c.id !== playerUnitId);
-            if (oldBlocker) newBench.push(oldBlocker);
+            // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 同 challengeEnemy：被顶掉的旧格挡者回席前先还原
+            if (oldBlocker) newBench.push(restoreCantAttackPower(oldBlocker));
             return newBench;
         });
 
@@ -4939,15 +5764,8 @@ setPlayerBench(prev => [...prev, blockerCard]);
         if (!initializedRef.current && !isSandbox) {
             initializedRef.current = true; // 先置位，StrictMode 双跑第二次 effect 直接跳过
             startRound(true); // [2026-08-15] 开局（换牌前）跳过 round_start 强化，第一回合暗箭等由换牌后 triggerFirstRoundRogueEnhance 触发
-
-            // ★ 如果指定了第一回合先手方，覆盖默认的 attackToken
-            if (firstAttacker === 'enemy') {
-                setGame(prev => ({
-                    ...prev,
-                    attackToken: { player: null, enemy: 'normal' },
-                    turnOwner: 'enemy',
-                }));
-            }
+            // [2026-10-03 莉莉子 · 进攻标识三层分离 ①] 原先这里有一段「firstAttacker === 'enemy' ⇒ 手动覆盖 attackToken/turnOwner」，
+            //   现已收进 `calculateRoundStart(game, firstAttacker)`（先手方占奇数回合）⇒ 补偿删除，只留一处坐标系。
 
             // ★ 覆盖教程模式的水晶初始 HP（在 startRound 之后执行，确保最终生效）
             if (tutorialInit?.playerCrystalHp !== undefined || tutorialInit?.enemyCrystalHp !== undefined) {
@@ -5046,6 +5864,11 @@ setPlayerBench(prev => [...prev, blockerCard]);
         setGame(prev => ({
             ...prev,
             round: 1,               // 第1回合
+            // [2026-10-06 独立审查修复 · 跨局泄漏] 本条同样"铺 prev + 直接写 round:1"，
+            //   绕过 `calculateRoundStart` 的 round-0 清零 ⇒ 显式清授予账本，
+            //   否则上一局遗留的 `seq > handled` 会在新局回合 1 触发一次**凭空的**「获得进攻标识时」。
+            tokenGrantSeq: { player: 0, enemy: 0 },
+            tokenGrantHandled: { player: 0, enemy: 0 },
             phase: 'main',          // 进入主阶段
             turnOwner: 'player',    // 奇数回合玩家先手
             playerMana: 1,          // 玩家1费
@@ -5090,6 +5913,22 @@ setPlayerBench(prev => [...prev, blockerCard]);
         const oldUnitIndex = oldBench.findIndex(c => c.id === selectedTarget.id);
         if (oldUnitIndex === -1) return;
 
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-04] **替换打出也要记账**（play_card 探针的补洞）
+        // ── 病根：`playCard` 里的 play_card 探针写在「备战席满员 → 进 select_bench 并 return」**之后**
+        //    ⇒ 走「选择一个单位替换」打出的卡**一次都不计数**，被静默吞掉的任务包括：
+        //      · 15 个皮肤成就（`missionData.ts:162+`「在对局中累计打出 X 5 次」）
+        //      · 各"打出指定卡牌"类任务（play_card）
+        //      · 「携带 XX 小队：作战成功」的**旧**实现（查 play_card ⇒ 第三名成员常走替换 ⇒ 永远判不过）
+        // ── 位置刻意放在两道守卫**之后**：只有"真的换成了"才算打出过，非法目标/取消不记。
+        // =====================================
+        gameLogger.logEvent({
+            type: 'play_card',
+            turn: stateRef.current.game.round,
+            isPlayerSide: true,
+            cardKey: activeCard.key,
+        });
+
         // 1. 标记旧单位为「消亡」并发送碎裂事件
         const eliminatedUnit = { ...oldBench[oldUnitIndex], deathType: 'ELIMINATED' as const };
         eventBus.emit('unit_eliminated', { card: eliminatedUnit });
@@ -5122,7 +5961,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
 
             newUnit.effects.forEach(effId => {
                 const def = EFFECT_DB[effId];
-                if (def && def.timing.includes('ON_PLAY')) {
+                // [2026-10-06 程拍板 · 时机口径统一] 「替换打出」**也是从手牌打出** ⇒ 两条时机都放行
+                //   （口径与 playCard 的入场发动机一致；`includes` 子串匹配已废弃）。
+                if (def && (isEntryTiming(def.timing) || isPlayFromHandTiming(def.timing))) {
                     const ctx: EffectContext = {
                         game: tempGame,
                         playerBench: tempPlayerBench,
@@ -5134,6 +5975,8 @@ setPlayerBench(prev => [...prev, blockerCard]);
                         combatField: tempCombatField,
                         owner: 'player',
                         sourceCard: newUnit,
+                        // [2026-10-05 莉莉子 BUG修复] 补传 `createFullCard`（满场"替换打出"的 ON_PLAY，露米飞剑2 走这里）
+                        createFullCard,
                     };
                     const res = processEffect(effId, [], ctx);
                     tempGame = res.game;
@@ -5151,7 +5994,7 @@ setPlayerBench(prev => [...prev, blockerCard]);
             // [2026-09-22 莉莉子 BUG修复] 补齐入场（战吼）效果的写回
             // 原实现只把 res.playerDeck / playerHand / enemyHand 写回 React，
             // 而下面这些变更全部只落在局部变量上、随函数结束被静默丢弃：
-            //   · res.game      → 安·校准（calibratePending）、茉莉安入场「补兵券」（marianBeaconVoucher）、
+            //   · res.game      → 安·校准（calibratePending）、茉莉安入场「贴重生亡语」（2026-10-02 取代原「补兵券」）、
             //                     全局光环账本（everywhereBuffs）、入场获得的法力（GRANT_MANA）等
             //   · enemyBench    → 入场效果对敌方备战席的改动（如装备3·备战爆破）
             //   · combatField   → 入场召唤直送交战区的单位（如飞剑）
@@ -5165,8 +6008,18 @@ setPlayerBench(prev => [...prev, blockerCard]);
         }
 
         // [2026-08-12 装备系统] 替换打出同样触发装备打出效果（对敌方备战席造成伤害）
-        const equipEnemyBench = executeEquipmentOnPlay(stateRef.current.enemyBench, newUnit);
-        if (equipEnemyBench) setEnemyBench(equipEnemyBench);
+        // [2026-10-04 莉莉子 BUG修复] 与 ON_PLAY 路径同口径：传「双方席位 + owner」。
+        //   本函数是**玩家专用**（第 5256 行固定取 stateRef.current.playerBench、固定发玩家音效），
+        //   故 owner 恒为 'player' —— 但**仍走同一个入口**，避免将来 AI 也用替换流程时再踩一次。
+        const equipStruck = executeEquipmentOnPlay(
+            { playerBench: stateRef.current.playerBench, enemyBench: stateRef.current.enemyBench },
+            newUnit,
+            'player',
+        );
+        if (equipStruck) {
+            if (equipStruck.side === 'player') setPlayerBench(equipStruck.bench);
+            else setEnemyBench(equipStruck.bench);
+        }
 
         // 5. 触发入场语音
         eventBus.emit(GameEvents.PLAY_CARD_VOICE, newUnit);
@@ -5251,6 +6104,39 @@ setPlayerBench(prev => [...prev, blockerCard]);
         } else {
             setEnemyDeckState(newDeck);
         }
+        // ==========================================
+        // [2026-10-03 莉莉子 BUG修复 · 校准面板互相挤掉]
+        //   收尾时若**队列里还有校准请求** ⇒ 立刻出队（而不是直接清空 pending），
+        //   否则后触发的校准会**静默消失**（比覆盖更糟：那次校准白打了）。
+        //   ⚠️ 出队时**现抽**候选牌，不再沿用排队那一刻的快照：
+        //      · 同侧（如安 + 穆林同一回合）⇒ 用刚写好的 `newDeck`
+        //      · 异侧（AI 的校准排在玩家之后）⇒ 用对方**当前**牌库（本次确认没动过它）
+        // ==========================================
+        const nextReq = (game.calibrateQueue ?? [])[0];
+        if (nextReq) {
+            const sameOwner = nextReq.owner === pending.owner;
+            const baseDeck = sameOwner
+                ? newDeck
+                : (nextReq.owner === 'player' ? stateRef.current.playerDeck : stateRef.current.enemyDeck);
+            const built = buildCalibrateDraw(baseDeck, nextReq.owner, nextReq.count);
+            // [2026-10-03 防御] 排队期间牌库可能已被抽空 ⇒ 弹 0 张面板会让 AI 自动选择 `cards[0].card` 崩掉
+            if (built.drawnCards.length === 0) {
+                console.warn('[Calibrate] 出队时牌库已空 ⇒ 跳过本次及其后排队的校准');
+                setGame(prev => ({ ...prev, calibratePending: undefined, calibrateQueue: [] }));
+                setMessage('牌库已空，校准跳过');
+                return;
+            }
+            // ⚠️ 同样**不在这里写牌库** —— 出队只是把下一场校准挂上，
+            //    牌库仍按"确认时才落库"的既有语义走（见 effectProcessor 的 CALIBRATE 分支注释）。
+            setGame(prev => ({
+                ...prev,
+                calibratePending: { drawnCards: built.drawnCards, deckMinus: built.deckMinus, owner: nextReq.owner },
+                calibrateQueue: (prev.calibrateQueue ?? []).slice(1),
+            }));
+            console.log(`[Calibrate] 出队：${nextReq.owner} 的校准接着弹（剩余队列 ${(game.calibrateQueue ?? []).length - 1}）`);
+            setMessage('校准完成 · 下一场校准排队中');
+            return;
+        }
         setGame(prev => ({ ...prev, calibratePending: undefined }));
         setMessage(selectedCardId ? '校准完成' : '放弃校准');
     };
@@ -5295,17 +6181,20 @@ setPlayerBench(prev => [...prev, blockerCard]);
         const selectedIds = sc.targets.map((t: any) => t.id);
         const discardCount = selectedIds.length;
 
-        // 1. 从手牌移除弃置的卡牌
-        setPlayerHand(prev => prev.filter(c => !selectedIds.includes(c.id)));
+        // 1. 从手牌移除弃置的卡牌（**值式一次提交**：本函数后面要用同一份快照驱动门铃）
+        const handNow = stateRef.current.playerHand.filter((c: any) => !selectedIds.includes(c.id));
 
-        // 2. 瓦莱莉上场
+        // 2. 瓦莱莉上场 —— ⚠️ [2026-10-06 独立审查修复 · P0 **本函数是回归点**]
+        //    **必须与下面的猫头鹰合成"同一次提交"**：原来这里是函数式
+        //    `setPlayerBench(prev => [...prev, valerie])`，而猫头鹰那步是**值式**提交
+        //    （底取自 `stateRef`、**不含**瓦莱莉）⇒ React 里值式提交会**覆盖**排队中的函数式更新
+        //    ⇒ **瓦莱莉根本不上场、位置被猫头鹰顶掉**。现改为在本地数组里先放她，再一次性提交。
         const activeCard = stateRef.current.game.activeCard;
-        if (activeCard) {
-            const valerie = { ...activeCard, animState: 'idle' as const };
-            setPlayerBench(prev => [...prev, valerie]);
-        }
+        const benchWithValerie = activeCard
+            ? [...stateRef.current.playerBench, { ...activeCard, animState: 'idle' as const }]
+            : stateRef.current.playerBench;
 
-        // 3. 召唤夜巡猫头鹰（带 +X/+X）
+        // 3. 召唤夜巡猫头鹰（带 +X/+X）+ 补「入场」门铃
         if (discardCount >= 0) {
             const owl = createCard('Night_Owl');
             owl.buffs = {
@@ -5313,7 +6202,40 @@ setPlayerBench(prev => [...prev, blockerCard]);
                 health: discardCount
             };
             owl.customProgress = discardCount;
-            setPlayerBench(prev => [...prev, owl]);
+            // =====================================
+            // [2026-10-06 程拍板 · A 方案] **先落场、再补「入场」门铃**
+            //   （本站点是 hook 直塞，此前召唤出来的猫头鹰拿不到入场效果 / `on_summon` 强化）
+            //   ⚠️ 手牌用**过滤后**的那份（`handNow`）—— 直接读 stateRef 会把刚弃掉的牌捞回来
+            //   ⚠️ 备战席用**含瓦莱莉的那份**（`benchWithValerie`）—— 见上面 P0 说明
+            // =====================================
+            const benchWithOwl = [...benchWithValerie, owl];
+            setPlayerBench(benchWithOwl);
+            stateRef.current.playerBench = benchWithOwl; // 同步快照（门铃要靠它找到这只猫头鹰）
+            setPlayerHand(handNow);
+            stateRef.current.playerHand = handNow;
+            const entry = runSummonEntry(owl.id, 'player', {
+                game: stateRef.current.game,
+                playerBench: benchWithOwl,
+                enemyBench: stateRef.current.enemyBench,
+                playerHand: handNow,
+                enemyHand: stateRef.current.enemyHand,
+                playerDeck: stateRef.current.playerDeck,
+                enemyDeck: stateRef.current.enemyDeck,
+                combatField: stateRef.current.combatField,
+            }, createFullCard);
+            if (entry.applied) {
+                // [2026-10-06 独立审查修复 · P1] **只在真的变了时才值式提交** ——
+                //   否则会把同 tick 里排队中的更新（例如上面刚排的手牌过滤）回滚掉。
+                const gameBefore = stateRef.current.game;
+                if (entry.playerBench !== benchWithOwl) { setPlayerBench(entry.playerBench); stateRef.current.playerBench = entry.playerBench; }
+                if (entry.enemyBench !== stateRef.current.enemyBench) { setEnemyBench(entry.enemyBench); stateRef.current.enemyBench = entry.enemyBench; }
+                if (entry.playerHand !== handNow) { setPlayerHand(entry.playerHand); stateRef.current.playerHand = entry.playerHand; }
+                if (entry.enemyHand !== stateRef.current.enemyHand) { setEnemyHand(entry.enemyHand); stateRef.current.enemyHand = entry.enemyHand; }
+                if (entry.game !== gameBefore) { setGame(entry.game); stateRef.current.game = entry.game; }
+                if (entry.playerDeck && entry.playerDeck !== stateRef.current.playerDeck) { setPlayerDeck(entry.playerDeck); stateRef.current.playerDeck = entry.playerDeck; }
+                if (entry.enemyDeck && entry.enemyDeck !== stateRef.current.enemyDeck) { setEnemyDeckState(entry.enemyDeck); stateRef.current.enemyDeck = entry.enemyDeck; }
+                if (entry.combatField && entry.combatField !== stateRef.current.combatField) { setCombatField(entry.combatField); stateRef.current.combatField = entry.combatField; }
+            }
             setMessage(`瓦莱莉弃置了 ${discardCount} 张牌，召唤了 ${discardCount + 1}/${discardCount + 1} 的夜巡猫头鹰`);
         }
 
@@ -5352,7 +6274,9 @@ setPlayerBench(prev => [...prev, blockerCard]);
             enemyDeck: stateRef.current.enemyDeck,
             combatField: stateRef.current.combatField,
             owner: 'player',
-            sourceCard: activeCard
+            sourceCard: activeCard,
+            // [2026-10-05 莉莉子] 与其它 EffectContext 站点保持一致（防御性补传；本路径当前不触达 FLYING_SWORD）
+            createFullCard,
         };
 
         // 3. 执行效果（如果有）
@@ -5456,16 +6380,99 @@ setPlayerBench(prev => [...prev, blockerCard]);
     // 升级影片/队列走下方豁免）→ 强制恢复 main + 交战区应急归位，防对局永久死锁。
     // 与各 try/finally 逃生互补：两处恢复都带 phase==='animating' 门 + 幂等，
     // 先触发者把 phase 置 main 后，另一侧读到非 animating 即空转。
+    //
+    // [2026-10-04 莉莉子 · AI 停机保护性修复] **豁免改为"限时 + 进展感知"**：
+    //   病根：原实现只要 levelUpCard/队列非空就整体 return，连 interval 都不建 ⇒
+    //   升级链一旦断掉（画面中途被撤、onComplete 没来），phase 停在 animating 就再无兜底 ——
+    //   **唯一会永久卡死的状态，恰好被唯一的看门狗豁免掉了。**
+    //   现在：豁免照旧（正常长演出不被误伤），但必须"看得见进展" ——
+    //   以 (levelUpCard.id + 队列长度) 为进展指纹，指纹一变即刷新计时；
+    //   连续 LEVELUP_STALL_GRACE_MS 不变 ⇒ 判定断链，强拆（**同时清队列 + 恢复 phase**，
+    //   绝不再把 phase 留在 animating —— 那正是"AI 永久停机"的宿主状态）。
     // ==========================================
+    const levelUpProgressRef = useRef<{ stamp: number; key: string }>({ stamp: Date.now(), key: '' });
+    // [2026-10-04 独立审查 #5 修复] 暂停 / 页面不可见期间**不判定停滞**：
+    //   60s 宽限是墙钟时间，而升级影片在暂停时会被按住（GameSession.tsx:275-290 会暂停根容器内所有 <video>），
+    //   指纹自然不变 ⇒ 原实现会把"玩家暂停了一分钟"误判成断链，强拆掉一次**合法**升级
+    //   （还会吞掉 TUTORIAL_LEVEL_UP_COMPLETE，让教程 resume_upgrade 永远等下去）。
+    //   后台标签页节流 / 系统休眠是同一个签名，一并挡掉。
+    const watchdogPausedRef = useRef(false);
+    useEffect(() => {
+        const onPause = () => { watchdogPausedRef.current = true; };
+        const onResume = () => {
+            watchdogPausedRef.current = false;
+            // 恢复时刷新计时起点，避免把暂停时长算进宽限
+            levelUpProgressRef.current = { stamp: Date.now(), key: '' };
+        };
+        eventBus.on(GameEvents.GAME_PAUSE, onPause);
+        eventBus.on(GameEvents.GAME_RESUME, onResume);
+        return () => {
+            eventBus.off(GameEvents.GAME_PAUSE, onPause);
+            eventBus.off(GameEvents.GAME_RESUME, onResume);
+        };
+    }, []);
     useEffect(() => {
         if (game.gameResult) return;
-        if (game.levelUpCard || (game.pendingLevelUps && game.pendingLevelUps.length > 0)) return; // 豁免升级影片/多英雄排队
-        if (game.phase !== 'animating') return;
+        // [2026-10-04 独立审查 #4 修复] 布防条件放宽：
+        //   原来只在 `phase === 'animating'` 时布防，但 `levelUpCard` 会在别处写 phase 时**留在场上**
+        //   （passTurn→confirmBlock 写 react_to_block、额外攻击守卫写 block_declare、回合末序列……），
+        //   而 AI 的闸门这次新增了 `levelUpCard` ⇒ 那种组合会变成**没有任何兜底**的永久冻死。
+        //   现在：只要"有人在升级"或"仍在 animating"，就布防。
+        const levelUpPendingNow = !!game.levelUpCard || (game.pendingLevelUps ?? []).length > 0;
+        if (game.phase !== 'animating' && !levelUpPendingNow) return;
         const iv = setInterval(() => {
-            if (Date.now() - animGuard.lastBump < ANIM_STALL_MS) return; // 仍在推进
             const g = stateRef.current.game;
-            if (g.gameResult || g.phase !== 'animating') return;
-            if (g.levelUpCard || (g.pendingLevelUps && g.pendingLevelUps.length > 0)) return;
+            if (g.gameResult) return;
+            const busy = !!g.levelUpCard || (g.pendingLevelUps ?? []).length > 0;
+            if (g.phase !== 'animating' && !busy) return;
+
+            // 暂停 / 不可见：不计时，并刷新计时起点（恢复后重新获得完整宽限）
+            if (watchdogPausedRef.current || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
+                levelUpProgressRef.current = { stamp: Date.now(), key: levelUpProgressRef.current.key };
+                return;
+            }
+
+            // 进展指纹：升级链是否还在往前走（换人 / 出队都会改变它）
+            const fp = `${g.levelUpCard?.id ?? '-'}|${(g.pendingLevelUps ?? []).length}`;
+            if (fp !== levelUpProgressRef.current.key) {
+                levelUpProgressRef.current = { stamp: Date.now(), key: fp };
+            }
+            const levelUpBusy = busy;
+
+            if (levelUpBusy) {
+                // 升级链豁免：但指纹迟迟不变 ⇒ 断链，强拆并**恢复 phase**（这一步原实现整个缺失）
+                if (Date.now() - levelUpProgressRef.current.stamp < LEVELUP_STALL_GRACE_MS) return;
+                console.error('[AnimWatchdog] 🚨 升级链停滞超时（演出已断链），强制清队列 + 恢复 main', {
+                    round: g.round, turnOwner: g.turnOwner,
+                    levelUpCard: g.levelUpCard?.key ?? null,
+                    pendingLevelUps: (g.pendingLevelUps ?? []).map(c => c.key),
+                    combatFieldLen: stateRef.current.combatField.length,
+                });
+                levelUpProgressRef.current = { stamp: Date.now(), key: '-|0' };
+                setGame(prev => ({
+                    ...prev,
+                    levelUpCard: null,
+                    pendingLevelUps: [],
+                    phase: 'main' as const,
+                    spellStack: [],
+                    spellCasting: null,
+                    activeCard: null,
+                    consecutivePasses: 0,
+                    lastActionTimestamp: Date.now(),
+                }));
+                // [2026-10-04 独立审查 #5 附带] 强拆绕过了 `LevelUpOverlay.onClose`
+                //   （GameSession.tsx:2547 在那里发教程的"升级演出已完整播完"信号）
+                //   ⇒ 教程的 resume_upgrade 会永远等下去。这里补发同一个信号。
+                eventBus.emit(GameEvents.TUTORIAL_LEVEL_UP_COMPLETE);
+                return;
+            }
+
+            // [2026-10-04 独立审查 #4 完成] 非 animating 阶段**不做** animating 停滞判定：
+            //   上方 busy 分支已按"有人在升级"独立处理；这里恢复 animating 专属语义，
+            //   免得 `animGuard.lastBump` 陈旧时对非 animating 阶段误跑战斗区应急归位。
+            if (g.phase !== 'animating') return;
+
+            if (Date.now() - animGuard.lastBump < ANIM_STALL_MS) return; // 仍在推进
             console.warn('[AnimWatchdog] ⚠️ animating 停滞超时，强制恢复 main', {
                 phase: g.phase, round: g.round, turnOwner: g.turnOwner,
                 spellStack: g.spellStack.map((s: any) => s.card?.key),

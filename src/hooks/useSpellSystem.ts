@@ -5,11 +5,15 @@ import { EFFECT_DB } from '../data/effectRegistry';
 import type { TargetType } from '../data/effectRegistry';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { executeSpellEffect } from '../logic/spells';
+// [2026-10-03 莉莉子 · P0 收口] "等升级播完"的唯一实现（原先本文件与 useGameState 各一份）
+import { awaitLevelUpDrain as awaitLevelUpDrainCore } from '../utils/levelUpDrain';
 import { applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
 import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
+import { noteSpellCast } from '../utils/gameRules'; // [2026-10-08 第二波] 施法计数（条件减费判据）
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { CARD_DB } from '../data/cards';
-import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck, getLeveledUpCard } from '../utils/gameRules';
+import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck, getLeveledUpCard, isLeveledUpForSide } from '../utils/gameRules';
+import { attachEquipment } from '../data/equipment'; // [2026-10-04 莉莉子 BUG修复] 法术回库生成的英雄副本要补挂装备/武装
 import { StrikeEvents } from '../utils/eventBus'; // [新增] 引入全新的打击信号总线
 import { getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
 import { getFlyingSwordOwner, getDefensiveSide, getExtraAttackOwner } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具 · [2026-09-26 T17] 额外攻击判定
@@ -160,6 +164,53 @@ export interface UseSpellSystemParams {
     triggerShake: () => void;
 
     onComplete: (card: CardData, targets: any[]) => void;
+
+    /**
+     * [2026-10-04 莉莉子 BUG修复 · I3a] 该方"卡 key → 装备/武装 id 列表"表。
+     * 用途：`grantChampionSpellCopy`（法术回库生成英雄副本）要给新副本**补挂装备/武装** ——
+     *   程口径：「法术回库生成的英雄副本应该要带装备」。
+     * ⚠️ 与 useGameState 的 `rogueEquipments` / `enemyEquipments` 同源、按方传入。
+     * ⚠️ GameSession 的 UI 层实例**不传**（undefined）⇒ 那边行为与改动前逐字一致。
+     */
+    playerEquipments?: Record<string, string[]>;
+    enemyEquipments?: Record<string, string[]>;
+
+    /**
+     * [2026-10-02 莉莉子] 棋盘快照读取器 —— **仅供"目标不足时放宽"使用**。
+     *
+     * 背景：本 hook 在本项目有**两个实例**：
+     *   · useGameState 层：完整传参（含 stateRef）
+     *   · GameSession UI 层：**只传 onComplete**，其余全 undefined（`as` 强转绕过类型）
+     * 而游戏内的目标点击恰恰走 UI 层 ⇒ 它拿不到棋盘数据 ⇒ 无法判断"还剩几个可选目标"。
+     *
+     * ⚠️ 刻意不复用 stateRef：那会激活 `handleTargetClick` 顶部那条
+     *    原本在 UI 层被跳过的 `select_discard` 分支，属于会改变既有行为的风险改动。
+     *    本参数是**纯新增**，除了下面那处放宽判定，没有任何代码读它。
+     */
+    boardSnapshot?: () => { playerBench: CardData[]; enemyBench: CardData[]; combatField: any[] };
+
+    /**
+     * [2026-10-04 莉莉子] 水晶血量快照读取器 —— **仅供「生机补充」满血屏蔽（ally_not_full）判定使用**。
+     *
+     * 背景与 boardSnapshot 完全同源：玩家点击走的是 **GameSession UI 层实例**，
+     *   那个实例刻意不传 `stateRef`（见上方注释：复用 stateRef 会激活 UI 层原本跳过的
+     *   高风险分支）⇒ 它读不到 `game.playerNexus` ⇒ 满血水晶挡不住。
+     *
+     * ⚠️ 纯新增参数：除 `readNexusHp` 外没有任何代码读它；
+     *   UI 层不传时自动回落 `stateRef`（useGameState 层本来就有）。
+     */
+    nexusSnapshot?: () => { player: number; playerMax: number; enemy: number; enemyMax: number };
+
+    /**
+     * [2026-10-04 莉莉子] 非法目标反馈通道。
+     *
+     * 此前 `handleTargetClick` 点到不合法目标时**只有 `console.log("Invalid target")`**，
+     *   玩家屏幕上零反馈（"点了没反应"），这正是「生机补充」白花 2 费的体验源头。
+     *
+     * ⚠️ 刻意不给 UI 层传 `setMessage`：那会顺带激活本 hook 内其他 setMessage 调用点
+     *   （HAND_CARD 提示 / startSpellCasting / 艾娃光环），属于**范围外**的行为变化。
+     */
+    onInvalidTarget?: (message: string) => void;
 }
 
 export const useSpellSystem = (params: UseSpellSystemParams) => {
@@ -167,7 +218,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         stateRef, game,
         setGame, setPlayerBench, setEnemyBench, setCombatField,
         setPlayerHand, setEnemyHand, setPlayerDeck, setEnemyDeckState,
-        setMessage, createFullCard, flushMicroQueue, judgeLifeAndDeath, wait, triggerShake, onComplete
+        setMessage, createFullCard, flushMicroQueue, judgeLifeAndDeath, wait, triggerShake, onComplete,
+        playerEquipments, enemyEquipments,
+        onInvalidTarget
     } = params;
     // 正在施放的卡牌
     const [castingCard, setCastingCard] = useState<CardData | null>(null);
@@ -331,6 +384,31 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         setSelectedTargets([]);
     };
 
+    // =============================================
+    // [2026-10-04 莉莉子] 水晶血量读取（「生机补充」满血屏蔽专用）
+    // 数据源优先级与 boardSnapshot 同思路：
+    //   ① UI 层补传的 nexusSnapshot（玩家点击路径，该实例刻意无 stateRef）
+    //   ② stateRef.current.game（useGameState 层，本来就有）
+    // ⚠️ 都拿不到 ⇒ 返回 null，调用方按"放行"处理 ——
+    //    绝不因为读不到血量而误锁玩家目标（宁可漏挡，不可错杀）。
+    // =============================================
+    const readNexusHp = (owner: 'player' | 'enemy'): { current: number; max: number } | null => {
+        const snap = params.nexusSnapshot?.();
+        if (snap) {
+            return owner === 'player'
+                ? { current: snap.player, max: snap.playerMax }
+                : { current: snap.enemy, max: snap.enemyMax };
+        }
+        const g = stateRef ? stateRef.current?.game : undefined;
+        if (g) {
+            // 上限口径与 effectProcessor:3158 逐字一致（缺省 20 = NEXUS_MAX_HP）
+            const max = (owner === 'player' ? g.playerNexusMax : g.enemyNexusMax) ?? 20;
+            const current = owner === 'player' ? g.playerNexus : g.enemyNexus;
+            return { current, max };
+        }
+        return null;
+    };
+
     // --- 3. 核心：验证目标是否合法 ---
     // 这是一个纯逻辑判断，用于决定点击是否有效，以及是否显示高亮框
     const isValidTarget = (
@@ -346,10 +424,19 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     ): boolean => {
         if (card === 'nexus') {
             // [2026-06-27 生机补充] ally_only 时我方水晶可被选，敌方不可
-            if (targetCondition === 'ally_only') {
-                return (reqType === 'PLAYER_NEXUS' && owner === 'player') ||
+            // [2026-10-04 莉莉子] ally_not_full = ally_only ∪ 「满血水晶不可选」
+            if (targetCondition === 'ally_only' || targetCondition === 'ally_not_full') {
+                const isOwnNexus = (reqType === 'PLAYER_NEXUS' && owner === 'player') ||
                        (reqType === 'ENEMY_NEXUS' && owner === 'enemy') ||
                        (reqType === 'ANY_TARGET' && owner === 'player');
+                if (!isOwnNexus) return false;
+                // 满血屏蔽：水晶治疗量 = min(nexusMax - current, amount)
+                // （effectProcessor:3159），已满 ⇒ 恒为 0 ⇒ 放行就是让玩家白花一张牌
+                if (targetCondition === 'ally_not_full') {
+                    const hp = readNexusHp(owner);
+                    if (hp && hp.current >= hp.max) return false;
+                }
+                return true;
             }
             if (targetCondition) return false; // 其他条件水晶不参与判定
             return (reqType === 'PLAYER_NEXUS' && owner === 'player') ||
@@ -393,9 +480,14 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         // [核心新增] 高级条件拦截器 (Advanced Radar)
         // =====================================
         if (targetCondition) {
-            if (targetCondition === 'ally_only') {
+            if (targetCondition === 'ally_only' || targetCondition === 'ally_not_full') {
                 // [2026-06-27 生机补充] 只能选我方单位（水晶已在上面拦截层放过）
                 if (!isAlly) return false;
+                // [2026-10-04 莉莉子] ally_not_full：满血单位不可被选
+                //   判据取 damageTaken，与 effectProcessor 的 applyHeal 逐字同口径
+                //   （:3178-3179 actualHeal = Math.min(damageTaken, amount)），
+                //   damageTaken=0 ⇒ 治疗量恒为 0 ⇒ 放行就是白花 2 费。
+                if (targetCondition === 'ally_not_full' && (card.damageTaken || 0) <= 0) return false;
             }
             else if (targetCondition === 'injured') {
                 // 必须掉血才能被选中
@@ -532,7 +624,101 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 .slice(0, currentStepIndex)
                 .reduce((n, r) => n + countOf(r), 0);
             const needForCurrent = countOf(effect.targetRequirements[currentStepIndex]);
-            const currentReqSatisfied = newTargets.length - priorNeed >= needForCurrent;
+            const selectedForStep = newTargets.length - priorNeed;
+
+            // =====================================
+            // [2026-10-02 莉莉子 BUG修复] 「目标不足时」也必须能收尾
+            // ── 病根：本判定**只看"需求写了几"，没看"场上还剩几个可选的"**。
+            //    典型复现（粉丝原话）：「钢羽傍身」= `{type:'ENEMY_UNIT', count:2}`，
+            //      「对面只有一个人的时候用不了」—— 永远选不满 2 个 ⇒ 卡在选目标，法术打不出去。
+            // ── 口径：**选满 count** 或 **已无任何合法目标可选** ⇒ 本步完成（选几个算几个）。
+            // ── 安全性：这是**纯放宽** —— 只在"原本永远无法完成"的情形下多给一条出路，
+            //    目标充足时行为与原来完全一致（仍要求选满 count）。
+            // ── 候选池口径与 `findAITargetsForEffect` / `isValidTarget` 保持一致；
+            //    其余类型（水晶 / 堆叠法术 / 手牌…）不放宽，返回 0 ⇒ 维持原行为。
+            // =====================================
+            const remainingSelectable = (() => {
+                // ⚠️ [2026-10-02 莉莉子 紧急修复] `stateRef` 是**可选的**！
+                //   useSpellSystem 在本项目里有**两个实例**：
+                //     · useGameState 层 —— 完整传参，含 stateRef
+                //     · GameSession UI 层 —— **只传 onComplete**，其余参数全是 undefined
+                //       （见 GameSession.tsx:576 的 `as Parameters<...>[0]` 强转）
+                //   此前这里直接 `stateRef.current` ⇒ UI 层一选目标就抛
+                //   `Cannot read properties of undefined (reading 'current')` ⇒ 所有需要选目标的法术全部点不动。
+                //   返回 -1 表示「**无法枚举**」（≠ 0「确实没有可选目标」），用于与真正的空池区分。
+                //   数据源优先级：stateRef（useGameState 层）→ boardSnapshot（UI 层补传）
+                const board = stateRef ? stateRef.current : params.boardSnapshot?.();
+                if (!board) return -1;
+
+                // =====================================
+                // 🔴 [2026-10-03 莉莉子 BUG修复 · 钢羽傍身"只有一个敌人时用不了"第二根因]
+                // ── 病根：本段的 `owner` **用错了语义**。
+                //    `handleTargetClick(target, owner, …)` 的 `owner` 是**被点击目标的阵营**，
+                //    不是施法者阵营。证据（三处独立）：
+                //      · :533  `{ type: owner === 'player' ? 'ally' : 'enemy', id: target.id }`
+                //      · :434  `case 'ENEMY_UNIT': return isEnemy`（= 目标在敌方侧）
+                //      · 调用方 GameSession :2213/2227/2258 传目标的 owner；:2920 打敌方水晶传 'enemy'
+                //    而相邻的 `findAITargetsForEffect(effectDef, owner, …)` 里的 `owner` 才是**施法者**
+                //    （:1186 传 `choiceOwner`）。当初 -06 的放宽段就是照抄它的 `isAI/friendly/hostile` —
+                //    ⇒ 玩家点敌方单位时 owner='enemy' ⇒ 被误判成"AI 在施法"
+                //    ⇒ `hostile` 取到了**玩家自己的备战席**，且 `isValidTarget(c, 'enemy', 'ENEMY_UNIT')`
+                //      恒为 true（它只看传进来的那个 owner，不看 card）
+                //    ⇒ 计数实际变成「**玩家自己备战席上还剩几个单位**」！
+                // ── 症状：玩家点掉唯一敌人后，只要自己场上还有活着的单位，
+                //    `remainingSelectable ≥ 1` ⇒ 判定"没选满 2 个" ⇒ 卡在选目标 ⇒ **打不出去**。
+                //    完全解释「有时行有时不行」= 取决于**玩家自己阵容里有没有单位**（空场/全死时能打出）。
+                // ── 也解释为什么敌人在 2 个以上时从来不犯：走正常路径 `selectedForStep >= 2`，
+                //    根本不经过本段。
+                // ── 正解：**按候选自己的阵营分桶、按候选自己的阵营校验** ——
+                //    与"真实点击一次"的校验方式逐字一致，不再推导施法者是谁（本路径本就只有玩家点选）。
+                // =====================================
+                const playerPool: CardData[] = [...(board.playerBench ?? [])];
+                const enemyPool: CardData[] = [...(board.enemyBench ?? [])];
+                // 交战区：attacker 属 `f.owner`；blocker 属 `f.owner` 的**对面**（全局统一口径）
+                (board.combatField ?? []).forEach((f: any) => {
+                    if (f?.attacker) (f.owner === 'player' ? playerPool : enemyPool).push(f.attacker);
+                    if (f?.blocker) (f.owner === 'player' ? enemyPool : playerPool).push(f.blocker);
+                });
+
+                // 按需求类型决定候选来自哪一侧（与本 hook 的 `isValidTarget` 同口径：
+                //   ALLY_* / SELF / ALL_ALLIES ⇒ 需 owner==='player'；ENEMY_UNIT ⇒ 需 owner==='enemy'）
+                let candidates: { card: CardData; side: 'player' | 'enemy' }[] = [];
+                if (requirement.type === 'ALLY_UNIT' || requirement.type === 'ALLY_CHAMPION'
+                    || requirement.type === 'ALL_ALLIES' || requirement.type === 'SELF') {
+                    candidates = playerPool.map(c => ({ card: c, side: 'player' as const }));
+                    if (requirement.type === 'ALLY_CHAMPION') {
+                        candidates = candidates.filter(x => x.card?.isChampion);
+                    }
+                } else if (requirement.type === 'ENEMY_UNIT') {
+                    candidates = enemyPool.map(c => ({ card: c, side: 'enemy' as const }));
+                } else if (requirement.type === 'ANY_UNIT' || requirement.type === 'ANY_TARGET') {
+                    candidates = [
+                        ...playerPool.map(c => ({ card: c, side: 'player' as const })),
+                        ...enemyPool.map(c => ({ card: c, side: 'enemy' as const })),
+                    ];
+                } else {
+                    return -1; // 其余类型（水晶 / 堆叠法术 / 手牌…）不放宽 ⇒ 维持原行为
+                }
+
+                if (requirement.filterKey) {
+                    const fk = requirement.filterKey.toLowerCase();
+                    candidates = candidates.filter(x => x.card?.key?.toLowerCase().includes(fk));
+                }
+
+                const seen = new Set<string>();
+                let n = 0;
+                for (const { card: c, side } of candidates) {
+                    if (!c || !c.id || seen.has(c.id)) continue;
+                    seen.add(c.id);
+                    if (newTargets.some(t => t.id === c.id)) continue; // 同一步不可重复选同一单位
+                    // ⚠️ 用**候选自己的阵营** `side` 校验（原实现传的是被点击目标的 `owner`）
+                    if (isValidTarget(c, side, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter, requirement.stackCostBelow, requirement.stackSpeedFilter)) n++;
+                }
+                return n;
+            })();
+
+            // [2026-10-02] `=== 0` 严格判定：-1（无法枚举）不会误触发放宽
+            const currentReqSatisfied = selectedForStep >= needForCurrent || remainingSelectable === 0;
 
             setSelectedTargets(newTargets); // [核心修复 BUG 1] 先存状态以维持前台连线渲染，绝不提前销毁
 
@@ -547,8 +733,27 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             }
             // 未选满：留在本步骤，让玩家继续点（连线保持）
         } else {
-            // 点了不合法的目标 -> 可选：播放错误音效或提示
+            // [2026-10-04 莉莉子] 「生机补充」满血被拒时给玩家**可见**反馈
+            //   —— 此前该分支只有 `console.log("Invalid target")`，玩家屏幕上零反馈。
+            //
+            // ⚠️ 为什么必须走 onInvalidTarget，而不是直接用 setMessage（第一版就栽在这里）：
+            //   本项目 `setMessage` 写入的 message state 在**标准对局里没有任何渲染点** ——
+            //     · GameSession 只解构 setMessage、**从不解构也不渲染 `message`**
+            //     · useGameState 里 `message` 只有「定义(:187)」与「导出(:5864)」两处，无消费 effect
+            //     · 全项目唯一渲染点是沙盒 `SandboxSession.tsx:604 / :983`
+            //   ⇒ 标准对局的可见通道只有 announce（useGameAnnouncer → <GameAnnouncement>），
+            //     由调用方经 onInvalidTarget 接上。
+            //
+            // ⚠️ 只对 ally_not_full 提示：其他法术卡的"非法点击静默"行为**不在本次范围**，一字不改。
+            const cond = effect.params?.targetCondition;
             console.log("Invalid target");
+            if (cond === 'ally_not_full') {
+                const reason = target === 'nexus'
+                    ? '该水晶生命值已满，无法被治疗！'
+                    : '该单位生命值已满，无法被治疗！';
+                onInvalidTarget?.(reason);   // 标准对局：GameSession → announce 中央播报
+                setMessage?.(reason);        // 沙盒：SandboxSession 会渲染 message（其余场景为兼容兜底）
+            }
         }
     };
     // ==========================================
@@ -621,10 +826,21 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         const hasChoices = Array.isArray((src as any)?.choices) && (src as any).choices.length > 0;
         if (!champKey || !hasChoices || !CARD_DB[champKey]) return;
 
-        // 英雄已全局升级时生成 Lv2 副本，与变形系统 processHandTransformation 的取牌口径一致
+        // 英雄已升级时生成 Lv2 副本，与变形系统 processHandTransformation 的取牌口径一致
+        // [2026-10-04 莉莉子 BUG修复 · I5] 判据改为**按方**：原先读全局 `leveledChampions`
+        //   ⇒ 镜像对局里"玩家把某英雄练到 Lv2"会让**敌方**那张同名卡回库时也生成 Lv2 副本（跨侧泄漏）。
         let champCard = createFullCard(champKey);
-        if (stateRef.current.game.leveledChampions?.includes(champKey)) {
+        if (isLeveledUpForSide(stateRef.current.game, owner, champKey)) {
             champCard = getLeveledUpCard(champCard);
+        }
+
+        // [2026-10-04 莉莉子 BUG修复 · I3a] 副本必须**带装备/武装**（程口径）——
+        //   照搬"开局构建"的同一口径：按 champKey 查该方的装备表，逐个 attachEquipment。
+        //   ⚠️ GameSession 的 UI 层实例不传这两张表（undefined）⇒ 那边不挂，行为与改动前一致。
+        const copyEquips = (owner === 'player' ? playerEquipments : enemyEquipments)?.[champKey];
+        if (copyEquips?.length) {
+            for (const eid of copyEquips) champCard = attachEquipment(champCard, eid);
+            console.log(`[ChampionSpell] 🎽 回库副本 ${champKey} 补挂装备/武装 [${copyEquips.join(', ')}]`);
         }
 
         // Fisher-Yates 洗入牌堆（与 useGameState.shuffleDeck 同算法）——
@@ -654,6 +870,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     };
 
     const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
+        // [2026-10-08 莉莉子 · 法术专属装备 第二波] **施法计数累加**（唯一入口）
+        //   ⚠️ 必须在**扣费之前/同时**记：条件减费判据是"本回合**尚未**打出过法术"，
+        //      若在结算后才记，同回合的第二张法术会误判成"还没打过"。
+        noteSpellCast(owner);
         // [2026-09-19] 确定打出法术音效 —— 极速法术紧随「打出」；快速/慢速在玩家点「确定」时走到这里
         eventBus.emit(GameEvents.SFX_SPELL_CONFIRM);
         // [2026-07-20 对局记录修复] 使用 setTimeout 将事件推入宏任务队列，
@@ -690,9 +910,19 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         // [2026-08-20 莉莉子] 成长装备 player_cast_spell：我方施法后，在场成长装触发（歌莉娅的课题权杖〔原法术温养〕/乐手的疗愈独奏〔原灵气传导〕）
         // 仅扫描我方交战区存活单位（装备卡须在场才成长）；self → 装备卡自己；random_ally → 随机在场友军
         if (owner === 'player') {
-            const fieldUnits = stateRef.current.combatField
-                .filter((f: any) => f.owner === 'player' && f.attacker && !f.attacker.isDead && f.attacker.animState !== 'dying' && f.attacker.animState !== 'ephemeral_dying')
-                .map((f: any) => f.attacker as CardData);
+            // [2026-10-06 莉莉子 · 审计收口] **补上备战席** —— 原实现**只扫交战区**，
+            //   而 main 阶段交战区按引擎不变量**恒为空** ⇒ **主阶段施法（绝大多数）零成长**，
+            //   只有恰好在战斗阶段（attack_declare / block_declare / react_to_block）施法才涨。
+            //   装备文案的条件只是"装备卡**在场**"，备战席显然算在场（这也是卡牌的常驻位置）。
+            //   ⇒ 与「攻击后成长」同口径：扫描 = 备战席存活 + 交战区己方存活。
+            const isLiveUnit = (c: any): c is CardData =>
+                !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+            const fieldUnits: CardData[] = [
+                ...stateRef.current.playerBench.filter(isLiveUnit),
+                ...stateRef.current.combatField
+                    .filter((f: any) => f.owner === 'player' && isLiveUnit(f.attacker))
+                    .map((f: any) => f.attacker as CardData),
+            ];
             if (fieldUnits.length) {
                 const growth: { id: string; buffed: CardData }[] = [];
                 // 合并同卡多次成长（一张卡可挂多件同事件成长装，避免写回时只取第一条丢 buff）
@@ -734,7 +964,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             const echoOwnerHand = owner === 'player'
                 ? stateRef.current.playerHand
                 : stateRef.current.enemyHand;
-            const echoResult = applyEchoOnPlay(card, echoOwnerHand, owner);
+            // [2026-10-08 第二波 · Q5] 传本体装备表 ⇒ 复制品继承装备（G1 防递归在 applyEchoOnPlay 内）
+            const echoResult = applyEchoOnPlay(card, echoOwnerHand, owner, (owner === 'player' ? playerEquipments : enemyEquipments)?.[card.key]);
             if (echoResult.echoedCards.length > 0) {
                 if (owner === 'player') {
                     setPlayerHand(echoResult.hand);
@@ -758,7 +989,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (!card.parentCard) {
                 // [2026-07-10 诗人] 凯特琳减费影响实际扣费（双方均适配）
                 const benchForCost = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
-                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana);
+                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana, owner);
                 const { newMana, newSpellMana } = calculateNewMana(
                     effectiveCost,
                     owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
@@ -860,6 +1091,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 // [2026-07-08 修复] 补传 enemyHand，DISCARD 需要它来找到要弃的牌
                 enemyHand: stateRef.current.enemyHand,
                 setEnemyHand,
+                // [2026-10-03 莉莉子 BUG-20261002-24] 透传建卡工厂：
+                //   神格①③「拉取暴露单位」的触发在 effectProcessor 内（猎影标记的额外攻击），
+                //   而 RogueTriggerCtx.createFullCard 必填 ⇒ 必须从这里一路带下去。
+                createFullCard,
             }, card); // [2026-07-28] 传入法术卡牌实例（供 FLYING_SWORD 读取 customProgress 模式）
 
             await wait(50);
@@ -911,7 +1146,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (!card.parentCard) {
                 // [2026-07-15 梵音] 慢速法术也应用减费（觉悟/凯特琳）
                 const benchForCost = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
-                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana);
+                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana, owner);
                 const { newMana, newSpellMana } = calculateNewMana(
                     effectiveCost,
                     owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
@@ -1016,9 +1251,63 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             return;
         }
 
+        // [2026-10-04 莉莉子 BUG修复 · 审计 #4] 退卡必须按**抉择归属方**分派 ——
+        //   原实现固定 `setPlayerHand(...)` ⇒ AI 的抉择法术被取消时，卡会"传送"到**玩家手牌**
+        //   （玩家还能再把它打出来）。归属以 `spellCasting.choiceOwner`（10-02 引入的显式字段）为准。
+        const choiceOwner = sc?.choiceOwner ?? 'player';
         if (currentActive) {
             const cardToReturn = currentActive.parentCard || currentActive;
-            setPlayerHand(prev => [...prev, cardToReturn]);
+            if (choiceOwner === 'enemy') {
+                setEnemyHand(prev => [...prev, cardToReturn]);
+            } else {
+                setPlayerHand(prev => [...prev, cardToReturn]);
+            }
+        }
+        // =====================================
+        // 🔴 [2026-10-05 莉莉子 BUG修复] **抉择之后**取消 ⇒ 必须退还**子卡**费用。
+        // ── 病根：`resolveChoice` 已按子卡费用扣过费（星光之途 1 费 / 绝对主角 6 费），
+        //    而这里只"退卡不退费" ⇒ 玩家在"子卡选目标"阶段一取消就**白扣一次**。
+        //    （上面 :1216 的替换打出分支是**退费**的 ⇒ 本意就该退，这里漏了。）
+        // ── 判据：`parentCard` 存在 = **已抉择出子卡**（仍在 choose_mode 时 activeCard 是母卡、无 parentCard，
+        //    那一刻**尚未扣费**，绝不能退）。
+        // ── 退费公式与 :1219-1232（替换打出）/ GameSession 的取消施法**逐字一致**
+        //    （超出最大法力的部分转法术法力，上限 3）。
+        // =====================================
+        // ⚠️ [2026-10-05 莉莉子 · 独立审查修复] 判据**必须同时要求"已离开 choose_mode"**。
+        //   病根：AI 抉择"需要选目标"时存在一个 0.35~0.65s 的中间态 —— `resolveChoice` 已把
+        //   `activeCard` 换成**子卡**（带 parentCard），但 `spellCasting` 仍是 `choose_mode`。
+        //   若只看 `parentCard`，该窗口内一旦被取消入口命中，就会"**退子卡费用 + 母卡回手**"，
+        //   而 AI 那边的 `runEnemySpellCastBeats().then(commitSpell)` **仍会继续结算**
+        //   ⇒ 变成"退费 + 回手 + 照样生效"的**免费施法**。
+        //   ⇒ 收紧为「有 parentCard **且** 已离开 choose_mode」= 真·已抉择（玩家正在选目标）。
+        //   （玩家侧本就自洽：choose_mode 时 activeCard 是母卡、无 parentCard ⇒ 不退；进 select_* 后才退 ✅）
+        const pickedCost = ((currentActive as any)?.parentCard && sc?.step !== 'choose_mode')
+            ? (currentActive!.cost || 0)
+            : 0;
+        if (pickedCost > 0) {
+            if (choiceOwner === 'enemy') {
+                setGame(prev => {
+                    let newMana = prev.enemyMana + pickedCost;
+                    let newSpellMana = prev.enemySpellMana;
+                    if (newMana > prev.enemyMaxMana) {
+                        newSpellMana = Math.min(3, newSpellMana + (newMana - prev.enemyMaxMana));
+                        newMana = prev.enemyMaxMana;
+                    }
+                    return { ...prev, activeCard: null, spellCasting: null, enemyMana: newMana, enemySpellMana: newSpellMana };
+                });
+            } else {
+                setGame(prev => {
+                    let newMana = prev.playerMana + pickedCost;
+                    let newSpellMana = prev.playerSpellMana;
+                    if (newMana > prev.playerMaxMana) {
+                        newSpellMana = Math.min(3, newSpellMana + (newMana - prev.playerMaxMana));
+                        newMana = prev.playerMaxMana;
+                    }
+                    return { ...prev, activeCard: null, spellCasting: null, playerMana: newMana, playerSpellMana: newSpellMana };
+                });
+            }
+            setMessage("已取消，费用已返还");
+            return;
         }
         setGame(prev => ({ ...prev, activeCard: null, spellCasting: null }));
     };
@@ -1028,13 +1317,46 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         const originalCard = game.activeCard;
         if (!originalCard || !game.spellCasting || game.spellCasting.step !== 'choose_mode') return;
 
+        // [2026-10-02 莉莉子 BUG修复] 抉择归属方以 spellCasting.choiceOwner 为准，不再用 turnOwner 推断。
+        //   病根：玩家可在**对方优先权**阶段打出极速抉择法术（典型：玩家进攻 → 格挡阶段
+        //   turnOwner 归防守方 = 'enemy'），此时按 turnOwner 推断会把**玩家的**法术算成敌方法术：
+        //   扣敌方法力、按敌方飞剑数算折扣、法术记成敌方所有 ⇒ 玩家点了也没用 / 资源算错。
+        const choiceOwner = game.spellCasting.choiceOwner
+            ?? (game.turnOwner === 'enemy' ? 'enemy' : 'player');
+
         const transformed = createFullCard(chosenCardKey);
         transformed.parentCard = originalCard;
+
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-01] **引擎侧兜底**：慢速子卡的时机必须与普通慢速法术同口径
+        // ── UI 侧已由 `gameRules.evaluateChoiceCondition` 的「枷锁4」拦下（选项显示锁定+原因）；
+        //    这里再钉一道，是因为"合法性"这条语义在本项目出过太多次"两处不同源"的事故
+        //    （高光说能打、点下去打不出去）。三条判据与 `playCard` 的慢速守卫**逐字同源**。
+        // ── 越权时既不静默吞卡也不吞费：给提示 + 走既有 `cancelChoice`（母卡回手、子卡费用尚未扣），
+        //    面板正常关闭 ⇒ 不存在"卡死在抉择界面"的风险（AI 侧同样安全）。
+        // =====================================
+        if (transformed.type === 'spell-slow') {
+            const g = stateRef.current.game;
+            const isCombatPhase = g.phase === 'attack_declare' || g.phase === 'block_declare' || g.phase === 'react_to_block';
+            const illegalReason = isCombatPhase
+                ? '战斗阶段无法施放慢速法术'
+                : (g.turnOwner !== choiceOwner
+                    ? '慢速法术只能在自己回合施放'
+                    : (g.spellStack.length > 0 ? '法术响应中，无法施放慢速法术' : null));
+            if (illegalReason) {
+                console.warn(`[抉择·慢速守卫] ${transformed.name}(${chosenCardKey}) 被拒绝：${illegalReason}`
+                    + `（owner=${choiceOwner} turnOwner=${g.turnOwner} phase=${g.phase} stack=${g.spellStack.length}）`);
+                setMessage(`${illegalReason}！`);
+                cancelChoice();
+                return;
+            }
+        }
+        // [2026-10-02 莉莉子] 抉择归属留痕 —— 复测时看这行即可确认玩家的抉择没有被算成敌方的
+        console.log(`[抉择] ${originalCard.name}(${originalCard.key}) → 「${transformed.name}」 owner=${choiceOwner} turnOwner=${game.turnOwner} phase=${originalPhase}`);
 
         // [2026-07-30 飞剑减费] 抉择确认时应用飞剑折扣（朔望之期 + 剑痕时空）
         const SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
         if (SWORD_DISCOUNT_KEYS.includes(chosenCardKey)) {
-            const choiceOwner = game.turnOwner === 'enemy' ? 'enemy' : 'player';
             const gameState = stateRef.current.game;
             const fsTotal = choiceOwner === 'player'
                 ? (gameState.playerFlyingSwordsTotal || 0)
@@ -1054,17 +1376,49 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             });
         }
 
-        const choiceOwner = game.turnOwner === 'enemy' ? 'enemy' : 'player';
+        // =====================================
+        // 🔴 [2026-10-05 莉莉子 BUG修复] 抉择子卡的扣费**必须同步写回 `stateRef`**。
+        // ── 病根（程实测）：「天启者法术 → 抉择小技能/大招 → **最后不扣费**」。链条：
+        //    ① 这里用 `setGame(prev => …)` 扣费 —— 那是**异步入队**，`stateRef.current.game` 此刻仍是旧值；
+        //    ② 紧接着**同步**调用的 `commitSpell` 会执行 `let cleanSnapshot = { ...stateRef.current.game }`（:939）
+        //       ⇒ **取到扣费前的快照**，随后 `setGame({ ...cleanSnapshot, … })`（快速/慢速走 :1154）
+        //       **整体覆盖**这把 mana ⇒ 那次扣费被抹掉；
+        //    ③ 而 `commitSpell` 里两处扣费（:973 极速 / :1130 快速·慢速）都写着 `if (!card.parentCard)`
+        //       —— **本意正是"抉择时已经扣过了、别再扣"**，前提却是这次扣费没被覆盖。
+        //    ⇒ **两头都以为对方扣了，结果一分钱没花**（子卡是 spell-fast/spell-slow，正好都走覆盖路径）。
+        // ── 修法：扣费后**立即同步 `stateRef.current.game`**，让随后同步执行的 `commitSpell`
+        //    取到的 `cleanSnapshot` 已带着扣费（与项目里多处"手动同步 stateRef"同一惯例）。
+        // ── 顺带：读数由闭包 `game` 换成 `stateRef.current.game` —— 本函数前面还有几处 setGame，
+        //    闭包值可能不是最新。
+        // =====================================
+        const costGame = (stateRef ? stateRef.current.game : game);
+        // ⚠️ [2026-10-05 莉莉子 · 独立审查修复] 扣费金额改走 `getEffectiveSpellCost`，
+        //   与 `commitSpell` 的两处扣费（:976 极速 / :1133 快速·慢速）**同一口径** ——
+        //   它把"凯特琳 -1""觉悟归零"等减费算进去（gameRules.ts）。
+        //   原实现直接取 `transformed.cost` 裸值 ⇒ 抉择子卡一直吃不到减费；
+        //   改动前这个差异被"扣费被覆盖"掩盖着（等于没扣），修好扣费后它**首次真实可见** ⇒ 必须对齐。
+        const costBench = choiceOwner === 'player' ? stateRef?.current.playerBench : stateRef?.current.enemyBench;
+        const effectiveSubCost = costBench
+            ? getEffectiveSpellCost(transformed, costBench, costGame.playerMaxMana, choiceOwner)
+            : (transformed.cost || 0);
         const { newMana, newSpellMana } = calculateNewMana(
-            transformed.cost,
-            choiceOwner === 'player' ? game.playerMana : game.enemyMana,
-            choiceOwner === 'player' ? game.playerSpellMana : game.enemySpellMana,
+            effectiveSubCost,
+            choiceOwner === 'player' ? costGame.playerMana : costGame.enemyMana,
+            choiceOwner === 'player' ? costGame.playerSpellMana : costGame.enemySpellMana,
             false
         );
         if (choiceOwner === 'player') {
-            setGame(prev => ({ ...prev, playerMana: Math.min(prev.playerMaxMana, newMana), playerSpellMana: Math.min(3, newSpellMana) }));
+            const nextMana = Math.min(costGame.playerMaxMana, newMana);
+            const nextSpellMana = Math.min(3, newSpellMana);
+            setGame(prev => ({ ...prev, playerMana: nextMana, playerSpellMana: nextSpellMana }));
+            // ⚠️ 必须同步：commitSpell 的 cleanSnapshot(:939) 读的是 stateRef，不同步则覆盖本次扣费
+            if (stateRef) stateRef.current.game = { ...stateRef.current.game, playerMana: nextMana, playerSpellMana: nextSpellMana };
         } else {
-            setGame(prev => ({ ...prev, enemyMana: Math.min(prev.enemyMaxMana, newMana), enemySpellMana: Math.min(3, newSpellMana) }));
+            const nextMana = Math.min(costGame.enemyMaxMana, newMana);
+            const nextSpellMana = Math.min(3, newSpellMana);
+            setGame(prev => ({ ...prev, enemyMana: nextMana, enemySpellMana: nextSpellMana }));
+            // ⚠️ 同上（AI 抉择侧）
+            if (stateRef) stateRef.current.game = { ...stateRef.current.game, enemyMana: nextMana, enemySpellMana: nextSpellMana };
         }
 
         const effectId = transformed.effects && transformed.effects.length > 0 ? transformed.effects[0] : null;
@@ -1108,7 +1462,12 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                         cardId: transformed.id,
                         step: step,
                         targets: [],
-                        allyId: undefined
+                        allyId: undefined,
+                        // ⚠️ [2026-10-05 莉莉子 · 独立审查修复] **必须带上抉择归属** ——
+                        //   `cancelChoice` 的退卡/退费归属只认 `sc.choiceOwner`（:1241）。
+                        //   原实现切到 select_* 时丢了这个字段 ⇒ 兜底成 'player'，
+                        //   一旦 AI 侧出现持久化的 select_* 步，费用会**退到玩家头上**。
+                        choiceOwner,
                     }
                 }));
                 setMessage(`请选择 ${transformed.name} 的施放目标`);
@@ -1362,6 +1721,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 // [2026-07-08 修复] 补传 enemyHand，DISCARD 需要它来找到要弃的牌
                 enemyHand: stateRef.current.enemyHand,
                 setEnemyHand,
+                // [2026-10-03 莉莉子 BUG-20261002-24] 同上（堆栈结算路径）
+                createFullCard,
             }, spell.card); // [2026-07-28] 传入法术卡牌实例（供 FLYING_SWORD 读取 customProgress 模式）
             setGame(prev => ({ ...prev, spellStack: prev.spellStack.filter(s => s.card.id !== spell.card.id) }));
 
@@ -1375,24 +1736,24 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [2026-09-13 莉莉子] 天启者法术回库（慢速/快速抉择走堆栈结算，极速走 commitSpell）
             grantChampionSpellCopy(spell.card, spell.owner);
 
+            // ==========================================
             // [2026-08-30 莉莉子 死锁护栏] 升级影片/队列等待加超时上限，
             // 杜绝升级影片 onEnd 挂起（芬妮单挑、卜卜胜利竞态）导致的无限死锁。
             // 超时后强制清空升级队列放行——升级数值/效果已入账，仅截断演出，绝不冻结对局。
-            const levelUpQueueLen = (stateRef.current.game.pendingLevelUps || []).length;
-            const levelUpWaitLimit = Math.max(20000, levelUpQueueLen * 12000); // 单英雄20s，每多一个英雄+12s
-            let levelUpWaitMs = 0;
-            while (
-                stateRef.current.game.levelUpCard !== null ||
-                (stateRef.current.game.pendingLevelUps && stateRef.current.game.pendingLevelUps.length > 0)
-            ) {
-                if (levelUpWaitMs >= levelUpWaitLimit) {
-                    console.warn(`[resolveStack] ⏱️ 升级等待超时(${levelUpWaitLimit}ms)，强制清空升级队列放行，防止死锁`);
-                    setGame(prev => ({ ...prev, levelUpCard: null, pendingLevelUps: [] }));
-                    break;
-                }
-                await wait(200);
-                levelUpWaitMs += 200;
-            }
+            // [2026-10-03 莉莉子 · P0 收口] 这段原先是**内联拷贝**，现已与 useGameState 合并到
+            //   `utils/levelUpDrain.ts` 的唯一实现；本实例（UI 层简版只传 onComplete 时参数为 undefined）
+            //   由那边的**判空防御**兜住 —— 宁可不等待，也不会崩。
+            // ==========================================
+            await awaitLevelUpDrainCore({
+                readPending: () => {
+                    const g = stateRef.current.game;
+                    const queueLen = (g.pendingLevelUps || []).length;
+                    return { isPending: g.levelUpCard !== null || queueLen > 0, queueLen };
+                },
+                clearLevelUp: () => setGame(prev => ({ ...prev, levelUpCard: null, pendingLevelUps: [] })),
+                wait,
+                tag: 'resolveStack:法术结算后',
+            });
 
             // [2026-07-21 对局记录] 全量对比发射
             {

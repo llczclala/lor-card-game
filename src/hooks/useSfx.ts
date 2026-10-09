@@ -1,5 +1,7 @@
 import { useEffect,useRef,useCallback } from 'react';
 import { eventBus, GameEvents } from '../utils/eventBus';
+// [2026-10-05 莉莉子 BUG修复 · 20261005-06] 音量改为"可读取的当前值"（模块级快照）
+import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
 
 // 直接引入音效文件
 import clickSound from '../music/music/click.ogg';
@@ -61,14 +63,18 @@ import defaultHitSound from '../music/music/默认受击.ogg';
 import beaconHitSound from '../music/music/茉莉安 霄鹰/信标受击.ogg';
 
 export const useSfx = () => {
-    // [新增] 全局音效音量 Ref (默认 0.6)
-    const globalVolumeRef = useRef(0.6);
+    // [新增] 全局音效音量 Ref
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 初值改为**读取全局快照**（不再是写死的 0.6）——
+    //   本 hook 目前只在 App 根部实例化（常驻，不受"每局重挂"影响），但同族的 `useVoice` 就是被
+    //   写死默认值坑了 ⇒ 这里一并收口，将来谁在局内新挂实例都不会再踩。
+    const globalVolumeRef = useRef(getVolume('sfx'));
     // [2026-09-19 茉莉安] 大招音效实例（用于「重触发」——见 playMarianUlt 注释）
     const marianUltAudioRef = useRef<HTMLAudioElement | null>(null);
 
     // [新增] 设置音效音量接口
     const setSfxVolume = useCallback((vol: number) => {
         globalVolumeRef.current = Math.max(0, Math.min(1, vol));
+        setVolumeSnapshot('sfx', vol); // [2026-10-05] 同步全局快照（供之后新挂的实例自取）
     }, []);
     useEffect(() => {
         // [修复] 浏览器自动播放策略解锁：首次用户交互时激活音频上下文

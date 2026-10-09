@@ -19,6 +19,7 @@ import type {
     NexusDamageLogEvent,
     DamageDealtLogEvent,
     LevelUpLogEvent,
+    DeckListLogEvent,
     GameEndLogEvent
 } from '../utils/gameLogger';
 
@@ -236,17 +237,32 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
                         if (playedChampion) added += 1;
                     }
                     break;
-                // [2026-07-12] 携带指定后勤小队全员获胜：检查是否打出过小队所有成员且获胜
-                case 'win_with_squad':
-                    if (isWin && mission.condition.targetKeys && mission.condition.targetKeys.length > 0) {
-                        const playedCards = new Set(
-                            logs.filter(l => l.type === 'play_card' && l.isPlayerSide)
-                                .map(l => (l as PlayCardLogEvent).cardKey)
-                        );
-                        const allPlayed = mission.condition.targetKeys.every(k => playedCards.has(k));
-                        if (allPlayed) added += 1;
-                    }
+                // [2026-07-12] 携带指定后勤小队全员获胜
+                // =====================================
+                // [2026-10-05 莉莉子 BUG修复 · 20261005-04] 判据从「**打出过**」改为「**携带**」= 开局牌组快照
+                // ── 病根：卡面写「携带XX小队全员（各三张），赢得一场对局胜利」，实现却在查 `play_card` 日志
+                //    （等价于"本局必须把三名成员都打出去过"）—— 比卡面严得多；更要命的是**替换打出的那一次
+                //    根本没有 play_card 探针**（`useGameState.playCard` 的探针写在"备战席满员 → 进 select_bench
+                //    并 return"**之后**，`confirmReplacePlay` 也不补记）⇒ 备战席满员时打出的成员不计数。
+                //    而按卡面「各三张」成簇出牌的自然打法（3 张鸽子→3 张乐手→第 7 张才是箭头）里，
+                //    第三名成员的第一张**几乎必然正好是需要替换的那一张** ⇒ 任务永远 0/1（程 2026-10-05 报）。
+                // ── 修法：改判开局写入的 `deck_list` 快照 —— 与卡面/公告口径一致（「携带全员赢得对局」），
+                //    且完全不依赖"怎么打出去的"（替换、法术从手牌打出、一直被沉底没抽到…都不影响）。
+                // ── 张数：`requiredCopies` 逐条写在数据里（**作战成功系列 = 3**，对应卡面「各三张」；
+                //    缺省回落到 1 = 携带全员各至少一张，供将来其他"携带类"任务复用）。
+                //    ⚠️ 需要**拥有** 3 张才放得进卡组（DeckBuilder 单卡上限 3 + 拥有量闸门）——
+                //      版本「新版本启航」只发每人 1 张（`card` 奖励 = 每个 key +1），所以这 2 张要靠抽卡攒。
+                // =====================================
+                case 'win_with_squad': {
+                    if (!isWin || !mission.condition.targetKeys || mission.condition.targetKeys.length === 0) break;
+                    const required = mission.condition.requiredCopies ?? 1;
+                    const deckEvent = logs.find(l => l.type === 'deck_list') as DeckListLogEvent | undefined;
+                    const carried = new Map<string, number>();
+                    (deckEvent?.cardKeys || []).forEach(k => carried.set(k, (carried.get(k) || 0) + 1));
+                    const allCarried = mission.condition.targetKeys.every(k => (carried.get(k) || 0) >= required);
+                    if (allCarried) added += 1;
                     break;
+                }
                 // [2026-07-22] 指定单位累计造成伤害 (用于臆莲基座等)
                 case 'damage_dealt':
                     logs.filter(l => l.type === 'damage_dealt' && l.isPlayerSide && (l as DamageDealtLogEvent).sourceCardKey === mission.condition.targetKey).forEach(l => {

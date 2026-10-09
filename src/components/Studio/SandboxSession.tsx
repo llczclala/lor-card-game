@@ -18,6 +18,8 @@ import { SmartNexus } from '../GameUI';
 import { ManaGemSystem } from '../ManaGemSystem';
 import { UI_IMAGES, PERSONALIZATION_ASSETS } from '../../data/imageData';
 import type { CardData, Keyword } from '../../types';
+// [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔进度：沙盒"一键达标"必须同时写账本与镜像
+import { setMauxirProgressForSandbox } from '../../utils/mauxirProgress';
 
 interface SandboxSessionProps {
     onClose: () => void;
@@ -288,13 +290,17 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
     // ══════════════════════════════════════════════════════════════════
     // [2026-09-13 L1-B / L1-C] 升级进度：语义化编辑 + 一键达标
     //
-    // 追踪"升级进度"的字段有两个，且都不直观：
+    // 追踪"升级进度"的字段有三个，且都不直观：
     //   · strikeCount    —— 里芙（打击 2 次）
-    //   · customProgress —— 卜卜(≥3) / 猫汐尔(≥30)
+    //   · customProgress —— 卜卜(≥3)
+    //   · mauxirDamage   —— 猫汐尔(≥30)
     //
-    // ⚠️ customProgress 是【被多个系统共用的位域】：bit2 同时被
-    //    "费用已降低标记"（equipment.ts）和"芬妮触发记录"（effectProcessor.ts）占用。
-    //    直接赋值会污染其他位，故写值时统一保住 bit2。
+    // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔由 `customProgress` 迁到**专属字段**
+    //   `mauxirDamage`（真源 = 模块级账本 `utils/mauxirProgress`）——
+    //   `customProgress` 是【被多个系统共用的位域】（bit2 = 费用已降低标记 / 芬妮触发记录），
+    //   而猫汐尔要的是一个 0~30 的**计数器**，共用会把她的进度虚增/误扣 2。
+    //
+    // ⚠️ customProgress 仍是位域：直接赋值会污染其他位，故写值时统一保住 bit2。
     //
     // ⚠️ 等价性说明（重要）：这里直接设值属于「快照模式」。对【升级类 BUG】它与真机
     //    **等价** —— 因为 checkCardLevelUp 只看字段值，而升级流程本身走的是真实引擎
@@ -307,8 +313,8 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
         if (!key) return null;
         if (key === 'lyfe') return { field: 'strikeCount' as const, label: '打击次数', target: 2, hint: '里芙：打击 2 次即可升级' };
         if (key === 'pupu_specular_soul') return { field: 'customProgress' as const, label: '目睹攻击水晶', target: 3, hint: '卜卜：场上目睹攻击敌方水晶 3 次' };
-        if (key === 'mauxir_lotus_drive') return { field: 'customProgress' as const, label: '召唤伤害累计', target: 30, hint: '猫汐尔：友方召唤者与召唤物累计造成 30 点伤害' };
-        if (key === 'fenny') return { field: 'nexus' as const, label: '水晶血量 ≤ 10', target: null, hint: '芬妮：任意一方水晶 ≤ 10 —— 请用底部「全局参数」直接调低水晶' };
+        if (key === 'mauxir_lotus_drive') return { field: 'mauxirDamage' as const, label: '召唤伤害累计', target: 30, hint: '猫汐尔：友方召唤者与召唤物累计造成 30 点伤害（已是专属字段，不再共用 customProgress 位域）' };
+        if (key === 'fenny') return { field: 'nexus' as const, label: '水晶血量 ≤ 上限的一半', target: null, hint: '芬妮：任意一方水晶 ≤ 其自身上限的一半（标准对局上限 20 ⇒ ≤10）—— 请用底部「全局参数」直接调低水晶' };
         if (key === 'acacia_chrono_echo') return { field: 'flag' as const, label: '朔望之期已打出', target: null, hint: '安卡：需在对局中真实打出「朔望之期」才能标记升级' };
         return null;
     }, [activeDnaCard?.key]);
@@ -318,6 +324,8 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
         if (!activeDnaCard || !levelUpMeta) return 0;
         if (levelUpMeta.field === 'strikeCount') return activeDnaCard.strikeCount || 0;
         if (levelUpMeta.field === 'customProgress') return activeDnaCard.customProgress || 0;
+        // [2026-10-06 BUG-20261006-01] 猫汐尔：专属镜像字段
+        if (levelUpMeta.field === 'mauxirDamage') return activeDnaCard.mauxirDamage || 0;
         return 0;
     }, [activeDnaCard, levelUpMeta]);
 
@@ -330,6 +338,11 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
         } else if (levelUpMeta.field === 'customProgress') {
             const preserved = (activeDnaCard.customProgress || 0) & 2;
             updateDnaCard({ customProgress: preserved | v });
+        } else if (levelUpMeta.field === 'mauxirDamage') {
+            // [2026-10-06 BUG-20261006-01] 猫汐尔：**账本与镜像要一起写** ——
+            //   只写卡上字段的话，下一次"全域兜底贴值"（回合开始/归位）会拿账本值把这里覆盖回去。
+            setMauxirProgressForSandbox(v, 'player');
+            updateDnaCard({ mauxirDamage: v });
         }
     };
 
@@ -998,8 +1011,8 @@ export const SandboxSession: React.FC<SandboxSessionProps> = ({ onClose }) => {
 
                     {/* ══════════════════════════════════════════════════════════
                         [2026-09-13 L1-D] 全局参数：水晶 / 法力 / 回合 / 阶段
-                        —— 让"水晶 ≤ 10 触发升级"（芬妮）这类条件可以直接构造，
-                        不必先真刀真枪把水晶打到 10。
+                        —— 让"水晶 ≤ 上限的一半触发升级"（芬妮）这类条件可以直接构造，
+                        不必先真刀真枪把水晶打到阈值。
                         ══════════════════════════════════════════════════════════ */}
                     <div className="flex flex-wrap gap-2 items-center bg-black/30 rounded-lg px-3 py-2 text-[10px]">
                         <span className="text-gray-500 font-black tracking-wider">水晶</span>

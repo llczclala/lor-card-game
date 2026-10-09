@@ -44,6 +44,26 @@ export const reloadHeroProgressionCache = (): void => {
     listeners.forEach(fn => fn());
 };
 
+/**
+ * [2026-10-05 莉莉子] **模块级**读某英雄当前等级（无记录 → 1）。
+ *
+ * 为什么需要它：`useArmamentConfig` 要在**模块加载期**做一次"未解锁槽残留清理"
+ *   （见 `clearLockedSlotResidue`），那时拿不到 hook 的返回值，但能读模块级的 `sharedMap`。
+ * ⚠️ 与 hook 内暴露的 `getHeroLevel` **同源**（都是这一个函数）⇒ 两处口径不会分叉。
+ */
+export const getHeroLevelOf = (heroKey: string): number => sharedMap[heroKey]?.level ?? 1;
+
+/**
+ * [2026-10-05 莉莉子] 该英雄**是否存在等级记录**。
+ *
+ * ⚠️ 为什么必须区分「无记录」与「真的是 Lv1」：
+ *   `getHeroLevelOf` 的 `?? 1` 只是**兜底显示值**。若存储读取异常（`StorageUtils.load` 捕获异常返回 `{}`）
+ *   或存档被删，**所有英雄都会兜底成 1** ⇒ 任何"按等级推断槽位"的**写操作**都会把
+ *   **已解锁槽也当成锁着的清掉并落盘**（持久化的配置损失）。
+ *   ⇒ 凡是要**据等级改存档**的地方（如 `clearLockedSlotResidue`），先问一句"他真的存在等级记录吗"。
+ */
+export const hasHeroProgressOf = (heroKey: string): boolean => !!sharedMap[heroKey];
+
 export const useHeroProgression = () => {
     const [progressMap, setProgressMap] = useState<Record<string, HeroProgressData>>(sharedMap);
 
@@ -81,10 +101,8 @@ export const useHeroProgression = () => {
         };
     }, []);
 
-    /** 获取某英雄当前等级（无记录 → 1） */
-    const getHeroLevel = useCallback((heroKey: string): number => {
-        return sharedMap[heroKey]?.level ?? 1;
-    }, []);
+    /** 获取某英雄当前等级（无记录 → 1）—— 直接复用模块级唯一出口，避免两处口径 */
+    const getHeroLevel = useCallback((heroKey: string): number => getHeroLevelOf(heroKey), []);
 
     /** [2026-08-14 开发者] 直接设置某英雄等级（1-30，钳制范围），用于开发者测试等级数字颜色等 */
     const setHeroLevel = useCallback((heroKey: string, level: number) => {

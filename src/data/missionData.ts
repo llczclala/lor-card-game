@@ -50,6 +50,9 @@ export interface MissionDef {
         type: MissionConditionType;
         targetKey?: string;      // 监听的具体卡牌标识
         targetKeys?: string[];   // [2026-07-12] 监听的多卡牌标识列表（用于 win_with_squad）
+        // [2026-10-05 莉莉子] win_with_squad 专用：每张成员卡要求**携带**几张（开局牌组快照里数）。
+        //   缺省 1 = 「携带全员各至少一张」（与公告口径一致）；卡面若写「各三张」就填 3。
+        requiredCopies?: number;
     };
     // [2026-06-27] 版本任务专用字段
     rewardDirect?: boolean;      // 是否直接领取（无需进度）
@@ -439,6 +442,55 @@ export const MISSIONS: MissionDef[] = [
         condition: { type: 'play_card', targetKey: 'Crows_Eyest_Squad_Hiki' }
     },
 
+    // ==========================================
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-07] 安卡 / 茉莉安的**专属后勤**皮肤成就（整块漏做）
+    // ── 圣树小队 = 安卡希雅的专属后勤（`cards.ts` region 'Acacia'）；松露小队 = 茉莉安的（region 'Marian'）
+    // ── 病根：这两支小队的 `_01 / _02` 立绘与三档裁剪坐标（`cardCropConfig.ts`）**早就备好了**，
+    //    但 `skinData.ts` 的目录里**一条都没有** ⇒ 既没有「阶段二」成就任务，也没有商店/盲盒入口，
+    //    皮肤在游戏里**完全没有获取渠道**（程 2026-10-05 报）。
+    // ── 本批补齐 6 条（与其余 14 支小队同款）：`在对局中累计打出「小队-成员」5 次` → 对应「阶段二」皮肤。
+    // ⚠️ 皮肤奖励是**按 `missionId` 反查 `COSMETIC_REGISTRY`** 才能解锁的（`useUserSystem.ts:1090`）
+    //    ⇒ 必须 `skinData.ts` 与本处**两侧同时登记**，否则任务能完成、奖励却发不出去。
+    // ==========================================
+    // Logistics (后勤) · 圣树小队（安卡希雅专属）
+    {
+        id: 'mission_sacredtree_lumi_01',
+        category: 'achievement', title: '林间剑鸣', description: '在对局中累计打出「圣树-露米」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_sacredtree_lumi_01' },
+        condition: { type: 'play_card', targetKey: 'Sacred_Tree_Squad_Lumi' }
+    },
+    {
+        id: 'mission_sacredtree_margaret_01',
+        category: 'achievement', title: '翠荫突袭', description: '在对局中累计打出「圣树-玛格丽特」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_sacredtree_margaret_01' },
+        condition: { type: 'play_card', targetKey: 'Sacred_Tree_Squad_Margaret' }
+    },
+    {
+        id: 'mission_sacredtree_alvina_01',
+        category: 'achievement', title: '圣树号令', description: '在对局中累计打出「圣树-阿尔维娜」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_sacredtree_alvina_01' },
+        condition: { type: 'play_card', targetKey: 'Sacred_Tree_Squad_Alvina' }
+    },
+    // Logistics (后勤) · 松露小队（茉莉安专属）
+    {
+        id: 'mission_truffle_mushroom_shadows_01',
+        category: 'achievement', title: '蕈影潜行', description: '在对局中累计打出「松露-蕈影」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_truffle_mushroom_shadows_01' },
+        condition: { type: 'play_card', targetKey: 'Truffle_Squad_Mushroom_Shadows' }
+    },
+    {
+        id: 'mission_truffle_elm_01',
+        category: 'achievement', title: '榆木流萤', description: '在对局中累计打出「松露-榆」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_truffle_elm_01' },
+        condition: { type: 'play_card', targetKey: 'Truffle_Squad_Elm' }
+    },
+    {
+        id: 'mission_truffle_iris_01',
+        category: 'achievement', title: '虹彩折光', description: '在对局中累计打出「松露-虹彩」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_truffle_iris_01' },
+        condition: { type: 'play_card', targetKey: 'Truffle_Squad_Iris' }
+    },
+
     // 🏆 2.0 版本活动 (Version 2.0)
     // ==========================================
     // 【维护提示】老友福利是每个版本可重复领取的测试服回馈礼包。
@@ -461,6 +513,45 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '新版本启航', description: '迎接新版本，获得猫汐尔莲驱与图征小队全员！',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'card', cardKeys: ['mauxir_lotus_drive', 'Illustration_Squad_Kuranas', 'Illustration_Squad_Swali', 'Illustration_Squad_Soline'] },
+        condition: { type: 'direct_claim' }
+    },
+    // ==========================================
+    // [2026-10-03 程拍板] **新手卡组补给** —— 存量号把收藏补齐到"能填满 40 张卡组"
+    //   背景：两套初始卡组已由 15 张 → **40 张**（结构 = 英雄 ×1 + 13 种 ×3），
+    //    而旧口径的新手收藏是「英雄 1 / 其余 2」⇒ **每种都差 1 张**，还缺 2 张阵营法术
+    //    ⇒ 收藏只有 40 张时，按"卡组必须 40 张"的规则**根本凑不出合法卡组**
+    //      （连里芙单独一套最多也只有 1 + 38 = 39 张）。详见 `initialUserData.ts` 的注释。
+    //   本任务一次性补齐 **25 张**：
+    //     ① 原有 19 种基础卡 各 +1（2 → 3 = 构筑单卡上限）
+    //     ② 新增 2 张阵营法术 各 +3（0 → 3）：`lyfe_support`（冻沙激流）/ `fenny_support`（激励之声）
+    //   ⚠️ `card` 奖励语义 = `cardKeys` 里**每个 key 各 +1**、**同一 key 重复写就会多发**
+    //      （`useUserSystem.grantMissionReward`）⇒ 下面那两张各写 3 遍是**刻意的**。
+    //   ⚠️ id 带日期：任务进度按 id 存档，沿用旧 id 会让领过的人无法再领
+    //      （见上方「老友福利」的维护提示）。
+    //   📌 卡组本身的升级走**登录迁移**（`migrateStarterDecks`）—— 任务系统**发不了卡组**
+    //      （`MissionRewardType` 无 `deck` 类型，`MissionDef.reward` 也没有卡组字段）。
+    // ==========================================
+    {
+        id: 'version_gift_starter_deck_20261003',
+        category: 'version', title: '新手卡组补给',
+        description: '补齐新手卡牌收藏，两套初始卡组现在都是完整的 40 张（2026-10-03）',
+        targetCount: 1, rewardDirect: true,
+        reward: {
+            type: 'card',
+            cardKeys: [
+                // ── ① 原有 19 种基础卡，各 +1（2 → 3）──
+                'single_combat', 'prayer', 'focus',
+                'hidden_arrow', 'inspire', 'destruction',
+                'Messenger_Squad_Ah_Hua', 'Ghost_Squad_Antina', 'Argo_Squad_Pigeon',
+                'Typhoon_Squad_Flameheart', 'Ulster_Squad_Koni', 'Mingyi_Squad_Zhe_hao',
+                'Messenger_Squad_Gena', 'Ghost_Squad_Vez', 'Argo_Squad_Musician',
+                'Dream_Guardians_Squad_Martina',
+                'Typhoon_Squad_Dornier', 'Ghost_Squad_Valen', 'Mingyi_Squad_Jin_Lang',
+                // ── ② 新增 2 种阵营法术，各 +3（0 → 3）—— 里芙组 / 芬妮组的第 4 张法术 ──
+                'lyfe_support', 'lyfe_support', 'lyfe_support',
+                'fenny_support', 'fenny_support', 'fenny_support',
+            ]
+        },
         condition: { type: 'direct_claim' }
     },
     {
@@ -502,70 +593,70 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '阿尔戈小队：作战成功', description: '携带阿尔戈小队全员（鸽子·乐手·箭头）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Argo_Squad_Pigeon', 'Argo_Squad_Musician', 'Argo_Squad_Arrowhead'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Argo_Squad_Pigeon', 'Argo_Squad_Musician', 'Argo_Squad_Arrowhead'] }
     },
     {
         id: 'version_squad_mingyi',
         category: 'version', title: '明夷小队：作战成功', description: '携带明夷小队全员（赭毫·朱鹤·金琅）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Mingyi_Squad_Zhe_hao', 'Mingyi_Squad_Zhu_He', 'Mingyi_Squad_Jin_Lang'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Mingyi_Squad_Zhe_hao', 'Mingyi_Squad_Zhu_He', 'Mingyi_Squad_Jin_Lang'] }
     },
     {
         id: 'version_squad_star',
         category: 'version', title: '星朗小队：作战成功', description: '携带星朗小队全员（朵薇尔·爱莉薇娅·妲柯丝）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Star_Bright_Squad_Doveil', 'Star_Bright_Squad_Alivy', 'Star_Bright_Squad_Dakors'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Star_Bright_Squad_Doveil', 'Star_Bright_Squad_Alivy', 'Star_Bright_Squad_Dakors'] }
     },
     {
         id: 'version_squad_chongye',
         category: 'version', title: '重叶小队：作战成功', description: '携带重叶小队全员（梅贝尔·伊莉斯·歌莉娅）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Chongye_Squad_Mabel', 'Chongye_Squad_Elice', 'Chongye_Squad_Golia'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Chongye_Squad_Mabel', 'Chongye_Squad_Elice', 'Chongye_Squad_Golia'] }
     },
     {
         id: 'version_squad_illustration',
         category: 'version', title: '图征小队：作战成功', description: '携带图征小队全员（库兰娅丝·斯瓦莉·索莉妮）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Illustration_Squad_Kuranas', 'Illustration_Squad_Swali', 'Illustration_Squad_Soline'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Illustration_Squad_Kuranas', 'Illustration_Squad_Swali', 'Illustration_Squad_Soline'] }
     },
     {
         id: 'version_squad_green',
         category: 'version', title: '绿灵小队：作战成功', description: '携带绿灵小队全员（格伦茨·艾娃·格蕾丝）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Green_Spirit_Squad_Glanz', 'Green_Spirit_Squad_Eva', 'Green_Spirit_Squad_Grace'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Green_Spirit_Squad_Glanz', 'Green_Spirit_Squad_Eva', 'Green_Spirit_Squad_Grace'] }
     },
     {
         id: 'version_squad_forger',
         category: 'version', title: '锻造者小队：作战成功', description: '携带锻造者小队全员（蕾西亚·缇坦妮娅·白猎）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['The_Forger_Squad_Leisia', 'The_Forger_Squad_Tatiana', 'The_Forger_Squad_White_Hunt'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['The_Forger_Squad_Leisia', 'The_Forger_Squad_Tatiana', 'The_Forger_Squad_White_Hunt'] }
     },
     {
         id: 'version_squad_sacred',
         category: 'version', title: '梵音小队：作战成功', description: '携带梵音小队全员（洛迦·欧白芷·莎罗）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['SacredChants_Squad_Loka', 'SacredChants_Squad_European_Angelica', 'SacredChants_Squad_Shalo'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['SacredChants_Squad_Loka', 'SacredChants_Squad_European_Angelica', 'SacredChants_Squad_Shalo'] }
     },
     {
         id: 'version_squad_danu',
         category: 'version', title: '达努小队：作战成功', description: '携带达努小队全员（班西·温蒂·银臂）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Danu_Squad_Banshee', 'Danu_Squad_Wendy', 'Danu_Squad_SilverArm'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Danu_Squad_Banshee', 'Danu_Squad_Wendy', 'Danu_Squad_SilverArm'] }
     },
     {
         id: 'version_squad_crows',
         category: 'version', title: '鸦眼小队：作战成功', description: '携带鸦眼小队全员（安·穆林·海基）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Crows_Eyest_Squad_An', 'Crows_Eyest_Squad_Mulin', 'Crows_Eyest_Squad_Hiki'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Crows_Eyest_Squad_An', 'Crows_Eyest_Squad_Mulin', 'Crows_Eyest_Squad_Hiki'] }
     },
 
     // --- 四星后勤：鬼怪小队 ---
@@ -574,7 +665,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '鬼怪小队：作战成功', description: '携带鬼怪小队全员（安提娜·薇兹·瓦莲）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Ghost_Squad_Antina', 'Ghost_Squad_Vez', 'Ghost_Squad_Valen'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Ghost_Squad_Antina', 'Ghost_Squad_Vez', 'Ghost_Squad_Valen'] }
     },
 
     // --- 四星后勤：布里吉小队 ---
@@ -583,7 +674,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '布里吉小队：作战成功', description: '携带布里吉小队全员（菲儿·金吉拉·瓦莱莉）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Bridget_Squad_Feier', 'Bridget_Squad_Chinchilla', 'Bridget_Squad_Valerie'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Bridget_Squad_Feier', 'Bridget_Squad_Chinchilla', 'Bridget_Squad_Valerie'] }
     },
 
     // --- 四星后勤：精灵小队 ---
@@ -592,7 +683,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '精灵小队：作战成功', description: '携带精灵小队全员（露莎卡·斯涅妮卡·邦尼）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Spirit_Squad_Lusaka', 'Spirit_Squad_Snenika', 'Spirit_Squad_Bonnie'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Spirit_Squad_Lusaka', 'Spirit_Squad_Snenika', 'Spirit_Squad_Bonnie'] }
     },
 
     // --- 四星后勤：诗人小队 ---
@@ -601,7 +692,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '诗人小队：作战成功', description: '携带诗人小队全员（奥伊辛·凯特琳·科洛）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Poet_Squad_Oisin', 'Poet_Squad_Caitlin', 'Poet_Squad_Kelo'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Poet_Squad_Oisin', 'Poet_Squad_Caitlin', 'Poet_Squad_Kelo'] }
     },
 
     // --- 三星后勤：守梦人小队 ---
@@ -610,7 +701,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '守梦人小队：作战成功', description: '携带守梦人小队全员（玛蒂娜·赛奎特·海法）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Dream_Guardians_Squad_Martina', 'Dream_Guardians_Squad_Saikui', 'Dream_Guardians_Squad_Haifa'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Dream_Guardians_Squad_Martina', 'Dream_Guardians_Squad_Saikui', 'Dream_Guardians_Squad_Haifa'] }
     },
 
     // --- 三星后勤：阿尔斯特小队 ---
@@ -619,7 +710,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '阿尔斯特小队：作战成功', description: '携带阿尔斯特小队全员（科尼·梅芙·弗拉梅）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Ulster_Squad_Koni', 'Ulster_Squad_Maeve', 'Ulster_Squad_Flamme'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Ulster_Squad_Koni', 'Ulster_Squad_Maeve', 'Ulster_Squad_Flamme'] }
     },
 
     // --- 三星后勤：堤丰小队 ---
@@ -628,7 +719,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '堤丰小队：作战成功', description: '携带堤丰小队全员（焰心·多尼尔·613）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Typhoon_Squad_Flameheart', 'Typhoon_Squad_Dornier', 'Typhoon_Squad_613'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Typhoon_Squad_Flameheart', 'Typhoon_Squad_Dornier', 'Typhoon_Squad_613'] }
     },
 
     // --- 三星后勤：信使小队 ---
@@ -637,7 +728,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '信使小队：作战成功', description: '携带信使小队全员（阿花·格娜·WALL-E）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Messenger_Squad_Ah_Hua', 'Messenger_Squad_Gena', 'Messenger_Squad_WALL_E'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Messenger_Squad_Ah_Hua', 'Messenger_Squad_Gena', 'Messenger_Squad_WALL_E'] }
     },
 
     // --- 三星后勤：御守小队 ---
@@ -646,7 +737,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '御守小队：作战成功', description: '携带御守小队全员（灼·香蒲·桃子）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Amulet_Squad_Scorching', 'Amulet_Squad_Cattail', 'Amulet_Squad_Peaches'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Amulet_Squad_Scorching', 'Amulet_Squad_Cattail', 'Amulet_Squad_Peaches'] }
     },
 
     // --- 三星后勤：梵灵小队 ---
@@ -655,7 +746,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '梵灵小队：作战成功', description: '携带梵灵小队全员（露茜娅·纳芙·瓦茜）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['FanLing_Squad_Lucia', 'FanLing_Squad_Nafu', 'FanLing_Squad_Wasi'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['FanLing_Squad_Lucia', 'FanLing_Squad_Nafu', 'FanLing_Squad_Wasi'] }
     },
 
     // --- 安卡希雅专属后勤：圣树小队 ---
@@ -664,7 +755,7 @@ export const MISSIONS: MissionDef[] = [
         category: 'version', title: '圣树小队：作战成功', description: '携带圣树小队全员（露米·玛格丽特·阿尔维娜）各三张，赢得一场对局胜利',
         targetCount: 1,
         reward: { type: 'dataGold', amount: 3600 },
-        condition: { type: 'win_with_squad', targetKeys: ['Sacred_Tree_Squad_Lumi', 'Sacred_Tree_Squad_Margaret', 'Sacred_Tree_Squad_Alvina'] }
+        condition: { type: 'win_with_squad', requiredCopies: 3, targetKeys: ['Sacred_Tree_Squad_Lumi', 'Sacred_Tree_Squad_Margaret', 'Sacred_Tree_Squad_Alvina'] }
     },
 
     // ==========================================
@@ -804,6 +895,18 @@ export const MISSIONS: MissionDef[] = [
     {
         id: 'version_gift_pack_10_20260920',
         category: 'version', title: '悖论补给·福利', description: '版本福利放送：直接领取 10 个「悖论迷宫卡包」（在推演结算或评估嘉勉中开启，随机获得一个武装）',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'pack', amount: 10 },
+        condition: { type: 'direct_claim' }
+    },
+    // [2026-10-02 v1.0.18.1 热补丁] 「开匣吞碎片」事故补偿：白送 10 个迷宫卡包
+    //   背景：碎片匣/整局结算会把玩家已有碎片清零（已修）。玩家侧损失已发生，
+    //         故追加这一期版本任务作为补偿 —— 直接领取，无门槛。
+    //   ⚠️ ID 带日期 —— 任务进度按 ID 存档，沿用旧 ID 会让上次领过的玩家无法再领
+    //      （同 version_gift_pack_10_20260920 的维护约定）
+    {
+        id: 'version_gift_pack_10_20261002',
+        category: 'version', title: '悖论补给·补偿', description: '因「开匣吞碎片」问题的补偿：直接领取 10 个「悖论迷宫卡包」（在评估嘉勉中开启，随机获得一个奖励匣）',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'pack', amount: 10 },
         condition: { type: 'direct_claim' }

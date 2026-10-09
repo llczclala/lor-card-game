@@ -19,6 +19,7 @@ export type LogActionType =
     | 'nexus_damage'   // 对水晶造成伤害 (用于芬妮卡背任务)
     | 'damage_dealt'   // 造成伤害 (用于莲驱臆莲基座累计伤害任务)
     | 'level_up'       // 英雄升级 (用于卜卜卡背任务)
+    | 'deck_list'      // [2026-10-05] 开局牌组快照 (用于「携带指定卡取胜」类任务)
     | 'game_end';      // 对局结束 (用于每日/每周活跃任务)
 
 // 基础事件结构
@@ -67,6 +68,13 @@ export interface GameEndLogEvent extends BaseLogEvent {
     result: 'win' | 'loss' | 'draw';
 }
 
+// 派生事件结构：开局牌组快照 [2026-10-05]
+// ⚠️ 用**数组**而不是计数表：同一 key 出现 N 次 = 携带 N 张（"各三张"这类要求才判得出来）
+export interface DeckListLogEvent extends BaseLogEvent {
+    type: 'deck_list';
+    cardKeys: string[];
+}
+
 // 联合类型
 export type LogEvent =
     | PlayCardLogEvent
@@ -74,6 +82,7 @@ export type LogEvent =
     | NexusDamageLogEvent
     | DamageDealtLogEvent
     | LevelUpLogEvent
+    | DeckListLogEvent
     | GameEndLogEvent;
 
 // 供外部调用的简易参数类型 (去除了自动生成的 timestamp)

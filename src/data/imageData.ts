@@ -178,6 +178,8 @@ import spell_40 from '../image/spells/40.webp'; // 神格共鸣（三选天启�
 import spell_41 from '../image/spells/41.webp'; // 芬格尼尔之冬（冻结全场+3伤）
 import spell_42 from '../image/spells/42.webp'; // 破军（单体3伤+飞剑减费）
 import spell_43 from '../image/spells/43.webp'; // 剑鸣回响（回响+飞剑2）
+// [2026-10-08 莉莉子 · 瓦尔基里大赛]「世纪和解」强化图标（程指定）
+import lyfeFenny from '../image/spells/lyfe-fenny.png';
 
 // [新增] 臆莲基座原画
 import placeholder_pedestal from '../image/units/mauxir_lotus_pedestal.webp';
@@ -585,6 +587,8 @@ export const SPELL_IMAGES = {
     lyfe_rush: lyfe_spell_01,
     lyfe_ultimate: lyfe_spell_02,
     lyfe_support: lyfe_spell_03, // [新增] 冻沙激流
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛]「世纪和解」（里芙+芬妮）强化图标
+    lyfe_fenny: lyfeFenny,
 
     // 卜卜灵鉴
     pupu_specular_soul_spell: pupu_specular_soul_spell_base,

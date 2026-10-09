@@ -3,6 +3,8 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 import { VOICE_DB } from '../data/voiceData';
 import type { VoiceEventType } from '../data/voiceData';
 import type { CardData } from '../types';
+// [2026-10-05 莉莉子 BUG修复 · 20261005-06] 音量改为"可读取的当前值"（模块级快照）
+import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
 
 interface VoiceTask {
     card: CardData;
@@ -32,8 +34,12 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
     // 用于 die 打断判定：只允许"同一个单位"的 die 打断自己，跨单位语音排队不打断
     const currentVoiceCardIdRef = useRef<string | null>(null);
 
-    // [新增] 语音音量 Ref (默认 0.8)
-    const volumeRef = useRef(0.8);
+    // [新增] 语音音量 Ref
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 初值原本**写死 0.8** —— 而本 hook 是**每场对局新挂一个实例**
+    //   （`GameSession.tsx:921`），App 的音量又只在 isReady 时推一次事件 ⇒ 新实例永远收不到那次推送
+    //   ⇒「一进新对局语音音量被重置，得在局内再拖一次滑块才恢复」（程实测：迷宫每次进新对局都中）。
+    //   现在 mount 时**自取全局快照现值**；事件推送仍保留，用于实时改正在播的那一条。
+    const volumeRef = useRef(getVolume('voice'));
 
     useEffect(() => {
         const handleVolumeUpdate = (vol: number) => {
@@ -205,6 +211,10 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
 
     return {
         speakingCardId,
-        setVoiceVolume: (vol: number) => eventBus.emit(GameEvents.SET_VOICE_VOLUME, vol)
+        setVoiceVolume: (vol: number) => {
+            // [2026-10-05 莉莉子] 同步全局快照 ⇒ 之后新挂的实例（下一场对局）自取到的就是它
+            setVolumeSnapshot('voice', vol);
+            eventBus.emit(GameEvents.SET_VOICE_VOLUME, vol);
+        }
     };
 };

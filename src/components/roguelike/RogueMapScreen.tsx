@@ -4,7 +4,7 @@
 // 性能：平移/缩放直接操作 ref + DOM transform（不走 React 高频重渲染）
 // ==========================================
 import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
-import { Heart, RefreshCw, RotateCcw, ArrowLeft, Plus, Minus, Send } from 'lucide-react'; // [2026-08-26] Plus/Minus 缩放按钮、Send 纸飞机定位
+import { Heart, RefreshCw, RotateCcw, ArrowLeft, Plus, Minus, Send, Package } from 'lucide-react'; // [2026-08-26] Plus/Minus 缩放按钮、Send 纸飞机定位 ｜ [2026-10-02] Package 待开匣子入口
 import {
     MAP_WIDTH, MAP_HEIGHT, generateMapLayout, nodeColumnIndex,
     type RogueNode, type RogueNodeType,
@@ -22,6 +22,8 @@ import { RunEndModal, type RunEndInfo } from './modals/RunEndModal'; // [2026-08
 import { RogueDrawer } from './RogueDrawer'; // [2026-08-10] 头像抽屉：牌组/强化列表
 import { NodePreviewPanel } from './NodePreviewPanel'; // [2026-08-11] 节点右键预览面板
 import { NodeEntryModal } from './NodeEntryModal'; // [2026-08-27] 节点进入方形面板（点击节点在正上方弹出）
+// [2026-10-05 莉莉子 · 方案 P3] 事件结果清单类型（透传给弹窗）
+import type { EventApplyResult } from '../../data/roguelike/eventAppliers';
 import { getDialogueBg } from '../../data/roguelike/dialogueBg'; // [2026-08-27] 进入面板背景图（指定 or 随机）
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes'; // [2026-08-27] 战斗节点流派名/简介
 import { ShopModal, type ShopTab } from './modals/ShopModal'; // [2026-08-12 商店经济] 商店弹窗 [2026-08-28] 页签类型
@@ -74,6 +76,8 @@ interface RogueMapScreenProps {
     onMoveTo: (nodeId: string) => void; // [2026-08-04] 位置移动
     onRest: () => void;
     onRestRemove?: (cardKey: string) => void; // [2026-08-29] 休整·净化删卡
+    /** [2026-10-05 莉莉子 · 方案 P1] 标记"该节点的服务/奖励已用掉"（防右键反复进入刷取；见 BUG-20261005-13） */
+    onMarkNodeResolved?: (nodeId: string) => void;
     onRestCopy?: (cardKey: string) => void;   // [2026-08-29] 休整·复制卡
     onRestScout?: (cardKey: string) => void;  // [2026-08-29] 休整·探路
     onEnhance: (key: string) => void; // [2026-08-05] 选择迷宫强化
@@ -91,6 +95,17 @@ interface RogueMapScreenProps {
     pendingChests?: ChestInstance[]; // [2026-09-29] 通关结算待打开奖励匣
     onOpenChest?: (index: number) => any; // [2026-09-29] 打开匣子
     onShardDrop?: (res: any) => void; // [2026-09-29] 碎片入账
+    // [2026-10-04 独立审查 #10] ⚡ 一键开匣 + 武装库存：**透传自 App 的唯一实例**
+    //   （此前 RunEndModal 自己 new 了第二个 useUserSystem 实例 ⇒ settings 快照不同步 ⇒ 匣子可被重复开）
+    onOpenAllChests?: () => any[];
+    armamentStock?: Record<string, number>;
+    /**
+     * [2026-10-02 莉莉子 BUG修复 #17] 局中「待开匣子 / 评估嘉勉」入口。
+     *   此前 `onOpenEvaluation` **全项目只有肉鸽大厅一处入口**（RogueLobby），
+     *   局中地图与战斗胜利弹窗都无处可去 ⇒ 玩家抽到匣子后**只能干看着**，
+     *   这正是程说的「导航按钮没做好」。传入即在右上角渲染带角标的入口。
+     */
+    onOpenEvaluation?: () => void;
     onRunEndConfirm: () => void;
     // [2026-08-12 商店经济]
     onBuyCard: (cardKey: string, equipId: string | undefined, price: number) => boolean;
@@ -105,7 +120,12 @@ interface RogueMapScreenProps {
     onTreasureSacrifice: (enhancementId: string) => void;
     onTreasureRandom: (result: RandomTreasureResult) => void;
     // [2026-08-28 事件]
-    onEvent?: (eventId: string, choiceIndex: number, removePicks?: string[]) => void;
+    /** [2026-10-05 · 方案 P3] 返回值 = "实际结果清单"（透传给事件弹窗的结果步骤） */
+    onEvent?: (eventId: string, choiceIndex: number, removePicks?: string[]) => EventApplyResult[] | void;
+    /** [2026-10-08 莉莉子 · 交互回响层 批次3] 迎战类事件：结果步骤的「迎战」按钮才真正切进战斗 */
+    onEventFight?: () => void;
+    /** [2026-10-05 · 方案 P4 §3] 「深层回响」结算（透传） */
+    onEventDeep?: (eventId: string, layers: number) => EventApplyResult[] | void;
     onConsumeEnhancementRank?: () => void; // 托付遗物：强化品质+1 投资消费
     // [2026-08-29 经验重构] 进入非战斗节点时回调（App 层发节点经验，按节点去重）
     onEnterNode?: (node: RogueNode) => void;
@@ -122,16 +142,37 @@ const MAX_ZOOM = 2.0;
 
 export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     run, reward,
-    onBackRequest, onBattle, onMoveTo, onRest, onRestRemove, onRestCopy, onRestScout, onEnhance, onRewardPick, onRewardSkip, onRewardRefresh, onRefreshEnhance, onOpenPack, onDevWin, pendingPacks, pendingChests, onOpenChest, onShardDrop, onRunEndConfirm,
+    onBackRequest, onBattle, onMoveTo, onRest, onRestRemove, onRestCopy, onRestScout, onEnhance, onRewardPick, onRewardSkip, onRewardRefresh, onRefreshEnhance, onOpenPack, onDevWin, pendingPacks, pendingChests, onOpenChest, onShardDrop, onOpenAllChests, armamentStock, onRunEndConfirm, onOpenEvaluation,
     heroRecruit, onHeroRecruitPick, onHeroRecruitSkip, // [2026-09-04 首战招募]
     onBuyCard, onBuyEnhancement, onBuyEquipment, onRemoveCard, onShopRefresh,
     onTreasureGold, onTreasureCard, onTreasureEnhancement, onTreasureSacrifice, onTreasureRandom,
-    onEvent, onConsumeEnhancementRank, // [2026-08-28 事件]
+    onEvent, onEventFight, onConsumeEnhancementRank, // [2026-08-28 事件] · [2026-10-08] +onEventFight（迎战按钮）
+    onEventDeep, // [2026-10-05 · 方案 P4 §3] 深层回响结算
     onEnterNode, // [2026-08-29 经验重构]
+    onMarkNodeResolved, // [2026-10-05 莉莉子 · 方案 P1] 标记节点服务已用掉（防刷取）
     reveal, onRevealEnd, // [2026-08-28 莉莉子 推演开场]
     runEnd, // [2026-08-29] 通关/败亡结算
     isDev, onDevPick, // [2026-08-31 莉莉子 开发者] 任意选强化
 }) => {
+    // =====================================
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-13 / 方案 P1]
+    //   地图是**单向不可回退**的 ⇒ 节点重入的唯一路径就是"站在节点上右键 → 进入"。
+    //   用 `run.resolvedNodes`（该节点的服务/奖励**已经用掉**）把这条路径堵死：
+    //     · 事件：做出选择时记 · 强化：选定强化时记 · 休整：四个行动任一记
+    //     · 宝箱：五种领奖任一记 · 商店：首次购买/刷新时记（只看不买仍可重开）
+    // =====================================
+    const resolvedNodeSet = new Set(run.resolvedNodes ?? []);
+    const resolveCurrentNode = () => {
+        if (run.currentNodeId) onMarkNodeResolved?.(run.currentNodeId);
+    };
+    /** 包装"会给玩家好处"的回调：调用后顺手把当前节点标记为已用掉
+     *  ⚠️ **保留返回值**（商店的购买回调返回 boolean，`false` = 没买成，如金币不足/已售出）
+     *     ⇒ 只有真正成功（返回值不是 false）才把节点算作"用掉"。 */
+    const withResolve = <A extends unknown[], R>(fn?: (...args: A) => R) => (...args: A): R => {
+        const ret = fn?.(...args) as R;
+        if ((ret as unknown) !== false) resolveCurrentNode();
+        return ret;
+    };
     const viewportRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLDivElement>(null);
     const panRef = useRef({ x: 0, y: 0 });
@@ -150,6 +191,11 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     const [previewNode, setPreviewNode] = useState<RogueNode | null>(null); // [2026-08-11] 当前右键预览的节点（null=关闭）
     const [shopOpen, setShopOpen] = useState(false); // [2026-08-12 商店经济] 商店弹窗开关
     const [shopStock, setShopStock] = useState<ShopStock | null>(null); // [2026-08-12 商店经济] 当前商店商品
+    // [2026-10-08 莉莉子 · 交互回响层 批次3] 商店状态**按节点缓存**：
+    //   原来"首次购买/刷新 ⇒ 标记节点用尽"的防刷法，代价是**关掉商店后再右键只剩灰字**（玩家不知道店没了）。
+    //   现在改为：允许回头再进，但库存与「已购」都不重随 ⇒ 防刷不变，锁店消失。
+    const [shopPurchased, setShopPurchased] = useState<string[]>([]);
+    const shopNodeCacheRef = useRef<Record<string, { stock: ShopStock; purchased: string[] }>>({});
     const [treasureOpen, setTreasureOpen] = useState(false); // [2026-08-12 宝箱节点] 宝箱弹窗开关
     const shopTabsRef = useRef<Record<string, ShopTab[]>>({}); // [2026-08-28] 商店节点 → 开启页签（进节点随机确定，重复开窗不重随）
     const [currentEvent, setCurrentEvent] = useState<RogueEvent | null>(null); // [2026-08-28 事件] 当前事件
@@ -367,14 +413,20 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             const all: ShopTab[] = ['card', 'enhancement', 'equipment', 'remove'];
             shopTabsRef.current[node.id] = [...all].sort(() => Math.random() - 0.5).slice(0, count);
         }
-        setShopStock(generateShopStock(run.rarityBonus, run.passUnlockedEnhancements, { equippedCards: run.equippedCards, ownedEnhancements: run.enhancements })); // [2026-08-29 通行证] [2026-09-25] 不叠加：不发已拥有强化/该卡已有装备
+        // [2026-10-08 · 批次3] 命中缓存 ⇒ 原样重开（库存 + 已购都保留）；未命中才进货
+        const cached = shopNodeCacheRef.current[node.id];
+        setShopStock(cached ? cached.stock : generateShopStock(run.rarityBonus, run.passUnlockedEnhancements, { equippedCards: run.equippedCards, ownedEnhancements: run.enhancements, difficulty: run.difficulty })); // [2026-08-29 通行证] [2026-09-25] 不叠加 [2026-10-08 难度分层]
+        setShopPurchased(cached ? cached.purchased : []);
         setShopOpen(true);
-    }, [run.heroLevel, run.rarityBonus]);
+    }, [run.heroLevel, run.rarityBonus, run.passUnlockedEnhancements, run.equippedCards, run.enhancements, run.difficulty]);
 
     // [2026-08-28 事件] 事件抽取：一局内最近 8 个不重复（权重由 rollRogueEvent 处理）
     const rollEvent = (): RogueEvent => {
         const ev = rollRogueEvent(seenEventsRef.current);
-        seenEventsRef.current = [...seenEventsRef.current.slice(-8), ev.id];
+        // [2026-10-05 莉莉子 · 方案 P1] **整局唯一**：原来只对"最近 8 个"去重（滑动窗口）⇒ 一局内会重复遇到同一事件。
+        //   依据：《参考-肉鸽事件设计》§F 明写"事件去重：一局内避免重复同事件"；一局事件节点仅 1~2 个/Act、池子 23 条足够。
+        //   （池子抽空时 `rollRogueEvent` 会自动退回全集，不会抽不出事件。）
+        seenEventsRef.current = [...seenEventsRef.current, ev.id];
         return ev;
     };
     // [2026-08-28 事件] 强化节点抽选：托付遗物投资 → 第一个强化品质+1（一次性消费标记）
@@ -392,11 +444,24 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
         }
         return opts;
     };
-    // [2026-08-29] 迷宫强化三选一刷新：消耗刷新次数（App 处理）成功后重新生成候选
+    // [2026-10-05 莉莉子 · 方案 P1 残项] **强化候选按节点缓存**：
+    //   原来"关掉弹窗再右键进入"会重新 `rollEnhanceOptions()` ⇒ 等于**免费刷三选一**（存档式刷选项）。
+    //   现在同一节点永远给同一组候选；只有花刷新次数（`handleEnhanceRefresh`）才重抽。
+    const enhanceOptionsCacheRef = useRef<Record<string, MazeEnhancement[]>>({});
+    const getEnhanceOptionsFor = (nodeId: string): MazeEnhancement[] => {
+        const cached = enhanceOptionsCacheRef.current[nodeId];
+        if (cached) return cached;
+        const rolled = rollEnhanceOptions();
+        enhanceOptionsCacheRef.current[nodeId] = rolled;
+        return rolled;
+    };
+    // [2026-08-29] 迷宫强化三选一刷新：消耗刷新次数（App 处理）成功后重新生成候选（并覆盖缓存）
     const handleEnhanceRefresh = () => {
         if (eventModal !== 'enhance') return;
         if (onRefreshEnhance && !onRefreshEnhance()) return; // 刷新次数不足
-        setEnhanceOptions(rollEnhanceOptions());
+        const rolled = rollEnhanceOptions();
+        enhanceOptionsCacheRef.current[run.currentNodeId ?? ''] = rolled; // 付了刷新次数 ⇒ 更新缓存
+        setEnhanceOptions(rolled);
     };
 
     // [2026-08-27 莉莉子] 头像移动完成后的「进入」：战斗→弹右侧敌人详情（详情里有「战斗」按钮再进）；非战斗→直接打开对应弹窗
@@ -404,10 +469,26 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
         if (node.type === 'battle' || node.type === 'elite' || node.type === 'boss') {
             setPreviewNode(node); // 移动完成 → 右侧敌人详情
         } else {
+            // =====================================
+            // [2026-10-08 莉莉子 · 瓦尔基里大赛] **待战节点优先**
+            //   事件已做出选择、该节点现在"变成战斗节点"了 ⇒ 点它 = 开打。
+            //   ⚠️ 必须放在下方 `resolvedNodeSet` 检查**之前** ——
+            //      事件做出选择时节点**已被 `markNodeResolved` 记为"用掉"**（防刷取机制），
+            //      若先查 resolved 会被直接挡掉 ⇒ 玩家永远打不了这一场。
+            // =====================================
+            if (run.pendingBattles?.[node.id]) {
+                onEventFight?.();
+                return;
+            }
+            // [2026-10-05 · 方案 P1] 该节点的服务/奖励已用掉 ⇒ 不再进入（防右键反复进入刷取）
+            if (resolvedNodeSet.has(node.id)) {
+                console.warn(`[RogueMap] 节点 ${node.id}(${node.type}) 已完成，忽略重复进入`);
+                return;
+            }
             // [2026-08-29 经验重构] 非战斗节点进入即发经验（App 层 grantNodeExp 按节点去重）
             onEnterNode?.(node);
             if (node.type === 'enhance') {
-                if (!isDev) setEnhanceOptions(rollEnhanceOptions()); // [2026-08-28] 托付遗物投资：品质+1；[2026-08-31 莉莉子 开发者] 开发者走全量选择器，无需随机候选
+                if (!isDev) setEnhanceOptions(getEnhanceOptionsFor(node.id)); // [2026-08-28] 托付遗物投资：品质+1；[2026-10-05] 按节点缓存
                 setEventModal('enhance');
             } else if (node.type === 'shop') {
                 openShop(node);
@@ -484,6 +565,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     const defeatedSet = new Set(run.defeated ?? []);
     const missedSet = new Set(run.missed ?? []);
     const visitedSet = new Set(run.visited ?? []); // [2026-08-27] 走过的节点（灰显不可回退）
+    // （`resolvedNodeSet` 已提前到组件顶部定义 —— `doEnterNode` 更早用到它）
     // [2026-08-27 莉莉子] 当前战斗节点未击败 → 后续不解锁（必须打败该节点敌人才解锁下一段）
     const curEntryNode = nodeById.get(run.currentNodeId ?? '');
     const isCombatBlocked = !!curEntryNode
@@ -621,6 +703,8 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                                 y={node.y}
                                 state={state}
                                 enemyKey={node.enemyKey} // [2026-08-10] 战斗节点预分配敌人头像
+                                // [2026-10-08 莉莉子 · 瓦尔基里大赛] 该节点已登记「待战」⇒ 渲染成战斗节点
+                                pendingBattle={!!run.pendingBattles?.[node.id]}
                                 onActivate={() => handleNodeClick(node)}
                                 onPreview={() => handleNodeContextMenu(node)} // [2026-08-11] 右键预览
                                 revealDelay={reveal ? (nodeRevealDelays.get(node.id) ?? 0.45) : undefined} // [2026-08-28 莉莉子 推演开场] 按列从暗弹出
@@ -699,8 +783,39 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                     </div>
                     <div className="flex items-center gap-4">
                         <span className="flex items-center gap-1.5 text-sm font-bold text-white"><RefreshCw size={14} className="text-cyan-300" />{run.refreshCount}</span>
-                        <span className="flex items-center gap-1.5 text-sm font-bold text-white"><RotateCcw size={14} className="text-green-300" />{run.reviveCount}</span>
+                        <span className="flex items-center gap-1.5 text-sm font-bold text-white">
+                            <RotateCcw size={14} className="text-green-300" />
+                            {/* [2026-10-04 程拍板] key = 数值 ⇒ 复活次数一变就重放一次「放大 + 绿闪」，
+                                让「消耗 1 次」/「宝箱补回」在地图上**看得见**（此前数字是静默跳变的） */}
+                            <motion.span
+                                key={run.reviveCount}
+                                initial={{ scale: 1.5, color: '#4ade80' }}
+                                animate={{ scale: 1, color: '#ffffff' }}
+                                transition={{ type: 'spring', stiffness: 320, damping: 18 }}
+                                className="inline-block tabular-nums"
+                            >{run.reviveCount}</motion.span>
+                        </span>
                     </div>
+                    {/* [2026-10-05 莉莉子 · 方案 P3] **跨节点效果的常驻提示**（投资 / 未来敌人强化）
+                        —— 这两类效果原本只能靠玩家自己记得；兑现后徽章自动消失 */}
+                    {(run.pendingInvestments?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1.5 mt-0.5 border-t border-white/10">
+                            {run.pendingInvestments!.map((inv, i) => (
+                                <span key={i} className="flex items-center gap-1 text-[11px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-400/30 rounded-md px-1.5 py-0.5">
+                                    🌱 {inv.kind === 'battleWinGold'
+                                        ? `战斗胜利 +${inv.value ?? 0} 金`
+                                        : inv.kind === 'restHeal'
+                                            ? `休息回血 ×${inv.value ?? 2}`
+                                            : '强化品质 +1'}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+                    {!!run.pendingFightDebuff && run.pendingFightDebuff.fights > 0 && (
+                        <div className="flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-500/10 border border-amber-400/30 rounded-md px-1.5 py-0.5 mt-0.5">
+                            ⚠️ 敌人强化 {run.pendingFightDebuff.fights} 场 · 水晶 +{run.pendingFightDebuff.enemyHpBonus}
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -726,24 +841,53 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                 </button>
             </div>
 
+            {/* [2026-10-02 莉莉子 BUG修复 #17] 右上角：待开匣子 / 评估嘉勉入口
+                —— 卡包抽到匣子后，局中必须**有个地方能去开**（此前只有肉鸽大厅有入口）。
+                角标 = 待打开卡包 + 待打开匣子 的总数，有货才亮起，一眼看得见。 */}
+            {onOpenEvaluation && (
+                <div className="absolute top-3 right-3 z-40">
+                    <button
+                        onClick={onOpenEvaluation}
+                        title="评估嘉勉 · 开启待打开卡包 / 奖励匣"
+                        className={`relative flex items-center gap-2 rounded-full border pl-3.5 pr-4 py-2 backdrop-blur-sm transition-all ${
+                            ((pendingPacks ?? 0) + (pendingChests?.length ?? 0)) > 0
+                                ? 'bg-amber-500/25 border-amber-300/70 hover:bg-amber-500/40 shadow-[0_0_22px_rgba(250,204,21,0.45)]'
+                                : 'bg-slate-800/90 border-white/15 hover:border-white/40'
+                        }`}
+                    >
+                        <Package size={18} className={((pendingPacks ?? 0) + (pendingChests?.length ?? 0)) > 0 ? 'text-amber-200' : 'text-white'} />
+                        <span className={`text-sm font-black tracking-wider ${((pendingPacks ?? 0) + (pendingChests?.length ?? 0)) > 0 ? 'text-amber-100' : 'text-white'}`}>
+                            评估嘉勉
+                        </span>
+                        {((pendingPacks ?? 0) + (pendingChests?.length ?? 0)) > 0 && (
+                            <span className="min-w-5 h-5 px-1 rounded-full bg-orange-500 border-2 border-slate-900 text-[10px] font-black text-white flex items-center justify-center">
+                                {(pendingPacks ?? 0) + (pendingChests?.length ?? 0)}
+                            </span>
+                        )}
+                    </button>
+                </div>
+            )}
+
             {/* 节点事件弹窗 */}
             {eventModal && (
                 <NodeEventModal
                     type={eventModal}
                     hp={run.hp}
                     maxHp={run.maxHp}
-                    onRest={onRest}
-                    onEnhance={onEnhance}
+                    onRest={withResolve(onRest)} // [2026-10-05 · 方案 P1] 休整回血 ⇒ 记"用完"
+                    onEnhance={withResolve(onEnhance)} // [2026-10-05 · 方案 P1] 选定强化 ⇒ 记"用完"
                     enhanceOptions={enhanceOptions}
                     onClose={() => setEventModal(null)}
                     run={run}
                     event={currentEvent ?? undefined}
-                    onEvent={onEvent} // [2026-08-28 事件]
+                    onEvent={onEvent} // [2026-08-28 事件]（App.handleRogueEvent 内部已记账）
+                    onEventFight={onEventFight} // [2026-10-08 · 批次3] 迎战按钮（结果步骤里）
+                    onEventDeep={onEventDeep} // [2026-10-05 · 方案 P4 §3] 深层回响结算
                     onRefresh={handleEnhanceRefresh} // [2026-08-29] 强化三选一刷新
                     refreshCount={run.refreshCount}  // [2026-08-29] 剩余刷新次数
-                    onRemoveCard={onRestRemove} // [2026-08-29] 休整·净化删卡
-                    onAddCard={onRestCopy}      // [2026-08-29] 休整·复制卡
-                    onStartScout={onRestScout}  // [2026-08-29] 休整·探路
+                    onRemoveCard={withResolve(onRestRemove)} // [2026-08-29] 休整·净化删卡 ⇒ 记"用完"
+                    onAddCard={withResolve(onRestCopy)}      // [2026-08-29] 休整·复制卡 ⇒ 记"用完"
+                    onStartScout={withResolve(onRestScout)}  // [2026-08-29] 休整·探路 ⇒ 记"用完"
                     // [2026-08-31 莉莉子 开发者] 任意选强化
                     isDev={isDev}
                     devPlayerPool={PLAYER_ENHANCEMENTS}
@@ -758,12 +902,16 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                 <ShopModal
                     run={run}
                     stock={shopStock}
+                    initialPurchased={shopPurchased} // [2026-10-08 · 批次3] 回头再进时「已购」不丢
                     availableTabs={shopTabsRef.current[run.currentNodeId ?? ''] ?? ['card', 'enhancement', 'equipment', 'remove']}
+                    // [2026-10-08 莉莉子 · 交互回响层 批次3] **撤掉 withResolve**（不再把商店节点标记"用尽"）：
+                    //   防刷改由"按节点缓存库存 + 已购"承担 —— 回头能买，但内容不重随、已购不能重买
                     onBuyCard={onBuyCard}
                     onBuyEnhancement={onBuyEnhancement}
                     onBuyEquipment={onBuyEquipment}
                     onRemoveCard={onRemoveCard}
                     onRefresh={onShopRefresh}
+                    onStateChange={(s) => { if (run.currentNodeId) shopNodeCacheRef.current[run.currentNodeId] = s; }}
                     onClose={() => setShopOpen(false)}
                 />
             )}
@@ -772,11 +920,11 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             {treasureOpen && (
                 <TreasureModal
                     run={run}
-                    onCollectGold={onTreasureGold}
-                    onPickCard={onTreasureCard}
-                    onPickEnhancement={onTreasureEnhancement}
-                    onSacrificeForEpic={onTreasureSacrifice}
-                    onCollectRandom={onTreasureRandom}
+                    onCollectGold={withResolve(onTreasureGold)}          // [2026-10-05 · 方案 P1] 五种领奖任一 ⇒ 记"用完"
+                    onPickCard={withResolve(onTreasureCard)}
+                    onPickEnhancement={withResolve(onTreasureEnhancement)}
+                    onSacrificeForEpic={withResolve(onTreasureSacrifice)}
+                    onCollectRandom={withResolve(onTreasureRandom)}
                     onClose={() => setTreasureOpen(false)}
                 />
             )}
@@ -809,6 +957,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             {run.status !== 'active' && runEnd && (
                 <RunEndModal run={run} runEnd={runEnd} pendingPacks={pendingPacks} onOpenPack={onOpenPack}
                     pendingChests={pendingChests} onOpenChest={onOpenChest} onShardDrop={onShardDrop}
+                    onOpenAllChests={onOpenAllChests} armamentStock={armamentStock}
                     onConfirm={onRunEndConfirm} />
             )}
 
@@ -833,8 +982,14 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                 onDevWin={onDevWin} // [2026-08-29] 开发者一键胜利
                 onInteractCurrent={(n) => {
                     setPreviewNode(null);
+                    // [2026-10-05 莉莉子 · 方案 P1] **该节点的服务/奖励已用掉 ⇒ 右键不再能进入**（防刷取）
+                    //   覆盖事件/强化/休整/宝箱/商店 —— 地图单向不可回退，这里就是唯一的重入路径。
+                    if (resolvedNodeSet.has(n.id)) {
+                        console.warn(`[RogueMap] 节点 ${n.id}(${n.type}) 已完成，右键「进入」已禁用`);
+                        return;
+                    }
                     // 当前非敌人节点互动：复用地图左键的互动路径（rest→休整弹窗 / enhance→生成3选1 / shop→商店弹窗 / event/treasure→占位弹窗）
-                    if (n.type === 'enhance') setEnhanceOptions(rollEnhanceOptions()); // [2026-08-28] 托付遗物投资：品质+1
+                    if (n.type === 'enhance') setEnhanceOptions(getEnhanceOptionsFor(n.id)); // [2026-10-05] 按节点缓存（防"关掉再开"免费重抽）
                     if (n.type === 'shop') {
                         openShop(n); // [2026-08-28] 重复开窗页签不变（进入节点时已固定）
                         return;

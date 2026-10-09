@@ -16,7 +16,9 @@ interface DeskMediaProps {
     style?: React.CSSProperties;
 }
 
-export const DeskMedia: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false, className, style }) => {
+// [2026-10-02 莉莉子 性能优化] 本体改名，末尾统一用 React.memo 导出。
+//   props 全是基本类型（number / boolean / string）⇒ memo 浅比较必然生效，零成本。
+const DeskMediaInner: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false, className, style }) => {
     const video = dynamic ? getDeskVideo(deskIndex) : undefined;
     const videoRef = useRef<HTMLVideoElement>(null);
     const loggedRef = useRef<Set<number>>(new Set());
@@ -56,3 +58,10 @@ export const DeskMedia: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false
     // [2026-09-18] 兜底 desks[0]：存档里可能残留已失效的牌桌编号（如 09-18 重编号前的旧值）
     return <img src={PERSONALIZATION_ASSETS.desks[deskIndex] ?? PERSONALIZATION_ASSETS.desks[0]} className={className} style={style} alt="牌桌" />;
 };
+
+// ══════════════════════════════════════════════════════════════
+// [2026-10-02 莉莉子 性能优化] memo 导出
+//   牌桌是常驻全屏背景（对局 + 各菜单共 8 个调用点），而它本身只在
+//   deskIndex / dynamic / className / style 变化时才需要重渲染 —— 全是基本类型。
+// ══════════════════════════════════════════════════════════════
+export const DeskMedia = React.memo(DeskMediaInner);

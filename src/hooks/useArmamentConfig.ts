@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useReducer } from 'react';
 import { StorageUtils, STORAGE_KEYS } from '../utils/storageUtils';
 import { getHeroLevelBonus } from '../data/roguelike/heroProgression'; // [2026-08-28 莉莉子] 武装槽解锁随等级
+import { getHeroLevelOf, hasHeroProgressOf } from './useHeroProgression'; // [2026-10-05 莉莉子] 模块级读等级/记录（加载期清理残留用；不成环：后者不反向 import 本模块）
 
 export const ARMAMENT_SLOT_COUNT = 3; // 武装槽数
 
@@ -73,12 +74,50 @@ const dedupeArmamentSlots = (cfg: ArmamentConfig): { next: ArmamentConfig; chang
     return { next, changed };
 };
 
-/** [2026-09-25] 读取武装配置并做一次重复清理（有改动才写回，纯迁移不覆盖玩家数据） */
+/**
+ * [2026-10-05 莉莉子 BUG修复 · 残留清理] 清掉**每个英雄**「未解锁槽」里的残留武装。
+ *
+ * ── 病根：`ArmamentConfig` 恒为 3 槽，而"能用几槽"随等级解锁（Lv1 / Lv9 / Lv18 → 1 / 2 / 3）。
+ *    等级一旦**由高变低**（开发者调级、旧存档），高等级时配好的武装会**留在锁着的槽里**：
+ *      · 不生效 —— `getArmament` 只返回已解锁槽 ✅
+ *      · 但会**占库存** —— 旧口径算 occupied 时把它算进去了 ⇒ 玩家"有份数却装不了"
+ *      · 且**日后升回解锁等级时会突然"复活"** ⇒ 凭空多出一件（占用还可能超过库存）
+ *    ⇒ 必须在**加载时统一清掉**，而不是只在"打开某个英雄的武装页"时清那一个
+ *      （原 `RogueHeroInfoModal` 的自动清理只覆盖当前打开的英雄）。
+ *
+ * ⚠️ 与 `dedupeArmamentSlots` 同一时机、同一性质：**纯数据清理，物品不丢失**
+ *    （武装槽只是"配置引用"，清槽 = 卸下，库存份数不受影响，随时可再装回去）。
+ * ⚠️ 每个英雄按**自己的等级**算解锁槽数，不能用同一个 n。
+ */
+const clearLockedSlotResidue = (cfg: ArmamentConfig): { next: ArmamentConfig; changed: boolean } => {
+    let changed = false;
+    const next: ArmamentConfig = {};
+    for (const [hk, slots] of Object.entries(cfg ?? {})) {
+        // ⚠️ [2026-10-05 莉莉子 · 独立审查 R1 修复] **没有等级记录就不清**。
+        //   病根：`getHeroLevelOf` 的 `?? 1` 只是兜底值 —— 存储读取异常（`StorageUtils.load` 返回 `{}`）
+        //   或存档被删时，**所有英雄都会兜底成 Lv1** ⇒ 这里会把**已解锁槽也清掉并落盘**，
+        //   把一个"显示层故障"放大成**持久化的配置损失**（旧实现只影响显示/生效过滤，从不写档）。
+        //   ⇒ 取舍：**宁可漏清，不可误清** —— 真·新账号本来就不可能有未解锁槽残留。
+        if (!hasHeroProgressOf(hk)) { next[hk] = [...(slots ?? [])]; continue; }
+        const n = Math.max(1, getHeroLevelBonus(getHeroLevelOf(hk)).armamentSlots);
+        const arr = [...(slots ?? [])];
+        for (let i = n; i < arr.length; i++) {
+            if (arr[i]) { arr[i] = null; changed = true; }
+        }
+        next[hk] = arr;
+    }
+    return { next, changed };
+};
+
+/** [2026-09-25] 读取武装配置并做一次重复清理（有改动才写回，纯迁移不覆盖玩家数据）
+ *  [2026-10-05 莉莉子] **再叠一道**「未解锁槽残留」清理 —— 与去重互相独立
+ *    （一个管"同一英雄内的同名重复"，一个管"锁着的槽里还留着东西"） */
 const loadArmamentConfig = (): ArmamentConfig => {
     const raw = StorageUtils.load<ArmamentConfig>(getStorageKey(), {});
-    const { next, changed } = dedupeArmamentSlots(raw);
-    if (changed) StorageUtils.save(getStorageKey(), next);
-    return next;
+    const deduped = dedupeArmamentSlots(raw);
+    const cleaned = clearLockedSlotResidue(deduped.next);
+    if (deduped.changed || cleaned.changed) StorageUtils.save(getStorageKey(), cleaned.next);
+    return cleaned.next;
 };
 
 // ── [2026-09-07] 模块级共享 store（对齐 useHeroProgression）──

@@ -33,7 +33,10 @@ interface BattlefieldProps {
 
 }
 
-export const Battlefield: React.FC<BattlefieldProps> = ({
+// [2026-10-02 莉莉子 性能优化] 本体保持原名语义，末尾统一用 React.memo 导出。
+//   交战区最多 12 张 Card（6 攻 + 6 挡），是全屏渲染量最大的区域之一；
+//   此前它自身没有 memo，且内部 4 处 Card 都传内联箭头 ⇒ 每次游戏状态变化全量重渲染。
+const BattlefieldInner: React.FC<BattlefieldProps> = ({
     combatField, selectedBlockerId, onCombatClick, onCardClick, onViewArt,
     speakingCardId,
     // [新增] 解构
@@ -184,3 +187,13 @@ export const Battlefield: React.FC<BattlefieldProps> = ({
         </div>
     );
 };
+
+// ══════════════════════════════════════════════════════════════
+// [2026-10-02 莉莉子 性能优化] memo 导出
+//   生效前提（已在 GameSession 侧落实）：传入的 5 个回调全部改为 useStableCallback 稳定引用 ——
+//     onCombatClick / onCardClick / onChallengerClick / onCombatPointerDown / cardGazeEvents。
+//   其余 props 本就稳定：combatField（数组引用）/ phase / turnOwner / selectedBlockerId /
+//     speakingCardId / selectedChallengerId / 卡背 URL / previewAttackerCount（数字）/ skinOverrides。
+//   本组件不 re-render ⇒ 内部 4 处 Card 也不会 re-render（内联箭头随本组件渲染才重建）。
+// ══════════════════════════════════════════════════════════════
+export const Battlefield = React.memo(BattlefieldInner);

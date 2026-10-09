@@ -61,14 +61,17 @@ export const DEFAULT_ROGUE_STARTER_DECKS: Record<string, { name: string; cards: 
             SacredChants_Squad_Loka: 1, Ghost_Squad_Vez: 1, Danu_Squad_Wendy: 1,
         },
     },
+    // [2026-10-03 程拍板 · BUG-20261002-21] 六套卡组里**只有安卡的本体是 1 张** ⇒ 与"两张才能保证
+    //   英雄法术用得上"的口径不一致（本体一死就再没有天启者法术）。
+    //   调整：**删 1 张「“阿尔斯特”科尼」（1 费 0/4，`Ulster_Squad_Koni`）→ 本体补到 2 张**（总张数仍 15，不动其他）。
     acacia_chrono_echo: {
         name: '肉鸽·安卡希雅 时之重奏',
         cards: {
-            acacia_chrono_echo: 1, acacia_chrono_echo_support: 1,
+            acacia_chrono_echo: 2, acacia_chrono_echo_support: 1,
             Sacred_Tree_Squad_Lumi: 1, Sacred_Tree_Squad_Margaret: 1, Sacred_Tree_Squad_Alvina: 1,
             temp_spell_09: 1, temp_spell_19: 1, temp_spell_20: 1, temp_spell_10: 1,
             Poet_Squad_Caitlin: 1, Poet_Squad_Kelo: 1, Bridget_Squad_Chinchilla: 1,
-            Crows_Eyest_Squad_An: 1, Green_Spirit_Squad_Eva: 1, Ulster_Squad_Koni: 1,
+            Crows_Eyest_Squad_An: 1, Green_Spirit_Squad_Eva: 1,
         },
     },
     // [2026-09-26 莉莉子] 茉莉安·霄鹰 —— 埋雷引爆流（难度 3 档，同卜卜）
@@ -130,6 +133,17 @@ export const isStaleRogueStarterDeck = (heroKey: string, cards?: Record<string, 
     for (const k of Object.keys(cards)) {
         if (!CARD_DB[k]) return true;
     }
+    // ==========================================
+    // [2026-10-02 莉莉子 BUG修复 · BUG-20261002-21] 本体张数低于当前官方默认 ⇒ 也算过时
+    // ── 病根：原判据**只看总张数**（≥ 官方默认的一半），看不住"本体被改少"。
+    //    一份 `marian: 1` + 其余 14 张的旧快照（早期版本存下的），含本体 ✓、key 全有效 ✓、总张数 15 ≥ 7 ✓
+    //    ⇒ 被判为"不过时"而**永久沿用** ⇒ 粉丝反馈「开局选的天启者为什么只给一张，英雄法术都没得用」
+    //    （官方默认 `marian: 2`，见下方 DEFAULT_ROGUE_STARTER_DECKS）。
+    // ── 为什么专门补这一条：**天启者本体的张数是"能不能一直用英雄法术"的硬约束**，
+    //    少一张就少一条命，比其他卡少一张严重得多；而总张数阈值天然盖不住它。
+    // ==========================================
+    const defaultCards = DEFAULT_ROGUE_STARTER_DECKS[heroKey]?.cards;
+    if (defaultCards && (cards[heroKey] || 0) < (defaultCards[heroKey] || 0)) return true;
     const expected = buildStarterDeck(heroKey).length;
     const total = expandDeckCards(cards).length;
     if (expected > 0 && total < Math.max(3, Math.floor(expected / 2))) return true;

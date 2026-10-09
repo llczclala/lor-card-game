@@ -1083,8 +1083,20 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
         if ((activeSlots ?? []).includes(def.id)) return 0;
         // [2026-09-08 修复] 占用跨全英雄统计；消耗品/普通都尊重真实库存——
         //  开发者普通武装库存为 0 时给 3 份便于白嫖测试；但消耗品一律看真实库存（福利领 6 就该显示 ×6，不被开发者上限盖掉）
+        //
+        // 🔴 [2026-10-05 莉莉子 BUG修复] **占用只统计「已解锁槽」** ——
+        //   病根：原先遍历每个英雄的**全部 3 个槽**（含未解锁），而"生效"判定用的是
+        //   `activeSlots = slots.slice(0, unlockSlots)`（只含已解锁槽）⇒ **两套口径不一致**：
+        //   未解锁槽里的**历史残留**会**虚占库存** ⇒ 玩家"明明还有份数，却显示装不了"
+        //   （典型场景：某英雄还低等级时留下的残留，此后一直占着别人的份数）。
+        //   ⚠️ 每个英雄的解锁槽数**各不相同**（Lv1 / Lv9 / Lv18 → 1 / 2 / 3 槽，
+        //      见 heroProgression 的等级里程碑），必须按**各自的等级**算，不能用同一个 n。
+        //   📌 与「未解锁槽的残留不生效」同一条口径（见 useArmamentConfig.getArmament 的注释）。
         let occupied = 0;
-        for (const arr of Object.values(config ?? {})) for (const id of arr ?? []) if (id === def.id) occupied++;
+        for (const [hk, arr] of Object.entries(config ?? {})) {
+            const n = Math.max(1, getHeroLevelBonus(heroProgression.getHeroLevel(hk)).armamentSlots);
+            for (let i = 0; i < n; i++) if (arr?.[i] === def.id) occupied++;
+        }
         const have = armStockMap[def.id] ?? 0;
         const base = isDev && !def.consumable && have === 0 ? 3 : have;
         return Math.max(0, base - occupied);

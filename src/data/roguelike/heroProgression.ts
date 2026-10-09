@@ -68,7 +68,7 @@ export const HERO_LEVEL_BONUS: Record<number, Partial<HeroLevelBonus>> = {
     8: { goldBonus: 30 },
     9: { armamentSlots: 2 },                                     // [2026-08-14 武装] 获得二号武装槽位
     10: { maxHpBonus: 5, rarityBonus: { rare: 0, epic: 2.5, legendary: 0 }, equipRarityBonus: 10 },  // [2026-08-28] 生命节点② +5 · [2026-08-29] 装备稀有度 +10
-    11: { grantedSpellEquips: ['equip_cost_down'] },             // [2026-08-29 程拍板] 随机一张初始牌组法术卡持有「海基的推演手记」（费用-1；原「微缩回路」）①
+    11: { grantedUnitEquips: ['equip_cost_down'] },             // [2026-10-06 程拍板 · 口径③] 改发**单位卡**（原为法术卡：该装备按类型轴是单位侧，此前靠绕过闸门才生效）①
     12: { refreshBonus: 1 },                                     // [2026-08-29 程拍板] 刷新次数 +1（原以战养战已移走）
     13: { armamentRarity: 'rare' },                              // [2026-08-14 武装] 可以装备稀有武装
     14: { goldBonus: 30 },
@@ -79,7 +79,7 @@ export const HERO_LEVEL_BONUS: Record<number, Partial<HeroLevelBonus>> = {
     19: { equipRarityBonus: 10 },                                    // [2026-08-29] 装备稀有度 +10（替代重复稀有度档）
     20: { maxHpBonus: 5 },                                       // [2026-08-28] 生命节点④ +5（迷宫强化已移走 08-29）
     21: { goldBonus: 30 },
-    22: { grantedSpellEquips: ['equip_cost_down'] },             // [2026-08-29 程拍板] 随机一张初始牌组法术卡持有「海基的推演手记」（费用-1；原「微缩回路」）②
+    22: { grantedUnitEquips: ['equip_cost_down'] },             // [2026-10-06 程拍板 · 口径③] 同 11 级：改发**单位卡**②
     23: { expRateBonus: 10 },                                    // [2026-08-29 程拍板] 经验获取效率 +10%（替代重复稀有度档）
     24: { rarityBonus: { rare: 5, epic: 0, legendary: 0 } },
     25: { grantedUnitEquips: ['equip_stat_11'] },                // [2026-08-29 程拍板] 随机一个非英雄单位获得「均衡增补」（+1/+1）

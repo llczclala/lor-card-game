@@ -54,6 +54,11 @@ export interface CardData {
 
   // 运行时状态
   isDead?: boolean;         // [SBA] 逻辑死亡标记。true=已死，索敌/碰撞无视
+  // [2026-10-05 莉莉子 BUG修复 · 20261005-12] **「这次死亡的 unit_die 强化已派发」账本字段**。
+  //   为什么写在卡上而不是外部 WeakSet：程序里 `{ ...card }` 复制点有 8 处，按对象身份记会随复制丢失
+  //   ⇒ 同一次死亡被重复派发；字段则**随 spread 自动复制**（详见 `utils/deathLedger.ts` 头注释）。
+  //   ⚠️ 复活（写 `isDead: false` 的 3 处）必须调 `clearUnitDieDispatched` 擦掉它，否则复活体的第二次死亡不发。
+  unitDieDispatched?: boolean;
   deathType?: DeathType;    // [2026-07-20] 死亡类型：KILLED(阵亡) / ELIMINATED(消亡替换)
   strikeCount: number;
   strikeStamp?: number; // [2026-08-19 莉莉子] 撞击计数戳：连击第二撞时递增，触发动画容器重挂载重播撞击动画
@@ -64,6 +69,28 @@ export interface CardData {
   //    而茉莉安的升级目标恰好是 2，与 bit2 同值 → 复用会把「降费」误判成「升级达成」。
   //    （猫汐尔目标 30、卜卜目标 3，都天然躲开了这个坑；茉莉安躲不开，所以另开字段）
   beaconDeaths?: number;
+  // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔专属：召唤体系伤害升级进度的**显示镜像**。
+  //   真源 = 模块级账本 `utils/mauxirProgress.ts`（为什么真源不住在卡上/`game` 里，见该文件头注释）；
+  //   本字段由 `applyMauxirProgress` **幂等贴值**（同值重复贴不会产生新对象）。
+  //   ⚠️ 刻意**不复用 `customProgress`** —— 那是被多个系统共用的**位域**
+  //      （bit0 鬼怪/银臂、**bit1 = 绿色减费标记**），而猫汐尔的进度是 0~30 的**计数器**：
+  //      bit1 根本不是空闲位 —— `equipment.ts:900` 的 `| 2` 会把进度虚增 2（0→2、4→6…），
+  //      任何 `& ~2` 又会把它无意扣掉 2。（茉莉安当初另开 `beaconDeaths` 是同一个理由。）
+  mauxirDamage?: number;
+  // [2026-10-06 莉莉子 BUG修复 · 莲台无垠] **本场已应用过的「全法术减费」量**。
+  //   为什么要这个标记：减费现在有**两条路** ——
+  //     ① 开局对已在手/库的法术**改数据**（卡面能显示绿色减费，玩家看得见）
+  //     ② `getEffectiveSpellCost` 的**查询时判定**（覆盖战斗中**新生成**的法术）
+  //   两条路共用本标记 ⇒ 查询时只补"还没减过的差额"（`N - spellCostDown`），**天然幂等、不会双减**。
+  spellCostDown?: number;
+  // [2026-10-06 程拍板 ②] **本实例费用被强制覆盖为 N**（迷宫强化生成时的 `costOverride`，
+  //   如「剑舞长空」的 0 费「灵轨月轮·扩散」）。
+  //   ── 为什么要这个标记：覆盖只写在 `card.cost` 上，而下面这些链条会**整卡重建**同一张牌 ——
+  //      安卡「圆缺有律」切换（`effectProcessor`）· 升级 `upgradeAcaciaHand` · 退级 `demoteAcaciaHand` ——
+  //      它们用裸 `createCard(key)` 造新对象 ⇒ 费用被打回**卡面原价**（切一次模式就"0 费变 2 费"）。
+  //   ── 口径（程 2026-10-06）：转换链**保留**这份覆盖 ⇒ 一律经 `carryCostOverride` 携带。
+  //   ── 普通卡不带此标记 ⇒ 既有行为逐字不变。
+  costOverride?: number;
   // [2026-09-19 莉莉子 方向一 · 归属盖章] 单位归属方：召唤落场时一次性写死，此后【查表】而非【推导】。
   // ── 病根：此前 CardData 无归属字段，谁的人全靠「在哪个数组里 + 交战区进攻方/格挡方推导」现算，
   //    同一套规则被手抄了 8 处（判死 / 开票 / 打场上信标 / 分摊选人 / 光环 / 记账…），抄错一处就出事
@@ -134,7 +161,11 @@ export interface AIConfig {
 // ==========================================
 // [新增] 能力系统类型
 // ==========================================
-export type AbilityTrigger = 'on_play' | 'on_attack_declare' | 'round_start';
+// [2026-10-06 程拍板 · 时机口径统一]
+//   · `on_play`    = **入场**：从手牌打出 **或** 被效果召唤到战场都触发（口径见 `data/keywords.ts` 术语表「入场」）
+//   · `on_play_from_hand` = **打出时**：**只有从手牌打出**才触发；被法术/能力召唤到场上**不触发**
+//   ⚠️ 两者是**不同**的时机，判据别混用（`data/effectRegistry.ts` 的 `isEntryTiming` / `isPlayFromHandTiming`）。
+export type AbilityTrigger = 'on_play' | 'on_play_from_hand' | 'on_attack_declare' | 'round_start';
 
 export type AbilityPostState = 'dim' | 'recharge';
 
@@ -200,7 +231,11 @@ export type GameRecordCategory =
   | 'combat_declare'  // [2026-07-21] 进攻/格挡宣告
   | 'combat_fight'    // [2026-07-21] 单路战斗结算
   | 'spell_effect'    // [2026-07-21] 法术效果（伤害/治疗等）
-  | 'volatile_discard'; // [2026-07-23] 瞬逝手牌弃置
+  | 'volatile_discard' // [2026-07-23] 瞬逝手牌弃置
+  // [2026-10-08 莉莉子 · 对局记录补齐] 能力效果 —— **非操作型**的伤害/影响（基座扫射 / 信标引爆 /
+  //   亡语 / 光环 / 回合末效果）。记录系统原本是"操作驱动"的（埋点全在"有人点了什么"处），
+  //   而这类伤害是**效果结算的副产物**，没有对应的操作 ⇒ 此前一律不进记录。
+  | 'ability_effect';
 
 // [2026-07-21] 卡牌变化类型 — 用于法术效果的多维展示
 export type RecordChangeType =
@@ -287,17 +322,40 @@ export interface GameState {
   questProgress?: Record<string, number>;
   /** [2026-09-25 莉莉子 强化线] 悬赏标记的单位 id（BOUNTY_CYCLE 用；目标离场即视为已击杀） */
   bountyId?: string;
-  rogueFirstSummonDone?: boolean; // [2026-08-11] 暗影双生：本回合是否已触发过首次召唤复制（每回合开始重置）
+  // [2026-08-11] 暗影双生：本回合是否已触发过首次召唤复制（每回合开始重置）
+  // [2026-10-05 莉莉子 BUG修复 · 20261005-09] 语义已明确为**「本回合的『首个打出单位』时机是否已消费」**：
+  //   写入者两处 —— ① `useGameState` 的打出单位路径（分发完 on_first_summon / on_first_play_unit 后无条件置位）
+  //   ② 暗影双生（CLONE_AND_SUMMON）自己的处理器。读取者 = `isFirstUnitPlayedThisRound` 闸门
+  //   （芬妮①③「聚光灯下/全场焦点」、先锋之锐、斩杀协议）。
+  //   ⚠️ 此前只有 ② 会写、而 ② 的 trigger 从不分发 ⇒ 该标记恒为 false ⇒ "每回合首个"退化成"每个"。
+  // 🔴 [2026-10-06 程拍板 · 审计收口 · **模式 B：一个标记别兼任两件事**] **改为按方记录**：
+  //   原先是一个**敌我共用**的布尔 ⇒ "**谁先打出单位，谁就把它消费掉**"
+  //   ⇒ 另一侧那一回合永远吃不到「首个打出单位」类加成。
+  //   受害者：玩家的「先锋之锐」、芬妮①③「聚光灯下 / 全场焦点」、`divfx_fenny_1/3`；
+  //   敌方的「斩杀协议」；以及双方各自的「暗影双生」。卡面语义本就是"**每方各自**每回合首个"
+  //   ⇒ 真源必须分两份账本（与 Mauxir / 茉莉安进度改「按方」是同一条判据）。
+  rogueFirstSummonDone?: { player?: boolean; enemy?: boolean };
   // [2026-09-17 1.0.16 松露小队 · 虹彩] 獠牙信标生命上限的永久修正（负值），局内累计。
   // 召唤落场时套用 —— 这样【尚未登场】的信标也吃得到（方案 8.1 关键细节）。
   // ⚠️ 绝不直接改 CARD_DB：那是模块级常量，改它会跨局污染。
   beaconMaxHealthMod?: number;
+  // [2026-10-02 莉莉子 C1 · 全局进度] 「我方召唤的獠牙信标被破坏」的**权威计数**（按阵营）。
+  // ── 为什么挪到全局：旧实现把计数写在**茉莉安的卡副本**上，而她同一时刻只会在一个区域
+  //    （备战席/手牌/牌库/交战区四选一，进攻时被移出备战席）⇒ 漏扫她当时所在区域就**静默丢进度**，
+  //    战斗归位又把旧实例写回 —— 这是 09-23 / 09-27 两次「茉莉安不升级」事故的本质。
+  // ── 手册问题记录 I04 当初写的就是这个方向：「进度挂**全局对局状态**」。
+  // ── 卡上的 `beaconDeaths` 字段保留为**显示镜像**（UI 进度环 / checkCardLevelUp 读它），
+  //    由死亡漏斗按本字段的**绝对值赋值**（幂等，不再各自累加）。
+  // ── 「按阵营分开记账」：镜像对局双方各算各的（与旧口径一致）。
+  beaconDeaths?: { player?: number; enemy?: number };
   // [2026-09-17 1.0.16 松露小队 · 园丁] 园丁灌溉无人机上次触发所在的回合号。
   // 与 game.round 相等即表示「本回合已触发过」——实现「每回合首次」的节流。
   truffleGardenerRound?: number;
-  // [2026-09-19 1.0.16 茉莉安 Lv2] 「每回合首次信标被击败 → 在敌方备战席补一个」的节流记录（记回合号）。
-  // 与 game.round 相等即表示本回合已补过 —— 与园丁 truffleGardenerRound 同款写法。
-  marianBeaconRespawnRound?: number;
+  // ⛔ [2026-10-02 莉莉子 信标亡语化 · 已废弃] 原 `marianBeaconRespawnRound`（Lv2 每回合首次补兵的节流）
+  //    与 `marianBeaconVoucher`（Lv1 补兵券欠条）—— 随「补兵机制整体改为亡语」一并移除。
+  //    新机制：重生由**信标自己的亡语**负责（effect_marian_beacon_respawn），
+  //    Lv1 入场授予一次 / Lv2 光环动态授予 ⇒ 既不需要券，也不需要每回合节流。
+  //    （字段已删；若老存档里残留这两个键，读不到也不影响 —— 代码不再引用。）
   // ==========================================
   // [2026-09-19 1.0.16 茉莉安 · 大招逐击改造] 连斩（CHAIN_STRIKE）的续击状态机
   // ── 为什么需要它：连斩此前是 effectProcessor 里一个**同步 for 循环**，一次 tick 全打完
@@ -313,11 +371,18 @@ export interface GameState {
     step: number;           // 已打完的击数
     done: boolean;
     prevPhase: string;      // 链开始前的 phase，收尾时还原
+    /**
+     * [2026-10-04 程拍板] 本链**击杀过獠牙信标** ⇒ 后续续击**跳过信标**（是"跳过"，不是"断链"）。
+     *
+     * 口径（程原话）：大招打死信标 → 它满血复活 ⇒ **跳过它**、转去打别的敌人；
+     *   除信标外的敌人也清完了 ⇒ 才转打水晶。
+     * 为什么必须有这条：信标的重生亡语让它**满血回归**，而大招的续击条件是"击杀就继续"
+     *   ⇒ 两者叠加会形成**自我维持的循环**（打死 → 重生 → 再打死 …直到 MAX_CHAIN 上限），
+     *   表现即粉丝报的「用大招无限击杀复活的信标」。
+     */
+    skipBeacon?: boolean;
   };
-  // [2026-09-19 1.0.16 茉莉安] 「补兵券」：茉莉安入场时若敌方备战席**已有**信标，不发新的、改发一张欠条。
-  // 信标被击败时兑现（**要求她本人活着在场**，程 2026-09-19 拍板）。按阵营分开记账（镜像对局各算各的）。
-  // 与 marianBeaconRespawnRound 的区别：券是**入场时发的欠条**（可多次入场累积），后者是 Lv2 的每回合节流。
-  marianBeaconVoucher?: { player?: number; enemy?: number };
+  // ⛔ [2026-10-02 已废弃并删除] `marianBeaconVoucher` —— 见上方说明（补兵券随亡语化移除）。
   enemyNexus: number;
   enemyNexusMax?: number; // [2026-08-30 莉莉子] 敌方水晶回血上限（=敌方水晶初值；肉鸽=难度基础+生命强化，缺省 20）
   enemyNexusBarrier?: number; // [2026-08-27] 敌方水晶屏障（固若金汤：可挡伤害点数，回合末清零）
@@ -339,6 +404,12 @@ export interface GameState {
     allyId?: string;
     targets: any[];
     isHeroLeveled?: boolean; // [新增] 告知界面：当前施放英雄法术的英雄是否已升级
+    // [2026-10-02 莉莉子 BUG修复] 抉择归属方 —— 只认「这张抉择法术是谁打出的」，不认 turnOwner。
+    //   病根：UI 三处（AI自动抉择 / 选项点击 / 背景取消）此前都用 `turnOwner === 'enemy'`
+    //   推断"这是 AI 的抉择"。但玩家完全可以在**对方优先权**阶段打出极速抉择法术
+    //   （典型：玩家进攻 → 格挡阶段 turnOwner 归防守方 = 'enemy' → 玩家打出极速抉择）
+    //   ⇒ 玩家自己的弹窗被当成 AI 的：点不动、取消不掉，AI 还会拿敌方法力替他选 ⇒ 卡死。
+    choiceOwner?: 'player' | 'enemy';
   };
   pendingSpell: SpellStackItem | null; // [新增] 预提交缓冲站：存放已打出但未最终确认的法术
   spellStack: SpellStackItem[];
@@ -353,7 +424,10 @@ export interface GameState {
   //   敌我双方场上有同名天启者时，我方升级写下的标记会让敌方 Lv1 同名英雄
   //   在扫描时被误判为"该升级"，反复入队播影片、却因不达标而永远升不了级
   //   → 升级影片无限循环（粉丝反馈）。
-  // 本字段按方记录，从根上分开敌我；leveledChampions 仍照常维护（另有 8 处读它）。
+  // 本字段按方记录，从根上分开敌我；leveledChampions 仍照常维护（写入端必须同步两套）。
+  // [2026-10-04 莉莉子 · I5 收口] 原先 09-13 那次只改了「升级流程」一处，而**变形 / 抉择解锁 /
+  //   法术回库 / 安卡手牌升级**仍读全局 ⇒ 镜像对局里仍会跨侧串味。本次已把这几处读取端
+  //   全部改为 `isLeveledUpForSide(game, side, key)`；全局表现只剩写入端与少数幂等守卫。
   leveledChampionsBySide: { player: string[]; enemy: string[] };
   pendingLevelUps: CardData[]; // [新增] 待升级英雄候场区队列
   levelUpCard: CardData | null;
@@ -382,6 +456,32 @@ export interface GameState {
 
   // [2026-07-17 鸦眼小队] 校准挂起状态
   calibratePending?: CalibrateData;
+  /**
+   * [2026-10-03 莉莉子 · 进攻标识三层分离]
+   * **侦察关键词的「每回合首次」标记**（`Scout`：每回合首次仅用侦察单位进攻 ⇒ 进攻后再获得一次进攻机会）。
+   *
+   * 为什么必须显式存：此前实现是拿「**token 值是不是 `normal`**」当"本回合是否已触发过"的代理指标
+   * （`useGameState` 回合末结算），于是**备战一旦把 token 改写成 `rally`，侦察的额外机会就会被误判成"用过了"而吞掉**。
+   * ⇒ 回合边界由 `calculateRoundStart` 统一清零（与进攻标识同批重置）。
+   */
+  scoutUsedThisRound?: { player: boolean; enemy: boolean };
+  // [2026-10-06 程拍板 · 序号去重] 「获得进攻标识时」(`ON_GET_ATTACK_TOKEN`) 的**授予账本**。
+  //   ── 病根（程实测）：**格挡回合**打出灵轨月轮 → 侦察给出标识（`null → 'rally'`）⇒ 场上的安卡**不给月轮**。
+  //      原实现有两个派发点各管一半（回合初「块 B」/ 回合内检测器），中间漏了这一整类；
+  //      而补上它又会与块 B **重复派发**（块 B 是在 +100ms 定时器里读**实时**状态的，边界不是提交批次）。
+  //   ── 现口径：`grantExtraAttackTurn` 是「追加进攻权」的**唯一出口** ⇒ 每次**真正授予**就 `tokenGrantSeq[side]++`；
+  //      两个派发点都按「`seq > handled` 才发、发完把 handled 追平」去重
+  //      ⇒ **一次授予 = 一次派发**，与**时序 / 提交批次 / prev 值**全都无关。
+  //   ⚠️ 只统计 **rally 授予**；回合轮换发的 `normal` 不计数（那份由块 B 的"持标识即扫"覆盖）。
+  tokenGrantSeq?: { player: number; enemy: number };
+  tokenGrantHandled?: { player: number; enemy: number };
+  /**
+   * [2026-10-03 莉莉子 BUG修复 · 校准面板互相挤掉]
+   * 待触发的校准**排队请求**（单槽 `calibratePending` 被后触发的校准**覆盖**过）。
+   * ⚠️ 这里**只存请求**（谁、抽几张），不存牌库快照 ——
+   *    候选牌在**出队时**从当时的真实牌库现抽（避免排队期间牌库变了导致用到陈旧快照）。
+   */
+  calibrateQueue?: { owner: 'player' | 'enemy'; count: number }[];
 
   // [2026-08-06 莉莉子] 墓地：本牌局死亡单位快照（正常死亡才记录，消亡替换/爆牌不计）
   // 拆成双方独立数组，法术2「瓦尔哈拉的呼唤」按方复活
@@ -437,6 +537,10 @@ export interface UserSettings {
     bgm: number;
     sfx: number;
     voice: number;
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 「过场」通道补进类型 ——
+    //   此前 UI（SettingsModal 的 volumes 声明）有 movie、而这里与默认值都没有 ⇒
+    //   `settings.volume.movie` 恒为 undefined（滑块初值 undefined、越界夹紧也算不出）
+    movie: number;
   };
   customization: {
     currentCardBackIndex: number; // 当前佩戴的卡背
@@ -454,7 +558,12 @@ export interface UserSettings {
   // [2026-09-29 程拍板] 奖励匣体系：开包改为「先抽到匣子 → 再打开匣子得到道具」
   //   两类匣：武装匣（开对应品质武装）/ 神格碎片匣（开对应数量神格碎片，每5片一组随机归属某天启者）
   pendingChests?: import('./data/roguelike/divinityShards').ChestInstance[];
-  passClaimedRewards?: number[]; // [2026-08-29 通行证·手动领取] 已领取的通行证奖励等级（达到等级后需在通行证面板手动领取）
+  passClaimedRewards?: number[]; // [2026-08-29 通行证·手动领取] 已领取的通行证奖励等级（**≤30 固定表**用；达到等级后需在通行证面板手动领取）
+  // [2026-10-04 程拍板 ③] **31+ 里程碑奖励的领取水位**（不允许跳级）。
+  //   为什么另开一个字段而不是继续用数组：31+ 是**无限等级**，数组会无上限增长；
+  //   而"不允许跳级"意味着只需记住"领到第几级"即可 ⇒ 用水位。
+  //   缺省（未设置）视为 ANALYST_FIXED_REWARD_MAX（30），即 ≤30 仍走上面的数组。
+  passClaimedUpTo?: number;
   videoResolution?: '1k' | '2k' | '4k';
   lastSeenAnnouncementVersion?: string; // [2026-08-09] 已读过的公告版本号（新版本首次进大厅弹窗标记）
   skipGameStartDrawAnimation?: boolean; // 跳过开局抽卡动画

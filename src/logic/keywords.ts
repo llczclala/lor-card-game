@@ -1,5 +1,7 @@
 import type { CardData, GameState, Keyword } from '../types';
 import { createCard } from '../data/cards'; // [2026-08-06 莉莉子] Echo 回响：生成瞬逝复制品需要重建卡牌实例
+// [2026-10-08 莉莉子 · 法术专属装备 第二波 · Q5] 复制品**继承装备**（G1：跳过提供 Echo 的装备，防无限繁殖）
+import { attachEquipment, getEquipmentById } from '../data/equipment';
 
 /**
  * 战斗交互结果接口
@@ -50,7 +52,11 @@ export const applyRoundStartKeywords = (cards: CardData[]): CardData[] => {
         // 效果：回合开始回复满血
         if (card.keywords.includes('Regeneration')) {
             // [核心修复] 判断是否受伤，唯一标准是看身上有没有“欠条” (damageTaken > 0)
-            const needsHeal = (card.damageTaken || 0) > 0;
+            // 🔴 [2026-10-06 莉莉子 · 审计收口] **"无法被治疗"必须拦住【再生】** ——
+            //   全项目对 `cantBeHealed`（终焉契约的 Pact 代价）只有一处拦截：`effectProcessor` 的 HEAL 效果类；
+            //   而关键词【再生】直接清欠条 ⇒ **绕过**了"无法被治疗"，带契约的单位照样每回合回满血。
+            //   ⇒ 与 HEAL 类同口径：契约在手，不回血。
+            const needsHeal = (card.damageTaken || 0) > 0 && !card.cantBeHealed;
 
             if (needsHeal) {
                 return {
@@ -485,7 +491,9 @@ export interface EchoResult {
 export const applyEchoOnPlay = (
     sourceCard: CardData,
     ownerHand: CardData[],
-    _owner: 'player' | 'enemy' // [2026-08-16] 未使用，下划线前缀避免 TS6133
+    _owner: 'player' | 'enemy', // [2026-08-16] 未使用，下划线前缀避免 TS6133
+    /** [2026-10-08 第二波 · Q5] 本体已挂的装备 id（由调用方按方传入：玩家 = rogueEquipments / 敌方 = enemyEquipments） */
+    equipIds?: string[],
 ): EchoResult => {
     if (!sourceCard.keywords.includes('Echo')) return { hand: ownerHand, echoedCards: [] };
     if (ownerHand.length >= 10) {
@@ -493,7 +501,19 @@ export const applyEchoOnPlay = (
         return { hand: ownerHand, echoedCards: [] };
     }
 
-    const copy = createCard(sourceCard.key);
+    // ── [Q5 程定稿] 复制品**继承装备**：与既有语义「装备按卡 key 生效、覆盖该卡所有副本」一致。
+    //    不继承的话，「给带回响的法术装减费」会出现本体减费、复制品原价 —— 同卡副本行为不一致，玩家会当 BUG。
+    // ── [G1 防递归] **跳过"提供 Echo 关键词"的装备**：
+    //    否则给无 Echo 的法术装「誊抄副本」→ 复制品继承该装备 → 复制品也带 Echo → 无限繁殖。
+    //    语义 = 一件回响装备只多一次施放（1→2），不滚雪球。
+    // ── [G2] 只排除**装备来源**的 Echo，不动"卡面自带 Echo"的链式复制（既有的"回响复刻连绵不绝"，本次不改）。
+    let copy = createCard(sourceCard.key);
+    for (const id of equipIds ?? []) {
+        const def = getEquipmentById(id);
+        if (!def) continue;
+        if (def.keywords?.includes('Echo')) continue; // G1
+        copy = attachEquipment(copy, id);
+    }
     const echoed = {
         ...copy,
         keywords: Array.from(new Set([...(copy.keywords || []), 'Volatile'])),

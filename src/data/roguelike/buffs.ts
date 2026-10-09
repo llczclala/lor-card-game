@@ -34,6 +34,10 @@ export type BattleTrigger = 'game_start' | 'round_start' | 'on_summon' | 'on_fir
     // [2026-09-28 莉莉子 神格神经] 新时机：进攻宣告（commitAttack 那一刻，程授权改 useGameState 埋点）
     //   服务：芬妮②④（进攻单位攻击力总和达标 → 备战）· 卜卜①③（进攻时复制召唤）
     | 'on_attack_declare'      // 进攻宣告（commitAttack，程授权改 useGameState 埋点）
+    // [2026-10-06 程拍板 · 新增强化「霜锋乘势」] 新时机：**每次获得进攻标识时**
+    //   唯一入口 = `processOnGetAttackToken`（回合初的"块 B" 与 回合内的授予账本检测器都调它）
+    //   ⇒ 天然"一次授予派发一次"（去重靠 `tokenGrantSeq / tokenGrantHandled`）
+    | 'on_get_attack_token'
     // [2026-09-28 莉莉子 神格神经] 拉取暴露单位（challengeEnemy 放行后，程授权改 useGameState 埋点）
     | 'on_pull_exposed';
 export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLONE_AND_SUMMON'
@@ -46,6 +50,7 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     | 'FREEZE_STRONGEST'     // 回合开始：冻结对方攻击力最高的单位
     | 'DUEL_STRONGEST'       // 回合结束：双方攻击力最高的单位相互打击
     | 'SET_STRONGEST_STATS'  // 回合开始：将对方最强的单位强制设为 1/1
+    | 'SET_RANDOM_STATS'     // [2026-10-06 程拍板] 回合开始：将对方**随机一个**单位强制设为 1/1（「衰弱蔓延」）
     | 'HAND_DISCOUNT'        // 打出单位时：手牌随机单位卡费用减少（减=打出单位的费用）
     | 'DEATH_GIFT'           // 单位阵亡时：把阵亡单位的攻血赋予手牌随机单位
     // [2026-08-27 莉莉子] 品质扩充批效果类（绿蓝金红 · 全双开关）
@@ -64,6 +69,9 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     | 'CHAMPION_TO_HAND'      // [2026-09-01 莉莉子] 天启共鸣：开局从牌库随机抽一张天启者到手牌（提高上手率，天启者等级奖励专属）
     | 'DRAW_CARDS'            // [2026-09-25 莉莉子 三线任务化框架] 开局抽 N 张（params.value）：牌库顶 N 张进手牌；武装任务兑现与后续条目共用
     | 'DISCARD_LOWEST_BUFF_CHAMPION' // [2026-09-25 莉莉子 武装线] 噬牌之匣：回合开始弃掉手牌中费用最低的一张 → 天启者永久 +1/+1
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **从牌库召唤**（区别于 SUMMON 的"造卡"）：
+    //   取牌库里的**实例** ⇒ 天然带装备/武装（开局构建时已挂好）；语义是**移出**牌库
+    | 'SUMMON_FROM_DECK'
     // [2026-09-25 莉莉子 武装线] 武装专用效果类（载体为 armfx_* 条目）
     | 'SUMMON_INHERIT_LAST_DEAD'    // 亡者低语：此后每次召唤，新单位获得"最后阵亡单位"的攻血
     | 'SPREAD_CHAMPION_KEYWORDS'    // 共鸣水晶：随机赋予天启者一个关键词 → 其关键词同时赋予在场我方单位
@@ -157,6 +165,18 @@ export const MAZE_BUFFS: MazeBuff[] = [
         battleEffect: { trigger: 'game_start', effectClass: 'SUMMON', params: { summonKey: 'Ghost_Squad_Antina' } },
         playerEligible: true, enemyEligible: false,
     },
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **世纪和解**（仅「瓦尔基里大赛」绝密档可得）
+    //   效果：开局时**从牌库**召唤里芙与芬妮到备战席（移出牌库，带装备随卡而来）
+    //   ⚠️ `playerEligible: false` ⇒ **不进任何随机池**（同神格神经 `divfx_*` 的做法），
+    //      玩家唯一的获取途径是该事件的 `addEnhancementFrom`。
+    //   ⚠️ `enemyEligible: true` ⇒ 绝密档「在哪里参赛？」的敌方**也持有一条**（程的表里明确写了）。
+    {
+        id: 'enhance_century_reconciliation', name: '世纪和解',
+        description: '开局时，从牌库召唤里芙与芬妮到备战席。',
+        rarity: 'mythic', icon: SPELL_IMAGES.lyfe_fenny, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['lyfe', 'fenny'] } },
+        playerEligible: false, enemyEligible: true,
+    },
     {
         id: 'enhance_seize_moment', name: '机不可失', description: '我方召唤单位时，本回合给予其 +1/+1。',
         rarity: 'rare', icon: SPELL_IMAGES.full_purification, effect: { type: 'passive' },
@@ -190,7 +210,10 @@ export const MAZE_BUFFS: MazeBuff[] = [
         // [2026-09-28 程拍板 · 神格神经] 「打击后 +1/+1」这个效果**只属于神格神经**（里芙节点①）：
         //   本条从玩家强化池**摘出**（playerEligible: false），不再有任何局内获取途径。
         //   ⇒ 通行证 29 级奖励已改发「凯旋之匣」（见 analystProgression）。
-        //   ⚠️ 条目本体保留（历史 id 不动）：节点①的载体可直接复用本效果，敌方侧另有「狂怒印记」不受影响。
+        // 🔴 [2026-10-06 莉莉子 · 审计纠错] 原注释写"节点①的载体**可直接复用本效果**" —— **与代码不符**：
+        //   里芙① 实际发的是**它自己的** `divfx_lyfe_1`（见 heroDivinity.ts），**从不引用本 id**
+        //   ⇒ 本条是**孤儿数据**（全项目仅此处定义、无任何发放来源）。
+        //   保留只为"历史 id 不动"；若确认永不复用，可删除（删前 grep 确认无引用）。
         playerEligible: false, enemyEligible: false,
     },
     {
@@ -262,7 +285,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: false,
     },
     {
-        id: 'enhance_scavenge', name: '拾荒', description: '每场战斗结束时，若我方水晶不低于 10 点，获得 20 金币。',
+        id: 'enhance_scavenge', name: '拾荒', description: '战斗胜利后，若我方水晶不低于 10 点，获得 20 金币。',
         rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
         runBattleEndGold: 20, runBattleEndMinNexus: 10, // run 层结算（与凯旋之匣同一处），不走战斗内管线
         playerEligible: true, enemyEligible: false,
@@ -403,7 +426,8 @@ export const MAZE_BUFFS: MazeBuff[] = [
     // 新增触发时机 round_end / unit_die + 5 个新效果类（FREEZE_STRONGEST / DUEL_STRONGEST / SET_STRONGEST_STATS / HAND_DISCOUNT / DEATH_GIFT）
     {
         id: 'freeze_strongest', name: '霜寒压制', description: '回合开始时，冻结对方攻击力最高的单位。',
-        rarity: 'rare', icon: SPELL_IMAGES.temp_spell_18, effect: { type: 'passive' },
+        // [2026-10-06 程拍板] 玩家反馈"太强、不好打" ⇒ 稀有 → **史诗**（原稀有档由新条目「霜锋乘势」顶替）
+        rarity: 'epic', icon: SPELL_IMAGES.temp_spell_18, effect: { type: 'passive' },
         battleEffect: { trigger: 'round_start', effectClass: 'FREEZE_STRONGEST', priority: 10 }, // [2026-09-09] 冻结先于衰弱：冻结后最强归0 → 衰弱实时重判到次强
         playerEligible: true, enemyEligible: true,
     },
@@ -415,8 +439,26 @@ export const MAZE_BUFFS: MazeBuff[] = [
     },
     {
         id: 'shrink_strongest', name: '衰弱诅咒', description: '回合开始时，将对方最强的单位设置为 1/1。',
-        rarity: 'epic', icon: SPELL_IMAGES.mauxir_zhishui_ningxing, effect: { type: 'passive' },
+        // [2026-10-06 程拍板] 玩家反馈"太强、不好打" ⇒ 史诗 → **传说**（原史诗档由新条目「衰弱蔓延」顶替）
+        rarity: 'legendary', icon: SPELL_IMAGES.mauxir_zhishui_ningxing, effect: { type: 'passive' },
         battleEffect: { trigger: 'round_start', effectClass: 'SET_STRONGEST_STATS', priority: 20 }, // [2026-09-09] 排在冻结后：对实时战场重判"当前最强"
+        playerEligible: true, enemyEligible: true,
+    },
+    // ── [2026-10-06 程拍板] 两条"降档替身"新强化（原条目提升品质后，用它们顶住**原品质档位**）──
+    {
+        id: 'frost_momentum', name: '霜锋乘势', description: '每次获得进攻标识时，冻结对方攻击力最高的单位。',
+        rarity: 'rare', icon: SPELL_IMAGES.temp_spell_18, effect: { type: 'passive' },
+        // 与「霜寒压制」同效果类，差别只在**时机**：回合开始 → **每次获得进攻标识时**
+        //   （分发唯一入口 = `processOnGetAttackToken`；去重靠 `tokenGrantSeq/tokenGrantHandled`）
+        battleEffect: { trigger: 'on_get_attack_token', effectClass: 'FREEZE_STRONGEST' },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'shrink_spread', name: '衰弱蔓延', description: '回合开始时，将对方随机一个单位设置为 1/1。',
+        rarity: 'epic', icon: SPELL_IMAGES.mauxir_zhishui_ningxing, effect: { type: 'passive' },
+        // 与「衰弱诅咒」同"设为 1/1"语义，差别只在**目标**：最强 → **随机一个**
+        //   priority 30：排在冻结(10)/衰弱(20)**之后** —— 沿用既有顺序（先处理"最强"那一脉，随机这脉收尾）
+        battleEffect: { trigger: 'round_start', effectClass: 'SET_RANDOM_STATS', priority: 30 },
         playerEligible: true, enemyEligible: true,
     },
     {
@@ -488,7 +530,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: true,
     },
     {
-        id: 'undying_legion', name: '亡灵军团', description: '我方首个单位阵亡时，将其复活。',
+        id: 'undying_legion', name: '亡灵军团', description: '我方单位阵亡时，将其中首个复活（同一批阵亡只救得起一个）。',
         rarity: 'legendary', icon: SPELL_IMAGES.temp_spell_02, effect: { type: 'passive' },
         battleEffect: { trigger: 'unit_die', effectClass: 'RESURRECT', params: { all: false } },
         playerEligible: true, enemyEligible: true,
@@ -518,7 +560,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: true,
     },
     {
-        id: 'undying_host', name: '不死军团', description: '我方每个单位阵亡时，都会在回合开始时被复活。',
+        id: 'undying_host', name: '不死军团', description: '我方单位阵亡时立即复活，并获得【幻象】（回合结束时会消散）。',
         rarity: 'mythic', icon: SPELL_IMAGES.ghostly_shadows, effect: { type: 'passive' },
         battleEffect: { trigger: 'unit_die', effectClass: 'RESURRECT', params: { all: true } },
         playerEligible: true, enemyEligible: true,
@@ -673,12 +715,22 @@ export const MAZE_BUFFS: MazeBuff[] = [
     },
     {
         id: 'divfx_acacia_6', name: '剑舞长空',
-        description: '回合开始时，在手牌中生成一张 0 费的「安卡希雅的剑舞」；且我方所有单位获得【先攻】。',
+        description: '回合开始时，在手牌中生成一张 0 费、瞬逝的「灵轨月轮·扩散」。我方所有单位获得【侦察】（含此后召唤的单位）。',
         rarity: 'legendary', icon: SPELL_IMAGES.acacia_chrono_echo_spell, effect: { type: 'passive' },
-        // 一条强化两个效果（都在 round_start）：生成 0 费剑舞 + 全员先攻
+        // [2026-10-06 程口径 · 文案断句] 关键词那一句**不带时机** —— 语义是「我方全员**持续**生效（含此后召唤的）」，
+        //   **不是**"回合开始那一刻扫一次"；与「钢铁洪流 / 战争领主 / 铁誓」那种
+        //   「回合开始时，我方所有单位获得 +N/+M」（**一次性时点**数值）**不是同一类**，勿混。
+        //   ⇒ 断成两句：第一句管生成（保留「回合开始时，在手牌中生成…」模板），第二句管关键词（独立陈述）。
+        // 一条强化三个效果：生成 0 费灵轨月轮·扩散 + 全员侦察（在场 + 此后召唤）
+        // [2026-10-06 程拍板] 生成物「安卡希雅的剑舞」→「灵轨月轮·扩散」（仍 0 费）；关键词【先攻】→【侦察】
+        // [2026-10-06 程实测 BUG修复] 原先只有 `round_start` 一条 ⇒ **只有那一刻在备战席的单位**拿得到，
+        //   此后打出的单位 / 飞剑召唤**全部漏掉**。补 `on_summon`（与「决意·不退之阵」「不死之身」同范式）：
+        //   · 打出单位 → `useGameState` 打出路径分发 `on_summon`（`info.playedCard` = 该单位）
+        //   · 飞剑等衍生召唤 → `effectProcessor` 飞剑落位处**补跑** `on_summon`（每把剑各触发一次）
         battleEffects: [
-            { trigger: 'round_start', effectClass: 'GENERATE', params: { generateKey: 'acacia_chrono_echo_spell', costOverride: 0 } },
-            { trigger: 'round_start', effectClass: 'ALL_UNITS_GRANT_KEYWORD', params: { keyword: 'QuickAttack' } },
+            { trigger: 'round_start', effectClass: 'GENERATE', params: { generateKey: 'acacia_sword_rain', costOverride: 0 } },
+            { trigger: 'round_start', effectClass: 'ALL_UNITS_GRANT_KEYWORD', params: { keyword: 'Scout' } },
+            { trigger: 'on_summon', effectClass: 'ALL_UNITS_GRANT_KEYWORD', params: { keyword: 'Scout' } },
         ],
         playerEligible: false, enemyEligible: false,
     },

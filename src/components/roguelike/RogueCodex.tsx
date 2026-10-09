@@ -36,12 +36,16 @@ export const TRIGGER_LABELS: Record<BattleTrigger, string> = {
     // [2026-09-28 莉莉子 神格神经] 新增时机（芬妮/卜卜/茉莉安）
     on_attack_declare: '进攻宣告',
     on_pull_exposed: '拉取暴露',
+    // [2026-10-06 程拍板] 新时机（「霜锋乘势」= 每次获得进攻标识时冻结最强）
+    on_get_attack_token: '获得进攻标识时',
 };
 
 /** [2026-08-26 莉莉子] 战斗效果类 → 中文标签 */
 export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     GENERATE: '生成',
     SUMMON: '召唤',
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 从牌库召唤（世纪和解）—— 与上方"造卡召唤"区分
+    SUMMON_FROM_DECK: '从牌库召唤',
     BUFF: '增益',
     RALLY: '备战',
     CLONE_AND_SUMMON: '克隆召唤',
@@ -53,6 +57,7 @@ export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     FREEZE_STRONGEST: '冻结最强',
     DUEL_STRONGEST: '双方最强互打',
     SET_STRONGEST_STATS: '设1/1最强',
+    SET_RANDOM_STATS: '设1/1随机',  // [2026-10-06 程拍板] 新增强化「衰弱蔓延」
     HAND_DISCOUNT: '手牌减费',
     DEATH_GIFT: '亡语赋予',
     // [2026-08-27 莉莉子] 品质扩充批效果类

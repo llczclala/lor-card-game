@@ -11,8 +11,22 @@ import d5 from '../../image/dialogue/5.webp';
 import d6 from '../../image/dialogue/6.webp';
 import d7 from '../../image/dialogue/7.webp';
 import d8 from '../../image/dialogue/8.webp';
+// [2026-10-08 莉莉子 · 瓦尔基里大赛] 事件**专属 CG**（程指定：该事件用这张）
+import plotCg003 from '../../image/map/dialogue/PlotCG_003.png';
 
 export const DIALOGUE_BG_IMAGES: string[] = [d1, d2, d3, d4, d5, d6, d7, d8];
+
+/**
+ * [2026-10-08 莉莉子 · 瓦尔基里大赛] **事件专属 CG 表**（key → url）。
+ * 由事件数据的 `RogueEvent.cg` 字段引用；比"一局内固定随机背景"更强的叙事指向。
+ */
+export const EVENT_CG_IMAGES: Record<string, string> = {
+    valkyrie_arena: plotCg003,
+};
+
+/** 取事件专属 CG：key 未命中 ⇒ `undefined`（调用方回落到 `getDialogueBg()`） */
+export const getEventCg = (key?: string): string | undefined =>
+    key ? EVENT_CG_IMAGES[key] : undefined;
 
 /** 编辑器可选背景 key（'1'~'8'，对应 dialogue/1.png ~ 8.png） */
 export const DIALOGUE_BG_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8'];

@@ -9,6 +9,9 @@ import { CARD_DB } from '../cards';
 import { getEquipmentOnlyDefs, getEquipmentById, getEquipPoolForCard, type EquipmentRarity } from '../equipment';
 import { pickRandomEnhancements, type RarityBonusInput } from './enhancements';
 import type { EnhancementRarity } from './buffs';
+import type { RogueDifficulty } from './difficulties';
+// [2026-10-08 莉莉子 · 难度分层] 装备/强化品质改按难度取表（唯一真源）
+import { equipChanceFor, equipWeightsFor, weightedPick } from './difficultyTiers';
 
 export interface ShopCardItem {
     cardKey: string;
@@ -65,9 +68,12 @@ const randomCardKey = (exclude: Set<string>): string => {
     return pool.length ? pool[Math.floor(Math.random() * pool.length)].key : 'lyfe';
 };
 
-const randomEquipId = (card: { type: string }, excludeIds?: string[]): string | undefined => {
+// [2026-10-08 莉莉子 · 难度分层] 由"按件数均匀抽"改为"按难度品质权重抽（上限截断）"：
+//   旧实现下装备池 51 件里金4+红4 ⇒ **每格 15.7% 概率出金/红，且任何难度都一样**（反方向的分级漏洞）
+const randomEquipId = (card: { type: string }, excludeIds?: string[], difficulty?: RogueDifficulty): string | undefined => {
     const pool = getEquipPoolForCard(card, excludeIds); // [2026-08-29] 按卡筛：单位→全装备，法术→纯减费
-    return pool.length ? pool[Math.floor(Math.random() * pool.length)].id : undefined;
+    const table = equipWeightsFor(difficulty);
+    return weightedPick(pool, e => table[e.rarity] ?? 0)?.id;
 };
 
 /**
@@ -76,14 +82,19 @@ const randomEquipId = (card: { type: string }, excludeIds?: string[]): string | 
  * [2026-09-25 莉莉子 装备不叠加] 传 equippedCards 后，候选卡不再佩戴"这张卡已经挂着"的装备：
  *   装备按卡 key 生效（新副本本来就继承那件），再发一件同样的只是白加价。
  */
-export const generateCardOffers = (count: number, equippedCards?: Record<string, string[]>): ShopCardItem[] => {
+export const generateCardOffers = (
+    count: number,
+    equippedCards?: Record<string, string[]>,
+    opts?: { difficulty?: RogueDifficulty; equipChance?: number }, // [2026-10-08 难度分层] 难度决定"带装备的概率"与"装备品质"
+): ShopCardItem[] => {
     const cards: ShopCardItem[] = [];
     const used = new Set<string>();
+    const chance = opts?.equipChance ?? equipChanceFor(opts?.difficulty);
     for (let i = 0; i < count; i++) {
         const key = randomCardKey(used);
         used.add(key);
-        const withEquip = Math.random() < 0.6;
-        const equipId = withEquip ? randomEquipId(CARD_DB[key], equippedCards?.[key]) : undefined;
+        const withEquip = Math.random() < chance;
+        const equipId = withEquip ? randomEquipId(CARD_DB[key], equippedCards?.[key], opts?.difficulty) : undefined;
         cards.push({ cardKey: key, equipId, price: getCardPrice(key, equipId) });
     }
     return cards;
@@ -93,6 +104,8 @@ export const generateCardOffers = (count: number, equippedCards?: Record<string,
 export interface ShopStockContext {
     equippedCards?: Record<string, string[]>;
     ownedEnhancements?: string[];
+    /** [2026-10-08 难度分层] 本局难度 → 决定强化/装备的品质权重与上限 */
+    difficulty?: RogueDifficulty;
 }
 
 /**
@@ -100,11 +113,13 @@ export interface ShopStockContext {
  * @param rarityBonus 英雄等级的稀有度加成（影响强化/装备抽选权重）
  */
 export const generateShopStock = (rarityBonus?: RarityBonusInput, unlockedPass?: string[], ctx?: ShopStockContext): ShopStock => {
-    const cards = generateCardOffers(3, ctx?.equippedCards);
+    // [2026-10-08 难度分层] 买卡区：难度决定"带装备概率"与"装备品质"
+    const cards = generateCardOffers(3, ctx?.equippedCards, { difficulty: ctx?.difficulty });
 
     // 买迷宫强化：从玩家强化池抽 1 个（含稀有度权重；[2026-08-29 通行证] 已解锁通行证强化也入池）
     // [2026-09-25 莉莉子 强化不叠加] 排除本局已拥有 → 池空则不卖强化（enhancement = null）
-    const enh = pickRandomEnhancements(1, undefined, rarityBonus, unlockedPass, ctx?.ownedEnhancements)[0];
+    // [2026-10-08 难度分层] 原第二参写死 `undefined` ⇒ 商店买的强化与强化节点**不同源**；现传本局难度
+    const enh = pickRandomEnhancements(1, ctx?.difficulty, rarityBonus, unlockedPass, ctx?.ownedEnhancements)[0];
     const enhancement: ShopEnhancementItem | null = enh
         ? { enhancementId: enh.id, price: getEnhancementPrice(enh.rarity) }
         : null;
@@ -117,14 +132,13 @@ export const generateShopStock = (rarityBonus?: RarityBonusInput, unlockedPass?:
     //   而 handleRogueBuyEquipment 不做类型校验 —— 若把 spellOnly（仅法术可挂）混进来，就会被挂到单位身上，
     //   正是"武装混进商店"那类漏洞的翻版。（法术卡带装备走**买卡区**：generateCardOffers 已按卡筛池。）
     const equipPool = getEquipmentOnlyDefs('unit');
+    const equipTable = equipWeightsFor(ctx?.difficulty); // [2026-10-08 难度分层] 品质权重按难度
     const equipments: ShopEquipmentItem[] = [];
     const usedEquip = new Set<string>();
-    for (let i = 0; i < 2 && i < equipPool.length; i++) {
-        let e = equipPool[Math.floor(Math.random() * equipPool.length)];
-        let guard = 0;
-        while (usedEquip.has(e.id) && guard++ < 20) {
-            e = equipPool[Math.floor(Math.random() * equipPool.length)];
-        }
+    for (let i = 0; i < 2; i++) {
+        const cand = equipPool.filter(e => !usedEquip.has(e.id));
+        const e = weightedPick(cand, x => equipTable[x.rarity] ?? 0);
+        if (!e) break;
         usedEquip.add(e.id);
         equipments.push({ equipmentId: e.id, price: getEquipmentPrice(e.rarity) });
     }

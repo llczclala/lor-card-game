@@ -15,6 +15,41 @@ import { Card } from './Card';
 import { gameLogger } from '../utils/gameLogger'; // [核心新增] 引入黑匣子
 import { MissionToast } from './MissionUI'; // [核心新增] 引入结算滑动提示框
 import { isSkinOwned as checkSkinOwned } from '../data/skinData'; // [皮肤门禁] 统一拥有判定（原画 0 恒拥有）
+// ═══ [2026-10-04 程拍板] 详情页左上角「装备 / 武装」图标列 ═══
+import { getEquipmentById } from '../data/equipment';
+import { bindArmamentGaze } from './roguelike/ArmamentPreview'; // 悬停浮出大卡（宿主在 App 全局，浮层 z-10001 > 本层 10000）
+import { useArmamentConfig } from '../hooks/useArmamentConfig';   // 天启者的武装槽（装备之外的第二条数据源）
+import { useHeroProgression } from '../hooks/useHeroProgression'; // 武装槽按英雄等级解锁，取等级用
+
+// [2026-10-04] 六边形 clip-path + 装备品质色 —— **独立定义同款**（与 Card.tsx:329/331 一致）。
+//   理由同 RogueHeroInfoModal:837 的注释：Card.tsx 是核心文件，不为了两个常量去动它。
+const EQUIP_HEXAGON = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
+const EQUIP_RARITY_COLOR: Record<string, string> = {
+    common: '#e5e7eb', uncommon: '#22c55e', rare: '#3b82f6',
+    epic: '#a855f7', legendary: '#facc15', mythic: '#ef4444',
+};
+
+/**
+ * 🎛️ [2026-10-04 程拍板] 详情页左上角「装备 / 武装」图标列的**调参区**（程要微调尺寸，故 export）。
+ *
+ * ★ **只改 `scale` 一个就够** —— 图标边长 / 间距 / 描边厚度**全部按它等比**放大，不用自己乘。
+ *   位置两项（offsetX / offsetY）是**独立旋钮**，因为它们是"放哪儿"，不该跟着尺寸一起缩。
+ *
+ * 改这里 → 存盘 → 详情页立刻生效（不必动组件代码）。
+ */
+export const FULLART_EQUIP_UI = {
+    /** ★ 主旋钮：图标整体缩放（1 = 基准 48px） */
+    scale: 2.5,
+    // ── 以下为基准值（最终尺寸 = 基准 × scale）──
+    baseSize: 48,        // 六边形图标边长（px）
+    baseGap: 8,          // 图标之间的间距（px）
+    baseBorder: 3,       // 六边形描边厚度（px）
+    // ── 位置（独立旋钮，不随 scale）──
+    offsetX: 16,         // 距详情页左边
+    offsetY: 16,         // 距详情页上边
+    /** 图标列最多占详情页高度的百分比（超了就滚轮滚动） */
+    maxHeightPct: 92,
+};
 
 // [新增] 自定义购买确认弹窗组件
 const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: any) => (
@@ -203,6 +238,25 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
     const [viewLevel, setViewLevel] = useState(currentCard.level);
     const [animState, setAnimState] = useState<'idle' | 'up' | 'down'>('idle');
 
+    // ═══ [2026-10-04 程拍板] 本卡身上的「装备 + 武装」═══════════════════
+    //   ① 装备 → `card.equipment`（attachEquipment 写入；战斗内手牌/备战席、地图抽屉都已 attach）
+    //   ② 武装 → 天启者的**槽位**（`getArmament(heroKey)`）—— 它与装备是**两条数据源**，
+    //      所以必须在这里合并；非天启者卡天然取不到武装 ⇒ 一套逻辑覆盖两类。
+    //   ⚠️ 详情页不自己去猜"现在是不是迷宫"：两个 getter 对局外场景都安全返回空。
+    // ══════════════════════════════════════════════════════════════════
+    const { getArmament } = useArmamentConfig();
+    const heroProgression = useHeroProgression();
+    const cardEquipIds = useMemo(() => {
+        const equips = currentCard.equipment ?? [];
+        const arms = getArmament(currentCard.key, heroProgression.getHeroLevel(currentCard.key))
+            .filter((v): v is string => !!v);
+        return Array.from(new Set([...equips, ...arms])); // 去重：同一件可能两边都在
+    }, [currentCard.equipment, currentCard.key, getArmament, heroProgression]);
+    // 🎛️ [2026-10-04 程拍板] 图标列尺寸全部由 `FULLART_EQUIP_UI` 派生 —— 微调只改那个常量（主旋钮 scale）
+    const eqSize = FULLART_EQUIP_UI.baseSize * FULLART_EQUIP_UI.scale;
+    const eqGap = FULLART_EQUIP_UI.baseGap * FULLART_EQUIP_UI.scale;
+    const eqBorder = FULLART_EQUIP_UI.baseBorder * FULLART_EQUIP_UI.scale;
+
     // --- [皮肤] 皮肤浏览状态 ---
     const availableSkins = useMemo(() => {
         const skins = SKIN_IMAGES[currentCard.key];
@@ -243,9 +297,14 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
 
     const { baseCard, leveledCard } = useMemo(() => {
         const base = CARD_DB[currentCard.key] as CardData;
-        const leveled = getLeveledUpCard(base);
+        // [2026-10-05 莉莉子] Lv2 预览的**芬妮成长文案**必须跟着玩家这张卡的位标记走 ——
+        //   `getLeveledUpCard` 现在按 `(customProgress & 4)`（1 级成长是否已触发）
+        //   决定描述写「+8/+0」还是「+5/+0」。若仍只喂 `CARD_DB` 基卡（`customProgress` 恒 0），
+        //   图鉴/详情页会**恒显示 +8**，对"已经吃过 +3"的玩家是错的。
+        //   ⚠️ 这里只借它的**位标记**，不把实例的 buffs / 装备等状态带进预览。
+        const leveled = getLeveledUpCard({ ...base, customProgress: currentCard.customProgress });
         return { baseCard: base, leveledCard: leveled };
-    }, [currentCard.key]);
+    }, [currentCard.key, currentCard.customProgress]);
 
     const targetCard = !currentCard.isChampion ? currentCard : (viewLevel === 1 ? baseCard : leveledCard);
     // [皮肤] 浏览皮肤时优先使用皮肤图片
@@ -337,6 +396,49 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
             }}
         >
             {/* 关闭按钮 [2026-08-26 莉莉子] data-tutorial-close 供教程引导层锚定提示定位 */}
+            {/* ══ [2026-10-04 程拍板] 左上角：本卡的「装备 / 武装」图标列 ══
+                · 只展示**图标**（沿用武装/装备那套六边形），**悬停出大卡**看详情
+                  —— `bindArmamentGaze` → App 全局的 `ArmamentPreview`（createPortal z-10001，压在本层 10000 之上）
+                · 位置按程指定放**左上角**（右上角是关闭按钮、右侧已被数值/关键词/描述占满）
+                ══ ⚠️ 滚轮 / 点击的拦截**只绑在这个列表容器上**，作用范围精确等于"鼠标在列表区域" ══
+                · **onWheel**：在列表上滚 = 只滚列表；鼠标在**其他任何位置**都不经过这里，
+                  照常冒泡到根 div 的 onWheel ⇒ **正常翻页卡牌** ✅（程 2026-10-04 明确的口径）
+                · **onClick**：必须吞掉 —— 否则点图标会冒泡到根 div 的 `onClick={onClose}`，
+                  **顺手把详情页关掉**（这是本次读回时发现并补上的）
+                · `overscroll-contain`：列表滚到顶/底时不把滚动"溢"给外层 */}
+            {cardEquipIds.length > 0 && (
+                <div
+                    // 🎛️ [2026-10-04 程拍板] 尺寸 / 位置全部取自 `FULLART_EQUIP_UI`（改那一个常量即可微调，无须动这里）
+                    className="absolute z-[210] flex flex-col overflow-y-auto overscroll-contain pr-1"
+                    style={{
+                        left: FULLART_EQUIP_UI.offsetX,
+                        top: FULLART_EQUIP_UI.offsetY,
+                        gap: eqGap,
+                        maxHeight: `calc(${FULLART_EQUIP_UI.maxHeightPct}% - ${FULLART_EQUIP_UI.offsetY * 2}px)`,
+                    }}
+                    onWheel={e => e.stopPropagation()}
+                    onClick={e => e.stopPropagation()}
+                >
+                    {cardEquipIds.map(id => {
+                        const def = getEquipmentById(id);
+                        if (!def) return null;
+                        const color = EQUIP_RARITY_COLOR[def.rarity] || '#9ca3af';
+                        return (
+                            <div key={id} className="relative shrink-0 cursor-help"
+                                style={{ width: eqSize, height: eqSize }}
+                                {...bindArmamentGaze(id)}>
+                                {/* 外层：品质色六边形边框（底色 + clip 当边框，与手牌 pips 同款） */}
+                                <div className="absolute inset-0" style={{ clipPath: EQUIP_HEXAGON, background: color, filter: `drop-shadow(0 0 5px ${color}66)` }} />
+                                {/* 内层：深色底 + 装备/武装卡面（描边厚度同样随 scale 等比） */}
+                                <div className="absolute overflow-hidden" style={{ inset: eqBorder, clipPath: EQUIP_HEXAGON, background: '#14171d' }}>
+                                    <img src={def.icon} alt={def.name} draggable={false} className="h-full w-full object-cover" />
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
             <button onClick={onClose} data-tutorial-close="fullart" className="absolute top-4 right-4 md:top-8 md:right-8 text-white/80 hover:text-white bg-black/50 hover:bg-red-500/80 rounded-full p-2 transition-all z-[210]">
                 <X size={32} />
             </button>
@@ -748,7 +850,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                             </div>
                             <p className="text-white text-xl font-medium italic text-center leading-relaxed max-w-[80%]">
                                 "{targetCard.name.includes('里芙') ? '此牌打击 2 次。' :
-                                 (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 10。' :
+                                 (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 其上限的一半。' :
                                  (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 3 次' :
                                  (targetCard.name.includes('猫汐尔 莲驱') ? '召唤师和召唤衍生物累计造成30点伤害' :
                                  (targetCard.name.includes('安卡希雅 时之重奏') ? '我方打出“朔望之期”' :
@@ -954,11 +1056,26 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
         }
 
         const t1 = setTimeout(() => setPhase('blackout_in'), 1500);
+        // =====================================
+        // [2026-10-05 莉莉子 BUG修复 · 20261005-11] **胜利影片也必须有看门狗**（"时间说了算"）
+        // ── 病根：胜利影片的推进**完全押在 `onPlayMovie` 的回调上**（影片 onEnd → blackout_out → menu）
+        //    ⇒ 影片一旦卡住/回调被吞，结算面板**永远到不了 `menu`**：玩家只看到黑屏，
+        //    而且 `scanLogs`（军功结算）也挂在 `phase === 'menu'` 上 ⇒ **那一局的胜利任务全都不计数**。
+        // ── 修法：进片后武装一个兜底计时器（片长 4~8s，取 15s 余量足够），到点直接进 `menu`。
+        //    与升级影片同款思路：**计时器是主推进，影片 onEnd 只是让它更早**。
+        // =====================================
+        const VICTORY_MOVIE_WATCHDOG_MS = 15000;
+        let victoryWatchdog: ReturnType<typeof setTimeout> | undefined;
         const t2 = setTimeout(() => {
             // [修改 4] 使用 onPlayMovieRef.current 来调用，而不是直接用 props
             if (onPlayMovieRef.current) {
                 setPhase('video');
+                victoryWatchdog = setTimeout(() => {
+                    console.warn('[GameOverScreen] ⏱️ 胜利影片未结束（15s 兜底）→ 强制进入结算菜单，避免黑屏干等/漏结算');
+                    setPhase('menu');
+                }, VICTORY_MOVIE_WATCHDOG_MS);
                 onPlayMovieRef.current(() => {
+                    if (victoryWatchdog) clearTimeout(victoryWatchdog); // 正常播完 ⇒ 撤掉兜底
                     setPhase('blackout_out');
                     setTimeout(() => setPhase('menu'), 800);
                 });
@@ -967,7 +1084,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
             }
         }, 2000);
 
-        return () => { clearTimeout(t1); clearTimeout(t2); };
+        return () => { clearTimeout(t1); clearTimeout(t2); if (victoryWatchdog) clearTimeout(victoryWatchdog); };
     }, [result, delayVictoryMovie]);
 
     return (

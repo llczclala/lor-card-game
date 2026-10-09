@@ -970,7 +970,13 @@ function evaluateCHOICE(
         checkData = { ...data, cost: Math.max(0, (data.cost || 0) - fsTotal) };
       }
     }
-    const { canPlay } = evaluateChoiceCondition(checkData, state.enemyMana, state.enemySpellMana, false, state.phase);
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-01] 补传慢速时机枷锁：只有当**至少一个选项此刻真能施放**时，
+    //   AI 才该打出这张抉择基牌（否则会"打出→无一可选→当场撤回"，白绕一圈）
+    const { canPlay } = evaluateChoiceCondition(checkData, state.enemyMana, state.enemySpellMana, false, state.phase, {
+      owner: 'enemy',
+      turnOwner: state.turnOwner,
+      stackLength: (state.spellStack || []).length,
+    });
     return canPlay;
   });
   if (!hasAffordable) {

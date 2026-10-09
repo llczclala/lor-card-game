@@ -154,11 +154,33 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
     const [viewCard, setViewCard] = useState<CardData | null>(null);
 
     // --- 数据加载 ---
+    // =====================================
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-16 · 方案 A] **草稿不再遮蔽文件**
+    // ── 病根：原来 `stored ? 用草稿 : 用文件` —— 只要按过一次「保存」，此后**永远看草稿**
+    //    ⇒ `archetypes.ts` 里新增的敌方卡组（如 2026-09-26 的 3 套）永远不出现（程实测）。
+    // ── 修法：**以文件为基底合并草稿**（文件全集 ∪ 草稿；同名以草稿为准），并用版本戳算出
+    //    "文件里有、而你存草稿时还没有"的新卡组 ⇒ 顶部横幅告知，可一键改用文件版本整体覆盖。
+    // ── 存储格式升级为 `{ savedAt, baseIds, data }`；**旧格式（裸 Record）自动兼容**。
+    // =====================================
+    const [fileNewIds, setFileNewIds] = useState<string[]>([]); // 文件有、草稿基线里没有的 id（顶部横幅用）
     useEffect(() => {
+        const file = JSON.parse(JSON.stringify(ENEMY_ARCHETYPES)) as Record<string, EnemyArchetype>;
+        const fileIds = Object.keys(file);
         try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            setArchetypes(stored ? JSON.parse(stored) : JSON.parse(JSON.stringify(ENEMY_ARCHETYPES)));
-        } catch { setArchetypes(JSON.parse(JSON.stringify(ENEMY_ARCHETYPES))); }
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) { setArchetypes(file); return; }
+            const parsed = JSON.parse(raw);
+            const isNewFormat = !!parsed && typeof parsed === 'object' && !!parsed.data && typeof parsed.data === 'object';
+            const draft: Record<string, EnemyArchetype> = isNewFormat ? parsed.data : parsed;
+            // 旧格式没有基线 ⇒ 退化为"草稿里没有的文件项"（可能把"故意删掉的"也算成新增，仅限旧草稿一次）
+            const baseIds: string[] = isNewFormat && Array.isArray(parsed.baseIds) ? parsed.baseIds : Object.keys(draft);
+            setArchetypes({ ...file, ...draft }); // ← 合并：新卡组不再被草稿挡住
+            const fresh = fileIds.filter(id => !baseIds.includes(id));
+            setFileNewIds(fresh);
+            if (fresh.length > 0) setIsDirty(true); // 内容已与草稿存档不同 ⇒ 提示需重新导出/保存
+        } catch {
+            setArchetypes(file);
+        }
     }, []);
 
     useEffect(() => {
@@ -288,12 +310,31 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
 
     // --- 导出与保存 ---
     const saveToLocal = useCallback(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(archetypes)); setIsDirty(false);
+        // [2026-10-05 · 20261005-16 方案 A] 存成**带版本戳**的格式：
+        //   `baseIds` = 存草稿那一刻 `archetypes.ts` 里的 id 全集 ⇒ 下次打开即可**精确**算出
+        //   "文件里新增了哪些卡组"（不会把"我故意删掉的"误报成新增）。
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            savedAt: Date.now(),
+            baseIds: Object.keys(ENEMY_ARCHETYPES),
+            data: archetypes,
+        }));
+        setIsDirty(false);
+        setFileNewIds([]); // 已按当前文件为基线存档 ⇒ 横幅收起
         const t = document.createElement('div');
         t.textContent = '✅ 已保存到本地存储';
         t.className = 'fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg z-[9999] text-sm animate-fade-in';
         document.body.appendChild(t); setTimeout(() => t.remove(), 2000);
     }, [archetypes]);
+
+    /** [2026-10-05 · 20261005-16 方案 A] 从文件重新加载：**丢弃本地草稿**，回到 `archetypes.ts` 的真值 */
+    const reloadFromFile = useCallback(() => {
+        if (!window.confirm('确定用 archetypes.ts 覆盖当前内容吗？\n（本地的未保存草稿会被丢弃，已保存草稿也会一并清掉）')) return;
+        localStorage.removeItem(STORAGE_KEY);
+        setArchetypes(JSON.parse(JSON.stringify(ENEMY_ARCHETYPES)));
+        setFileNewIds([]);
+        setIsDirty(false);
+        setSelectedId(null);
+    }, []);
 
     const exportToClipboard = useCallback(() => {
         const lines: string[] = [ `import type { EnemyArchetype } from './archetypes';`, '', `export const ENEMY_ARCHETYPES: Record<string, EnemyArchetype> = {` ];
@@ -376,10 +417,28 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
                         className="w-full py-2.5 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold tracking-wider transition-all shadow-[0_0_20px_rgba(37,99,235,0.2)]">
                         <Plus size={18} /> 新建流派
                     </button>
+                    {/* [2026-10-05 莉莉子 · 20261005-16 方案 A] 从文件重新加载（丢弃本地草稿） */}
+                    <button onClick={reloadFromFile}
+                        className="w-full mt-2 py-2 flex items-center justify-center gap-2 bg-white/5 hover:bg-white/15 border border-white/10 text-gray-300 hover:text-white rounded-lg text-xs font-bold tracking-wider transition-all">
+                        从 archetypes.ts 重新加载
+                    </button>
                 </div>
+                {/* [2026-10-05 · 方案 A] 横幅：文件里有、而草稿基线中没有的新卡组（避免"以为没进库"） */}
+                {fileNewIds.length > 0 && (
+                    <div className="mx-4 mt-3 rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-[11px] text-amber-200 leading-relaxed shrink-0">
+                        <div className="font-black mb-1">📥 archetypes.ts 里有 {fileNewIds.length} 套新卡组，已并入</div>
+                        <div className="text-amber-200/80 break-all">{fileNewIds.join(' / ')}</div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                            <button onClick={() => setFileNewIds([])} className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 font-bold transition-colors">知道了</button>
+                            <button onClick={reloadFromFile} className="px-2 py-1 rounded bg-red-600/60 hover:bg-red-500 text-white font-bold transition-colors">改用文件版本（丢弃我的草稿）</button>
+                        </div>
+                    </div>
+                )}
                 <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] p-4 space-y-3">
                     {Object.entries(archetypes).map(([id, arch]) => {
                         const champImg = CARD_DB[arch.champion || '']?.imageUrl || '';
+                        // [2026-10-05 · 方案 A] 草稿独有（文件里没有这个 id）⇒ 标一下，避免与"文件里的卡组"混淆
+                        const isDraftOnly = !(id in ENEMY_ARCHETYPES);
                         return (
                             <div key={id} onClick={() => setSelectedId(id)}
                                 className={`group relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all h-24 ${selectedId === id ? 'border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)] scale-105 z-10' : 'border-white/10 hover:border-gray-400 opacity-70 hover:opacity-100'}`}>
@@ -395,6 +454,7 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
                                     </div>
                                     <div className="text-[10px] text-gray-400 font-bold tracking-widest relative z-10">
                                         {CARD_DB[arch.champion || '']?.name ? `CORE: ${CARD_DB[arch.champion || ''].name}` : 'NO CORE HERO'}
+                                        {isDraftOnly && <span className="ml-2 text-amber-300/90">· 草稿独有</span>}
                                     </div>
                                 </div>
                             </div>

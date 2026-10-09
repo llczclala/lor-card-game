@@ -22,6 +22,7 @@ export type EffectClass =
     | 'SUMMON_FROM_HAND'   // [锻造者] 从手牌召唤类：选择手牌单位并召唤到战场
     | 'SPELL_DAMAGE_AURA' // [锻造者] 法术增伤光环类：全局法术伤害+1
     | 'GRANT_MANA'        // [梵音] 额外法力类：本回合获得额外法力值
+    | 'SPELL_MANA_GAIN'   // [2026-10-08 莉莉子 · 法术专属装备 第二波] 法术法力类：恢复 N 点法术法力（上限走 spellManaCapOf）
     | 'CALIBRATE'          // [鸦眼] 校准类：从牌库选4张，选1张放顶部
     | 'DECK_BUFF'          // [达努/鸦眼] 牌库强化类：对牌库内单位/法术施加buff
     | 'FLYING_SWORD'        // [2026-07-26 安卡希雅] 飞剑类：召唤X个飞剑衍生物并立即发起进攻
@@ -40,6 +41,7 @@ export type EffectTiming =
     | 'BURST' | 'FAST' | 'SLOW'
     | 'ON_PLAY' | 'ON_ATTACK_DECLARE' | 'ON_ATTACK' | 'LAST_BREATH'
     | 'ROUND_START' | 'ROUND_END' | 'ON_PLAY_AND_ROUND_START'
+    | 'ON_PLAY_FROM_HAND'    // [2026-10-06 程拍板] 「打出时」：**只有从手牌打出**才触发（≠「入场」）
     | 'ON_FIRST_NEXUS_STRIKE'
     | 'ON_NEXUS_STRIKE'      // [2026-07-14 锻造者] 每次打击水晶时触发（不限于首次）
     | 'ON_DAMAGE_SURVIVE'    // [达努] 受伤并存活时触发
@@ -48,6 +50,19 @@ export type EffectTiming =
     | 'POST_COMBAT'          // [达努] 战斗结算后触发（存活判定）
     | 'ON_FIRST_ROUND_END'   // [鸦眼] 首次回合结束时触发
     | 'ON_GET_ATTACK_TOKEN'; // [安卡希雅] 获得进攻标识时触发
+
+// ── [2026-10-06 程拍板 · 时机口径统一] 「入场」与「打出时」是**两个不同**的时机 ──
+//   · `ON_PLAY` / `ON_PLAY_AND_ROUND_START` = **入场**：从手牌打出 **或** 被效果召唤到战场都触发。
+//     口径来源 = `data/keywords.ts` 的术语表「入场」条目 —— 那是**玩家能看到的词条**，所以它是**契约**。
+//   · `ON_PLAY_FROM_HAND` = **打出时**：**只有从手牌打出**才触发；
+//     被法术召唤到场上、或被别人的能力拉到场上（如白猎「重装出击」）**都不触发**。
+//   ⚠️ **不要再用 `timing.includes('ON_PLAY')` 这种子串匹配** ——
+//      `'ON_PLAY_FROM_HAND'.includes('ON_PLAY') === true`，会把两条时机混成一条。
+//      一律走下面两个判据函数（各自只有一个真源）。
+export const isEntryTiming = (t?: string): boolean =>
+    t === 'ON_PLAY' || t === 'ON_PLAY_AND_ROUND_START';
+export const isPlayFromHandTiming = (t?: string): boolean =>
+    t === 'ON_PLAY_FROM_HAND';
 
 // [2026-08-06 莉莉子] 法术速度定义（注册表 speed 字段）
 export type EffectSpeed = 'BURST' | 'FAST' | 'SLOW';
@@ -96,6 +111,9 @@ export interface EffectParams {
     presenceRequirement?: string[];  // [新增] 通用在场条件扫描名单 (写入需要的卡牌 Key)
     targetKeyRequirement?: string[]; // [新增] 定向发牌白名单：只给拥有这些 Key 的单位发放 Buff
     raceFilter?: Race[];             // [新增] 种族过滤器：只给指定种族的单位发放效果
+    // [2026-10-02 莉莉子 BUG修复] 与 raceFilter【取并集】的 Key 白名单（OR 语义）。
+    //   ⚠️ 本文件与 effectProcessor.ts 各有一份 EffectParams，新增字段必须【两边同步补】（见 I01）
+    includeKeys?: string[];
 
     // =====================================
     // [新增] 动态溅射引擎参数 (Splash Strike Engine)
@@ -120,9 +138,22 @@ export interface EffectParams {
     gameStartSummon?: string;         // [2026-09-16 茉莉安] ④【库效】对局开始：召唤该 Key 落场（只触发一次）
     spreadDamageTotal?: number;       // [2026-09-16 茉莉安] SPREAD_DAMAGE：对己方全体分摊的总伤害量
     summonOnlyIfAbsent?: boolean;     // [2026-09-16 茉莉安] SUMMON：落点已有同名单位则不召唤（信标「最多 1 个」）
-    entryVoucher?: boolean;           // [2026-09-19 T44 茉莉安] SUMMON：本次入场发放一张「补兵券」（信标被击败时兑现）
     damageBeaconBy?: number;          // [2026-09-16 茉莉安] 钢羽傍身：对獠牙信标造成 N 点伤害（来源=法术卡本身）
-    damageBeaconSide?: 'both' | 'opponent'; // [2026-09-17 松露小队] 限定只打【对面】的信标（缺省 'both' 保持钢羽傍身的历史行为）
+    // [2026-10-04 程拍板] 茉莉安对信标的打击伤害 = **等级固定值**（Lv1 = 5 / Lv2 = 8）。
+    // ── 取代原 `damageBeaconBySummonerPower`：那条取"召唤者侧茉莉安的当前攻击力"，
+    //    而肉鸽能把她叠到 20+ 攻击力 ⇒ 一记补刀打死信标 ⇒「重生召唤 → 补刀打死 → 再召唤」
+    //    形成**无限循环爆炸**（程：「这不是我们想看到的」）。
+    // ── 为什么需要独立参数：亡语执行时 `sourceCard` 是**一具尸体**（信标 power = 0），
+    //    所以不能复用 `damageBeaconBySelfPower`（那会读出 0）；本参数会去"找活着的她"再按等级取值。
+    // ── 数值**不在**此处配置（避免两处漂移）：唯一定义在 effectProcessor 的 `marianBeaconStrike()`。
+    damageBeaconByMarianLevel?: boolean;
+    // [2026-09-17 松露小队] 限定打哪一侧的信标；[2026-10-02] 新增 'same'
+    //   'both'     缺省，双边都打（钢羽傍身的历史行为）
+    //   'opponent' 只打【施法者对面】那一侧（夜视监察无人机：别炸自己半场的信标）
+    //   'same'     只打【施法者本方】那一侧 —— 专供**亡语**语境：
+    //              亡语执行时 owner = 那具尸体所在侧（信标站的那一侧），
+    //              而"召唤/补刀"的对象正是**同侧**的那枚新信标 ⇒ 只用 'opponent'/'both' 都不对。
+    damageBeaconSide?: 'both' | 'opponent' | 'same';
     damageBeaconBySelfPower?: boolean;  // [2026-09-17 松露小队 · 流萤] 伤害取「施法者自身当前攻击力」，覆盖 damageBeaconBy 的静态值
     summonCountPerExposedEnemy?: number; // [2026-09-17 松露小队 · 榆] 动态召唤数：每有一个【暴露】的敌人召唤一个，本值 = 上限
     gameStartSummonSide?: 'self' | 'opponent'; // [2026-09-16 茉莉安] 落点阵营：缺省 'self'；'opponent' = 落到对方半场（獠牙信标）
@@ -140,7 +171,10 @@ export interface EffectParams {
     buffRewardKey?: string;      // [新增] 达到阈值后生成的奖励卡牌Key
     // [2026-07-14 锻造者] 法术增伤光环参数
     spellDamageBuff?: number;    // 法术增伤光环：对所有法术伤害的额外加成
-    triggerOnPlay?: boolean;     // [白猎] 从手牌召唤时是否触发入场效果
+    // ⚠️ [2026-10-06 程拍板] 原 `triggerOnPlay`（"从手牌召唤时是否触发入场效果"）**已删除**：
+    //   死字段（全项目零消费），也正是"战术闪击不触发入场"那个 BUG 的成因 ——
+    //   数据声明了意图、却没人实现。现「召唤到战场是否触发入场」是**统一口径**
+    //   （一律触发，见 `logic/summonEntry.ts`），不再由数据逐条开关。
     placeholder?: boolean;       // [2026-08-05 莉莉子] 占位标记：逻辑未实现的效果条目专用
     // [2026-08-05 莉莉子] 燃尽召唤 / 无效化参数
     useBurnout?: boolean;        // 燃尽：消耗全部法力后按燃尽值召唤泰坦（法术12）
@@ -518,7 +552,15 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
           targetRequirements: [{ type: 'ALL_ALLIES', count: 0, label: '全体友方单位' }],
           params: {
               power: 0, health: 1, duration: 'PERMANENT',
-              raceFilter: ['summoner', 'summon'],
+              // [2026-10-02 莉莉子 BUG修复 · 卜卜吃到医疗鳄加血]
+              //   原为 `raceFilter: ['summoner', 'summon']` —— 但 **'summoner' 是「召唤师类」天启者共用的 race**
+              //   （库兰娅丝、猫汐尔、卜卜…），导致卜卜也吃到 +0/+1。
+              //   粉丝原话：「这个加血卜卜会吃到是机制吗」→ 程判定：是 BUG（不该吃到）。
+              //   卡面口径是「友方所有【召唤单位】和【库兰娅丝】」：
+              //     · 召唤单位 → race 'summon'（项目里"召唤衍生物"的统一口径：effectRegistry:592/2121、肉鸽强化）
+              //     · 库兰娅丝 → 她的 race 是 'summoner'，无法用 raceFilter 单独挑出 ⇒ 走 includeKeys 白名单
+              raceFilter: ['summon'],
+              includeKeys: ['Illustration_Squad_Kuranas'],
               excludeSelf: true,
               excludeKeys: ['Kuranas_Crocodile'],  // ← 新增：不吃任何医疗鳄的BUFF
               selfDamage: 1,                        // ← 新增：BUFF完后自伤1血
@@ -806,6 +848,33 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         }
     },
 
+    // ==========================================
+    // [2026-10-08 莉莉子 · 法术专属装备 第二波] **装备追加效果**（不进 CARD_DB.effects）
+    //   由 `equipment.spellResolve.grantEffects` 声明 → `spells.ts` 在效果链**末尾**追加执行。
+    //   为什么不用"改实例 effects"：法术结算是按 `CARD_DB[cardKey].effects` 跑的，
+    //   实例上的 effects 不会被读取（这也是本次唯一必须动 `spells.ts` 的原因）。
+    // ==========================================
+    'effect_equip_warm_notes': {
+        id: 'effect_equip_warm_notes',
+        name: '余温',
+        description: '恢复 1 点法术法力。',
+        class: 'SPELL_MANA_GAIN',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1 },
+    },
+    'effect_equip_page_slip_draw1': {
+        id: 'effect_equip_page_slip_draw1',
+        name: '夹层',
+        description: '抽 1 张牌。',
+        class: 'DRAW',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { value: 1 },
+    },
+
     // --- 2. 生机补充 ---
     'effect_vitality_supplement': {
         id: 'effect_vitality_supplement',
@@ -819,7 +888,11 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         ],
         params: {
             value: 3,
-            targetCondition: 'ally_only'
+            // [2026-10-04 莉莉子] 满血屏蔽：ally_only → ally_not_full
+            //   —— 满血单位（damageTaken=0）/ 满血水晶的治疗量恒为 0
+            //   （effectProcessor:3178-3179 单位取 min(damageTaken, amount)；:3159 水晶取 min(nexusMax-cur, amount)），
+            //   放行等于让玩家白花 2 费 ⇒ 改由目标校验层（useSpellSystem.isValidTarget）直接挡下。
+            targetCondition: 'ally_not_full'
         }
     },
 
@@ -1010,7 +1083,9 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         name: '夜幕葬仪',
         description: '弃置任意数量手牌，召唤一只“夜巡猫头鹰”。',
         class: 'DISCARD_AND_SUMMON',
-        timing: 'ON_PLAY',
+        // [2026-10-06 程拍板] **需要玩家选牌 ⇒ 归「打出时」**：被召唤到场上时不触发
+        //   （否则没有选牌界面、会静默无事发生）。卡面文案同步为「打出时」。
+        timing: 'ON_PLAY_FROM_HAND',
         speed: 'BURST',
         targetRequirements: [],
         params: {
@@ -1270,12 +1345,15 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         name: '重装出击',
         description: '选择一个手牌中的单位，赋予他+3/+0和碾压并将他从手牌中召唤。',
         class: 'SUMMON_FROM_HAND',
-        timing: 'ON_PLAY',
+        // [2026-10-06 程拍板] **需要玩家选目标（手牌单位）⇒ 归「打出时」**：
+        //   被召唤到场上时不触发（否则没有选牌界面、只会静默无事发生）。卡面文案同步为「打出时」。
+        //   ⚠️ 它的实际执行由 `useGameState` 的 `confirmWhiteHuntSummon` 手工接管（本站点 effects 仅供视觉层）。
+        timing: 'ON_PLAY_FROM_HAND',
         speed: 'BURST',
         targetRequirements: [
             { type: 'HAND_CARD', count: 1, cardTypeFilter: 'unit', label: '选择一个手牌中的单位' }
         ],
-        params: { power: 3, keywords: ['Overwhelm'], triggerOnPlay: true, maxCost: 7 }
+        params: { power: 3, keywords: ['Overwhelm'], maxCost: 7 }
     },
 
     // ==========================================
@@ -1484,7 +1562,9 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         name: '校准·安',
         description: '入场时：从牌库中随机展示4张牌，选择1张放回牌库顶。',
         class: 'CALIBRATE',
-        timing: 'ON_PLAY',
+        // [2026-10-06 程拍板] **需要玩家选牌 ⇒ 归「打出时」**：被召唤到场上时不触发
+        //   （与白猎 / 瓦莱莉 同口径）。手牌打出时照旧触发（打出路径同时放行两条时机）。
+        timing: 'ON_PLAY_FROM_HAND',
         speed: 'BURST',
         targetRequirements: [],
         params: { calibrateCount: 4 }
@@ -1789,7 +1869,9 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         name: '时序加速',
         description: '打出时：飞剑2。',
         class: 'FLYING_SWORD',
-        timing: 'ON_PLAY',
+        // [2026-10-06 程拍板] 卡面写的是「**打出时**」⇒ 用 `ON_PLAY_FROM_HAND`：
+        //   被召唤到场上（战术闪击 / 白猎等）时**不该**白送两把飞剑。
+        timing: 'ON_PLAY_FROM_HAND',
         speed: 'BURST',
         targetRequirements: [],
         params: { summonCount: 2 }
@@ -1960,7 +2042,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         targetRequirements: [
             { type: 'HAND_CARD', count: 1, cardTypeFilter: 'unit', label: '选择一个手牌中费用小于等于3的单位' }
         ],
-        params: { maxCost: 4, triggerOnPlay: true },
+        params: { maxCost: 4 },
         record: { summary: '从手牌直接打出费用小于3的单位' }
     },
     'effect_temp_spell_12': {
@@ -2146,47 +2228,52 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_marian_lv1': {
         id: 'effect_marian_lv1',
         name: '狂轰滥炸',
-        description: '【库效】对局开始时：在敌方备战席召唤一个「獠牙信标」。\n入场：若敌方备战席没有「獠牙信标」则召唤一个；若已有，则首次被击败后补上一个。',
+        description: '【库效】对局开始时：在敌方备战席召唤一个「獠牙信标」。\n入场：若敌方备战席没有「獠牙信标」则召唤一个；若已有，则为它附加亡语：阵亡时召唤一个「獠牙信标」，并造成 5 点伤害。',
         class: 'SUMMON',
         // [2026-09-19 T38] `ON_PLAY_AND_ROUND_START` → **`ON_PLAY`**：回合开始那条要按等级分叉
         //   （Lv1 不再每回合补），改由 useRoundLifecycle 的 scanLibrarySummon 单独承担并加 Lv2 闸门。
         //   ⚠️ 若保留 ROUND_START，本效果会在每回合开始绕过闸门再补一次，T38 形同虚设。
+        //   [2026-10-02 莉莉子 信标亡语化] scanLibrarySummon 的补信标段**已整体删除**（程拍板不做回合开始兜底），
+        //     故本效果现在只承担两个职责：① 库效开局召唤 ② 入场"有则贴亡语 / 无则召唤"。
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [],
         params: {
             // 【库效】对局开始（useGameState.triggerGameStartGenerate，换牌后触发）
-            //   [2026-09-18] 每回合开始由 useRoundLifecycle 的 scanLibrarySummon 补扫（手牌+牌库，不在场也生效）
-            //   [2026-09-19 T38] scanLibrarySummon 已加「仅 Lv2」闸门 ⇒ Lv1 只有开局这一个信标
             gameStartSummon: 'Marian_Wolf_Tooth_Beacon',
             gameStartSummonSide: 'opponent',
             // 入场：若敌方备战席没有「獠牙信标」则召唤一个
             //   summonSide:'opponent' 复用 T04 的跨阵营落点；summonOnlyIfAbsent 保证「场上最多 1 个」
-            //   [2026-09-19 T44] entryVoucher：每次入场都发一张「补兵券」
-            //     （信标被击败时兑现，要求她本人活着在场；见 useGameState 死亡漏斗）
-            //     ⚠️ 语义修正（原 T39 只在"落点已有时"才发）——否则会被尸体/自狙击搞成永久断档
             summonKey: 'Marian_Wolf_Tooth_Beacon',
             summonSide: 'opponent',
             summonCount: 1,
             summonOnlyIfAbsent: true,
-            entryVoucher: true,
+            // 🔑 [2026-10-02 莉莉子 信标亡语化 · 程当晚更正] 「贴重生亡语」**不在这里做** ——
+            //    它已下放为**等级无关的「信标重生光环」**，由 useGameState 亡语派发处动态判定。
+            // ── 为什么不能"入场贴一次"（程点出的两个必断档场景）：
+            //    ① 入场时若场上没有信标，她召唤的那枚不会被贴；它被打死正好凑满升级 ⇒ 场上再无信标；
+            //    ② 即使贴了，重生出来的新信标不带亡语 ⇒ 第 2 枚被打死后再无信标。
+            //    再叠加"致死那一击看不到刚达成的 Lv2"（升级标记写在死亡批次末尾）⇒ 必然断档。
+            // ── 下放为光环后：只要她在场，**任意时刻的信标**都带亡语 ⇒ 链不会断。
         }
     },
 
-    // --- [2026-09-18] 茉莉安 ②：入场 & 回合开始 → 对敌方备战席的信标打「等同自身攻击力」的伤害 ---
+    // --- [2026-09-18] 茉莉安 ②：入场 & 回合开始 → 对敌方备战席的信标打「等级固定值」的伤害 ---
     //   与 effect_marian_lv1（补信标）成对使用：在 effects 数组里排在它**后面**，保证「先补后打」
-    //   伤害归属茉莉安本体（sourceCard = 茉莉安），故用 SelfPower 变体而非固定数值
+    //   伤害归属茉莉安本体（sourceCard = 茉莉安）
+    //   [2026-10-04 程拍板] 伤害由「等同自身攻击力」改为**等级固定值**（Lv1 = 5 / Lv2 = 8）——
+    //     肉鸽把她叠到 20+ 攻击力时，原口径会让信标被反复一击打死 ⇒ 无限循环爆炸。
     //   damageBeaconSide:'opponent' 只打对面 —— 避免敌方信标正落在我方半场时反噬自家信标
     'effect_marian_beacon_snipe': {
         id: 'effect_marian_beacon_snipe',
         name: '猎场压制',
-        description: '入场及回合开始时：对敌方备战席的「獠牙信标」造成等同于自己攻击力的伤害。',
-        class: 'BUFF',              // 复用 BUFF：它已完整支持 damageBeaconBy / damageBeaconBySelfPower
+        description: '入场及回合开始时：对敌方备战席的「獠牙信标」造成 5 点伤害（Lv2 为 8 点）。',
+        class: 'BUFF',              // 复用 BUFF：它已完整支持 damageBeaconBy / damageBeaconByMarianLevel
         timing: 'ON_PLAY_AND_ROUND_START',
         speed: 'BURST',
         targetRequirements: [],
         params: {
-            damageBeaconBySelfPower: true,  // 伤害 = 施法者（茉莉安）当前攻击力
+            damageBeaconByMarianLevel: true, // 伤害 = 等级固定值（Lv1 5 / Lv2 8），**不再取她的攻击力**
             damageBeaconSide: 'opponent',   // 只打对面
         }
     },
@@ -2204,6 +2291,11 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         ],
         params: {
             damageBeaconBy: 3,    // 对信标的伤害（来源=法术卡本身，不归属茉莉安）
+            // [2026-10-04 莉莉子 BUG修复 · 审计 #3] **必须显式声明打哪一侧**：
+            //   缺省会落到 BUFF 分支的 `'both'` 双边分支 ⇒ **AI 打出时打自家信标**，
+            //   并引爆对面那枚（它落在自己半场）炸自己一片。
+            //   同文件的猎场压制（:2214）· 夜视监察（:2456）· 流萤（:2487）都显式写了 `'opponent'`。
+            damageBeaconSide: 'opponent',
             keywords: ['Exposed'],
             duration: 'PERMANENT', // ⚠️ 设计文档 2.2 允许两种形态，本卡先取「永久赋予」；改 ROUND 即单回合
         }
@@ -2293,6 +2385,63 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
             //   ⚠️ 原注释写"6 → 8（结掉原待数值复核 TODO）"是**不实记录** —— 值从未改成 8；
             //   神格神经 ⑥「亡语翻倍」即以此为基础：6 → 12。
             spreadDamageTotal: 6,
+        }
+    },
+
+    // ==========================================
+    // [2026-10-02 莉莉子 · 信标亡语化] 獠牙信标「重生」亡语（程拍板）
+    //
+    // ── 病根（为什么要改机制）：旧「补兵券 + 死亡漏斗 + 对账器」需要**监控所有信标死亡路径**，
+    //    连续三次出事故（09-23 不计数 / 09-27 交战区实例 / 10-01 补兵根治）。
+    // ── 新机制：把重生能力**挂在信标自己身上** —— 它死了，它自己的亡语负责再召唤一枚。
+    //    不依赖任何区域扫描，也不需要"她是否在场"的跨区查询。
+    //
+    // ── 授予方式：**等级无关的光环** —— 只要茉莉安**活着在场**，敌方信标就带这个亡语。
+    //    实现 = 亡语派发那一刻动态判定并补挂（useGameState 的 hasLiveMarian 分支）。
+    //    ⚠️ 曾经实现为"Lv1 入场贴一次 / Lv2 光环"，**程当晚更正为统一下放 Lv1**：
+    //       入场贴一次必然断档（入场时场上没信标的那一枚不会被贴；重生出来的新信标也不带），
+    //       再叠加"致死那一击看不到刚达成的 Lv2"（升级标记写在死亡批次末尾）⇒ 两次都会永久断档。
+    //
+    // ⚠️ 落点必须用**缺省 summonSide**（= 亡语执行者 context.owner 那一侧）：
+    //    亡语语境下 `owner` = **那具尸体所在侧**（信标就站在这一侧），而它正是我们要补回去的那一侧。
+    //    若误写 summonSide:'opponent'，会算成"对面"⇒ 把新信标召唤到茉莉安自己半场（方向反了）。
+    // ==========================================
+    'effect_marian_beacon_respawn': {
+        id: 'effect_marian_beacon_respawn',
+        name: '獠牙重生',
+        description: '【亡语】阵亡时，召唤一个「獠牙信标」。',
+        class: 'SUMMON',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            summonKey: 'Marian_Wolf_Tooth_Beacon',
+            summonCount: 1,
+            summonOnlyIfAbsent: true, // 落点已有存活信标 / 满员 → 不补（与旧口径一致）
+            // ❗ 刻意不写 summonSide（见上方说明）
+        }
+    },
+
+    // 与重生配套的补刀：让新信标一登场就吃一记「茉莉安等级固定值」的伤害
+    //   [2026-10-04 程拍板] 由「等同茉莉安当前攻击力」改为**等级固定值**（Lv1 = 5 / Lv2 = 8）。
+    //     病根：肉鸽能把她叠到 20+ 攻击力 ⇒ 补刀一击打死新信标 ⇒ 它的重生亡语又召唤 + 补刀
+    //     ⇒ **无限循环爆炸**。
+    // ⚠️ 必须在 effects 数组里排在 respawn **之后** ⇒ 打的正是刚召唤出来的那枚
+    // ⚠️ 用 damageBeaconSide:'same'（打**同侧**）—— 亡语语境下 owner 是信标所在侧，
+    //    'opponent' 会打错边、'both' 会误伤镜像对局里对面的信标。
+    // ⚠️ 不能复用 `damageBeaconBySelfPower`：亡语源是**一具尸体**（信标 power = 0）⇒ 会打出 0 点。
+    //    故用 `damageBeaconByMarianLevel`（它自己去"找活着的她"、再按等级取固定值）。
+    'effect_marian_beacon_respawn_snipe': {
+        id: 'effect_marian_beacon_respawn_snipe',
+        name: '獠牙追猎',
+        description: '【亡语】阵亡时，对「獠牙信标」造成 5 点伤害（Lv2 为 8 点）。',
+        class: 'BUFF',
+        timing: 'LAST_BREATH',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            damageBeaconByMarianLevel: true,
+            damageBeaconSide: 'same',
         }
     },
 

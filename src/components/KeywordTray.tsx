@@ -19,7 +19,13 @@ interface KeywordTrayProps {
 }
 
 // 内部子组件：拥有独立特效大脑的“智能关键词图标”
-const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animState, isDepleted, titanCount, isOnBoard, side = 'player' }: { keyword: Keyword, sizeClass: string, isAttacking?: boolean, isDefending?: boolean, animState?: string, isDepleted?: boolean, titanCount?: number, isOnBoard?: boolean, side?: 'player' | 'enemy' }) => {
+// [2026-10-02 莉莉子 性能优化] 改名为 Inner，末尾统一用 React.memo 导出（见本文件 KeywordTrayInner 之前）。
+//   它由 KeywordTray 按**每个关键词**渲染一次 ⇒ 满屏 22 张卡 × 若干关键词 ≈ 60+ 实例，
+//   是本项目单一组件里实例数最多的之一。
+//   props 全是「字符串 / 布尔 / 数字」⇒ memo 能真正生效。
+//   ⚠️ 它内部用了 useState（冻结入场）与 useSyncExternalStore（订阅侦察状态）——
+//      memo 不影响 hook 与订阅：外部订阅变化仍会正常触发本实例重渲染。
+const SmartKeywordIconInner = ({ keyword, sizeClass, isAttacking, isDefending, animState, isDepleted, titanCount, isOnBoard, side = 'player' }: { keyword: Keyword, sizeClass: string, isAttacking?: boolean, isDefending?: boolean, animState?: string, isDepleted?: boolean, titanCount?: number, isOnBoard?: boolean, side?: 'player' | 'enemy' }) => {
     const config = KEYWORD_DB[keyword];
     if (!config) return null;
 
@@ -451,7 +457,13 @@ const SmartKeywordIcon = ({ keyword, sizeClass, isAttacking, isDefending, animSt
 };
 
 // 暴露给外部 (Card.tsx) 调用的主体容器组件
-export const KeywordTray: React.FC<KeywordTrayProps> = ({
+// ══════════════════════════════════════════════════════════════
+// [2026-10-02 莉莉子 性能优化] SmartKeywordIcon 的 memo 导出
+//   放在此处而非文件末尾 —— 确保它在 KeywordTray 使用之前就已初始化（避免 TDZ）。
+// ══════════════════════════════════════════════════════════════
+const SmartKeywordIcon = React.memo(SmartKeywordIconInner);
+
+const KeywordTrayInner: React.FC<KeywordTrayProps> = ({
     keywords,
     isAttacking = false,
     isDefending = false,
@@ -470,7 +482,11 @@ export const KeywordTray: React.FC<KeywordTrayProps> = ({
 
     return (
         <div
-            className={`bg-black/90 backdrop-blur-sm px-3 py-1 flex flex-wrap justify-center items-center gap-[2px] max-w-[95%] transition-colors duration-300 ${className}`}
+            // [2026-10-02 莉莉子 性能优化] 去掉 backdrop-blur-sm：
+            //   底衬是 bg-black/90（90% 不透明），透上来的只有 10% 且已模糊 ⇒ 视觉几乎无差；
+            //   但本组件**每张有词的卡都渲染一份** ⇒ 满屏 20+ 个 backdrop-filter，
+            //   而 backdrop-filter 要每帧重新采样并模糊背后内容，是明确的逐帧开销。
+            className={`bg-black/90 px-3 py-1 flex flex-wrap justify-center items-center gap-[2px] max-w-[95%] transition-colors duration-300 ${className}`}
             // 完美的六边形切角设计
             style={{ clipPath: 'polygon(8px 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 8px 100%, 0 50%)' }}
         >
@@ -491,3 +507,11 @@ export const KeywordTray: React.FC<KeywordTrayProps> = ({
         </div>
     );
 };
+
+// ══════════════════════════════════════════════════════════════
+// [2026-10-02 莉莉子 性能优化] memo 导出
+//   KeywordTray 挂在**每一张卡上**，而它内部有 64 处 drop-shadow（filter 是逐帧开销），
+//   是本项目最贵的展示型子组件之一。
+//   它的 props 全部是「字符串 / 布尔 / 数字 / 来自 data 的稳定引用」⇒ memo 能真正生效。
+// ══════════════════════════════════════════════════════════════
+export const KeywordTray = React.memo(KeywordTrayInner);

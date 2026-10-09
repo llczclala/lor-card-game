@@ -13,7 +13,7 @@ import { PLAYER_ENHANCEMENTS, MAZE_BUFF_BY_ID } from '../data/roguelike/buffs'; 
 import type { RogueDifficulty } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统]
 import type { RogueInvestment } from '../data/roguelike/events'; // [2026-08-28] 事件投资标记
 import { CARD_DB } from '../data/cards';
-import { getEquipPoolForCard, getEquipmentById } from '../data/equipment'; // [2026-08-29 休整·探路] 回归随机装备 · [2026-09-25] 武装任务查询
+import { getEquipPoolForCard, getEquipmentById, isEquipmentApplicable } from '../data/equipment'; // [2026-08-29 休整·探路] 回归随机装备 · [2026-09-25] 武装任务查询 · [2026-10-06 口径③] 开局发放补闸门
 import { resolveDivinityEffects, getUnlockedNodes } from '../data/roguelike/heroDivinity'; // [2026-09-28 神格神经] 节点效果并入本局强化表
 import { computeRunShards, type ChestInstance } from '../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 神格碎片结算 + 奖励匣（取代悖论点）
 import { advanceQuest, questCount, questKey } from '../logic/questTracker'; // [2026-09-25 莉莉子 武装线] 整局任务进度推进
@@ -42,6 +42,12 @@ export interface RoguelikeRunState {
     defeated: string[];   // [2026-08-10] 已击败的战斗节点 id（地图显示红叉）
     missed: string[];     // [2026-08-10] 错过的节点 id（走过分支未选择，地图显示灰色）
     visited: string[];    // [2026-08-27] 走过的节点 id（离开即记录，地图灰显不可回退）
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-13] **已处理过的交互节点 id**（粉丝反馈：右键节点可反复进入刷奖励）
+    //   ⚠️ 与 `visited` 的区别：`visited` 是"离开过"（含没做完就走的），本字段只记"**这个节点的好处/服务已经用掉了**"
+    //   ⇒ 用它挡住"站在节点上再右键进入刷一遍"这条路径（`visited` 挡不住：那时还没离开）。
+    //   [2026-10-05 追加 · 方案 P1] 由"仅事件"泛化为**四类一次性节点**（事件/强化/休整/宝箱/商店）——
+    //   地图是**单向不可回退**的，所以"重入"的唯一路径就是站在节点上右键 ⇒ 一个字段全部收口。
+    resolvedNodes?: string[];
     status: RoguelikeRunStatus;
     heroLevel?: number;       // [2026-08-12 天启者养成] 开局英雄等级（展示用）
     equippedCards?: Record<string, string[]>; // [2026-08-12 商店经济] 带装备的卡：卡 key → 装备 id 列表（英雄卡 + 商店购买，战斗构建时 attachEquipment 应用）
@@ -65,6 +71,28 @@ export interface RoguelikeRunState {
     heroRecruitDone?: boolean; // [2026-09-04 首战英雄招募] 首战天启者三选一已结算过（pick/skip 后置 true，防重复触发）
     // [2026-09-25 莉莉子 武装线] 本场战斗天启者是否阵亡（凯旋之匣结算用）：战斗开始时复位、战斗结束时消费
     heroDiedThisBattle?: boolean;
+    /**
+     * [2026-10-08 莉莉子 · 瓦尔基里大赛] **待战节点**：事件结算后该节点"**变成战斗节点**"。
+     *   `nodeId → 战斗配置`；玩家**点该节点**才真正开打（而不再在事件弹窗里直接切进战斗）。
+     *   打赢 / 复活跳过 ⇒ `clearPendingBattle` 清掉。
+     *   ⚠️ 与 `resolvedNodes` 的关系：事件做出选择时节点**已被记为"用掉"**（防刷取），
+     *      但"待战"是**另一件事** ⇒ 节点交互必须**优先查 pendingBattles**（否则会被"已完成"挡掉）。
+     */
+    pendingBattles?: Record<string, {
+        /** 敌方天启者 key 列表（决定敌人卡组）；缺省 = 沿用旧的随机流派 */
+        opponentHeroKeys?: string[];
+        /** 敌方携带的强化 id */
+        enemyEnhancements: string[];
+        /** 胜利奖励口径 */
+        reward: 'enhancement' | 'choose2';
+        /**
+         * [2026-10-08 莉莉子 · 瓦尔基里大赛] **胜利后才发放的奖励效果**。
+         *   程的规格：「每个战斗都是**赢了之后**会获得」⇒ 选择时这些效果**先不发**，
+         *   存在这里、打赢了再 `applyEventEffects` 逐个执行（然后弹"强化奖励 → 卡牌三选一"）。
+         *   打输 ⇒ 什么都不给（连同这些效果一起作废）。
+         */
+        rewards?: import('../data/roguelike/events').RogueEventEffect[];
+    }>;
 }
 
 // [2026-08-12 天启者养成] startRun 可选的等级加成（由 useHeroProgression.getHeroLevelBonus 提供，数值为"加成量"）
@@ -127,8 +155,28 @@ export const useRoguelikeRun = () => {
         // [2026-08-29 程拍板] 开局装备挂载：extraEquipments → 起始英雄卡；
         //   grantedSpellEquips → 随机一张初始牌组法术卡；grantedUnitEquips → 随机一个初始牌组非英雄单位（牌组无此类卡则跳过容错）
         // [2026-09-25 莉莉子 装备不叠加] 各来源统一去重：同一件装备不重复挂（重复挂会被 attachEquipment 静默忽略 = 白给）
+        // ==========================================
+        // [2026-10-06 莉莉子 BUG修复 · 程拍板 **口径③**] **闸门收口**：
+        //   本路径此前把装备**直接写进 `equippedCards`**、完全不调 `isEquipmentApplicable`
+        //   ⇒ 与局内商店/奖励的发放口径不一致，会**静默错挂**（最典型：Lv11/Lv22 的
+        //   「海基的推演手记」是单位侧装备，却被 `grantedSpellEquips` 发给法术卡，全靠绕闸才生效）。
+        //   现在两条来源统一过闸；**被拒的会打 warn**，把"数据与类型轴不一致"暴露出来而不是悄悄白给。
+        // ==========================================
         const equippedCards: Record<string, string[]> = {};
-        if ((bonus?.extraEquipments?.length ?? 0) > 0) equippedCards[heroKey] = Array.from(new Set(bonus!.extraEquipments!));
+        /** 这张卡到底能不能挂这件（类型轴 / 费用够减 / 关键词去重，全部走局内同一判据） */
+        const isAttachable = (cardKey: string, eq: string): boolean => {
+            const c = CARD_DB[cardKey];
+            const def = getEquipmentById(eq);
+            return !!c && !!def && isEquipmentApplicable(def, c, equippedCards[cardKey]);
+        };
+        if ((bonus?.extraEquipments?.length ?? 0) > 0) {
+            const kept = Array.from(new Set(bonus!.extraEquipments!)).filter(eq => {
+                const ok = isAttachable(heroKey, eq);
+                if (!ok) console.warn(`[RogueGrant] extraEquipments: ${eq} 不适用于起始英雄卡 ${heroKey} ⇒ 跳过`);
+                return ok;
+            });
+            if (kept.length > 0) equippedCards[heroKey] = kept;
+        }
         const grantCardEquips = (list: string[] | undefined, isSpell: boolean) => {
             if (!list?.length) return;
             const pool = deck.filter(k => {
@@ -138,7 +186,14 @@ export const useRoguelikeRun = () => {
             });
             if (!pool.length) return;
             for (const eq of list) {
-                const pick = pool[Math.floor(Math.random() * pool.length)];
+                // [2026-10-06 口径③] 先从"**真的挂得上它**"的卡里挑，再随机 ——
+                //   旧写法是"先随机挑一张卡、再硬挂"，闸门在局内 ⇒ 这里必然可能错挂/白给。
+                const eligible = pool.filter(k => isAttachable(k, eq));
+                if (!eligible.length) {
+                    console.warn(`[RogueGrant] ${eq} 在${isSpell ? '法术' : '单位'}池里没有任何合法卡 ⇒ 跳过（疑似里程碑数据与装备类型轴不一致）`);
+                    continue;
+                }
+                const pick = eligible[Math.floor(Math.random() * eligible.length)];
                 const cur = equippedCards[pick] ?? [];
                 if (cur.includes(eq)) continue; // [2026-09-25] 不叠加：同一件不重复挂
                 equippedCards[pick] = [...cur, eq];
@@ -255,13 +310,44 @@ export const useRoguelikeRun = () => {
         });
     }, []);
 
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-13] 标记「该节点的服务/奖励已经用掉了」（防右键反复进入刷取）
+    //   调用点（都是"真的给了玩家东西 / 服务已经提供"的结算点）：
+    //     · 事件：做出选择时（App.handleRogueEvent）
+    //     · 强化：选定强化时　· 休整：四个行动任一（休整弹窗本来就写着"选择一个行动"）
+    //     · 宝箱：五种领奖任一　· 商店：首次购买（只看不买、关掉再开仍允许）
+    //   ⚠️ 与 `defeated`（战斗红叉）分开记，避免红叉语义混淆。
+    const markNodeResolved = useCallback((nodeId: string) => {
+        setRun(prev => {
+            if (!prev || !nodeId || prev.resolvedNodes?.includes(nodeId)) return prev;
+            return { ...prev, resolvedNodes: [...(prev.resolvedNodes ?? []), nodeId] };
+        });
+    }, []);
+
+    // ── [2026-10-08 莉莉子 · 瓦尔基里大赛] 待战节点 ──
+    /** 事件结算 → 把该节点登记为「待战」（回地图后它会显示成战斗节点，点它才开打） */
+    const setPendingBattle = useCallback((nodeId: string, cfg: NonNullable<RoguelikeRunState['pendingBattles']>[string]) => {
+        if (!nodeId) return;
+        setRun(prev => prev ? { ...prev, pendingBattles: { ...(prev.pendingBattles ?? {}), [nodeId]: cfg } } : prev);
+    }, []);
+
+    /** 打完 / 复活跳过 ⇒ 清掉待战标记（之后该节点不再要求战斗） */
+    const clearPendingBattle = useCallback((nodeId: string) => {
+        setRun(prev => {
+            if (!prev?.pendingBattles?.[nodeId]) return prev;
+            const next = { ...prev.pendingBattles };
+            delete next[nodeId];
+            return { ...prev, pendingBattles: next };
+        });
+    }, []);
+
     // 战斗结算：失败 → 死亡；胜利 → 仅推进（HP/金币由奖励流程单独处理）
     const completeBattle = useCallback((win: boolean) => {
         setRun(prev => {
             if (!prev) return prev;
             if (!win) {
-                // [2026-09-29 程拍板] 悖论点已废弃 → 改发**神格碎片**（败亡保底 RUN_SHARD_LOSE）
-                return { ...prev, status: 'dead' as const, settledShards: computeRunShards(false) };
+                // [2026-09-29 程拍板] 悖论点已废弃 → 改发碎片
+                // [2026-10-03 程拍板] 改为**万能碎片**、按难度分档，且**只有通关给** ⇒ 败亡 0
+                return { ...prev, status: 'dead' as const, settledShards: computeRunShards(false, prev.difficulty) };
             }
             return prev;
         });
@@ -350,7 +436,11 @@ export const useRoguelikeRun = () => {
             if (!prev) return prev;
             // [2026-08-31 莉莉子 开发者] 兜底全量池：开发者任意选可能选到通行证锁定的强化（基础池已剔除），须同样可应用
             const def = MAZE_ENHANCEMENTS.find(e => e.id === key)
-                ?? PLAYER_ENHANCEMENTS.find(b => b.id === key);
+                ?? PLAYER_ENHANCEMENTS.find(b => b.id === key)
+                // [2026-10-08 莉莉子 · 瓦尔基里大赛] **回落到全量库** ——
+                //   「世纪和解」刻意 `playerEligible: false`（不进任何随机池，仅事件可得）
+                //   ⇒ 它**不在上面两个池里**；若不回落，事件发了 id 也会被这里静默 `return prev`。
+                ?? MAZE_BUFF_BY_ID[key];
             if (!def?.effect || prev.enhancements.includes(key)) return prev;
             let next: RoguelikeRunState = { ...prev, enhancements: [...prev.enhancements, key] };
             switch (def.effect.type) {
@@ -397,8 +487,9 @@ export const useRoguelikeRun = () => {
             if (!prev) return prev;
             const nextAct = prev.act + 1;
             if (nextAct > ROGUE_MAPS[prev.difficulty].length) {
-                // [2026-09-29 程拍板] 悖论点已废弃 → 通关发**神格碎片**（RUN_SHARD_WIN）
-                return { ...prev, status: 'won' as const, settledShards: computeRunShards(true) };
+                // [2026-09-29 程拍板] 悖论点已废弃 → 通关发碎片
+                // [2026-10-03 程拍板] 改为**万能碎片**、按难度分档（普通5/机密10/绝密15；败亡不给）
+                return { ...prev, status: 'won' as const, settledShards: computeRunShards(true, prev.difficulty) };
             }
             // [2026-08-04] 推进后定位到下一重迷宫起点
             const nextStart = ROGUE_MAPS[prev.difficulty][nextAct - 1]?.nodes[0]?.id ?? null; // [2026-08-28] 按难度取图
@@ -592,5 +683,5 @@ export const useRoguelikeRun = () => {
         setRun(prev => prev ? { ...prev, startedAt: Date.now() } : prev);
     }, []);
 
-    return { run, startRun, moveTo, completeBattle, heal, setHp, addGold, addCard, markHeroRecruited, applyEnhancement, applyDevEnhancements, setDevEnemyEnhancements, advanceAct, endRun, resetRun, markDefeated, spendGold, useRefresh, addEquippedCard, removeCard, addRevive, addRefresh, adjustMaxHp, addInvestment, consumeInvestments, addFightDebuff, consumeFightDebuff, removeRandomEquipment, grantNodeExp, resetStartedAt, startScout, advanceScout, savePendingRun, loadPendingRun, clearPendingRun, resetBattleFlags, settleArmamentBattleEnd, consumeRevive };
+    return { run, startRun, moveTo, completeBattle, heal, setHp, addGold, addCard, markHeroRecruited, applyEnhancement, applyDevEnhancements, setDevEnemyEnhancements, advanceAct, endRun, resetRun, markDefeated, markNodeResolved, setPendingBattle, clearPendingBattle, spendGold, useRefresh, addEquippedCard, removeCard, addRevive, addRefresh, adjustMaxHp, addInvestment, consumeInvestments, addFightDebuff, consumeFightDebuff, removeRandomEquipment, grantNodeExp, resetStartedAt, startScout, advanceScout, savePendingRun, loadPendingRun, clearPendingRun, resetBattleFlags, settleArmamentBattleEnd, consumeRevive };
 };

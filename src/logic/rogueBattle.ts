@@ -7,6 +7,8 @@
 import { MAZE_BUFFS, getBattleEffects, type MazeBuff, type BattleTrigger } from '../data/roguelike/buffs';
 import { EQUIPMENT_BY_ID, type EquipmentTrigger } from '../data/equipment';
 import { eventBus, GameEvents } from '../utils/eventBus';
+// [2026-10-05 莉莉子 BUG修复 · 20261005-12] 克隆时必须搬运「unit_die 已派发」账本（详见 applyPermanentBuff）
+import { markUnitDieDispatched, hasUnitDieDispatched } from '../utils/deathLedger';
 import type { CardData } from '../types';
 import { getPower, getHealth } from './keywords'; // [2026-08-27] 找最强单位用 · [2026-09-15 莉莉子] getHealth 用于打击强化的存活判据
 
@@ -27,13 +29,20 @@ export const flashRogueBuff = (def: MazeBuff) => {
 // 赋予 = 永久（buffs），给予 = 本回合（roundBuffs）。新强化统一用永久。
 // ==========================================
 /** 永久加成：写入 buffs（区别于 roundBuffs 的本回合给予） */
-export const applyPermanentBuff = (card: CardData, power = 0, health = 0): CardData => ({
-    ...card,
-    buffs: {
-        power: (card.buffs?.power || 0) + power,
-        health: (card.buffs?.health || 0) + health,
-    },
-});
+export const applyPermanentBuff = (card: CardData, power = 0, health = 0): CardData => {
+    const buffed: CardData = {
+        ...card,
+        buffs: {
+            power: (card.buffs?.power || 0) + power,
+            health: (card.buffs?.health || 0) + health,
+        },
+    };
+    // [2026-10-05 莉莉子 BUG修复 · 20261005-12 · 第二轮审查] **克隆必须带上账本**：
+    //   本金库函数是"从一张卡造出另一张卡"的通用出口（`ALL_BUFF` 等都在用）⇒ 若源卡已记「unit_die 已派发」，
+    //   结果卡也必须记上；否则克隆体被当成"没派发过"，同一次死亡会被**再派发一次**。
+    if (hasUnitDieDispatched(card)) markUnitDieDispatched(buffed);
+    return buffed;
+};
 
 /** 从某侧（备战席 + 交战区己方单位）找攻击力最高的存活单位；无则 undefined（[2026-08-27] 高级强化用） */
 export const findStrongestUnit = (
@@ -143,11 +152,30 @@ export const applyStrikeEnhancement = (
             if (be.trigger !== trigger) continue;
             if (be.effectClass === 'BUFF_SELF') {
                 out = applyPermanentBuff(out, (be.params?.power as number) ?? 0, (be.params?.health as number) ?? 0);
-            } else if (be.effectClass === 'STAT_BALANCE') {
-                out = applyStatBalance(out, (be.params?.mode as string) ?? 'health_to_power');
             }
+            // 🔴 [2026-10-06 程拍板 · 审计收口] **本函数不再处理 `STAT_BALANCE`**：
+            //   「生命壁垒 / 攻守易形」是"**进攻宣言**"时点效果（程 2026-09-05 拍板：挪到 commitAttack 生效，
+            //   战斗路径据此只用 `BUFF_SELF` 过滤），而**单挑 / 王见王没有"进攻时"这个状态** ——
+            //   它们只有一次"**打击**"行为 ⇒ 在这两条路径上触发它属于**时点错配**。
+            //   两条路径共用本函数，故一并收口（真正的时点仍是进攻宣言那条路）。
         }
         flashRogueBuff(def);
     });
+
+    // =====================================
+    // [2026-10-06 莉莉子 BUG修复 · 程拍板 **口径④**] **单挑 / 王见王 也算「打击」**
+    // ── 病根：这两条路径（单挑 = effectProcessor ×4 调用；王见王 = rogueTrigger ×2 调用）
+    //    只跑迷宫强化 `applyStrikeEnhancement`、**完全不查装备 `onTrigger`**
+    //    ⇒ 磨砺之锋 / 伊莉斯的修枝剪 / 愈战愈勇 在这两条路径上**永远不成长**。
+    // ── 修法：收口在本共享出口 —— 与强化同源，把**装备成长**也跑一遍。
+    //    单挑两侧本来就各跑 after_attack + after_attacked（互打 ⇒ 两侧都既打击又被打击），
+    //    与本次口径②「进攻被反击也算被打击」正好同构。
+    // ── ⚠️ 存活门已在上方（`isStrikeTargetAlive`）统一拦过，此处无需重复。
+    // =====================================
+    getEquipTriggers(out, trigger).forEach(t => {
+        if (t.target !== 'self') return;
+        out = applyPermanentBuff(out, t.power, t.health);
+    });
+
     return out;
 };

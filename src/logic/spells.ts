@@ -5,6 +5,9 @@ import { processEffect } from './effectProcessor';
 import type { EffectContext } from './effectProcessor';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { accumulateMauxirDamage } from '../utils/gameRules'; // [2026-06-27] 引入猫汐尔经验收集器
+import { getSpellResolveGrantEffects } from '../data/equipment'; // [2026-10-08 第二波] 装备追加的结算后效果
+// [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔进度：交战区贴值
+import { applyMauxirProgressToField } from '../utils/mauxirProgress';
 
 // [新增] 法术抽卡动画计数器，保证 animId 唯一
 let spellDrawCounter = 0;
@@ -28,6 +31,12 @@ export interface SpellContext {
   enemyDeck?: CardData[];  // [新增]
   setEnemyDeck?: React.Dispatch<React.SetStateAction<CardData[]>>;
   setMessage?: React.Dispatch<React.SetStateAction<string>>;
+  /**
+   * [2026-10-03 莉莉子 BUG-20261002-24] 建卡工厂（可选）—— 透传给 EffectContext。
+   * 目前唯一的消费者是「拉取暴露单位」触发（神格①③）：RogueTriggerCtx.createFullCard 是必填，
+   * 而猎影标记的额外攻击在 effectProcessor 内装配战场 ⇒ 必须由这里把工厂带进去。
+   */
+  createFullCard?: (key: string) => CardData;
 }
 
 // [重构] 通用法术执行器
@@ -60,7 +69,10 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
   let drawAnimIndex = 0;  // [2026-07-06] 同一次施法中连续抽卡的错开计数器
   let baseDelay = 0;      // [2026-07-07] 效果链动画时序累加器
   const sfxDrawnCardIds: string[] = []; // [2026-07-07] 收集动画抽卡的卡牌 ID，提交 state 时移除（由 onAtCenter 加回）
-  cardDef.effects.forEach(effectId => {
+  // [2026-10-08 莉莉子 · 法术专属装备 第二波] **装备追加效果**：拼在 DB 效果链**之后**执行
+  //   —— 语义上就是"该卡结算后"（余温笔录回法力 / 页码夹层抽牌），且复用同一套累加器与动画时序
+  const effectChain: string[] = [...cardDef.effects, ...getSpellResolveGrantEffects(sourceCard)];
+  effectChain.forEach(effectId => {
       // 每执行一个效果，都把当前累加器中最新鲜的数据组装成上下文
       const currentContext: EffectContext = {
           game: acc.game,
@@ -73,6 +85,8 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
           enemyDeck: acc.enemyDeck,
           owner,
           sourceCard, // [2026-07-28] 传入原始法术卡牌实例（含 customProgress 等运行时状态）
+          // [2026-10-03 莉莉子 BUG-20261002-24] 透传建卡工厂（神格①③「拉取暴露」触发需要）
+          createFullCard: ctx.createFullCard,
       };
 
       // 调用核心处理器
@@ -170,6 +184,9 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
         acc.playerDeck, (newDeck) => { acc.playerDeck = newDeck; }
       );
       console.log('[Swali Aura] 目睹梦莲无人机使用，猫汐尔升级进度 +3！');
+      // [2026-10-06 BUG-20261006-01 · 独立审查回执 R.6] 本处是 7 个记账点里**唯一漏贴交战区**的，补上。
+      //   （账本已记 ⇒ 不补也只是交战区那份镜像短暂落后，但既然收口就收干净。）
+      acc.combatField = applyMauxirProgressToField(acc.combatField) ?? acc.combatField;
     }
   }
   // [2026-07-07] 从手牌中移除以动画方式抽到的卡牌

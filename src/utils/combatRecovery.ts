@@ -6,6 +6,8 @@
 // 由调用方（各 hook / watchdog）决定是否把 phase 兜底回 main。
 import type { Dispatch, SetStateAction } from 'react';
 import type { CardData, GameState } from '../types';
+// [2026-10-05 莉莉子 BUG修复 · 20261005-03] 应急归位也要参与【无法攻击】的账本 —— 它同样是"回备战席"的出口
+import { restoreCantAttackPower } from './cantAttackLedger';
 
 export interface RecoverySetters {
     setPlayerBench: Dispatch<SetStateAction<CardData[]>>;
@@ -33,7 +35,7 @@ export const recoverCombatSurvivors = (
         seen.add(unit.id);
         const bench = side === 'player' ? playerBench : enemyBench;
         if (bench.some(c => c.id === unit.id)) return; // 已在席则跳过，防重复入席
-        out.push({ ...unit, animState: 'idle' as const });
+        out.push({ ...restoreCantAttackPower(unit as CardData), animState: 'idle' as const });
     };
     const sp: CardData[] = [];
     const se: CardData[] = [];

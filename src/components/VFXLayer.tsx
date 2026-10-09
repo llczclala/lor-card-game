@@ -52,28 +52,23 @@ const COLORS = {
     preview: '#ffffff',
 };
 
-const getLineColor = (owner: 'player' | 'enemy' | undefined, targetType: string): string => {
-    if (owner === 'enemy') {
-        // 敌方施法时，targetType 是绝对游戏视角：
-        //   'ally'/'player' = 玩家方单位 = AI的敌人 → 红
-        //   'enemy' = AI方单位 = AI的自己人 → 蓝
-        const isOwnSide = targetType.includes('enemy');  // AI自己单位
-        const isOpponentSide = targetType.includes('ally') || targetType.includes('player'); // 玩家单位
-        if (isOwnSide) return COLORS.ally;      // 蓝：AI 打自己人
-        if (isOpponentSide) return COLORS.enemy; // 红：AI 打玩家
-        if (targetType.includes('nexus')) return COLORS.nexus;
-        return COLORS.preview;
-    }
-    // 玩家施法（或兜底）: 按字面理解目标类型
-    if (!owner) {
-        if (targetType.includes('enemy')) return COLORS.enemy;
-        if (targetType.includes('ally') || targetType.includes('player')) return COLORS.ally;
-        if (targetType.includes('nexus')) return COLORS.nexus;
-        return COLORS.preview;
-    }
+const getLineColor = (_owner: 'player' | 'enemy' | undefined, targetType: string): string => {
+    // [2026-10-04 莉莉子 BUG修复 · 审计 #6] targetType 是**施法者视角**的相对类型
+    //   （`'ally'` = 施法者自己人、`'enemy'` = 施法者的敌人），与 owner 无关
+    //   ⇒ 两侧施法必须走**同一套**判断。
+    //
+    //   🔴 原实现在 `owner === 'enemy'` 时假设 targetType 是"绝对游戏视角"并做了反转
+    //      （`isOwnSide = includes('enemy')` → 蓝「AI 打自己人」），但**实际传入的是相对类型**：
+    //      ① `aiSpellStrategies.ts:1498-1501` 明写「Handler 内约定 enemyBench=**敌方**」，
+    //         产出的 `{ type: 'enemy' }` 指的就是"AI 的敌人" = **玩家单位**；
+    //      ② 玩家侧 `GameSession.tsx:801` 同样是"施法者对面"的相对写法。
+    //      ⇒ 后果：**AI 打玩家单位时被判成"打自己人"，连线画成蓝色**（应为红）。
+    //
+    //   📌 code.md「敌我判断黄金法则」点名的正是这一行，其给出的正确写法也是看 `'ally'`。
+    //   `_owner` 保留形参以兼容两处调用点（颜色已与施法方无关）。
+    if (targetType.includes('nexus')) return COLORS.nexus;   // 水晶：琥珀（绝对坐标，颜色与阵营无关）
     const isAlly = targetType.includes('ally') || targetType.includes('player');
-    if (isAlly) return COLORS.ally;
-    return COLORS.enemy;
+    return isAlly ? COLORS.ally : COLORS.enemy;
 };
 
 // ==========================================

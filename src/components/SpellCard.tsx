@@ -131,6 +131,7 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
                     {spellVideoSrc ? (
                         <CardFaceVideo
                             src={spellVideoSrc}
+                            poster={data.imageUrl} // [2026-10-02 莉莉子 性能] 静态插画兜底
                             className="w-full h-full object-cover scale-110 group-hover:scale-125 transition-transform duration-700"
                         />
                     ) : (

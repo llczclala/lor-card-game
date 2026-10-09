@@ -54,13 +54,55 @@ export const startManaBonusOf = (g: GameState): number => {
 export const enemyStartManaBonusOf = (g: GameState): number => sumStartManaBonus(g.enemyEnhancements);
 
 /**
- * 计算回合开始时的状态变更
+ * [2026-10-03 莉莉子 · 进攻标识三层分离 ①]
+ * **追加一次进攻权**（备战 / 侦察关键词的唯一出口）。
+ *
+ * 语义（程 2026-10-03 拍板）：
+ *   · **只看本回合** —— 给该侧"本回合还能再进攻一次"的权力；**跨回合由 `calculateRoundStart` 硬覆盖**，天然不累积。
+ *   · **不覆盖已有标识** —— 该侧若已持 `normal`（正轮换到它）就保持 `normal`；
+ *     只有"当前没有标识"（非奇偶方 / 刚进攻完被消耗）时才补一个 `rally`。
+ *     ⚠️ 这条正是为了修掉老实现"把 `normal` 无条件改写成 `rally`"的副作用：
+ *        那会让**侦察关键词的判据（曾用 token==='normal' 当代理指标）误判**。
+ *
+ * @param source 仅用于日志/排查（备战法术 / 狼群战术 / 侦察 等）
  */
-export const calculateRoundStart = (currentGame: GameState): Partial<GameState> => {
+export const grantExtraAttackTurn = (
+    g: GameState,
+    owner: 'player' | 'enemy',
+    source?: string,
+): GameState => {
+    if (g.attackToken[owner]) return g; // 已有标识 ⇒ 不重复授予、也不改写类型
+    console.log(`[AttackToken] 追加进攻权 → ${owner}（来源：${source ?? '未标注'}）`);
+    // [2026-10-06 程拍板 · 序号去重] 每次**真正授予**都递增授予序号 ——
+    //   `ON_GET_ATTACK_TOKEN`（安卡"获得进攻标识时"）的两个派发点按它去重：
+    //   「`seq > handled` 才发、发完追平」⇒ **一次授予 = 一次派发**，不靠 prev 值 / 时间窗猜。
+    const tokenGrantSeq = { player: 0, enemy: 0, ...(g.tokenGrantSeq ?? {}) };
+    tokenGrantSeq[owner] = (tokenGrantSeq[owner] ?? 0) + 1;
+    return { ...g, attackToken: { ...g.attackToken, [owner]: 'rally' }, tokenGrantSeq };
+};
+
+/**
+ * 计算回合开始时的状态变更
+ *
+ * [2026-10-03 莉莉子 · 进攻标识三层分离 ①] **先手方收进本函数**：
+ *   此前这里**写死「奇数=玩家」**，再靠外层两处补偿翻转（`useGameState` 开局覆盖 + `useRoundLifecycle` 每回合 swap）
+ *   ⇒ 效果等价但**隐式**：任何绕过 `startRound` 的 token 写入都不在同一条坐标系里。
+ *   现在直接按「**先手方占奇数回合**」算（程 2026-10-03 拍板口径），外层补偿一并删除。
+ */
+export const calculateRoundStart = (
+    currentGame: GameState,
+    firstAttacker: 'player' | 'enemy' = 'player',
+): Partial<GameState> => {
     const prev = currentGame;
     const manaBonus = startManaBonusOf(prev);
     // [2026-09-29 莉莉子] 敌方开局法力强化（enemy_start_mana_*）→ 与玩家侧同口径，仅作用于敌方
     const enemyManaBonus = enemyStartManaBonusOf(prev);
+
+    /** 先手方占奇数回合；后手方占偶数回合 */
+    const oddOwner = firstAttacker;
+    const evenOwner = oddOwner === 'player' ? 'enemy' : 'player';
+    /** 侦察「每回合首次」标记：回合边界统一清零（与进攻标识同批重置） */
+    const freshScoutFlag = { player: false, enemy: false };
 
     // 如果是第0回合(初始化)，直接跳到第1回合
     if (prev.round === 0) {
@@ -68,10 +110,15 @@ export const calculateRoundStart = (currentGame: GameState): Partial<GameState> 
             round: 1,
             playerMaxMana: 1 + manaBonus, playerMana: 1 + manaBonus, playerSpellMana: 0,
             enemyMaxMana: 1 + enemyManaBonus, enemyMana: 1 + enemyManaBonus, enemySpellMana: 0,
-            attackToken: { player: 'normal', enemy: null },
-            turnOwner: 'player',
+            attackToken: { player: oddOwner === 'player' ? 'normal' : null, enemy: oddOwner === 'enemy' ? 'normal' : null },
+            turnOwner: oddOwner,
             phase: 'main',
             consecutivePasses: 0,
+            scoutUsedThisRound: freshScoutFlag,
+            // [2026-10-06 独立审查修复 · 跨局泄漏] 授予账本是**对局级**的 ⇒ 每场开局（round 0 → 1）清零，
+            //   否则上一局遗留的 `seq > handled` 会在新局回合 1 触发一次**凭空的**「获得进攻标识时」。
+            tokenGrantSeq: { player: 0, enemy: 0 },
+            tokenGrantHandled: { player: 0, enemy: 0 },
         };
     }
 
@@ -79,7 +126,7 @@ export const calculateRoundStart = (currentGame: GameState): Partial<GameState> 
     const newPlayerMaxMana = Math.min(10, newRound + manaBonus); // [2026-09-28 神格神经 ⑤] 我方 +1（仅我方）
     // [2026-09-29 莉莉子] 敌方最大法力同样受己方加成，上限仍钳在 10
     const newEnemyMaxMana = Math.min(10, newRound + enemyManaBonus);
-    const tokenOwner = newRound % 2 !== 0 ? 'player' : 'enemy'; // 奇数玩家攻，偶数敌方攻
+    const tokenOwner = newRound % 2 !== 0 ? oddOwner : evenOwner; // 先手方占奇数回合
     // [修改] 根据回合归属，分配 'normal' 标识，另一方清空
     const nextAttackToken = {
         player: tokenOwner === 'player' ? 'normal' : null,
@@ -103,6 +150,7 @@ export const calculateRoundStart = (currentGame: GameState): Partial<GameState> 
         turnOwner: tokenOwner,
         phase: 'main',
         consecutivePasses: 0,
+        scoutUsedThisRound: freshScoutFlag,
     };
 };
 

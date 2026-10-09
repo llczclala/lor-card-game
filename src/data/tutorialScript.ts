@@ -371,7 +371,7 @@ export const BASIC_TUTORIAL_SCRIPT: TutorialScript = {
         annotations: [
           {
             targetSelector: '[data-card-key="lyfe"]',
-            text: '当攻击发生后，可以派出备战席上的单位进行格挡，每名单位只能阻挡一名敌人',
+            text: '当攻击发生后，可以指派备战席上的单位进行格挡，每名单位只能阻挡一名敌人',
             position: 'left' ,
           },
         ],
@@ -760,7 +760,7 @@ export const BASIC_TUTORIAL_SCRIPT: TutorialScript = {
           },
           {
             targetSelector: '[data-card-key="fenny"]',
-            text: '派出我们备战席的卡牌进行进攻吧',
+            text: '用我们备战席的卡牌发起进攻吧',
             position: 'top',
           },
           {
@@ -966,6 +966,9 @@ export const BASIC_TUTORIAL_SCRIPT_02: TutorialScript = {
   },
 
   // [2026-08-26 莉莉子] 芬妮升级条件"任一水晶血量≤10"开局即满足（enemyCrystalHp=10），
+  // [2026-10-04 程拍板] 条件已改为「任一方水晶 ≤ **其自身上限的一半**」；本关仍然满足、**无需改教程**：
+  //   · 玩家水晶 1 ≤ 20/2 = 10 ✅（上限 20 = 标准对局缺省）
+  //   · 敌方水晶 10 ≤ 20/2 = 10 ✅（enemyNexusMax = 20，教程只覆盖当前值、不动上限）
   // 若不暂停，开局升级影片会与里芙开场白重叠。先暂停 → 开场白播完点继续 → resume_upgrade 触发升级影片
   pauseUpgradeAtStart: true,
 
@@ -1010,8 +1013,8 @@ export const BASIC_TUTORIAL_SCRIPT_02: TutorialScript = {
     { type: 'dialogue', data: { speakerKey: 'fenny', speakerName: '芬妮', text: '轮到我们表演了！分析员，让我们一鼓作气拿下胜利！' } },
     { type: 'guide_layer', data: { highlightSelectors: ['[data-card-key="inspire"]', '[data-entity-id="player-mana"]'], annotations: [{ targetSelector: '[data-card-key="inspire"]', text: '「振奋」是一个【快速法术】，可以给所有友方单位+3/+3。费用5点，我们刚好够用！', position: 'top' }], dismissOnClick: true } },
     { type: 'task_group', data: { groupName: '强化部队', subTasks: [{ id: 'cast_inspire', description: '打出「振奋」强化全员', guidanceSteps: [{ text: '请从手牌中打出「振奋」', arrowTarget: '[data-card-key="inspire"]', direction: 'top' }], expectedAction: { type: 'free', targetSelector: '[data-card-key="inspire"]', completionCondition: 'play_card', lockActionButton: true } }] } },
-    { type: 'guide_layer', data: { highlightSelectors: ['[data-action="attack"]', '[data-card-key="lyfe"]', '[data-card-key="fenny"]'], annotations: [{ targetSelector: '[data-action="attack"]', text: '现在发起总攻！点击「进攻」按钮，然后派出我们的单位', position: 'top' }], dismissOnClick: true } },
-    { type: 'task_group', data: { groupName: '发动进攻', subTasks: [{ id: 'attack_victory', description: '派出所有单位发动进攻', guidanceSteps: [{ text: '请点击「进攻」按钮发起攻击宣言', arrowTarget: '[data-action="attack"]', direction: 'left' }, { text: '请派出里芙和芬妮进攻', arrowTarget: '[data-card-key="lyfe"]', direction: 'right' }], expectedAction: { type: 'free', targetSelector: '[data-action="attack"]', completionCondition: 'attack_declared', lockSkipButton: true } }] } },
+    { type: 'guide_layer', data: { highlightSelectors: ['[data-action="attack"]', '[data-card-key="lyfe"]', '[data-card-key="fenny"]'], annotations: [{ targetSelector: '[data-action="attack"]', text: '现在发起总攻！点击「进攻」按钮，然后指派我们的单位', position: 'top' }], dismissOnClick: true } },
+    { type: 'task_group', data: { groupName: '发动进攻', subTasks: [{ id: 'attack_victory', description: '指派所有单位发动进攻', guidanceSteps: [{ text: '请点击「进攻」按钮发起攻击宣言', arrowTarget: '[data-action="attack"]', direction: 'left' }, { text: '请指派里芙和芬妮进攻', arrowTarget: '[data-card-key="lyfe"]', direction: 'right' }], expectedAction: { type: 'free', targetSelector: '[data-action="attack"]', completionCondition: 'attack_declared', lockSkipButton: true } }] } },
     { type: 'auto_action', data: { action: 'wait', params: { delay: 3000 } } },
     { type: 'task_group', data: { groupName: '恭喜通关', subTasks: [{ id: 'congrats_02', description: '恭喜完成「施法的速度」', guidanceSteps: [], expectedAction: { type: 'free', targetSelector: '', completionCondition: 'free' } }] } },
   ],
@@ -1088,7 +1091,7 @@ export const OVERWHELM_TUTORIAL_SCRIPT: TutorialScript = {
         subTasks: [
           {
             id: 'declare_attack_overwhelm',
-            description: '派出所有单位发动进攻',
+            description: '指派所有单位发动进攻',
             guidanceSteps: [
               {
                 text: '请点击「进攻」按钮，然后选择两个单位发起进攻',
@@ -1192,10 +1195,10 @@ export const OVERWHELM_TUTORIAL_SCRIPT: TutorialScript = {
         subTasks: [
           {
             id: 'final_attack_overwhelm',
-            description: '派出单位发动最终进攻',
+            description: '指派单位发动最终进攻',
             guidanceSteps: [
               {
-                text: '点击「进攻」，派出所有单位直击敌方水晶！',
+                text: '点击「进攻」，指派所有单位直击敌方水晶！',
                 arrowTarget: '[data-action="attack"]',
                 direction: 'left',
               },
@@ -1301,7 +1304,7 @@ export const REGENERATION_TUTORIAL_SCRIPT: TutorialScript = {
         subTasks: [
           {
             id: 'attack_regeneration_1',
-            description: '派出所有单位发动进攻',
+            description: '指派所有单位发动进攻',
             guidanceSteps: [
               {
                 text: '点击「进攻」，两个单位一起攻击，看看能打掉它多少血',
@@ -1435,7 +1438,7 @@ export const REGENERATION_TUTORIAL_SCRIPT: TutorialScript = {
         subTasks: [
           {
             id: 'final_attack_regen',
-            description: '派出所有单位发动最终进攻',
+            description: '指派所有单位发动最终进攻',
             guidanceSteps: [
               { text: '现在攻击！两个单位一起上，彻底击杀再生守卫！', arrowTarget: '[data-action="attack"]', direction: 'left' },
             ],
@@ -1503,7 +1506,7 @@ export const REGENERATION_TUTORIAL_SCRIPT: TutorialScript = {
             id: 'final_blow_regen',
             description: '发动最后一次进攻，击破水晶！',
             guidanceSteps: [
-              { text: '点击进攻，派出所有单位终结战斗！', arrowTarget: '[data-action="attack"]', direction: 'left' },
+              { text: '点击进攻，指派所有单位终结战斗！', arrowTarget: '[data-action="attack"]', direction: 'left' },
             ],
             expectedAction: {
               type: 'free',
@@ -1610,7 +1613,7 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
         subTasks: [
           {
             id: 'attack_quick_compare',
-            description: '派出两个单位一起进攻',
+            description: '指派两个单位一起进攻',
             guidanceSteps: [
               { text: '点击「进攻」，然后派两个单位一起上，观察它们的区别！', arrowTarget: '[data-action="attack"]', direction: 'left' },
             ],
@@ -1707,7 +1710,7 @@ export const QUICK_ATTACK_TUTORIAL_SCRIPT: TutorialScript = {
             id: 'final_attack_qa',
             description: '发动最终进攻',
             guidanceSteps: [
-              { text: '派出所有单位攻击敌方水晶！', arrowTarget: '[data-action="attack"]', direction: 'left' },
+              { text: '指派所有单位攻击敌方水晶！', arrowTarget: '[data-action="attack"]', direction: 'left' },
             ],
             expectedAction: {
               type: 'free',

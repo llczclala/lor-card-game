@@ -18,6 +18,7 @@
 // ── 匣子取代原各位置奖励（含开包）──
 //   开包流程改为：**先抽到匣子 → 再打开匣子**得到对应道具
 // ==========================================
+import type { RogueDifficulty } from './difficulties'; // [2026-10-03] 整局结算按难度分档
 
 // ═══════════════════════════════════════════════
 // 一、神格碎片
@@ -103,7 +104,7 @@ export const spendShards = (
 };
 
 /**
- * 发放某英雄专属碎片（含**200 片封顶溢出转万能**）。
+ * 发放某英雄专属碎片（含**封顶溢出转万能**）。
  * @returns 实际入账的明细（供 UI 提示"溢出转化"）
  */
 export interface ShardGrantResult {
@@ -114,14 +115,35 @@ export interface ShardGrantResult {
     overflowToUniversal: number;
 }
 
+/**
+ * 发放某英雄专属碎片。
+ *
+ * 🔴 [2026-10-04 莉莉子 BUG修复 · 溢出判据]
+ *   封顶判据 = **该英雄是否已练满（六格神格神经全解锁）**，由 `isMaxed` 传入；
+ *   已满 ⇒ `room = 0` ⇒ 本次碎片**全额 1:1 转万能**。
+ *
+ * ── 为什么不能只看"持有数 ≥ 200"（旧实现 · 粉丝报的 BUG）：
+ *   点亮神经会**花掉**专属碎片（`spendShards` 把 hero[heroKey] 减掉，见 `:100-103`）
+ *   ⇒ **练满那一刻持有数通常已经归 0** ⇒ 旧判据算出 `room = 200 − 0 = 200`
+ *   ⇒ 之后再获得她的碎片会**一路重新堆进专属**，堆满 200 才肯转万能
+ *   ⇒ **越练满越不转化**，与设计意图「某英雄练满后，再抽到他的碎片不浪费」**正好相反**；
+ *      而练满后堆起来的那 200 片**没有任何消费出口**（六格已全亮）= 永久死币。
+ *
+ * ⚠️ 为什么必须从外面传：本文件是**纯数据层**，手里只有钱包、
+ *    看不到解锁表 `unlocked`（那在 `useHeroDivinity` 里）⇒ 判据只能由调用方给定。
+ * ⚠️ 兼容：默认 `false` ⇒ 未传的调用方行为与改动前逐字一致。
+ */
 export const grantHeroShards = (
     w: ShardWallet | undefined,
     heroKey: string,
     amount: number,
+    /** 该英雄六格是否已全部解锁（练满）。已满 ⇒ 本次碎片全额转万能 */
+    isMaxed: boolean = false,
 ): ShardGrantResult => {
     const base = w ?? EMPTY_WALLET;
     const have = getHeroShards(base, heroKey);
-    const room = Math.max(0, HERO_SHARD_CAP - have);
+    // [2026-10-04] 已练满 ⇒ 专属不再吸收任何碎片（room = 0），全部溢出为万能
+    const room = isMaxed ? 0 : Math.max(0, HERO_SHARD_CAP - have);
     const credited = Math.min(amount, room);
     const overflow = Math.max(0, amount - credited);
     return {
@@ -147,6 +169,10 @@ export const grantUniversalShards = (w: ShardWallet | undefined, amount: number)
  *
  * @param heroKeys 可归属的天启者 key 列表（= 已实装神格神经的英雄）
  * @param total    本次开出的碎片总片数
+ * @param isMaxed  [2026-10-04 莉莉子] 该英雄是否已练满 —— **必须由调用方传入真源判据**。
+ *   ⚠️ 若沿用默认（恒 false），本函数算出的 `details[].overflow` 会与真实入账不符：
+ *      历史上调用方传的是 `undefined` 钱包 + 无判据 ⇒ 一律按"空钱包 + 没练满"算
+ *      ⇒ **overflow 恒为 0** ⇒ 界面永远不显示「溢出 +N 万能」，而钱包其实转了。
  * @returns 新钱包 + 按英雄汇总的明细 + 溢出转万能总量
  */
 export interface ShardDropDetail {
@@ -156,8 +182,17 @@ export interface ShardDropDetail {
     overflow: number;
 }
 export interface ShardDropResult {
+    /**
+     * ⚠️ [2026-10-04 莉莉子] **仅供展示的快照**，语义 = 「传入的 `w` + 本次分配」。
+     *
+     * ❌ **绝不要拿它整体覆盖真源钱包** —— 那正是 2026-10-02「开碎片匣吞掉未消耗碎片」的坏味道：
+     *    调用方一旦传 `undefined`，它只是"**从空钱包起算**"的结果，覆盖上去就把玩家已有碎片清零。
+     * ✅ 真实入账一律走 `useHeroDivinity.applyShardDrop` —— 它以**真源钱包**为基准、按 `details` 逐笔重算，
+     *    与调用方传什么无关（本条注释是第三次审查点名提醒后补上的）。
+     */
     wallet: ShardWallet;
     details: ShardDropDetail[];
+    /** 溢出（转万能）总量。⚠️ 当前**无人消费**（入账侧只读 `details`）—— 留作展示口径，勿据此落盘 */
     totalOverflow: number;
 }
 
@@ -166,6 +201,8 @@ export const dropShards = (
     heroKeys: string[],
     total: number,
     rand: () => number = Math.random,
+    /** [2026-10-04 莉莉子] 该英雄是否已练满（与入账侧同源判据）；默认 false = 旧行为 */
+    isMaxed: (heroKey: string) => boolean = () => false,
 ): ShardDropResult => {
     if (heroKeys.length === 0 || total <= 0) {
         return { wallet: w ?? EMPTY_WALLET, details: [], totalOverflow: 0 };
@@ -184,12 +221,12 @@ export const dropShards = (
         const key = heroKeys[Math.floor(rand() * heroKeys.length)];
         perHero.set(key, (perHero.get(key) ?? 0) + g);
     }
-    // 3. 逐英雄入账（各自算 200 封顶溢出）
+    // 3. 逐英雄入账（各自算封顶溢出；判据与真实入账侧同源 ⇒ 显示值 = 实际值）
     let wallet = w ?? EMPTY_WALLET;
     const details: ShardDropDetail[] = [];
     let totalOverflow = 0;
     for (const [heroKey, amount] of perHero) {
-        const res = grantHeroShards(wallet, heroKey, amount);
+        const res = grantHeroShards(wallet, heroKey, amount, isMaxed(heroKey));
         wallet = res.wallet;
         details.push({ heroKey, amount, overflow: res.overflowToUniversal });
         totalOverflow += res.overflowToUniversal;
@@ -275,18 +312,37 @@ export const describeChestContent = (kind: ChestKind, rarity: EnhancementRarity)
 export const DAILY_UNIVERSAL_SHARDS = 20;
 
 // ═══════════════════════════════════════════════
-// 四、整局结算的神格碎片直发（取代原悖论点）
+// 四、整局结算直发（取代原悖论点）
+//   [2026-09-29] 悖论点废弃 → 改发神格碎片（当时是「随机归属的专属碎片」）
+//   [2026-10-03 程拍板] 再改为**万能碎片**，并按难度分档
 // ═══════════════════════════════════════════════
 
 /**
- * 一局推演结束直接发放的神格碎片（片）。
- * 设计口径：与旧「悖论点」对齐但**大幅提高**——原设定通关 60 点 / 败亡 5+节点数，
- * 而点满需 200 片；若照搬会让升满需要 3 局以上且败亡几乎无成长。
- * 这里改为「通关 60 片 / 败亡 15 片」为**保底**，另有奖励匣作为主成长渠道。
- * [参数可调]
+ * 一局推演结束**直接发放的万能碎片**（片），按难度分档。
+ *
+ * [2026-10-03 程拍板] 为什么改：
+ *   · 原实现 = `RUN_SHARD_WIN 60 / RUN_SHARD_LOSE 15` 的**专属碎片**，
+ *     走 `dropShards(undefined, 全体天启者, 60)` ⇒ 每 5 片一组**随机归属**某位天启者
+ *     ⇒ 想练的那位**期望只拿到 60/6 = 10 片/局**，而且"随机"不可控、不可定向。
+ *   · 改为**万能碎片**（可全额替代专属 ⇒ 能全投给想练的那位），并按难度分档；
+ *     **只有通关给，败亡不给**（旧设计的"败亡 15"保底一并取消）。
+ *
+ * 量级参考：单英雄点满 = 200 片（10/20/30/40/40/60）。
+ *   ⇒ 只靠结算点满一位：普通 **40 局** / 机密 **20 局** / 绝密 **≈13.3 局**。
+ *   主要来源仍是「碎片匣」（白5…红50，随机专属）+「每日任务：神格汲取 20 万能/天」。
+ *
+ * [参数可调] 改这三个数即可（⚠️ 改动后需同步 `更新公告` 与
+ * `技术手册/设计-神格碎片与奖励匣.md`）。
  */
-export const RUN_SHARD_WIN = 60;    // 通关
-export const RUN_SHARD_LOSE = 15;   // 败亡（固定保底；宝箱/奖励匣是主要来源）
+export const RUN_SETTLE_UNIVERSAL: Record<RogueDifficulty, number> = {
+    normal: 5,
+    secret: 10,
+    topsecret: 15,
+};
 
-/** 整局结算碎片数 */
-export const computeRunShards = (won: boolean): number => (won ? RUN_SHARD_WIN : RUN_SHARD_LOSE);
+/**
+ * 整局结算的万能碎片数。
+ * [2026-10-03 程拍板] **只有通关给，败亡不给**。
+ */
+export const computeRunShards = (won: boolean, difficulty: RogueDifficulty): number =>
+    won ? (RUN_SETTLE_UNIVERSAL[difficulty] ?? 0) : 0;

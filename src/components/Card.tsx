@@ -176,7 +176,7 @@ interface CardProps {
   data: CardData;
   location: 'hand' | 'bench' | 'combat' | 'enemy_bench' | 'spell_stack' | 'preview' | 'deck-builder' | 'gacha' | 'collection' | 'resolving' | 'deck-panel';
   skinId?: number; // [新增] 显式接收上层传下来的皮肤 ID（0为默认，1、2为限定皮肤）
-  onClick?: () => void;
+  onClick?: (card: CardData) => void; // [2026-10-02 莉莉子 性能] 回传本体，便于调用方用稳定引用（配合 React.memo）；无参写法仍兼容
   isBlocker?: boolean;
   isSelected?: boolean;
   highlightTarget?: boolean;
@@ -337,7 +337,11 @@ const EQUIPMENT_RARITY_COLOR: Record<string, string> = {
     mythic: '#ef4444',
 };
 
-export const Card: React.FC<CardProps> = ({
+// [2026-10-02 莉莉子 性能优化] 组件本体保持原名语义，末尾统一用 React.memo 导出。
+//   背景：Card 是全屏渲染次数最多的组件（手牌≤10 + 备战席6 + 交战区6 + 悬停预览），
+//   而本项目 GameSession 的那棵树下**全部组件都没有 memo** ⇒
+//   任意一个游戏状态变化（掉一滴血、闪一下特效）都会让 20+ 张 Card 全量重算。
+const CardInner: React.FC<CardProps> = ({
     data: realData, location, skinId = 0, // [新增] 解构 skinId 并默认赋予 0 默认皮肤
     heroDynamic: heroDynamicProp, // [2026-08-16] 动态卡面显式覆盖（悬停大图等 portal 场景，Context 无法穿透）
     spellDynamic: spellDynamicProp, // [2026-09-26] 动态法术/单位卡面显式覆盖
@@ -399,10 +403,15 @@ export const Card: React.FC<CardProps> = ({
         prevDataRef.current = realData;
     }, [realData, isTransformZone, transformPhase]);
 
-    // 阶段推进：shrink → expand → none（时长与下方 scaleX 动画对齐）
+    // 阶段推进：shrink → expand → none
+    // [2026-10-08 莉莉子 BUG修复 · 手牌变形「卡在翻面中途」] 220 → 250ms：
+    //   下方 scaleX 动画时长是 0.22s（220ms），与本 timer **原本一模一样 ⇒ 竞态** ——
+    //   动画晚启动一两帧或被主线程拖住时，`none` 会在动画跑完前到来，
+    //   而 `none` 阶段不再声明 scaleX ⇒ 值被永久锁在中途（程实测：一直保持到卡被打出再回手）。
+    //   ⚠️ 这里多留 30ms 只是**减少截断发生**；真正的兜底是 `dynamicAnimate` 基底的 `scaleX: 1`。
     useEffect(() => {
         if (transformPhase === 'shrink' || transformPhase === 'expand') {
-            const t = setTimeout(() => setTransformPhase(transformPhase === 'shrink' ? 'expand' : 'none'), 220);
+            const t = setTimeout(() => setTransformPhase(transformPhase === 'shrink' ? 'expand' : 'none'), 250);
             return () => clearTimeout(t);
         }
     }, [transformPhase]);
@@ -671,11 +680,11 @@ export const Card: React.FC<CardProps> = ({
             // [修复] 施法瞄准选目标时不触发抬起动画（避免"选目标时微微抬起"的问题）
             setIsLifting(true);
             setTimeout(() => {
-                onClick();
+                onClick(data); // [2026-10-02 莉莉子 性能] 回传本体
                 setIsLifting(false);
             }, 150); // 捏起悬停 150ms 后，放行底层数据的硬切修改
         } else if (onClick) {
-            onClick();
+            onClick(data); // [2026-10-02 莉莉子 性能] 回传本体
         }
     };
 
@@ -1269,6 +1278,7 @@ export const Card: React.FC<CardProps> = ({
                         {cardFaceVideoSrc ? (
                                 <CardFaceVideo
                                     src={cardFaceVideoSrc}
+                                    poster={currentImageUrl} // [2026-10-02 莉莉子 性能] 静态图兜底：视频未就绪时不再"先白一下"
                                     className="max-w-none opacity-90 block"
                                     style={{
                                         // [2026-09-26 莉莉子] 尺寸规则与下方静态 <img> 完全一致，保证视频/静态切换不跳动
@@ -1556,6 +1566,7 @@ export const Card: React.FC<CardProps> = ({
                         {cardFaceVideoSrc ? (
                                 <CardFaceVideo
                                     src={cardFaceVideoSrc}
+                                    poster={currentImageUrl} // [2026-10-02 莉莉子 性能] 静态图兜底（同上）
                                     className={location === 'deck-panel' ? 'w-full h-full object-cover block' : 'max-w-none block'}
                                     style={location === 'deck-panel' ? undefined : {
                                         // [2026-09-26 莉莉子] 尺寸规则与下方静态 <img> 完全一致，保证视频/静态切换不跳动
@@ -1909,6 +1920,24 @@ export const Card: React.FC<CardProps> = ({
         dynamicWhileHover = { scale: 1.05 };
     }
 
+    // ==========================================
+    // [2026-10-08 莉莉子 BUG修复 · 手牌变形「卡在翻面中途」]
+    //   ── 症状（程实测）：天启者↔天启者法术变形时，卡面**有时**停在翻面一半，
+    //      而且**一直保持**，直到该卡被打出、再撤回手牌才恢复正常；卡面显示的是**新卡**。
+    //   ── 根因：`transformPhase === 'none'` 阶段**不再声明 `scaleX`**（见下方 transformPhase 分支），
+    //      Framer Motion 对这条 MotionValue 就此**失去目标**；而 expand 的动画时长（0.22s）
+    //      与本组件推进阶段的 `setTimeout`（原 220ms）**完全相同 ⇒ 竞态**：
+    //      动画晚启动一两帧（AsyncMotionValueAnimation 要等下一帧的关键帧解析）或被主线程拖住时，
+    //      `none` 会在动画跑完前到来。此时 FM 的 removed-key fallback 用**当前值**填首帧
+    //      （keyframes 变 [null,null] ⇒ 视觉零变化）
+    //      ⇒ **值被永久锁在中间，之后再无任何机制把它拉回 1**。（卡打出再回手 = 新实例，故恢复）
+    //   ── 修法：基底**恒定声明 `scaleX: 1`** ⇒ `none` 阶段也有目标可动，收尾必定回到 1。
+    //      抽卡翻面（下方 shouldAnimateDraw）与变形（transformPhase）都是在这行**之后**赋值，
+    //      会正常覆盖它 ⇒ 不影响那两条动画；基线 `1` 只在"既非抽卡翻面、也非变形中"时生效。
+    //   ── 配套：阶段推进的 timer 由 220 → 250ms，给 0.22s 的动画留出启动余量（减少"被截断"）。
+    // ==========================================
+    dynamicAnimate = { ...dynamicAnimate, scaleX: 1 };
+
     // 兼容原版的抽卡翻面逻辑
     if (shouldAnimateDraw) {
         dynamicAnimate = { ...dynamicAnimate, scaleX: [1, 1, 0, 1, 1] };
@@ -2095,3 +2124,13 @@ export const Card: React.FC<CardProps> = ({
         </motion.div>
     );
 };
+
+// ══════════════════════════════════════════════════════════════
+// [2026-10-02 莉莉子 性能优化] memo 导出
+//   为什么能生效：调用方传给 Card 的 props 绝大多数是「数字 / 布尔 / 稳定引用」
+//     （data 走数据层的定向更新 —— 未变的卡保持同一对象引用），
+//     唯一不稳定的是 onClick —— 已改为「调用方持有稳定引用 + 本组件回传本体」。
+//   为什么安全：Card 只在 effect 里写模块级 cardLocationMemory，渲染时读到的是
+//     「上一次的位置」，而位置本身来自 props.location ⇒ props 变了必然重渲染，不会读到陈旧值。
+// ══════════════════════════════════════════════════════════════
+export const Card = React.memo(CardInner);

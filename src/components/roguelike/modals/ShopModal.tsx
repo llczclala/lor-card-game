@@ -6,7 +6,7 @@
 //   原 2×2 四区平铺太挤 → 改为 左侧竖排 tab（买卡/迷宫强化/装备/删卡）+ 右侧内容区，
 //   一次聚焦一类，卡片大展示不再挤在一起。顶部保留 金币/刷新/关闭，底部离开商店。
 // ==========================================
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // [2026-10-08 批次3] +useEffect（状态上报给地图层缓存）
 import { motion } from 'framer-motion';
 import { ShoppingBag, Sparkles, Swords, Trash2, Coins, RefreshCw, X, Inbox, ArrowDown, Check } from 'lucide-react';
 import type { CardData } from '../../../types';
@@ -21,6 +21,7 @@ import { MAZE_ENHANCEMENTS } from '../../../data/roguelike/enhancements';
 import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
 import { eventBus, GameEvents } from '../../../utils/eventBus';
 import { useArmamentConfig } from '../../../hooks/useArmamentConfig'; // [2026-09-10] 局外武装（英雄卡按手牌样式展示武装图标）
+import { ConfirmDialog } from '../ConfirmDialog'; // [2026-10-08 交互回响层 批次2] 通用二次确认（刷新商品）
 
 const HEX = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
 // [2026-08-27] 六档品质色：白/绿/蓝/紫/金/红
@@ -47,6 +48,10 @@ interface ShopModalProps {
     onRemoveCard: (cardKey: string, price: number) => boolean;
     onRefresh: () => boolean;
     onClose: () => void;
+    /** [2026-10-08 莉莉子 · 交互回响层 批次3] 回头再进时带回来的「已购」列表（防重复购买） */
+    initialPurchased?: string[];
+    /** [2026-10-08 · 批次3] 库存/已购变化上报 → 地图层按节点缓存（关窗不丢、重开不重随） */
+    onStateChange?: (s: { stock: ShopStock; purchased: string[] }) => void;
 }
 
 /** 商店展示卡（补全 runtime 字段满足 CardData）
@@ -147,17 +152,22 @@ const SideTabBtn: React.FC<{ active: boolean; onClick: () => void; icon: React.R
 );
 
 export const ShopModal: React.FC<ShopModalProps> = ({
-    run, stock: initialStock, availableTabs,
+    run, stock: initialStock, initialPurchased, onStateChange, availableTabs,
     onBuyCard, onBuyEnhancement, onBuyEquipment, onRemoveCard, onRefresh, onClose,
 }) => {
     const [stock, setStock] = useState<ShopStock>(initialStock);
-    const [purchased, setPurchased] = useState<Set<string>>(new Set());
+    // [2026-10-08 · 批次3] 「已购」由地图层按节点带回来（关窗再进不清零）
+    const [purchased, setPurchased] = useState<Set<string>>(() => new Set(initialPurchased ?? []));
     const [removePick, setRemovePick] = useState<string | null>(null);
     // [2026-09-10] 装备页签：先选天启者（单选）→ 再选装备（多选）→ 一并付款挂载
     const [equipHeroPick, setEquipHeroPick] = useState<string | null>(null);
     const [equipPicks, setEquipPicks] = useState<Set<string>>(new Set());
     // [2026-08-28] 左侧 tab 分类：初始定位到本商店开启的第一个页签
     const [tab, setTab] = useState<ShopTab>(() => availableTabs[0] ?? 'card');
+    // [2026-10-08 莉莉子 · 交互回响层 批次2] 刷新会消耗**不可再生的刷新次数** ⇒ 必须二次确认
+    const [confirmRefresh, setConfirmRefresh] = useState(false);
+    // [2026-10-08 · 批次3] 库存/已购变化即上报（父级写 ref，不会触发重渲染循环）
+    useEffect(() => { onStateChange?.({ stock, purchased: [...purchased] }); }, [stock, purchased, onStateChange]);
 
     const affordable = (price: number) => run.gold >= price;
     const mark = (id: string) => setPurchased(prev => new Set(prev).add(id));
@@ -181,7 +191,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
     const handleRefresh = () => {
         if (onRefresh()) {
-            setStock(generateShopStock(run.rarityBonus, run.passUnlockedEnhancements, { equippedCards: run.equippedCards, ownedEnhancements: run.enhancements })); // [2026-08-29 通行证] [2026-09-25] 不叠加：不发已拥有强化/该卡已有装备
+            setStock(generateShopStock(run.rarityBonus, run.passUnlockedEnhancements, { equippedCards: run.equippedCards, ownedEnhancements: run.enhancements, difficulty: run.difficulty })); // [2026-10-08 难度分层] // [2026-08-29 通行证] [2026-09-25] 不叠加：不发已拥有强化/该卡已有装备
             setPurchased(new Set());
             setRemovePick(null);
             setEquipPicks(new Set()); // [2026-09-10] 换货后清空已选装备
@@ -219,7 +229,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                             <Coins size={16} /> {run.gold}
                         </span>
                         <button
-                            onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleRefresh(); }}
+                            onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); setConfirmRefresh(true); }}
                             disabled={run.refreshCount <= 0}
                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-black transition-all ${run.refreshCount > 0
                                 ? 'bg-cyan-600/80 hover:bg-cyan-500 hover:scale-105'
@@ -550,6 +560,18 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                     </button>
                 </div>
             </motion.div>
+            {/* [2026-10-08 莉莉子 · 交互回响层 批次2] 刷新二次确认 */}
+            {confirmRefresh && (
+                <ConfirmDialog
+                    title="确定刷新商品？"
+                    desc="将重新进货本商店的卡牌 / 强化 / 装备（页签构成不变）。"
+                    notes={[`消耗 1 次刷新（当前剩余 ${run.refreshCount} 次）`, '刷新后已售出的商品不会回来']}
+                    confirmLabel={`确认刷新（剩 ${run.refreshCount} 次）`}
+                    tone="normal"
+                    onConfirm={() => { setConfirmRefresh(false); handleRefresh(); }}
+                    onCancel={() => setConfirmRefresh(false)}
+                />
+            )}
         </motion.div>
     );
 };

@@ -27,7 +27,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isCollectible: false
   },
   lyfe_rush: {
-    key: 'lyfe_rush', name: '无尽霜刃', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
+    key: 'lyfe_rush', name: '无尽霜刃', cost: 1, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
     description: '极速：给予 “里芙” +1/+1。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.lyfe_rush,
     effects: ['effect_lyfe_rush'],
@@ -35,8 +35,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     ai: { pattern: 'BUFF', priority: 4, config: { targetType: 'ALLY_UNIT', specificTargetKey: 'lyfe', power: 1, health: 1 } }
   },
   lyfe_ultimate: {
-    key: 'lyfe_ultimate', name: '吞噬神座', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
-    description: '进行备战。', type: 'spell-fast', keywords: [],
+    key: 'lyfe_ultimate', name: '吞噬神座', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Lyfe',
+    description: '进行备战。', type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.lyfe_ultimate,
     effects: ['effect_lyfe_ultimate'],
     isCollectible: false,
@@ -96,7 +96,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
       imageUrl: HERO_IMAGES.fenny.base,
       level2ImageUrl: HERO_IMAGES.fenny.level2,
       associatedSpellKey: 'fenny_spell',
-      levelUpCondition: '敌我任意水晶生命值 <= 10', // [新增] 升级文案
+      levelUpCondition: '敌我任意水晶生命值 ≤ 其上限的一半', // [2026-10-04 程拍板] 原为「<= 10」绝对值；改为按各自水晶上限的一半（标准对局上限 20 ⇒ 仍是 10，迷宫随上限放宽）
       levelUpTarget: 1, // [新增] 状态型升级，目标视为 1
       effects: ['effect_fenny_attack_lv1'] // [新增] 绑上首次进攻判定
   },
@@ -483,14 +483,20 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   marian: {
     key: 'marian', gachaPool: GachaPoolEnum.Zenith, name: '茉莉安 霄鹰', cost: 4, power: 5, health: 5, maxHealth: 5,
     isChampion: true, level: 1, region: 'Marian',
-    description: '【库效】对局开始时：在敌方备战席召唤一个“獠牙信标”。\n入场：若敌方备战席没有“獠牙信标”则召唤一个；若已有，则首次“獠牙信标”被击败后立刻召唤一个。\n入场及回合开始时：对敌方备战席的“獠牙信标”造成等同于自己攻击力的伤害。\n参战：变化为“茉莉安的猎场”。',
+    // [2026-10-02 莉莉子 信标亡语化] 文案与机制同步：贴重生亡语已下放为**等级无关的光环**
+    // [2026-10-04 程拍板] 打击伤害由「等同自身攻击力」改为**等级固定值**（Lv1 5 / Lv2 8）：
+    //   肉鸽里她能被叠到 20+ 攻击力，原口径会让信标被反复一击打死 ⇒ 无限循环爆炸。
+    description: '【库效】对局开始：敌方备战席召唤 1 个「獠牙信标」\n入场：敌方无「獠牙信标」则召唤\n光环：敌方「獠牙信标」获得亡语：阵亡召唤 1 个「獠牙信标」\n入场、回合开始、敌方召唤信标时：对敌方备战席「獠牙信标」造成 5 点伤害（Lv2 为 8 点）\n参战：变为「茉莉安的猎场」',
     type: 'unit', keywords: [],
     imageUrl: HERO_IMAGES.marian.base,
     level2ImageUrl: HERO_IMAGES.marian.level2,
     associatedSpellKey: 'marian_spell',
     levelUpCondition: '我方召唤的“獠牙信标”被破坏 2 次',
     levelUpTarget: 2,
-    // [T07] 升级计数；[2026-09-18] 入场&回合开始：先补信标（lv1）→ 再打信标伤害（snipe），顺序不可颠倒
+    // 🔒 [2026-10-02] 数组顺序即执行顺序。原先这里是「先贴亡语 → 再打伤害」的顺序铁律所在地 ——
+    //    **该铁律已随"下放为光环"而失效**：贴亡语不再发生在入场那一刻，而是在**亡语派发时动态判定**，
+    //    所以那一记狙击即使当场打死信标，死亡结算时照样能拿到光环 ⇒ 不存在"先打后贴就断档"的问题。
+    //    （保留这条注释是为了让后来人知道：这条顺序曾经重要过，但现在不是约束了。）
     effects: ['effect_marian_lv1', 'effect_marian_beacon_snipe'],
   },
   marian_spell: {
@@ -778,7 +784,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'mauxir_yiying_tuoyin', gachaPool: GachaPoolEnum.Permanent,
     name: '忆影拓印', cost: 4, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Mauxir',
-    description: '快速：选择任意一个单位，在手牌中生成一张瞬逝的白板复制牌（基础面板，不含增益）。',
+    description: '快速：选择任意一个单位，在手牌中生成一张瞬逝的复制牌。',
     type: 'spell-fast', keywords: [],
     imageUrl: SPELL_IMAGES.mauxir_yiying_tuoyin,
     effects: ['effect_mauxir_yiying_tuoyin'],
@@ -813,7 +819,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     type: 'unit',
     keywords: ['Channel', 'Ability'],
     description: '打出时：“飞剑”2。',
-    ability: { id: 'sacred_tree_lumi_gen', label: '时序加速', description: '打出时：飞剑2。', trigger: 'on_play', maxCharges: -1, postTriggerState: 'recharge' },
+    ability: { id: 'sacred_tree_lumi_gen', label: '时序加速', description: '打出时：飞剑2。', trigger: 'on_play_from_hand', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.sacred_tree_lumi,
     effects: ['effect_sacred_tree_lumi'],
   },
@@ -1409,14 +1415,15 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
 
   // 3. 白猎 (White Hunt) — 神枪手，手牌召唤大哥
-  // 注意：白猎的入场效果由 useGameState.ts playCard 拦截 + confirmWhiteHuntSummon 处理
+  // 注意：白猎的**打出时**效果由 useGameState.ts playCard 拦截 + confirmWhiteHuntSummon 处理
   // effects 引用仅用于视觉层（startCasting/isCastingForHand 检测），不走 effectProcessor 执行
+  // [2026-10-06 程拍板] **需要玩家选目标 ⇒ 归「打出时」**（被召唤时不该触发；否则没得选、静默无事发生）
   The_Forger_Squad_White_Hunt: {
     key: 'The_Forger_Squad_White_Hunt', gachaPool: GachaPoolEnum.Permanent, name: '”锻造者”\n白猎', region: 'Logistics',
     cost: 8, power: 4, health: 5, maxHealth: 5,
     isChampion: false, level: 0, type: 'unit', keywords: ['Overwhelm','Ability'],
-    description: '入场时，选择一个手牌中费用低于7的单位，赋予他+3/+0和碾压并将他从手牌中召唤。',
-    ability: { id: 'forger_white_hunt_summon', label: '神枪手', description: '入场时，选择一个手牌中费用低于7的单位，赋予他+3/+0和碾压并将他从手牌中召唤。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
+    description: '打出时，选择一个手牌中费用低于7的单位，赋予他+3/+0和碾压并将他从手牌中召唤。',
+    ability: { id: 'forger_white_hunt_summon', label: '神枪手', description: '打出时，选择一个手牌中费用低于7的单位，赋予他+3/+0和碾压并将他从手牌中召唤。', trigger: 'on_play_from_hand', maxCharges: 1, postTriggerState: 'dim' },
     imageUrl: UNIT_IMAGES.white_hunt, effects: ['effect_forger_white_hunt_summon'],
   },
 
@@ -1515,8 +1522,9 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'Bridget_Squad_Valerie', gachaPool: GachaPoolEnum.Permanent, name: '”布里吉”\n瓦莱莉', region: 'Logistics',
     cost: 7, power: 2, health: 5, maxHealth: 5,
     isChampion: false, level: 0, type: 'unit', keywords: ['Ability'], race: ['summoner'],
-    description: '入场：可弃置任意数量手牌，召唤一只“夜巡猫头鹰”。',
-    ability: { id: 'bridget_valerie_discard_summon', label: '夜巡', description: '入场：可弃置任意数量手牌，召唤一只”夜巡猫头鹰”。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
+    // [2026-10-06 程拍板] **需要玩家选牌（弃置任意数量手牌）⇒ 归「打出时」**（被召唤时不该触发）
+    description: '打出时：可弃置任意数量手牌，召唤一只“夜巡猫头鹰”。',
+    ability: { id: 'bridget_valerie_discard_summon', label: '夜巡', description: '打出时：可弃置任意数量手牌，召唤一只”夜巡猫头鹰”。', trigger: 'on_play_from_hand', maxCharges: 1, postTriggerState: 'dim' },
     imageUrl: UNIT_IMAGES.valerie, effects: ['effect_bridget_valerie_discard_summon']
   },
   // 瓦莱莉召唤的猫头鹰
@@ -1670,8 +1678,9 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     key: 'Crows_Eyest_Squad_An', gachaPool: GachaPoolEnum.Permanent, name: '”鸦眼”\n安', region: 'Logistics',
     cost: 2, power: 2, health: 2, maxHealth: 2,
     isChampion: false, level: 0, type: 'unit', keywords: ['Ability'],
-    description: '入场时：校准。',
-    ability: { id: 'crows_an_onplay_calibrate', label: '校准预知', description: '入场时：校准。', trigger: 'on_play', maxCharges: 1, postTriggerState: 'dim' },
+    // [2026-10-06 程拍板] **需要玩家选牌（校准面板）⇒ 归「打出时」**（被召唤到场上时不触发）
+    description: '打出时：校准。',
+    ability: { id: 'crows_an_onplay_calibrate', label: '校准预知', description: '打出时：校准。', trigger: 'on_play_from_hand', maxCharges: 1, postTriggerState: 'dim' },
     imageUrl: UNIT_IMAGES.crows_an, effects: ['effect_crows_an_onplay_calibrate'],
   },
   Crows_Eyest_Squad_Mulin: {
@@ -2050,7 +2059,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isChampion: false,
     level: 0,
     region: 'Logistics',
-    description: '极速：治疗友方所有单位与水晶1点生命值，并赋予友方所有单位 +0/+1。',
+    description: '快速：治疗友方所有单位与水晶1点生命值，并赋予友方所有单位 +0/+1。',
     type: 'spell-fast',
     keywords: [],
     imageUrl: SPELL_IMAGES.bader_reagent,
@@ -2370,7 +2379,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 27. Exposed (暴露) ---
   test_exposed: {
     key: 'test_exposed', name: '测试：暴露', cost: 1, power: 5, health: 5, maxHealth: 5, isChampion: false, level: 0, region: 'TEST',
-    description: '任意敌方单位进攻时，都可以把你从备战席拉上场格挡。', // [2026-09-16 1.0.16 T03] 同步新语义
+    description: '任意敌方单位进攻时，都可以把你从备战席拉入交战区格挡。', // [2026-09-16 1.0.16 T03] 同步新语义
     type: 'unit', keywords: ['Exposed'],
     imageUrl: TEST_IMAGES.exposed,
     isCollectible: false
