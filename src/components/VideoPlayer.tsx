@@ -1,6 +1,10 @@
 import React, { useRef, useEffect } from 'react';
 // [2026-10-05 莉莉子 BUG修复 · 20261005-11] 卡死上报（供自动降档）
 import { reportMovieStall } from '../utils/movieHealth';
+// [2026-10-09 莉莉子 · 影片诊断仪表] 只观测、不改播放行为（控制台过滤 `Vdiag`）
+import { attachVideoProbe } from '../utils/videoDiagnostics';
+// [2026-10-09 莉莉子 · 影片卡顿治理 P1] 影片放映期 ⇒ 循环视频全部让位（全局并发预算）
+import { setMovieHold } from '../utils/videoBudget';
 
 /** [2026-10-05] 判定"没进度=卡死"的连续秒数（1s 轮询 ⇒ 3 次 ≈ 3s，避免误伤网络抖动） */
 const STALL_TICKS = 3;
@@ -43,12 +47,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             // ── 修法：改用 `getAttribute('src')`（返回**我们写进去的原串**）做同源比较。
             // =====================================
             if (video.getAttribute('src') !== src) {
+                // ⚠️ [2026-10-09 撤回] 这里曾试过"换源时按旧位置续播"，**已回滚**：
+                //   程指出「影片开头定格是**升级动画在播放**」⇒ 起播/暂停的时序由演出层控制，
+                //   而"通用续播"还会把**不同影片**（如升级→胜利）误拖到上一部的位置 ⇒ 风险大于收益。
+                //   raw→blob 换源的真问题改在调用侧查（见技术手册 §9 待办）。
                 video.src = src;
                 video.load();
             }
             const playPromise = video.play();
             if (playPromise !== undefined) {
-                playPromise.catch(e => console.warn("Auto-play blocked:", e));
+                playPromise.catch(e => console.warn(`[Vdiag] ⚠️ play() 被拒绝：${(e as DOMException)?.name} — ${(e as DOMException)?.message}`));
             }
         } else {
             // B. 停止播放 (延迟暂停，给 CSS 淡出动画留出充足时间，防止画面定格)
@@ -56,7 +64,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             const timer = setTimeout(() => {
                 if (video) video.pause();
             }, delay);
-            return () => clearTimeout(timer);
+            // =====================================
+            // [2026-10-09 莉莉子 BUG修复] **隐藏足够久 ⇒ 释放解码器并摘掉 src**
+            // ── 程的原问题："我都进游戏了，那个标题影片凭啥还挂着？"
+            //    ⇒ 因为本组件是**全 App 单例、永不卸载**（`App.tsx` 写死在 JSX 里），
+            //      而旧实现只把它 `pause()` 掉、**元素与 src 一直留着**（首轮实测：多挂了 **98 秒**）。
+            // ── paused 虽不吃 CPU，但仍占着解码器与内存；本仓库 `CardFaceVideo` / `DeskMedia`
+            //    早就是"卸载即摘 src + load()"的同款收尾，这里补上（15s 宽限，跨场景淡出不误伤）。
+            // ── 重新可见时上面那段会按 `getAttribute('src') !== src` 自动重载，无需额外处理。
+            // =====================================
+            const releaseTimer = setTimeout(() => {
+                if (!video || !video.paused) return; // 期间又被播起来 ⇒ 不释放
+                try { video.pause(); } catch { /* noop */ }
+                video.removeAttribute('src');
+                try { video.load(); } catch { /* noop */ }
+                console.log('[Vdiag] [teardown] 已隐藏超时（15s）→ 释放解码器并摘除 src');
+            }, 15000);
+            return () => { clearTimeout(timer); clearTimeout(releaseTimer); };
         }
     }, [isVisible, src, noFade]);
 
@@ -93,6 +117,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         // ── 修法：只在**不可见**（= 真正的后台预热）时才 play→pause；可见时交给主 effect 播。
         // =====================================
         if (isVisible) return;
+        // ⚠️ [2026-10-09 撤回] 这里曾加过两道"不预热"闸（`!video.paused` / `readyState >= 2`），**已回滚**：
+        //   程指出「影片开头约 2 秒的定格 = 升级动画在播放」⇒ 那不是预热踩的，是演出层的正常时序。
+        //   ⇒ 预热逻辑保持改动前原样；**不再对演出时序做任何推测性改动**。
         const warmup = () => {
             video.play().then(() => {
                 video.pause();
@@ -118,9 +145,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // =====================================
     useEffect(() => {
         if (!isVisible || !src) return;
+        // [2026-10-09 莉莉子 · 诊断] 武装/解除各留一条 —— 回答"那 50 秒里看门狗到底有没有在跑"：
+        //   首轮日志里它**一条复活记录都没有**，只能靠这两条区分"根本没跑"与"跑了但 play() 一直被拒"。
+        console.log(`[Vdiag] 🐕 看门狗武装（visible=true, src=…${src.slice(-26)}）`);
 
         let lastTime = -1;
         let stuckTicks = 0;
+        let resumeFailLogs = 0;
 
         const interval = setInterval(() => {
             const video = videoRef.current;
@@ -132,7 +163,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 console.log("[Watchdog] Video paused unexpectedly, resuming...");
                 // [优化] 绝对不要重置 currentTime = 0，直接 play() 继续播放
                 // 这样既能救活视频，又不会导致画面鬼畜跳回开头
-                video.play().catch(() => {});
+                // [2026-10-09 莉莉子 BUG修复] 复活失败**必须说出来** —— 原来是 `.catch(() => {})`
+                //   静默吞掉 ⇒ 永远分不清"没救"还是"救了但被拒"（首轮就卡在这一格）
+                video.play().catch((e: DOMException) => {
+                    if (resumeFailLogs < 5) {
+                        console.warn(`[Vdiag] 🐕 复活被拒（第 ${resumeFailLogs + 1} 次）：${e?.name} — ${e?.message}`);
+                    }
+                    resumeFailLogs += 1;
+                });
                 return;
             }
 
@@ -150,8 +188,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }
         }, 1000); // 1秒检查一次，频率适中
 
-        return () => clearInterval(interval);
+        return () => { console.log('[Vdiag] 🐕 看门狗解除'); clearInterval(interval); };
     }, [isVisible, src, isLoop, onEnded]);
+
+    // 5. [2026-10-09 莉莉子 · 影片诊断仪表] **只观测**：把生命周期 + 周期快照 + 硬解能力
+    //    打进控制台（过滤 `Vdiag`）。刻意不做任何 play/pause/load 调用 —— 它不该影响观测对象。
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        return attachVideoProbe(video, () => src, isLoop ? 'loop' : 'movie');
+    }, [src, isLoop]);
+
+    // 6. [2026-10-09 莉莉子 · 影片卡顿治理 P1] **影片放映期 ⇒ 循环视频全部让位**
+    // ── 依据（两轮实测日志）：同屏 20+ 路循环视频（法术1080²/卡面760×1080/卡背/牌桌1920×1088）时，
+    //    影片会在播放中途**丢掉数据源**：`readyState=HAVE_CURRENT_DATA` + `networkState=NETWORK_IDLE`
+    //    ⇒ 画面定格（升级影片冻在 7.5s、胜利影片冻在 3.45s），丢帧率一度 40%。
+    // ── 处置：只在**一次性影片**（升级 / 胜利）放映期间把循环视频名额压到 0，播完自动恢复。
+    //    ⚠️ 大厅 / 标题那种**循环**影片本身就是背景（`isLoop=true`）—— 不为它压名额，
+    //       否则会把整个大厅的背景一起按黑。
+    useEffect(() => {
+        const hold = isVisible && !isLoop && !!src;
+        setMovieHold(hold);
+        return () => setMovieHold(false);
+    }, [isVisible, isLoop, src]);
 
 
     return (

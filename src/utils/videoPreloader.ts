@@ -44,6 +44,15 @@ const evictIfNeeded = (): void => {
         const url = blobCache.get(oldestKey);
         blobCache.delete(oldestKey);
         if (url && url.startsWith('blob:')) {
+            // ============================================================
+            // [2026-10-09 莉莉子 · 影片取证] **淘汰即留痕** —— 这是"影片播到一半定格"的头号嫌疑：
+            //   若这条 revoke 抹掉的正是**当前正在播**的那条 blob，元素会立刻失去数据源，
+            //   表现就是实测日志里的三连：`readyState=HAVE_CURRENT_DATA` + `networkState=NETWORK_IDLE`
+            //   + `currentTime` 不再前进（丢帧数还在涨）。
+            // ⚠️ 上方第 26 行那句"正在播放的必然是最新 fetch 的那条 ⇒ 不会被淘汰"是**错误假设**：
+            //   实际序列常见「预加载 A → 播 A → 预加载 B → 预加载胜利 C」⇒ A 在**播放中**被淘汰。
+            // ============================================================
+            console.warn(`[Vdiag] 💀 blob 淘汰并 revoke：${url.slice(0, 42)}…（key=${decodeURIComponent(oldestKey).split('/').slice(-2).join('/')}，剩余 ${blobCache.size} 条）`);
             try { URL.revokeObjectURL(url); } catch { /* noop */ }
         }
     }
@@ -78,6 +87,8 @@ export const preloadVideo = async (src: string): Promise<string> => {
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
         blobCache.set(src, url);
+        // [2026-10-09 莉莉子 · 影片取证] 新缓存也留痕：把"预加载序列"和"淘汰"对上时间轴
+        console.log(`[Vdiag] 📦 新缓存 blob（${blobCache.size}/${MAX_CACHE}）：${decodeURIComponent(src).split('/').slice(-2).join('/')}`);
         evictIfNeeded();
         return url;
     } catch (e) {

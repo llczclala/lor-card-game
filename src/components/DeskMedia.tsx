@@ -8,6 +8,7 @@
 import React, { useEffect, useRef } from 'react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 import { getDeskVideo } from '../data/deskVideos';
+import { LoopVideo } from './LoopVideo'; // [2026-10-09 P1] 循环视频统一实现（全局并发预算 + 可见性门控 + 卸载释放）
 
 interface DeskMediaProps {
     deskIndex: number;
@@ -20,7 +21,6 @@ interface DeskMediaProps {
 //   props 全是基本类型（number / boolean / string）⇒ memo 浅比较必然生效，零成本。
 const DeskMediaInner: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false, className, style }) => {
     const video = dynamic ? getDeskVideo(deskIndex) : undefined;
-    const videoRef = useRef<HTMLVideoElement>(null);
     const loggedRef = useRef<Set<number>>(new Set());
 
     // [2026-08-13] 日志：动态生效 / 兜底（各输出一次，避免刷屏）
@@ -38,22 +38,13 @@ const DeskMediaInner: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false, 
         }
     }, [video, dynamic, deskIndex]);
 
-    // [2026-08-13] 显式播放 + 无限循环（对齐 VideoPlayer 的 play() 触发方案）
-    useEffect(() => {
-        const el = videoRef.current;
-        if (!el || !video) return;
-        el.loop = true;
-        el.muted = true;
-        if (el.src !== video && el.src !== window.location.origin + video) {
-            el.src = video;
-            el.load();
-        }
-        const p = el.play();
-        if (p !== undefined) p.catch(() => {});
-    }, [video]);
+    // [2026-10-09 莉莉子 · P1] 原"显式 play() + loop/muted 属性同步"整段删除 ——
+    //   那几件事（显式 play / loop / muted / 卸载释放）已由 `LoopVideo` 统一承担，
+    //   并额外获得「全局并发名额 + 可见性门控」：**此前牌桌是永不让位的一路**。
 
     if (video) {
-        return <video ref={videoRef} src={video} className={className} style={style} playsInline preload="auto" muted loop />;
+        // 优先级 **0**：牌桌是全屏常驻背景（1920×1088@30，单路解码量最大）⇒ 排最后，需要时由它让位
+        return <LoopVideo src={video} className={className} style={style} priority={0} />;
     }
     // [2026-09-18] 兜底 desks[0]：存档里可能残留已失效的牌桌编号（如 09-18 重编号前的旧值）
     return <img src={PERSONALIZATION_ASSETS.desks[deskIndex] ?? PERSONALIZATION_ASSETS.desks[0]} className={className} style={style} alt="牌桌" />;
