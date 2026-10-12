@@ -25,6 +25,7 @@ import { getHeroVideo } from '../data/heroVideos'; // [2026-08-16 动态卡面] 
 import { getSpellVideo } from '../data/spellVideos'; // [2026-09-26 动态法术卡牌] 法术动态卡面视频
 import { getUnitVideo } from '../data/unitVideos'; // [2026-09-26 动态法术卡牌] 单位动态卡面视频
 import { CardFaceVideo } from './CardFaceVideo'; // [2026-09-26] 卡面视频播放器（英雄/法术/单位共用，见该文件注释）
+import { LoopVideo } from './LoopVideo'; // [2026-10-09 P1] 循环视频统一实现（全局并发预算 + 可见性门控 + 卸载释放）
 
 // [核心新增] 模块级卡牌位置记忆库 (突破 React 销毁重绘的失忆限制)
 const cardLocationMemory = new Map<string, string>();
@@ -152,25 +153,12 @@ export const useSpellDynamic = () => React.useContext(SpellCardMediaContext);
 //   （法术卡渲染路径有三条：手牌走 SpellCard / 打出后走 GameSession 法术圆盘 / 战场位走本文件，
 //    播放逻辑必须只有一份，否则三处必然各自漂移）
 
-// [2026-08-23 莉莉子] 动态卡背视频（对齐 HeroCardVideo：显式 play() + 无限循环 + muted）
-export const CardBackVideo: React.FC<{ src: string; className?: string; style?: React.CSSProperties }> = ({ src, className, style }) => {
-    const videoRef = useRef<HTMLVideoElement>(null);
-
-    useEffect(() => {
-        const el = videoRef.current;
-        if (!el) return;
-        el.loop = true;
-        el.muted = true;
-        if (el.src !== src && el.src !== window.location.origin + src) {
-            el.src = src;
-            el.load();
-        }
-        const p = el.play();
-        if (p !== undefined) p.catch(() => {});
-    }, [src]);
-
-    return <video ref={videoRef} src={src} className={className} style={style} playsInline preload="auto" muted loop />;
-};
+// [2026-08-23 莉莉子] 动态卡背视频
+// [2026-10-09 莉莉子 · P1] 收口到 `LoopVideo`（全局并发预算 + 可见性门控 + 卸载释放）
+//   优先级 **5**：卡背数量多（对手手牌/牌库各一张），但属装饰性背景 ⇒ 让位给卡面与影片
+export const CardBackVideo: React.FC<{ src: string; className?: string; style?: React.CSSProperties }> = ({ src, className, style }) => (
+    <LoopVideo src={src} className={className} style={style} priority={5} />
+);
 
 interface CardProps {
   data: CardData;
@@ -1111,7 +1099,12 @@ const CardInner: React.FC<CardProps> = ({
             }
         }
     }
-    // [修改] GSAP接手受击震动，animate-shake仅用于localShake（落地/撤回等）
+    // [修改] 受击震荡（localShake）与结算态（animState='hit'）都走 animate-shake。
+    //   ⚠️ [2026-10-10 莉莉子 · 打击感] 这里**故意保持"空 class + 只能换不能叠加"的旧形态**：
+    //      animClass 是"当前 animState 的纯函数"，一旦在此处换成另一段 transform 动画，
+    //      就会把**正在进行中的 bump 冲刺动画**在半途摘掉 ⇒ 卡牌一帧跳回原位（瞬移）。
+    //      要给受击方加"击退 + 挤压拉伸"，正确位置是 **bump keyframes 本身**
+    //      （见 index.css 的 bump-* 撞点帧），而不是在这里另起一个动画。
     if (data.animState === 'hit' || localShake) {
         animClass = localShake ? 'animate-shake' : '';
     }

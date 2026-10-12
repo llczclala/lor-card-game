@@ -96,37 +96,49 @@ html, body {
   20% { transform: translateY(-10px) scale(1.2); opacity: 1; }
   100% { transform: translateY(30px) scale(1); opacity: 0; }
 }
-/* --- A. 普通格挡碰撞 (向中心相撞) --- */
+/* --- A. 普通格挡碰撞 (向中心相撞) ---
+   [2026-10-10 莉莉子 · 打击感] 在**撞点帧**加入「挤压拉伸 + 回弹过冲」：
+   · 50% scale(1.12, 0.86) —— 沿受力轴（纵向）压扁、横向拉伸。旧值是等比 scale(1.1)，
+     只有"变大"、没有"被打扁"，这也是对撞缺乏打击感最直观的一处。
+   · 78% translateY(±10px) —— **越过原位的回弹过冲**，读作"被撞退了一步"，再落回 0。
+   ⚠️ translateY 的 -200px / 200px 是**不可改的几何基准**（决定两卡是否在中间相遇），
+      同时也是 useGameState 里音效对齐的"撞点"定义（0.3s × 50% = 150ms）。 */
 @keyframes bump-up {
-  0% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
   /* [微调点] 这里的 -200px 决定了我方卡牌向上飞多远。如果在中间没碰上，就改大(如 -250px) */
-  50% { transform: translateY(-200px) scale(1.1); }
-  100% { transform: translateY(0); }
+  50% { transform: translateY(-200px) scale(1.12, 0.86); }
+  78% { transform: translateY(10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
 @keyframes bump-down {
-  0% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
   /* [微调点] 这里的 200px 决定了敌方卡牌向下飞多远。 */
-  50% { transform: translateY(200px) scale(1.1); }
-  100% { transform: translateY(0); }
+  50% { transform: translateY(200px) scale(1.12, 0.86); }
+  78% { transform: translateY(-10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
-/* [修改] 时长延长至 3s，方便观察碰撞点 */
+/* [修正 2026-10-10] 原注释写"时长延长至 3s"，与实际 0.3s 差了 10 倍（误读会让后来人按 3s 推时序） */
 .animate-bump-up { animation: bump-up 0.3s ease-in-out; }
 .animate-bump-down { animation: bump-down 0.3s ease-in-out; }
 
-/* --- B. 无人格挡的长距离直击 (穿透战场) --- */
+/* --- B. 无人格挡的长距离直击 (穿透战场) ---
+   [2026-10-10 莉莉子 · 打击感] 同 bump：撞点（40%）加挤压 + 回弹过冲。
+   ⚠️ 撞点在这里是 40%（= 120ms），不是 50% —— 与上面那组不同，改 keyframe 要同步 useGameState。 */
 @keyframes bump-up-long {
-  0% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
   /* [微调点] -450px 决定了我方无阻挡时向上冲多远。如果没撞到敌方备战席边缘，继续增大 (如 -500px) */
-  40% { transform: translateY(-450px) scale(1.2); }
-  100% { transform: translateY(0); }
+  40% { transform: translateY(-450px) scale(1.12, 0.86); }
+  70% { transform: translateY(10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
 @keyframes bump-down-long {
-  0% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
   /* [微调点] 450px 决定了敌方无阻挡时向下冲多远。 */
-  40% { transform: translateY(450px) scale(1.2); }
-  100% { transform: translateY(0); }
+  40% { transform: translateY(450px) scale(1.12, 0.86); }
+  70% { transform: translateY(-10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
-/* [修改] 时长延长至 3s */
+/* [修正 2026-10-10] 原注释写"时长延长至 3s"，实际为 0.3s */
 .animate-bump-up-long { animation: bump-up-long 0.3s ease-in-out; }
 .animate-bump-down-long { animation: bump-down-long 0.3s ease-in-out; }
 
@@ -134,25 +146,31 @@ html, body {
    与 bump 系列 keyframes 相同，但类名不同。
    连击第二撞时 className 从 bump-up → bump-up-second，
    CSS 检测到 animation-name 变化会强制重播，实现"零重挂载"的二次撞击动画。 */
+/* [2026-10-10 莉莉子 · 打击感] 与上面 bump-* 保持**逐帧一致**（这组唯一的用途是
+   靠"类名不同"强制 CSS 重播动画；两边的形变一旦不一致，连击第一撞和第二撞的手感就会分裂）。 */
 @keyframes bump-up-2 {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(-200px) scale(1.1); }
-  100% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-200px) scale(1.12, 0.86); }
+  78% { transform: translateY(10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
 @keyframes bump-down-2 {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(200px) scale(1.1); }
-  100% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(200px) scale(1.12, 0.86); }
+  78% { transform: translateY(-10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
 @keyframes bump-up-long-2 {
-  0% { transform: translateY(0); }
-  40% { transform: translateY(-450px) scale(1.2); }
-  100% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
+  40% { transform: translateY(-450px) scale(1.12, 0.86); }
+  70% { transform: translateY(10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
 @keyframes bump-down-long-2 {
-  0% { transform: translateY(0); }
-  40% { transform: translateY(450px) scale(1.2); }
-  100% { transform: translateY(0); }
+  0% { transform: translateY(0) scale(1, 1); }
+  40% { transform: translateY(450px) scale(1.12, 0.86); }
+  70% { transform: translateY(-10px) scale(0.98, 1.03); }
+  100% { transform: translateY(0) scale(1, 1); }
 }
 .animate-bump-up-second { animation: bump-up-2 0.3s ease-in-out; }
 .animate-bump-down-second { animation: bump-down-2 0.3s ease-in-out; }
@@ -199,6 +217,33 @@ html, body {
 .animate-play-card { animation: play-card 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
 .animate-float-damage { animation: damage-pop 1.2s ease-out forwards; }
 .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+
+/* =================================================================
+   ⚠️ [2026-10-10 莉莉子 · 打击感 · 一次走错路的留档]
+   这里曾放过一套「单位受击本体反馈」(unit-hit-up/down + .animate-unit-hit-*)，
+   想法是"受击方 animState='hit' 时播击退 + 挤压"。**已撤掉**，两条原因都经代码证实：
+     ① **会一帧瞬移**：animClass 是"当前 animState 的纯函数"（Card.tsx:1074-1117），
+        在**撞点那一帧**把 bump 冲刺动画整段摘掉 ⇒ 卡牌从 -200px / -450px 跳回原位。
+     ② **根本轮不到它播**：`unit_damage` 会把该卡 localShake 置真（Card.tsx:721），
+        而 `localShake ? 'animate-shake' : ...` 中 localShake 优先 ⇒ 实战里播的仍是旧
+        animate-shake；等 1000ms 后 localShake 复位触发重渲染，它才**迟到地补播一次**。
+   ✅ 正确位置：**把击退 + 挤压写进 bump keyframes 的撞点帧**（见上方 bump-* 系列），
+      冲刺动画全程不被打断，撞点处的形变与回弹由它自己承担。
+   ================================================================= */
+
+/* --- [2026-10-07 莉莉子 · 打击感] 震屏分档 ---
+   ── 旧状：全项目只有 .animate-shake 一档（±4px / 0.5s，见上），
+      法术命中 / 水晶受击 / 卡牌落地全用它 ⇒ 事件权重完全没有区分。
+   ── Vlambeer「The Art of Screenshake」的核心主张就是：**反馈强度必须随事件权重变化**。
+   ── ⚠️ .animate-shake 故意保留原样不动（SmartNexus / Card 的 localShake / 商店页仍在用）。
+   ── 时长与 useGameState 的 NEXUS_SHAKE_MS 一一对应，改一处必须改两处。
+   ── 只用 translate3d、不加 rotate：整屏旋转会在画面四角露出背景缝。 */
+@keyframes shake-sm { 0%, 100% { transform: translate3d(0, 0, 0); } 25% { transform: translate3d(-2px, 1px, 0); } 50% { transform: translate3d(2px, -1px, 0); } 75% { transform: translate3d(-1px, 1px, 0); } }
+@keyframes shake-md { 0%, 100% { transform: translate3d(0, 0, 0); } 15% { transform: translate3d(-5px, 3px, 0); } 30% { transform: translate3d(5px, -3px, 0); } 45% { transform: translate3d(-4px, 2px, 0); } 60% { transform: translate3d(4px, -2px, 0); } 80% { transform: translate3d(-2px, 1px, 0); } }
+@keyframes shake-lg { 0%, 100% { transform: translate3d(0, 0, 0); } 12% { transform: translate3d(-11px, 6px, 0); } 26% { transform: translate3d(10px, -6px, 0); } 40% { transform: translate3d(-8px, 4px, 0); } 56% { transform: translate3d(7px, -4px, 0); } 74% { transform: translate3d(-4px, 2px, 0); } 88% { transform: translate3d(2px, -1px, 0); } }
+.animate-shake-sm { animation: shake-sm 0.18s cubic-bezier(.36,.07,.19,.97) both; }
+.animate-shake-md { animation: shake-md 0.28s cubic-bezier(.36,.07,.19,.97) both; }
+.animate-shake-lg { animation: shake-lg 0.42s cubic-bezier(.36,.07,.19,.97) both; }
 .animate-scale-in { animation: scale-in 0.5s ease-out forwards; }
 .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
 
