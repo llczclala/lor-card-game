@@ -1,8 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 固定画布游戏：禁用手势缩放（避免误触缩放打乱 ScaleWrapper 的等比缩放），
+         并让视口覆盖刘海/圆角区域 —— 配合安卓端的沉浸式全屏。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <title>LoR Card Game</title>
     <script type="module" src="/src/main.tsx"></script>
   </head>
