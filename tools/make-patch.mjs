@@ -51,19 +51,57 @@ function findOldVersion() {
       .map(f => f.match(/\.dist-snapshot-v([\d.]+)\.json$/) ? f.match(/\.dist-snapshot-v([\d.]+)\.json$/)[1] : null)
       .filter(Boolean);
     if (snaps.length > 0) {
-      const oldVersions = snaps.filter(v => v !== NEW_VERSION);
-      if (oldVersions.length === 0) return null;
-      // 版本号数字比较（降序，取最大）
-      oldVersions.sort((a, b) => {
-        const pa = a.split('.').map(Number);
-        const pb = b.split('.').map(Number);
+      // ═══════════════════════════════════════════════════════════
+      // [2026-10-10 程拍板] **固化选基线规则**（不再"取最大快照"碰运气）：
+      //   · 完整包 X.Y.Z   ⇒ 基线 = **上一个完整包**（严格小于自身的最大三段版本）
+      //       理由：完整包必须覆盖"期间所有热补丁的改动" ⇒ 任何 1.0.18.x 玩家都能一次升上来
+      //   · 热补丁 X.Y.Z.N ⇒ 基线 = **同小版本的上一个热补丁 X.Y.Z.(N-1)**；
+      //       不存在（= 该小版本的第一个热补丁）⇒ 基线 = **自己的小版本 X.Y.Z**
+      //   · 都找不到 ⇒ 退回旧行为（排除自身后的最大快照）+ **明确警告**
+      //   ⚠️ 旧行为用在**完整包**上会让基线落到最新热补丁
+      //      ⇒ 没装热补丁的玩家**混装**（能启动但功能错乱，最难查）
+      // ═══════════════════════════════════════════════════════════
+      const segs = (v) => v.split('.').map(Number);
+      const cmpDesc = (a, b) => {
+        const pa = segs(a), pb = segs(b);
         for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-          const diff = (pb[i] ?? 0) - (pa[i] ?? 0);
-          if (diff !== 0) return diff;
+          const d = (pb[i] ?? 0) - (pa[i] ?? 0);
+          if (d !== 0) return d;
         }
         return 0;
-      });
-      return oldVersions[0];
+      };
+      const lessThan = (a, b) => {
+        const pa = segs(a), pb = segs(b);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+          const x = pa[i] ?? 0, y = pb[i] ?? 0;
+          if (x !== y) return x < y;
+        }
+        return false;
+      };
+      const newSegs = segs(NEW_VERSION);
+      const has = (v) => snaps.indexOf(v) >= 0;
+
+      if (newSegs.length === 4) {
+        // 热补丁
+        const sameMinor = newSegs.slice(0, 3).join('.');
+        const prevHotfix = sameMinor + '.' + (newSegs[3] - 1);
+        if (has(prevHotfix)) return prevHotfix;
+        if (has(sameMinor)) return sameMinor;
+      } else {
+        // 完整包：上一个完整包（三段、且严格小于自身）中最大者
+        const fulls = snaps.filter(v => segs(v).length === 3 && lessThan(v, NEW_VERSION));
+        if (fulls.length > 0) { fulls.sort(cmpDesc); return fulls[0]; }
+      }
+
+      // 兜底：规则不适用 / 快照缺失
+      const rest = snaps.filter(v => v !== NEW_VERSION).sort(cmpDesc);
+      if (rest.length > 0) {
+        console.warn(`\n⚠️ [选基线] 按固化规则没找到合适基线 ⇒ 退回旧行为：v${rest[0]}`);
+        console.warn('   若本次目标是**完整包**，请确认「上一个完整包（三段版本）」的快照是否存在，');
+        console.warn('   否则基线会落在热补丁上 ⇒ 没装热补丁的玩家会**混装**。\n');
+        return rest[0];
+      }
+      return null;
     }
   }
   return null;

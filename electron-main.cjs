@@ -57,3 +57,26 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+// ============================================================
+// [2026-10-10 莉莉子 · 影片卡顿诊断] 打印 **GPU 解码能力实况**（只加日志，不改任何行为）
+// ── 为什么需要它：渲染进程里的 `navigator.mediaCapabilities.decodingInfo()` 只是 GPU **声称**支持
+//    （我们实测 VP9/AV1/H.264 全返回 powerEfficient=true，可画面照样卡）；
+//    而这个 API 读的是 **Chromium 实际启用的特性**（video_decode / vpx_decode / gpu_compositing …）。
+// ── 关注字段：
+//      `video_decode` = `hardware_accelerated` → 真的在硬解
+//      `video_decode` = `unavailable_software` / `disabled_*` → **根本没硬解**（那才是根因）
+//      `vpx_decode`   同上，但专指 VP9/VP8（我们全部素材都是 VP9）
+// ── 日志出现在**启动 Electron 的那个终端**（主进程 stdout），不是浏览器控制台。
+// ============================================================
+app.whenReady().then(async () => {
+  try {
+    await new Promise(r => setTimeout(r, 3000)); // 等 GPU 进程就绪，太早读会拿到空值
+    const status = app.getGPUFeatureStatus();
+    console.log('[Vdia] GPU 特性状态：', JSON.stringify(status, null, 1));
+    console.log(`[Vdia] 结论提示 → video_decode=${status.video_decode} · vpx_decode=${status.vpx_decode}` +
+      `（若含 software/disabled ⇒ 根本没硬解，优先改编码参数；若是 hardware_accelerated ⇒ 才轮到并发/架构问题）`);
+  } catch (e) {
+    console.warn('[Vdia] getGPUFeatureStatus 失败：', e);
+  }
+});
