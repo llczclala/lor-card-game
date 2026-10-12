@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">尘白同人·雪境争锋</string>
+    <string name="title_activity_main">尘白同人·雪境争锋</string>
+    <string name="package_name">com.snowbreak.rivals.official</string>
+    <string name="custom_url_scheme">com.snowbreak.rivals.official</string>
+</resources>
