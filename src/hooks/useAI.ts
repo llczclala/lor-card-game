@@ -87,6 +87,23 @@ const snapshotAIState = (
     consecutivePasses: game.consecutivePasses,
     enemyMana: `${game.enemyMana}/${game.enemySpellMana}`,
     attackTokenEnemy: game.attackToken?.enemy ?? null,
+    // [2026-10-10 莉莉子] **连斩链现场**（本次要的决定性字段）：程实测「茉莉安大招连杀后 AI 宕机」
+    //   时，`animating` 卡了 25s+，而看门狗快照里**完全没有链的信息** ⇒ 无法分辨
+    //   "链还在逐击推进（只是慢）" 还是 "链死在半路（死链）"。
+    //   📏 量级（**已按程的指正修正**）：实战一条链最多清 6~7 个单位、每击 1s
+    //      ⇒ **链本身只有几秒**；`MAX_CHAIN = 20` 只是防死循环的护栏、不可达。
+    //      ⇒ 若快照里 `pendingChain` 已 `done` 却仍在 `animating`，问题不在链的时长。
+    // [2026-10-10 莉莉子 · 二轮审查建议③] 补 `prevPhase` / `casterSide` / `skipBeacon` ——
+    //   `prevPhase` 是"链收尾还原成 animating"这类问题**唯一**的判据，务必带上。
+    pendingChain: game.pendingChain
+        ? {
+            step: game.pendingChain.step, done: game.pendingChain.done,
+            victimId: game.pendingChain.victimId,
+            prevPhase: game.pendingChain.prevPhase,
+            casterSide: game.pendingChain.casterSide,
+            skipBeacon: !!game.pendingChain.skipBeacon,
+          }
+        : null,
     enemyHand: (live.enemyHand ?? []).map(c => c?.key),
     enemyBench: (live.enemyBench ?? []).map(c => c?.key),
     combatFieldLen: (live.combatField ?? []).length,

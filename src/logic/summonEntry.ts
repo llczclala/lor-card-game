@@ -26,7 +26,15 @@ import type { RogueTriggerCtx, Side } from './rogueTrigger'; // ⚠️ **只 imp
  */
 export interface SummonEntryDeps {
     processEffect: (effectId: string, targets: any[], ctx: any) => any;
-    runRogueTrigger: (ctx: RogueTriggerCtx, enhancements: any, trigger: string) => void;
+    /**
+     * ⚠️ [2026-10-10 莉莉子 · 修复 TS2322 @ `effectProcessor.ts:5211`]
+     *   `trigger` 写 `any`、**不是 `string`** —— 原因：
+     *   `effectProcessor` 里 `runRogueTrigger` 的形参是**字面量联合**（`BattleTrigger`），
+     *   而函数赋值的参数是**逆变**的 ⇒ 目标类型写 `string` 会拒绝那个更窄的实现（TS2322）。
+     *   刻意不 import 那个类型：本模块的规矩是「**只 import type、保持零环**」，
+     *   且相邻的 `enhancements` 本就是 `any` —— 同一个 DI 接缝、同一口径。
+     */
+    runRogueTrigger: (ctx: RogueTriggerCtx, enhancements: any, trigger: any) => void;
 }
 
 let deps: SummonEntryDeps | null = null;

@@ -20,6 +20,7 @@ import { checkCardLevelUp, accumulateMauxirDamage, applyBeaconDeaths, isSummoner
 import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
 import { bumpAnimProgress, animGuard, ANIM_STALL_MS, LEVELUP_STALL_GRACE_MS } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳 · [2026-10-05] + 升级链宽限阈值
 import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
+import { applyBeaconFuse } from '../utils/beaconFuse'; // [2026-10-09 莉莉子 BUG修复 · BUG-20261009-01] 信标引爆倒计时的唯一实现（进攻宣告 + 飞剑造剑 两个调用点共用）
 // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 【无法攻击】归零/还原的**唯一出口**（模块级账本，hook 与纯逻辑层共用）
 import { applyCantAttackZeroPower, restoreCantAttackPower } from '../utils/cantAttackLedger';
 // [2026-10-05 莉莉子 BUG修复 · 20261005-12] 「unit_die 强化已派发」账本（与 `isDead` 解耦；见文件头注释）
@@ -454,6 +455,18 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const triggerShake = () => {
         setGame(prev => ({ ...prev, screenShake: true }));
         setTimeout(() => setGame(prev => ({ ...prev, screenShake: false })), 500);
+    };
+
+    // [2026-10-07 莉莉子 · 打击感] 分档震屏 —— 专供战斗撞水晶路径。
+    //   ── 背景：`triggerShake` 全项目**只被法术路径调用**（spells.ts:109），
+    //      所以"法术打水晶会全屏震、单位拼死冲上去砸水晶只有水晶自己抖 4px"，力度感是反的。
+    //   ── 为什么不直接改 triggerShake 的签名：那会连带改动 spells.ts / useSpellSystem.ts 的类型声明，
+    //      而法术路径不在本次范围内 ⇒ 这里**新增**一个函数，法术路径零影响。
+    //   ── 档位时长与 index.css 的 .animate-shake-{sm,md,lg} 一一对应，改一处必须改两处。
+    const NEXUS_SHAKE_MS: Record<'sm' | 'md' | 'lg', number> = { sm: 180, md: 280, lg: 420 };
+    const triggerNexusShake = (level: 'sm' | 'md' | 'lg') => {
+        setGame(prev => ({ ...prev, screenShake: level }));
+        setTimeout(() => setGame(prev => ({ ...prev, screenShake: undefined })), NEXUS_SHAKE_MS[level]);
     };
 
     // ==========================================
@@ -1246,7 +1259,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     // 监听到广播后，不再直接修改状态，而是向微队列中推入一个待办动作
     // ==========================================
     useEffect(() => {
-        const handleNexusStrike = (payload: { target: 'player' | 'enemy', amount: number }) => {
+        const handleNexusStrike = (payload: { target: 'player' | 'enemy', amount: number; floatOnly?: boolean }) => {
+            // [2026-10-10 莉莉子] **"只演出"的水晶事件不排微队列** ——
+            //   首个使用方：「镜阵回响」（`rogueTrigger` 的 `NEXUS_REPEAT_STRIKE` 兑现段）的回合末再击。
+            //   它要**飘字 / 震屏 / 音效**（故必须发正牌 `NEXUS_STRIKED`），但它**不是一次"打击"**
+            //   ⇒ 不能计入卜卜的目睹进度、更不能再次触发 `on_nexus_strike`（那正是回环）。
+            if (payload.floatOnly) return;
             // [2026-08-27] 双方水晶受击都入微队列（卜卜目睹/玩家强化只在敌方被打触发；敌方强化在我方被打触发）
             pendingActionsRef.current.push({ type: 'NEXUS_STRIKED', payload });
         };
@@ -1366,7 +1384,19 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             hasLeveledUp = true;
             const leveled = { ...getLeveledUpCard(card), id: card.id };
             // 严防死守：死人禁止诈尸升级
-            if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
+            // ══════════════════════════════════════════════════════════════════
+            // [2026-10-10 莉莉子 BUG修复 · 程实测] 判据由"只看 `animState`"改为**统一存活判据**
+            //   `isStrikeTargetAlive`；且**必须判 Lv1 的 `card`，绝不能判 `leveled`**。
+            // ── 病根：`animState === 'dying'` **只有战斗结算（combat.ts）会写**；法术路径
+            //    （单挑 / 王见王）打死人**只累加 `damageTaken`**，`animState` 只写 `'hit'`
+            //    （effectProcessor.ts:1266）⇒ 被「单挑」打死的天启者在这道门下**仍被判为存活**
+            //    ⇒ 照常入队、照常播升级影片（程：「里芙明明已经被击败了，却还是升级正常播放了升级影片」）。
+            //    这与 2026-09-15「打击成长救活尸体」是**同一个病根**（见 `isStrikeTargetAlive` 注释），
+            //    升级链路是当时没扫到的另一处 ⇒ 故直接复用那个唯一出口，不再自造第二份判据。
+            // ── 为什么不能判 `leveled`：`getLeveledUpCard` 会给里芙 `health + 1`（gameRules.ts:500）
+            //    ⇒ 一具 `damageTaken` 刚好打满 Lv1 血量的尸体，在升级后的卡上会被算成 hp=1 ⇒ 判活。
+            // ══════════════════════════════════════════════════════════════════
+            if (isStrikeTargetAlive(card)) {
                 leveledHeroes.push(leveled);
                 leveledSides.push(side);
             }
@@ -1840,7 +1870,79 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         setMessage("选择进攻单位");
     };
 
+    // ==========================================
+    // [2026-10-10 莉莉子 · 程拍板] 神格①③「猎影援护 / 猎影疾袭」：**在"点击进攻之后"才兑现**
+    // ── 为什么挪：原先在"拉取（装配战线）那一瞬间"就发 `on_pull_exposed` ⇒ 加成在玩家
+    //    还能**撤回进攻**时就到手（程：「我本来预期这样会无限刷 BUFF」）；撤回本身又撞上
+    //    空 `attacker` 的战線直接黑屏（同批已补空值护栏）。
+    // ── 现在：拉取只打 `fromExposePull` 标记（`effectProcessor` 的猎影分支）；本函数在
+    //    `commitAttack` / `confirmBlock`（＝玩家点了进攻、或防线确认）里被调用 ⇒ 已过"可撤回"窗口，
+    //    且**这次进攻本身就吃到加成**（+2/+0、或 +3/+0 与【快速攻击】）。
+    // ── 一次性：兑现后**清掉标记** ⇒ 同一条战线无论从哪个入口进来都只发一次。
+    // ── 口径与 `challengeEnemy` 的同名站点完全一致（只对 **player** 拥有的战线触发、只回写脏切片）。
+    // ==========================================
+    const grantExposePullBuffs = () => {
+        const snap = stateRef.current;
+        const marked = (snap.combatField || []).filter((f: any) => f?.fromExposePull && f?.attacker);
+        if (marked.length === 0) return;
+
+        let game = { ...snap.game };
+        let combatField: any[] = snap.combatField.map((f: any) => ({ ...f }));
+        let playerBench = [...snap.playerBench];
+        let enemyBench = [...snap.enemyBench];
+        let playerHand = [...snap.playerHand];
+        let enemyHand = [...snap.enemyHand];
+        const playerDeck = [...snap.playerDeck];
+        const enemyDeck = [...snap.enemyDeck];
+
+        for (const line of marked) {
+            // 神格是**玩家**的 run 强化（`buffs.ts` 的 divfx_marian_1/3 均 `playerEligible:false`）
+            // ⇒ 与 challengeEnemy 站点同口径：只对 player 拥有的战线触发。
+            if (line.owner !== 'player') continue;
+            const pullCtx: RogueTriggerCtx = {
+                game,
+                playerBench, enemyBench, combatField,
+                playerHand, enemyHand,
+                playerDeck, enemyDeck,
+                owner: 'player',
+                trigger: 'on_pull_exposed',
+                createFullCard,
+                info: { playedCard: line.attacker }, // BUFF handler 的加成对象 = 发起拉取者
+                dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
+            };
+            runRogueTrigger(pullCtx, game.rogueEnhancements, 'on_pull_exposed');
+            // 脏切片回写（与 challengeEnemy / effectProcessor 猎影分支的同名片段同构）
+            if (pullCtx.dirty.game) game = { ...pullCtx.game };
+            if (pullCtx.dirty.field) combatField = [...pullCtx.combatField];
+            if (pullCtx.dirty.bench.has('player')) playerBench = pullCtx.playerBench;
+            if (pullCtx.dirty.bench.has('enemy')) enemyBench = pullCtx.enemyBench;
+            if (pullCtx.dirty.hand.has('player')) playerHand = pullCtx.playerHand;
+            if (pullCtx.dirty.hand.has('enemy')) enemyHand = pullCtx.enemyHand;
+        }
+
+        // **清标记**（兑现凭据一次性）—— 与上面的加成写回放在**同一批**提交里
+        combatField = combatField.map((f: any) => (f?.fromExposePull ? { ...f, fromExposePull: false } : f));
+
+        setGame(game);
+        setCombatField(combatField);
+        setPlayerBench(playerBench);
+        setEnemyBench(enemyBench);
+        setPlayerHand(playerHand);
+        setEnemyHand(enemyHand);
+        // 同步快照：紧随其后的 commitAttack / confirmBlock 必须读到"加成之后"的战场
+        stateRef.current.game = game;
+        stateRef.current.combatField = combatField;
+        stateRef.current.playerBench = playerBench;
+        stateRef.current.enemyBench = enemyBench;
+        stateRef.current.playerHand = playerHand;
+        stateRef.current.enemyHand = enemyHand;
+    };
+
     const commitAttack = () => {
+        // [2026-10-10 莉莉子 · 程拍板] **猎影援护/疾袭 在这里兑现**（拉取时只打标记）。
+        //   放在最前：紧随其后的 `stateRef.current.combatField` 必须已经是"加成之后"的战场，
+        //   这样**这次进攻本身就吃到** +2/+0（或 +3/+0 与【快速攻击】）。
+        grantExposePullBuffs();
         const currentCombatField = stateRef.current.combatField; // 提取绝对新鲜的战场快照
         if (currentCombatField.length === 0) {
             setGame(prev => ({ ...prev, phase: 'main', lastActionTimestamp: Date.now() }));
@@ -2108,74 +2210,30 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             const challengedBySide: Record<'player' | 'enemy', number> = { player: 0, enemy: 0 };
             initialFighters.forEach(f => {
                 const side = f.owner === 'enemy' ? 'enemy' : 'player';
-                if (f.attacker) attackersBySide[side] += 1;
+                // [2026-10-09 莉莉子 BUG修复 · BUG-20261009-01] 已由「造剑处」计入倒计时的飞剑跳过
+                //   ── 可达场景：玩家在 attack_declare 期间用**快速**飞剑法术（御剑归鞘 / 剑鸣回响）召剑，
+                //      那两把剑此刻已在交战区里；若不跳过，本处会**再数一次** ⇒ 2 把剑扣 4 血。
+                //      （飞剑造剑处 `effectProcessor` 的 FLYING_SWORD 分支打此标记）
+                if (f.attacker && !(f.attacker as any).beaconFuseCounted) attackersBySide[side] += 1;
                 if (f.isChallenged) challengedBySide[side] += 1;
             });
 
-            /** 给单个獠牙信标挂伤害；非信标 / 已死 → 原样返回（引用不变，便于判空） */
-            const hitBeaconOne = (c: CardData, amount: number): CardData => {
-                if (!(amount > 0 && c.key === 'Marian_Wolf_Tooth_Beacon' && !c.isDead && c.animState !== 'dying')) return c;
-                // [2026-09-19] 补推 unit_damage：此前倒计时掉血**连事件都不发**
-                //   ⇒ 没有飘字、也没有受击音（程报"信标掉血完全无声"就是这个）
-                eventBus.emit('unit_damage', { id: c.id, amount, key: c.key }); // key 供音效层路由「信标专属受击音」
-                return { ...c, damageTaken: (c.damageTaken || 0) + amount, animState: 'hit' as const };
-            };
+            // [2026-10-09 莉莉子 BUG修复 · BUG-20261009-01] 规则实现已**收口**到 `utils/beaconFuse.ts`
+            //   ── 病根：这段原先只长在本函数里，于是"绕开 commitAttack 进场的飞剑"从不结算倒计时。
+            //      现在同一份规则被两个调用点共用：本处（进攻宣告）+ effectProcessor 造剑处（飞剑）。
+            //   ── ⚠️ 计数口径**不变**：仍是 `initialFighters`（宣告时的参战者快照）。
+            const fused = applyBeaconFuse({
+                playerBench: tempPlayerBench,
+                enemyBench: tempEnemyBench,
+                combatField: tempCombatField,
+                attackersBySide,
+                challengedBySide,
+                source: '进攻宣告',
+            });
 
-            /** 备战席版：整排扫；无变化则返回原引用 */
-            const damageBeacon = (bench: CardData[], amount: number): CardData[] => {
-                if (amount <= 0) return bench;
-                let hit = false;
-                const next = bench.map(c => {
-                    const n = hitBeaconOne(c, amount);
-                    if (n !== c) hit = true;
-                    return n;
-                });
-                return hit ? next : bench;
-            };
-
-            // [2026-09-18 BUG修复] 交战区版 —— 信标被【暴露】拉上场格挡时，只扫备战席会让它「隐身」，
-            //   导致「进攻 N 个单位 → 信标 −N」对场上信标完全不结算。
-            //   归属判定：attacker 属 fight.owner，blocker 属对面。
-            const damageBeaconInField = (field: typeof tempCombatField, dmgForPlayer: number, dmgForEnemy: number): typeof tempCombatField => {
-                if (dmgForPlayer <= 0 && dmgForEnemy <= 0) return field;
-                let changed = false;
-                const next = field.map(fight => {
-                    let nf = fight;
-                    if (fight.attacker) {
-                        const n = hitBeaconOne(fight.attacker, fight.owner === 'player' ? dmgForPlayer : dmgForEnemy);
-                        if (n !== fight.attacker) { nf = { ...nf, attacker: n }; changed = true; }
-                    }
-                    if (fight.blocker) {
-                        const blockerSide = fight.owner === 'player' ? 'enemy' : 'player';
-                        const n = hitBeaconOne(fight.blocker, blockerSide === 'player' ? dmgForPlayer : dmgForEnemy);
-                        if (n !== fight.blocker) { nf = { ...nf, blocker: n }; changed = true; }
-                    }
-                    return nf;
-                });
-                return changed ? next : field;
-            };
-
-            // 玩家进攻 → 敌方备战席的信标掉血；敌方进攻 → 我方备战席的信标掉血
-            // [2026-09-18 T08②] 被拉取格挡的额外 −1 一并计入
-            const dmgToEnemyBeacon = attackersBySide.player + challengedBySide.player;
-            const dmgToPlayerBeacon = attackersBySide.enemy + challengedBySide.enemy;
-            const nextEnemyBenchAfterBeacon = damageBeacon(tempEnemyBench, dmgToEnemyBeacon);
-            const nextPlayerBenchAfterBeacon = damageBeacon(tempPlayerBench, dmgToPlayerBeacon);
-            // [2026-09-18 BUG修复] 交战区一并结算（信标被拉上场格挡时不再漏算）
-            const nextCombatFieldAfterBeacon = damageBeaconInField(tempCombatField, dmgToPlayerBeacon, dmgToEnemyBeacon);
-
-            if (nextEnemyBenchAfterBeacon !== tempEnemyBench) {
-                setEnemyBench(nextEnemyBenchAfterBeacon);
-                console.log(`[BeaconDebug] 引爆倒计时：玩家进攻 ${attackersBySide.player} 个单位 + 被拉取格挡 ${challengedBySide.player} 次 → 敌方信标 −${dmgToEnemyBeacon}`);
-            }
-            if (nextPlayerBenchAfterBeacon !== tempPlayerBench) {
-                setPlayerBench(nextPlayerBenchAfterBeacon);
-                console.log(`[BeaconDebug] 引爆倒计时：敌方进攻 ${attackersBySide.enemy} 个单位 + 被拉取格挡 ${challengedBySide.enemy} 次 → 我方信标 −${dmgToPlayerBeacon}`);
-            }
-            if (nextCombatFieldAfterBeacon !== tempCombatField) {
-                setCombatField(nextCombatFieldAfterBeacon);
-                console.log(`[BeaconDebug] 引爆倒计时：交战区内的信标一并结算（玩家侧 −${dmgToPlayerBeacon} / 敌方侧 −${dmgToEnemyBeacon}）`);
-            }
+            if (fused.enemyBench !== tempEnemyBench) setEnemyBench(fused.enemyBench);
+            if (fused.playerBench !== tempPlayerBench) setPlayerBench(fused.playerBench);
+            if (fused.combatField !== tempCombatField) setCombatField(fused.combatField);
         }
         setGame(prev => ({
             ...(hasEffectTriggered ? tempGame : prev),
@@ -2191,6 +2249,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
     // [核心修复 1] 斩断直连结算！防守方确认格挡后，切入响应阶段，并把优先权踢回给进攻方
     const confirmBlock = () => {
+        // [2026-10-10 莉莉子 · 程拍板] 猎影援护/疾袭的**另一个兑现入口**：
+        //   猎影的额外攻击会把阶段推到 `block_declare`（`isExtraAttack` 强制格挡）⇒
+        //   玩家点的可能是「防线确认」而不是「进攻」。两处都调、靠 `fromExposePull` 标记
+        //   保证**只发一次**（先到先得，后到的查不到标记）。
+        grantExposePullBuffs();
         // [2026-07-21 对局记录] 格挡宣告 — 收集所有阻挡者
         const blockField = stateRef.current.combatField;
         const playerBlockers = blockField.filter(f => f.blocker && f.owner === 'enemy');
@@ -2483,7 +2546,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                     hasLeveledUp = true;
                     const leveled = cloneWithLedger(updatedCard, { ...getLeveledUpCard(updatedCard), id: updatedCard.id });
                     // [核心] 阵亡隔离锁：死者严禁入队升级！
-                    if (leveled.animState !== 'dying' && leveled.animState !== 'ephemeral_dying') {
+                    // [2026-10-10 莉莉子 BUG修复] 判据同「全场升级扫描」那处，改用统一出口 `isStrikeTargetAlive`：
+                    //   法术路径（单挑 / 王见王 / 剧毒 / 献祭）打死人**只累加 `damageTaken`**、
+                    //   `animState` 只写 `'hit'` ⇒ 只看 animState 在这条路上同样拦不住。
+                    //   **判 Lv1 的 `updatedCard`、不判 `leveled`**：`getLeveledUpCard` 会给里芙 +1 生命，
+                    //   拿升级后的卡判血量会把"刚好被打满"的尸体算成存活。
+                    if (isStrikeTargetAlive(updatedCard)) {
                         leveledHeroes.push(leveled);
                     }
                     return leveled;
@@ -3397,6 +3465,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const chainStrikeStep = () => {
         const chain = stateRef.current.game.pendingChain;
         if (!chain || chain.done) return;
+        // [2026-10-10 莉莉子 · 二轮独立审查建议①] **每击续一次"进展"心跳** ——
+        //   animating 看门狗的判据是"距上次 `bumpAnimProgress` 超过 25s"，而连斩的逐击路径
+        //   此前**一处都没打点** ⇒ 判据实际是"链从起点起 25s 内必须收尾"；
+        //   再加上 hidden/暂停早退不刷心跳，**切后台 / 休眠唤醒后墙钟一跳**就会在活链中途
+        //   被误判成停滞并强推。现在每击都续心跳 ⇒ 语义变成"**多久没有新的一击**"，活链永不误伤。
+        bumpAnimProgress();
         const snap = stateRef.current;
         const ctx: EffectContext = {
             game: { ...snap.game },
@@ -3516,25 +3590,49 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             });
 
             // 音效与节奏控制
-            let impactDelay = isAttackerDead ? 0 : (swingMiss ? 200 : 250); // 死人不出刀前摇；挥空只等晃动节奏
+            // ==========================================================
+            // [2026-10-10 莉莉子 · 打击感] 拆成**两个时点**：撞点（音效）与结算点（伤害/状态）。
+            //   为什么必须拆开 —— 这两件事对"能不能提前"的约束完全相反：
+            //   · 音效只是播声音 ⇒ 提前到撞点**零风险** ✅
+            //   · 结算会把卡牌 animState 从 'attacking' 翻成 'hit'，而 animClass 是
+            //     "当前 animState 的**纯函数**"（Card.tsx:1074-1117）⇒ 若在撞点结算，
+            //     就会**在撞点那一帧把 bump 动画整段摘掉**，卡牌从 -200px / -450px
+            //     **一帧跳回原位**（瞬移）。bump 动画 0.3s、quick-dash 0.4s，
+            //     所以结算必须等冲刺动画走完 —— 这就是旧值 400 / 470 / 350 的来历，
+            //     它们不是随手写的数，是在躲动画长度。**不要把结算提前到撞点。**
+            //   ⚠️ 撞点真源 = CSS keyframe 的百分比（index.css），改 keyframe 必须同步这里：
+            //      bump-*         0.3s × 50%      = 150ms（有格挡对撞）
+            //      bump-*-long    0.3s × 40%      = 120ms（无格挡直击水晶）
+            //      quick-dash-*   0.4s × 40~60%   = 160~240ms，取中点 200ms（先攻）
+            // ==========================================================
+            const impactAt = isAttackerDead ? 0
+                : swingMiss ? 200          // 挥空：无撞击，不发撞击音
+                : hasQuickAttack ? 200     // 先攻冲刺刺入中心
+                : (blocker ? 150 : 120);   // 有格挡对撞 / 直击水晶
+
+            // 结算点：与旧值逐一对应（0 / 350 / 400 / 470），一律晚于冲刺动画
+            const damageAt = isAttackerDead ? 0
+                : swingMiss ? 350          // 挥空：等晃动演完（swing-miss 0.5s）
+                : hasQuickAttack ? 470     // quick-dash 0.4s + 余量
+                : 400;                     // bump 0.3s + 余量
 
             if (!isAttackerDead && !swingMiss) {
                 if (!blocker) {
-                    setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NEXUS), 250);
+                    setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NEXUS), impactAt);
                 } else {
                     if (hasQuickAttack) {
-                        setTimeout(() => eventBus.emit(GameEvents.SFX_QUICK_ATTACK), 320);
-                        // [新增] 格挡者反击快攻音效，略延后以体现反击时序
-                        setTimeout(() => eventBus.emit(GameEvents.SFX_QUICK_BLOCK), 450);
-                        impactDelay = 320;
+                        setTimeout(() => eventBus.emit(GameEvents.SFX_QUICK_ATTACK), impactAt);
+                        // 格挡者的反击走 delayed-bump（1s × 70% = 700ms 才是它自己的撞点）
+                        // ⇒ 反击音对齐到 700ms（旧值 450ms 比它的动画早了 250ms）
+                        setTimeout(() => eventBus.emit(GameEvents.SFX_QUICK_BLOCK), 700);
                     } else {
-                        setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NORMAL), 250);
+                        setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NORMAL), impactAt);
                     }
                 }
             }
 
-            // 等待直到撞击发生
-            await wait(impactDelay + (isAttackerDead ? 0 : 150));
+            // 等待直到撞击结算（不是撞点 —— 见上方"瞬移"说明）
+            await wait(damageAt);
             const gameSnapshot = stateRef.current.game;
             const result = isDoubleStrikeFight
                 ? resolveDoubleStrikeCombat(currentFight, gameSnapshot)
@@ -3608,7 +3706,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                         return n;
                     });
                     // 第二击音效（普通攻击撞击）
-                    setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NORMAL), 0);
+                    // [2026-10-10 莉莉子 · 打击感] 第二撞走 bump-*-second（0.3s × 50% = 150ms 撞点）
+                    // ⇒ **音效**对齐到 150ms（旧值 0 比撞点早了 150ms）。
+                    // ⚠️ 但**结算仍留在 400ms**：`unit_damage` 会把该卡 localShake 置真
+                    //    （Card.tsx:721），从而在撞点那一帧把 bump-*-second 摘掉造成瞬移
+                    //    —— 与第一击同一条约束（见上方 impactAt / damageAt 说明）。
+                    setTimeout(() => eventBus.emit(GameEvents.SFX_STRIKE_NORMAL), 150);
                     await wait(400);
                     // ③ 第二击伤害飘字
                     emitStrikeDamage(dsResult.strike2.attackerDamage, dsResult.strike2.blockerDamage);
@@ -3864,6 +3967,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 const combatNexusImmune = isNexusImmune(stateRef.current.game, result.nexusDamage.target);
                 const combatFinalAmount = combatNexusImmune ? 0 : (combatNexusTough ? Math.max(0, result.nexusDamage.amount - 1) : result.nexusDamage.amount);
                 if (combatFinalAmount > 0) {
+                    // [2026-10-07 莉莉子 · 打击感] 单位撞水晶补上分档震屏。
+                    //   此前的力度感是反的：法术打水晶 → 全屏震；单位冲破防线撞上水晶 → 只有水晶自己抖 4px。
+                    //   量级分档：≥5 重震 / ≥3 中震 / 其余轻震。
+                    //   免疫 ⇒ combatFinalAmount 为 0 ⇒ 这里整个跳过，与"免疫时飘字也归零"同一口径（不留假反馈）。
+                    triggerNexusShake(combatFinalAmount >= 5 ? 'lg' : combatFinalAmount >= 3 ? 'md' : 'sm');
                     eventBus.emit(GameEvents.NEXUS_STRIKED, { target: result.nexusDamage.target, amount: combatFinalAmount, fromCombat: true }); // [2026-09-19] 战斗已播水晶打击音，音效层据此跳过
                 }
 
@@ -5514,13 +5622,21 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
             // ── 为什么"我方挑战敌人后撤回进攻"看起来正常、而暴露场景会消失：两者其实是同一条路径，
             //    差别只在用户点的是"撤回格挡"（走 recallBlocker ✓）还是"撤回进攻"（走本分支 ✗）。
             // =====================================
-            const fightIndex = combatField.findIndex(c => c.attacker.id === card.id);
+            // [2026-10-10 莉莉子 BUG修复 · 程实测「撤回进攻 → 黑屏」]
+            //   ── 崩溃栈：`Cannot read properties of undefined (reading 'id')`，落在本函数的
+            //      `combatField.filter(c => c.attacker.id …)` 上 ⇒ **某条战线的 `attacker` 是空值**。
+            //      `combatField` 在类型上是 `any[]`（`types.ts:305`），而死亡漏斗
+            //      （`judgeLifeAndDeath` 里 `attacker: entry.attacker ? … : null`）本来就会产出
+            //      **无 attacker 的战線** ⇒ 这里绝不能裸读 `.id`。
+            //   ── 修法：两处判据都改**可选链**（`?.id`）—— 空 attacker 的战線既不参与"是不是我要撤回的
+            //      那条"，也不会被误删（保持既有数组内容不变，交给死亡漏斗处理）。
+            const fightIndex = combatField.findIndex(c => c.attacker?.id === card.id);
             if (fightIndex !== -1 && combatField[fightIndex].blocker) {
                 recallBlocker(fightIndex);
             }
 
             setCombatField(prev => {
-                const nextField = prev.filter(c => c.attacker.id !== card.id);
+                const nextField = prev.filter(c => c.attacker?.id !== card.id);
                 // [Case 1 自动推进] 撤回单位后，检查战场是否已空。若空且处于进攻宣告期，自动退回主阶段
                 const hasPlayerAttackers = nextField.some(c => c.owner === 'player');
                 if (!hasPlayerAttackers && stateRef.current.game.phase === 'attack_declare') {
@@ -6147,8 +6263,23 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     const queueLevelUp = (card: CardData) => {
         // [新增] 阵亡隔离锁：死者严禁入队升级！
         // 即使英雄达成了条件，只要此时它的状态是死亡或消散，直接没收排队券
-        if (card.animState === 'dying' || card.animState === 'ephemeral_dying') {
-            console.log(`[LevelUp System] 拒绝入队：英雄 ${card.name} 已阵亡。`);
+        // ══════════════════════════════════════════════════════════════════
+        // [2026-10-10 莉莉子 BUG修复] 判据由"只看 `animState`"改为**统一存活判据**
+        //   `isStrikeTargetAlive`（与升级扫描那处同口径，见本文件升级扫描段的注释）：
+        //   法术路径（单挑 / 王见王）打死人**只累加 `damageTaken`**、`animState` 只写 `'hit'`
+        //   ⇒ 只看 animState 拦不住，死者照样拿到排队券。
+        //   `isStrikeTargetAlive` 额外覆盖 `!isDead` 与"真实血量 ≤ 0"（与 combat.ts 的 `getCurrentHP` 同构）。
+        // ⚠️ 边界说明：本函数收到的是**升级后（Lv2）**的卡（唯一调用点 :4249 传的是 `leveledCard`），
+        //    而 Lv2 的 `health` 比 Lv1 高（里芙 +1）⇒"刚好被打满"这种边界在 Lv2 卡上算不出来；
+        //    那条边界由**上游唯一调用点自己的 Lv1 存活门**兜住（combat.ts:499 / 512 的
+        //    `getCurrentHP(newAttacker) > 0`）。本函数这一道是**结构性兜底**（isDead / 消散态），
+        //    且**绝无误杀**：Lv2 生命 ≥ Lv1 ⇒ 上游判活的卡在这里必然也判活。
+        // ══════════════════════════════════════════════════════════════════
+        // ⚠️ 先把名字取出来：`isStrikeTargetAlive` 是**类型守卫**（`c is CardData`），
+        //    写成 `if (!isStrikeTargetAlive(card))` 后假分支里 `card` 会被 TS 收窄成 `never` ⇒ `card.name` 报错。
+        const rejectedHeroName = card.name;
+        if (!isStrikeTargetAlive(card)) {
+            console.log(`[LevelUp System] 拒绝入队：英雄 ${rejectedHeroName} 已阵亡。`);
             return;
         }
 
@@ -6478,13 +6609,38 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 spellStack: g.spellStack.map((s: any) => s.card?.key),
                 combatFieldLen: stateRef.current.combatField.length,
                 attackToken: g.attackToken,
+                // [2026-10-10 莉莉子] 补**连斩链现场**（与 AI 看门狗同字段）——
+                //   用来分辨"大招连斩还在逐击推进（只是慢）"还是"链死在半路"。
+                //   📏 量级（已按程指正修正）：链最多清 6~7 个单位、每击 1s ⇒ **链本身只有几秒**；
+                //      `MAX_CHAIN = 20` 只是护栏、不可达 ⇒ 别再把 20s 当解释。
+                // [2026-10-10 莉莉子 · 二轮审查建议③] 补 `prevPhase` / `casterSide` / `skipBeacon` ——
+                //   `prevPhase` 是本类问题（"链收尾还原成 animating"）**唯一**的判据，务必带上。
+                pendingChain: g.pendingChain
+                    ? {
+                        step: g.pendingChain.step, done: g.pendingChain.done,
+                        victimId: g.pendingChain.victimId,
+                        prevPhase: g.pendingChain.prevPhase,
+                        casterSide: g.pendingChain.casterSide,
+                        skipBeacon: !!g.pendingChain.skipBeacon,
+                      }
+                    : null,
             });
             recoverCombatSurvivors(stateRef.current.combatField, stateRef.current.playerBench, stateRef.current.enemyBench, {
                 setPlayerBench, setEnemyBench, setCombatField, setGame,
             });
             setGame(prev => prev.phase === 'animating'
                 ? { ...prev, phase: 'main' as const, spellStack: [], spellCasting: null, activeCard: null,
-                    consecutivePasses: 0, lastActionTimestamp: Date.now() }
+                    consecutivePasses: 0, lastActionTimestamp: Date.now(),
+                    // [2026-10-10 莉莉子 · 二轮独立审查后**撤回**] 这里刻意**不碰 `pendingChain`**：
+                    //   曾试过"停滞时把未完成的链标 `done`"，审查证明它既没用又有害 ——
+                    //   ① 正常链收尾时 `done` 已是 true ⇒ 三元返回**同一引用** ⇒ 驱动器不重跑 ⇒ 空操作；
+                    //   ② 它用**新引用**唤醒驱动器 ⇒ 收尾分支按 `prevPhase` 写回时会把看门狗刚设的
+                    //      `main` 顶掉 ⇒ 死链恢复反而慢一拍；
+                    //   ③ 切后台 / 休眠唤醒后墙钟一跳，看门狗可能在**活链中途**开火 ⇒ 标 done 会
+                    //      **掐掉剩余击数**（改动前不会）。
+                    //   ⇒ 根因在别处：连斩把"链之前的 phase"录成了 `animating` 本身
+                    //      （`effectProcessor.ts` 的 `prevPhase` 取值已修）；活链防误伤见连斩驱动器的**每击心跳**。
+                  }
                 : prev);
         }, 5000);
         return () => clearInterval(iv);

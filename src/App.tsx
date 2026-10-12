@@ -822,6 +822,10 @@ export default function App() {
     setPreBattleHpSnapshot(null);
     setRogueEncounter(null);
     setRogueReward(null);
+    // [2026-10-10 程拍板 · 独立审查 P1] 同 `handleRogueFinalDefeat`：**清掉"事件战斗"标记**。
+    //   这里尤其关键 —— 它后面紧跟 `resetRun()`，而 `rogueEventBattle` 是 **App 层 state**、
+    //   不随 run 一起清 ⇒ 会跨局活到新开局，把新局第一场普通胜利误判成事件战斗胜利（地图锁死）。
+    setRogueEventBattle(null);
     setRogueBattleType(null);
     setRogueBattleNodeId(null);
     playBgm('default');
@@ -876,11 +880,15 @@ export default function App() {
     return weightedPick(pool, e => equipTable[e.rarity] ?? 0)?.id;
   };
 
-  const handleRogueVictory = (playerNexus?: number, ovType?: RogueNodeType, ovNodeId?: string) => {
-    if (!rogue.run) return;
-    // [2026-08-29] 一键胜利（节点详情）时用 override 的节点类型/id；否则用当前战斗状态
-    const battleType = ovType ?? rogueBattleType;
-    const battleNodeId = ovNodeId ?? rogueBattleNodeId;
+  /**
+   * [2026-10-10 莉莉子 · 收口] **"战斗结束"两项通用结算 —— 唯一出口**
+   *   ① 播种希望投资兑现（`battleWinGold`）  ② 武装/强化线的"战斗结束"金币（凯旋之匣 / 拾荒）。
+   *   ⚠️ 为什么必须收成一个出口：**开发者「一键通过」也要跑这两步**（它按"打赢"结算，不能少结算）。
+   *     原先这两步内联在 `handleRogueVictory` 开头，而一键通过那条路**绕过** `handleRogueVictory` ⇒
+   *     投资不消化、武装结算不发（2026-10-10 独立审查 **P1** 抓出）。
+   *   @param playerNexus 战斗结束时的剩余水晶（一键通过没有真打 ⇒ 传当前水晶，等价于"打赢且水晶未受损"）
+   */
+  const settleBattleEndCommon = (playerNexus?: number) => {
     // [2026-08-28 事件] 战斗胜利投资回报（播种希望）：任何战斗胜利都结算
     const goldInvs = rogue.consumeInvestments('battleWinGold');
     if (goldInvs.length) {
@@ -892,40 +900,80 @@ export default function App() {
     // [2026-09-25 莉莉子 武装线/强化线] 战斗结束结算（凯旋之匣：天启者存活 +金币 / 拾荒：水晶达标 +金币）。
     //   放在事件战斗早返回之前，两条路径都能吃到；playerNexus 是战斗结束时的剩余水晶
     rogue.settleArmamentBattleEnd(playerNexus);
+  };
+
+  /**
+   * [2026-10-10 莉莉子 · 收口] **事件战斗（待战）胜利结算 —— 唯一出口**
+   *   两条路都走这里：① 真打赢（`handleRogueVictory` 的 `rogueEventBattle` 分支）
+   *   ② 开发者「一键通过」（在地图节点面板上直接把这场仗按"打赢"结算，不必先进战斗）。
+   *   ⚠️ 为什么必须收成一个出口：这段含**两段式奖励**（强化/固定天启者卡 → 卡牌三选一）、
+   *     `clearPendingBattle`、HP 写回、回地图 —— 抄第二份必然漂移（本项目反复踩过的病）。
+   *   @param nodeId 这场仗挂在哪个节点（胜利后 `clearPendingBattle` + 取奖励配置）
+   *   @param playerNexus 战斗剩余水晶：**真打赢**传数字 ⇒ HP 写回；
+   *                      **没有真打过**（一键通过）传 `null` ⇒ **完全不碰 HP**
+   *                      [三轮审查 F2] 类型收成 `number | null`（**不要**再留 `undefined`）——
+   *                      三值让"没打过"与"漏传"无法区分，且漏传会落进"真打赢"分支写回闭包旧 HP。
+   *   @param rewardFallback `pendingBattles` 缺失时的奖励口径兜底（真打赢路径传 `rogueEventBattle.reward`）
+   */
+  const settleEventBattleVictory = (
+    nodeId: string | null,
+    playerNexus: number | null,
+    rewardFallback: 'enhancement' | 'choose2',
+  ) => {
+    if (!rogue.run) return;
+    const pending = nodeId ? rogue.run.pendingBattles?.[nodeId] : undefined;
+    const reward = pending?.reward ?? rewardFallback;
+    const rewardResults: EventApplyResult[] = [];
+    // ① 执行**选择时扣下**的奖励（指定强化 / 天启者卡）—— 程：「赢了之后才会获得」
+    for (const ef of pending?.rewards ?? []) rewardResults.push(...applyEventEffects(ef));
+    // ② 旧 fight 事件（ev_ambush / ev_arena）没有 rewards ⇒ 沿用原来的"随机强化"，**老行为零变化**
+    if ((pending?.rewards?.length ?? 0) === 0 && reward === 'enhancement') {
+      // [2026-09-25 莉莉子 不叠加] 强化排除已拥有
+      // [2026-10-08 难度分层] 原第二参写死 `undefined`（假参与）⇒ 现传本局难度
+      const enh = pickRandomEnhancements(1, rogue.run.difficulty, { rare: 0, epic: 60, legendary: 40 }, rogue.run.passUnlockedEnhancements, rogue.run.enhancements)[0]; // [2026-08-29 通行证]
+      if (enh) {
+        rogue.applyEnhancement(enh.id);
+        recordCodexUnlock('enhancement', enh.id);
+        rewardResults.push({ kind: 'gain', icon: '🧬', text: `迷宫强化「${nameOfEnh(enh.id)}」` });
+      }
+    }
+    for (const r of rewardResults) if (r.kind === 'gain') pushExpFeed(`⚔️ 迎战胜利 · ${r.text}`, 'gain');
+    // [2026-10-10 莉莉子 BUG修复 · 二轮独立审查 F2] HP 写回**只在真打过时**做（一键通过传 `null` ⇒ 跳过）。
+    //   为什么必须区分：`playerNexus ?? rogue.run.hp` 里的 `rogue.run.hp` 是**渲染期闭包值**，
+    //   而本函数上方刚跑过奖励（`applyEventEffects` / `applyEnhancement`）——
+    //   将来一旦出现会改 HP / 上限的强化或奖励，这行就会把刚加上去的 HP **回滚掉**（两轮审查都点到）。
+    // [2026-10-10 三轮审查 F2] 只在**真拿到数字水晶值**时写回；`null`（一键通过 = 没打过）不碰 HP。
+    //   ⚠️ 用运行时 `typeof` 而不是 `!== null`：类型上已收成 `number | null`，但万一有 JS 路径漏传
+    //      `undefined`，`!== null` 会放行并写出 `NaN`（三轮 F5 正是同类隐患）⇒ 这里一并堵死。
+    if (typeof playerNexus === 'number') rogue.setHp(playerNexus);
+    setRogueEventBattle(null);
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 待战节点已打完 ⇒ 清掉标记（该节点不再要求战斗）
+    if (nodeId) rogue.clearPendingBattle(nodeId);
+    playBgm('deck_builder'); // [2026-08-28 莉莉子] 事件战斗胜利返回地图：恢复备战曲
+    setPreBattleHpSnapshot(null);
+    setRogueBattleType(null);
+    setRogueBattleNodeId(null);
+    setRogueEncounter(null);
+    setAppState('rogue_map');
+    // ③ 弹**第一段**：强化奖励（`choose2` 时关掉它再弹卡牌三选一）
+    setEventBattleReward({ results: rewardResults, thenCards: reward === 'choose2' });
+  };
+
+  const handleRogueVictory = (playerNexus?: number, ovType?: RogueNodeType, ovNodeId?: string) => {
+    if (!rogue.run) return;
+    // [2026-08-29] 一键胜利（节点详情）时用 override 的节点类型/id；否则用当前战斗状态
+    const battleType = ovType ?? rogueBattleType;
+    const battleNodeId = ovNodeId ?? rogueBattleNodeId;
+    // [2026-10-10 莉莉子 · 收口] 这两步抽成 `settleBattleEndCommon`（唯一出口）——
+    //   因为开发者「一键通过」也必须跑它们，而它不走本函数（见该函数注释）。
+    settleBattleEndCommon(playerNexus);
 
     // [2026-08-28 事件] 事件战斗胜利 → 事件奖励（不结算节点）
-    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **奖励两段式**（程的流程）：
-    //   第一段 = 强化 / 固定天启者卡（本块执行 + 弹 `EventBattleRewardModal`）
-    //   第二段 = 卡牌三选一（关掉第一段后弹 `BattleRewardModal`，见下方渲染处的 onClose）
+    // [2026-10-10 莉莉子 · 收口] 整段抽成 `settleEventBattleVictory`（**唯一出口**）——
+    //   因为开发者「一键通过」也要按同一套结算（发奖励 + 清待战标记 + 两段弹窗 + 回地图），
+    //   抄第二份必然漂移。这里只留"是谁触发的"这一层判断。
     if (rogueEventBattle) {
-      const pending = battleNodeId ? rogue.run.pendingBattles?.[battleNodeId] : undefined;
-      const rewardResults: EventApplyResult[] = [];
-      // ① 执行**选择时扣下**的奖励（指定强化 / 天启者卡）—— 程：「赢了之后才会获得」
-      for (const ef of pending?.rewards ?? []) rewardResults.push(...applyEventEffects(ef));
-      // ② 旧 fight 事件（ev_ambush / ev_arena）没有 rewards ⇒ 沿用原来的"随机强化"，**老行为零变化**
-      if ((pending?.rewards?.length ?? 0) === 0 && rogueEventBattle.reward === 'enhancement') {
-        // [2026-09-25 莉莉子 不叠加] 强化排除已拥有
-        // [2026-10-08 难度分层] 原第二参写死 `undefined`（假参与）⇒ 现传本局难度
-        const enh = pickRandomEnhancements(1, rogue.run.difficulty, { rare: 0, epic: 60, legendary: 40 }, rogue.run.passUnlockedEnhancements, rogue.run.enhancements)[0]; // [2026-08-29 通行证]
-        if (enh) {
-          rogue.applyEnhancement(enh.id);
-          recordCodexUnlock('enhancement', enh.id);
-          rewardResults.push({ kind: 'gain', icon: '🧬', text: `迷宫强化「${nameOfEnh(enh.id)}」` });
-        }
-      }
-      for (const r of rewardResults) if (r.kind === 'gain') pushExpFeed(`⚔️ 迎战胜利 · ${r.text}`, 'gain');
-      rogue.setHp(playerNexus ?? rogue.run.hp);
-      setRogueEventBattle(null);
-      // [2026-10-08 莉莉子 · 瓦尔基里大赛] 待战节点已打完 ⇒ 清掉标记（该节点不再要求战斗）
-      if (battleNodeId) rogue.clearPendingBattle(battleNodeId);
-      playBgm('deck_builder'); // [2026-08-28 莉莉子] 事件战斗胜利返回地图：恢复备战曲
-      setPreBattleHpSnapshot(null);
-      setRogueBattleType(null);
-      setRogueBattleNodeId(null);
-      setRogueEncounter(null);
-      setAppState('rogue_map');
-      // ③ 弹**第一段**：强化奖励（`choose2` 时关掉它再弹卡牌三选一）
-      setEventBattleReward({ results: rewardResults, thenCards: (pending?.reward ?? rogueEventBattle.reward) === 'choose2' });
+      settleEventBattleVictory(battleNodeId, playerNexus ?? null, rogueEventBattle.reward);
       return;
     }
     // [2026-08-10] 标记当前战斗节点已击败（地图红叉）
@@ -937,8 +985,19 @@ export default function App() {
     // [2026-08-11 全局 HP 衔接] 真衔接：把战斗剩余水晶写回全局 HP（setHp 内部 clamp 到 [0, maxHp]）
     rogue.setHp(playerNexus ?? rogue.run.hp);
     if (battleType === 'boss') {
-      // Boss 胜利 → 推进下一 Act（超最后一 Act 则通关）
-      rogue.advanceAct();
+      // ══════════════════════════════════════════════════════════════════
+      // [2026-10-10 莉莉子 BUG修复 · 程拍板口径] **「是不是最后一关」以"是否通过了 BOSS 节点"判断**
+      //   判据 = **刚打赢的这个节点在图上没有后继**（`next` 为空 ⇒ 它就是本图的**终点 BOSS**）。
+      //   ⚠️ 不再数 act 数量：图池改造（10-09）后 `ROGUE_MAPS[difficulty].length` 已是"图池里有几张图"
+      //      （普通 4 / 机密 5 / 绝密 5），拿关卡序号去比它 ⇒ 永不通关、结算窗不弹，
+      //      且会空推进到不存在的关卡（`currentNodeId = null`）＝软锁。
+      //   兜底：查不到该节点时按"**是最终 BOSS**"处理 —— 宁可结算，也不能让玩家卡在没有出口的地图上。
+      // ══════════════════════════════════════════════════════════════════
+      const layoutNodes = (rogue.run.layout ?? []).flatMap(act => act.nodes);
+      const clearedNode = battleNodeId ? layoutNodes.find(n => n.id === battleNodeId) : undefined;
+      const isFinalBoss = clearedNode ? clearedNode.next.length === 0 : true;
+      // Boss 胜利 → 推进下一 Act（**最终 BOSS 则通关**）
+      rogue.advanceAct(isFinalBoss);
       // [2026-08-07 难度解锁] 通关当前难度 → 解锁下一难度（递进：普通→机密→绝密）
       const cleared = rogue.run.difficulty;
       const nextToUnlock = ROGUE_DIFFICULTIES.find(d => d.unlockAfter === cleared)?.key;
@@ -985,6 +1044,9 @@ export default function App() {
           equipRarityBonus: rogue.run.equipRarityBonus ?? 0, // [2026-08-29] 等级装备稀有度加成
           forceEquip: battleType === 'elite',       // [2026-08-29] 精英必带装备
           equippedCards: rogue.run.equippedCards,   // [2026-09-25 莉莉子 装备不叠加] 候选卡不再佩戴其已有装备
+          // [2026-10-10 程拍板 ②③] 传本局牌组 ⇒ 候选**优先出牌组已有的卡**，且**至少一张不是**；
+          //   同时展示端会把它"已有的装备"一并渲染（A + B）
+          deckKeys: rogue.run.deck,
         });
         // [2026-08-29 程拍板] 普通/精英战斗不再送卡包（仅最终 Boss 通关给）；三选一由玩家选择
         setRogueReward({ gold, options });
@@ -998,7 +1060,26 @@ export default function App() {
     setAppState('rogue_map');
   };
   /** [2026-08-29] 开发者一键胜利：节点详情直接跳过战斗（复用胜利结算：击败/经验/奖励/通关） */
+  // [2026-10-10 莉莉子 BUG修复 · 程实测] **待战节点（瓦尔基里大赛变化出来的战斗节点）也要能一键通过**。
+  //   ⚠️ 它**不能**走 `handleRogueVictory`：那条路的事件战斗分支靠 `rogueEventBattle` 把关，而它
+  //     **只在"进入战斗"那一刻才被赋值**（见 `handleRogueEventFightStart`）⇒ 玩家站在地图面板上点
+  //     "一键通过"时它是 null ⇒ 会掉进**普通胜利分支**：`markDefeated` + 经验照发，
+  //     **却不会 `clearPendingBattle`** ⇒ 待战标记还挂着、节点照样要求打仗（＝"通过"没真的生效）。
+  //   ⇒ 待战节点直接按「**打赢这场事件战斗**」结算（程 2026-10-10 拍板：奖励一起走完）。
   const handleRogueNodeDevWin = (nodeType: RogueNodeType, nodeId: string) => {
+    const pending = rogue.run?.pendingBattles?.[nodeId];
+    if (pending) {
+      // [2026-10-10 独立审查 P1 修复] 一键通过**按"打赢"结算** ⇒ 真打赢跑的两项通用结算也必须跑：
+      //   ① 播种希望投资兑现 ② 武装/强化线的"战斗结束"金币（凯旋之匣 / 拾荒）。
+      //   ⚠️ 没有真打过 ⇒ 水晶传**当前值**，等价于"打赢且水晶未受损"（阈值类强化照样能达标）。
+      settleBattleEndCommon(rogue.run?.hp);
+      // ⚠️ 第三参传 `null`（不是 undefined）⇒ 结算**不写回 HP**（理由见该函数注释 F2）
+      settleEventBattleVictory(nodeId, null, pending.reward);
+      // [2026-10-10 二轮审查 F6] 这条横幅**放在结算之后** push：结算内部还会逐条 push 奖励回响，
+      //   而信息流只留最近 4 条 ⇒ 先 push 会被挤掉（绝密档 3+2 条奖励时必现）。
+      pushExpFeed('⚡ 开发者一键通过 · 本场迎战按胜利结算', 'gain');
+      return;
+    }
     handleRogueVictory(undefined, nodeType, nodeId);
   };
   // ═══ [2026-08-29 休整节点] 移动推进探路 + 休整三功能 ═══
@@ -1038,6 +1119,13 @@ export default function App() {
    *   能先落子、再由玩家决定要不要真的结算。）
    */
   const handleRogueFinalDefeat = () => {
+    // ═══ [2026-10-10 程拍板 · 独立审查 P1] **必须清掉"事件战斗"标记** ═══
+    //   删掉"事件战斗失败特例"之后，这条路径接手了它原先顺手做的清理。
+    //   漏清的后果（审查给出完整链路）：stale 标记会活到**下一局**，把新局里第一场
+    //   **普通**战斗的胜利误判成"事件战斗胜利" ⇒ 跳过 `markDefeated`/节点经验/金币/卡牌奖励
+    //   ⇒ 该节点不在 `defeated` ⇒ 地图后继节点全 locked ⇒ **走不动**（且每赢一次白送一次强化）。
+    //   与 `handleRogueRunEnd` 的同名清理对齐。
+    setRogueEventBattle(null);
     rogue.completeBattle(false); // → dead，回地图显示死亡结算（败北不写回 HP）
     // [2026-08-29 经验重构] 整局败北 → 结算经验（节点已发 + 时长/效率/共鸣差额）
     if (rogue.run) {
@@ -1059,21 +1147,15 @@ export default function App() {
   };
 
   const handleRogueDefeat = (_playerNexus?: number) => {
-    // [2026-08-28 事件] 事件战斗失败 → 不死亡，扣 30% 当前命返回地图（可选挑战的代价）
-    if (rogueEventBattle) {
-      // [2026-10-08 莉莉子 · 交互回响层 批次1] 此前是**零反馈**：扣完 30% 生命直接把玩家甩回地图
-      const lostHp = Math.floor((rogue.run?.maxHp ?? 0) * 0.3);
-      if (rogue.run) rogue.setHp(rogue.run.hp - lostHp);
-      pushExpFeed(`⚔️ 迎战失败 · 生命值 −${lostHp}`, 'cost');
-      setRogueEventBattle(null);
-      playBgm('deck_builder'); // [2026-08-28 莉莉子] 事件战斗失败返回地图：恢复备战曲
-      setPreBattleHpSnapshot(null);
-      setRogueBattleType(null);
-      setRogueBattleNodeId(null);
-      setRogueEncounter(null);
-      setAppState('rogue_map');
-      return;
-    }
+    // ═══ [2026-10-10 程拍板 · **取消特例**] 事件变化出来的战斗节点 = 普通战斗节点 ═══
+    //   原先（2026-08-28 的"可选挑战"口径）：事件战斗打输**不判败北**，只扣 30% 生命回地图。
+    //   程要求撤销：「变成战斗节点后，就按普通的战斗节点来就行，失败了就算失败、需要耗费复活次数」。
+    //   ⇒ 该特例分支已整段删除，直接落到下方的通用失败处置：
+    //     ① 还有复活次数 → 回地图弹窗询问（消耗 1 次后**待战标记保留**，可回到同一节点重打）
+    //     ② 复活耗尽   → 整局败北结算
+    //   ⚠️ 归一之后，"待战"这条线只体现在「入口是迎战、敌人配置来自 `pendingBattles`」；
+    //      成功侧（事件奖励）与失败侧的处置都**不再分叉**。
+    // ══════════════════════════════════════════════════════════════════════════
 
     // ═══ [2026-10-04 程拍板] 还有复活次数 → 回地图**弹窗询问**，不直接判败北 ═══
     //   —— 补齐 08-16 手册缺口 #5「败北时无复活重打逻辑」。
@@ -1112,17 +1194,11 @@ export default function App() {
     }
     // ⚠️ 此处读到的 reviveCount 是本渲染的旧值（consumeRevive 的 setRun 是异步的）⇒ 用 -1 推导剩余
     const left = Math.max(0, (rogue.run?.reviveCount ?? 1) - 1);
-    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **待战节点在复活后作废** ——
-    //   程的要求：「复活后可以**继续推进迷宫**，而不是被**卡在这个节点**」。
-    //   事件战斗打输 ⇒ 该节点不再要求玩家打（奖励输了就没了，但**不堵路**）。
-    const nid = rogue.run?.currentNodeId;
-    if (nid && rogue.run?.pendingBattles?.[nid]) {
-      rogue.clearPendingBattle(nid);
-      rogue.markNodeResolved(nid);
-      pushExpFeed('⚔️ 本场迎战已结束 · 该节点不再要求战斗，可继续推进', 'level');
-    } else {
-      pushExpFeed(`♻️ 消耗 1 次复活 · 剩余 ${left} 次 —— 回到本节点重新挑战`, 'level');
-    }
+    // [2026-10-10 程拍板 · **取消特例**] **不再让待战节点在复活后作废** ——
+    //   原先（2026-10-08）：「事件战斗打输 ⇒ 复活后该节点不再要求战斗、直接放行、不堵路」。
+    //   现按程的口径归一：**待战标记保留** ⇒ 消耗复活后回到同一节点**重新迎战**，
+    //   与普通战斗节点（回到本节点重新挑战）完全一致。
+    pushExpFeed(`♻️ 消耗 1 次复活 · 剩余 ${left} 次 —— 回到本节点重新挑战`, 'level');
   };
 
   /** [2026-10-04 程拍板] 复活弹窗 · **放弃并结算** */
@@ -1196,6 +1272,8 @@ export default function App() {
       equipRarityBonus: rogue.run.equipRarityBonus ?? 0,
       forceEquip: rogueBattleType === 'elite',
       equippedCards: rogue.run.equippedCards, // [2026-09-25 莉莉子 装备不叠加] 候选卡不再佩戴其已有装备
+      // [2026-10-10 程拍板 ②③] 刷新也应守同一口径：优先牌组已有卡、至少一张不是
+      deckKeys: rogue.run.deck,
     });
     setRogueReward(prev => prev ? { ...prev, options } : prev);
   };
@@ -1471,21 +1549,52 @@ export default function App() {
     return results; // [P3] 交给事件弹窗渲染「结果」步骤（玩家不必再靠猜血条/金币）
   };
 
+  /**
+   * [2026-10-10 莉莉子 · 收口] **事件战斗（待战）遭遇构建 —— 唯一出口**
+   *   「迎战」入口（`handleRogueEventFightStart`）与**「重开当前战斗」**共用它 ⇒ 重开后**对手与敌方强化**一致。
+   *   ⚠️ [2026-10-10 独立审查 P2] 但**牌组构成与敌方装备仍会重掷** —— 本函数内部走的是 `encounterBuilder`
+   *      的随机填充/洗牌 + `rollEnemyEquipments` 随机配装（既有行为）。要"完全可复现的重开"，得改成
+   *      **缓存进战时的 encounter 并复用**（未做，见日记待办）。
+   *   · `opponentHeroKeys` 非空 ⇒ 走"按天启者构建"（单人反查流派 / 双人**合成混合流派**）
+   *   · 缺省（旧的 fight 事件，如 ev_ambush / ev_arena）⇒ 沿用原来的随机流派，**老行为零变化**
+   *   ⚠️ 唯一真源是 `pendingBattles[nodeId]` —— **绝不能**改走 `rogueBattleArchetypeId`（那是普通战斗节点的路径）。
+   */
+  const buildEventBattleEncounter = (nodeId: string) => {
+    if (!rogue.run) return null;
+    const pending = rogue.run.pendingBattles?.[nodeId];
+    if (!pending) return null;
+    return pending.opponentHeroKeys?.length
+      ? buildEncounterForHeroes(pending.opponentHeroKeys, 'elite', rogue.run.difficulty, pending.enemyEnhancements)
+      : buildRoguelikeEncounter('elite', rogue.run.act, rogue.run.difficulty, undefined, pending.enemyEnhancements);
+  };
+
   /** [2026-10-08 莉莉子 · 瓦尔基里大赛] 事件「迎战」：**改由地图的待战节点触发**。
    *  改用 `pendingBattles[currentNodeId]` 作为唯一配置来源（不再依赖弹窗内的即时切换）。
-   *  ⚠️ 兼容旧的 `onEventFight`（弹窗内按钮）：两者都走这里，配置都从 pendingBattles 读。
-   *  （旧的即时切换相比，唯一差别是"晚一步"——但它让结果步骤有机会被看见） */
+   *  ⚠️ [2026-10-10 三轮审查 F4 更正] `onEventFight` **其实不是"弹窗内按钮回调"**：
+   *    `NodeEventModal` 只把它当**真值标志**用（`NodeEventModal.tsx:681` 的 `const willFight = !!onEventFight`
+   *    → 决定「离开」文案），**从不调用它**。真正调用的是地图侧两处：
+   *    `RogueMapScreen.tsx:555`（`doEnterNode` 的待战分支，当前不可达）与 `:1143`（右键预览面板）。
+   *    两处都是**真开打**，配置都从 `pendingBattles` 读。 */
   const handleRogueEventFightStart = () => {
     if (!rogue.run) return;
     const nid = rogue.run.currentNodeId;
     const pending = nid ? rogue.run.pendingBattles?.[nid] : undefined;
     if (!pending) return;
-    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **按选择指定敌方卡组 + 注入敌方持有强化**
-    //   · `opponentHeroKeys` 非空 ⇒ 走"按天启者构建"（单人反查流派 / 双人**合成混合流派**）
-    //   · 缺省（旧的 fight 事件，如 ev_ambush / ev_arena）⇒ 沿用原来的随机流派，**老行为零变化**
-    const encounter = pending.opponentHeroKeys?.length
-      ? buildEncounterForHeroes(pending.opponentHeroKeys, 'elite', rogue.run.difficulty, pending.enemyEnhancements)
-      : buildRoguelikeEncounter('elite', rogue.run.act, rogue.run.difficulty, undefined, pending.enemyEnhancements);
+    // [2026-10-10 莉莉子 · 收口] 遭遇构建改走**共用出口** `buildEventBattleEncounter`
+    //   （与「重开当前战斗」同源 ⇒ 重建出**同一对手 + 同一份敌方强化**；规则见该函数注释）
+    const encounter = nid ? buildEventBattleEncounter(nid) : null;
+    if (!encounter) return;
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-10-10 莉莉子 BUG修复 · 二轮独立审查 F1] **本场"天启者是否阵亡"标记必须在这里复位**
+    //   ── 病根（**既有 BUG**，2026-10-08 待战流程引入）：普通战斗入口早就有 `resetBattleFlags()`
+    //      （`handleRogueBattle`），**待战入口漏了**；而唯一读它的 `settleArmamentBattleEnd`
+    //      正是「凯旋之匣」的判据 ⇒
+    //      「待战战斗里她阵亡 → 用复活回同一节点重打 → 这次她没死并打赢」时，
+    //      （[2026-10-10 程拍板] 待战失败已改按普通战斗处理 ⇒ 这条"重打同一节点"的路径现在是常规路径）
+    //      结算读到**上一场遗留的 `true`** ⇒ **凯旋之匣金币被错误扣下**。
+    //   ── 该标记全库只有凯旋之匣一个消费者 ⇒ 战斗开始复位是唯一正确时点。
+    // ══════════════════════════════════════════════════════════════════
+    rogue.resetBattleFlags(); // 凯旋之匣：本场"天启者是否阵亡"标记复位
     setRogueEncounter(encounter);
     setRogueEventBattle({ reward: pending.reward }); // 保留：胜利时据此走"事件战斗奖励"分支
     setRogueBattleNodeId(nid ?? null);               // 让胜利时能 clearPendingBattle(battleNodeId)
@@ -1542,16 +1651,47 @@ export default function App() {
 
   // [2026-08-25 莉莉子 开发者] 重开当前肉鸽战斗（开发者账号测试用）：
   // HP 回滚到战斗前 → 重建同节点/同流派遭遇 → gameId 递增强制重挂战斗（loading 重进）
+  //
+  // [2026-10-10 莉莉子 BUG修复 · 程实测] **修「待战/事件战斗里重开不怎么生效」**：
+  //   ── 病根（两处叠加）：① 待战战斗的入口 `handleRogueEventFightStart` **从不写** `rogueBattleType`
+  //      （它回地图时被清成 null）② 本函数开头 `if (!rogueBattleType …) return` ⇒ **点了直接 return，毫无反应**；
+  //      即便残留了旧值，重建用的也是 `rogueBattleArchetypeId` / `rogueBattleBuffs`（那是**普通战斗节点**的口径）
+  //      ⇒ 重开后**对手换人**（丢掉瓦尔基里大赛指定的敌方卡组）。
+  //   ── 修法：待战战斗（`pendingBattles[nodeId]` 存在）改走 `buildEventBattleEncounter` —— 与「迎战」入口
+  //      **同一个出口**，重建出**同一对手 + 同一份敌方强化**；`rogueBattleType` 只在**普通战斗节点**才是必需的。
+  //      ⚠️ [2026-10-10 独立审查 P2 更正] 我原先写的"逐字一致"**说过头了**：`buildEventBattleEncounter`
+  //        内部仍是 `encounterBuilder` 那套随机（牌组填充/洗牌 + 敌方装备全随机）⇒
+  //        **牌组构成与敌方装备每次重建都会重掷**（与普通战斗节点的重开同性质、也是改动前的既有行为）。
+  //        定死的只有「对手（天启者/流派）」与「敌方强化」。
   const handleRogueRestartBattle = () => {
-    if (!rogue.run || !rogueBattleType || !rogueBattleNodeId) return;
+    if (!rogue.run || !rogueBattleNodeId) return;
+    // ① 待战/事件战斗 ⇒ 真源是 `pendingBattles`
+    const eventEncounter = buildEventBattleEncounter(rogueBattleNodeId);
+    // ② 普通战斗节点 ⇒ 同节点同流派 + 同一份预分配迷宫强化
+    const encounter = eventEncounter ?? (rogueBattleType
+      ? buildRoguelikeEncounter(
+          rogueBattleType as 'battle' | 'elite' | 'boss',
+          rogue.run.act,
+          rogue.run.difficulty,
+          rogueBattleArchetypeId,
+          rogueBattleBuffs // [2026-08-27 莉莉子] 重开保持同一份预分配迷宫强化
+        )
+      : null);
+    // 两个来源都不成立 ⇒ 无从重建（保守：宁可不重开，也绝不打错人）
+    //   ⚠️ [2026-10-10 独立审查 P3] HP 回滚**必须留在这道门之后**：否则"有 nodeId、但两个来源都取不到"
+    //      的状态下会「先改 HP、又不重开」（旧代码在回滚之前就 return 了）。
+    if (!encounter) return;
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-10-10 莉莉子 BUG修复 · **三轮独立审查 F1**] 重开也是**战斗入口**，同样必须复位本场标记。
+    //   ── 三轮审查证明这条链**普通玩家可达**且症状与 F1 同族：
+    //      「迎战」开始（已复位）→ 战斗中天启者阵亡（标记置 true）→ 玩家按 ESC「我遇到了BUG需要重开」
+    //      → **重开不复位** → 重开后她存活并打赢 ⇒ 结算读到旧 `true` ⇒ **凯旋之匣金币被错误扣下**。
+    //   ── 三处"建立遭遇并进战斗"的点现在**口径一致**：普通战斗 / 迎战 / 重开 都复位。
+    //   ⚠️ 遗留（**未修，见日记旁支**）：事件战斗**失败**分支不清该标记 ⇒ 它在回地图期间会挂着；
+    //      正常玩家下次胜利必经某个入口（会复位），但开发者在地图上「一键胜利」普通战斗节点时会读到它。
+    // ══════════════════════════════════════════════════════════════════
+    rogue.resetBattleFlags(); // 凯旋之匣：本场"天启者是否阵亡"标记复位
     if (preBattleHpSnapshot !== null) rogue.setHp(preBattleHpSnapshot); // 回滚进战前 HP（快照保持不变，重开后回到同一点）
-    const encounter = buildRoguelikeEncounter(
-      rogueBattleType as 'battle' | 'elite' | 'boss',
-      rogue.run.act,
-      rogue.run.difficulty,
-      rogueBattleArchetypeId,
-      rogueBattleBuffs // [2026-08-27 莉莉子] 重开保持同一份预分配迷宫强化
-    );
     setRogueEncounter(encounter);
     setGameId(id => id + 1); // [重挂] key={rogue_${gameId}} 变化 → RogueGameWrapper/GameSession 重新初始化
     setAppState('loading'); // 走加载界面重进战斗
@@ -1566,8 +1706,10 @@ export default function App() {
 
   /**
    * 投降（认输）
-   * [2026-10-04 程拍板] 肉鸽里**与「被打死」走同一条路** —— `handleRogueDefeat` 已完整包含三段：
-   *   ① 事件战斗 → 扣 30% 生命回地图 ② 还有复活 → 弹**复活确认窗**（使用 / 放弃）③ 耗尽 → 整局败北。
+   * [2026-10-04 程拍板] 肉鸽里**与「被打死」走同一条路** —— `handleRogueDefeat` 已完整包含两段：
+   *   ① 还有复活 → 弹**复活确认窗**（使用 / 放弃）② 耗尽 → 整局败北。
+   *   [2026-10-10 程拍板 · 取消特例] 原先还有第 0 段「事件变化出来的战斗节点失败 → 只扣 30% 生命回地图」
+   *   —— 已撤销：**待战节点与普通战斗节点的失败处置完全一致**（见 `handleRogueDefeat` 的注释）。
    *   ⚠️ 原先投降是"自己消费一次复活就回地图"、**不弹确认窗** —— 与"打死了才弹"不一致（程指出这是漏的）。
    */
   const handleSurrender = () => {
@@ -2074,6 +2216,8 @@ export default function App() {
                       difficulty: rogue.run!.difficulty,
                       equipRarityBonus: rogue.run!.equipRarityBonus ?? 0,
                       equippedCards: rogue.run!.equippedCards,
+                      // [2026-10-10 程拍板 ②③] 事件战斗的第二段三选一同口径
+                      deckKeys: rogue.run!.deck,
                   });
                   setRogueReward({ gold: 0, options });
               }}
@@ -2146,6 +2290,9 @@ export default function App() {
               onConsumeEnhancementRank={() => rogue.consumeInvestments('enhancementRank')} // [2026-08-28] 托付遗物投资消费
               isDev={userSystem.userId === 'dev_full_admin'} // [2026-08-31 莉莉子 开发者] 开发者走任意选强化
               onDevPick={handleRogueDevPick} // [2026-08-31 莉莉子 开发者] 多选确认
+              // [2026-10-10 莉莉子 开发者 · 事件审阅台] 切换事件时把整局状态回滚到"刚进这个事件节点"那一份快照
+              //   （快照由 RogueMapScreen 持有；这里只做通路，无任何逻辑）
+              onDevRestoreRun={rogue.restoreRun}
           />
       )}
 

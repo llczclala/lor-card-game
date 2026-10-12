@@ -415,7 +415,10 @@ export interface GameState {
   spellStack: SpellStackItem[];
   gameResult: 'victory' | 'defeat' | null;
 
-  screenShake?: boolean;
+  // [2026-10-07 莉莉子 · 打击感] 震屏分档：boolean 是**旧档**（法术路径沿用，走 .animate-shake），
+  //   字符串档位是撞水晶路径新增的（走 .animate-shake-{sm,md,lg}）。
+  //   故意保留 boolean 兼容：法术路径不在本次范围内，不能被动改到。
+  screenShake?: boolean | 'sm' | 'md' | 'lg';
   nexusDamage?: { target: 'player' | 'enemy', amount: number };
 
   leveledChampions: string[];

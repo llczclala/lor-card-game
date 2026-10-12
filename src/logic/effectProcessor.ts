@@ -21,6 +21,10 @@ import { runSummonEntry, configureSummonEntryDeps } from './summonEntry'; // [20
 import { getEquipmentById } from '../data/equipment'; // [2026-10-08 第二波] 卡级结算修饰（读施法那张卡身上的装备）
 // [2026-10-08 莉莉子] 减费特效唯一出口 —— ⚠️ 禁止在任何减费点自己 eventBus.emit（见 costReduceVFX.ts 文件头）
 import { emitCostReduceVFX } from './costReduceVFX';
+// [2026-10-09 莉莉子 BUG修复 · BUG-20261009-01] 信标引爆倒计时的唯一实现（与 useGameState.commitAttack 共用）
+//   ── 飞剑由本文件的 FLYING_SWORD 分支直接塞进交战区，进场路径只切 phase、从不经 commitAttack
+//      ⇒ 倒计时整段不执行、信标一声不响。此处按**实际召出把数**补结算（程 2026-10-09 拍板：每把算 1 次进攻）。
+import { applyBeaconFuse, type BeaconSide } from '../utils/beaconFuse';
 
 // ==========================================
 // [2026-08-15 莉莉子] 泰坦降临·预算均衡拆分（程重定义设计）
@@ -1888,59 +1892,21 @@ export const processEffect = (
                         owner: context.owner,
                         isChallenged: true,   // ⇒ useAI 格挡逻辑跳过该战位，预指定 blocker 不被顶掉
                         isExtraAttack: true,  // ⇒ 强制进入格挡阶段；归位时不消耗进攻标识
+                        // [2026-10-10 莉莉子 · 程拍板] **猎影专属凭据** —— 神格①③「猎影援护 / 猎影疾袭」
+                        //   的结算从"拉取这一瞬间"挪到"**玩家点了进攻之后**"（见下方说明）。
+                        fromExposePull: true,
                     },
                 ];
 
                 // =====================================
-                // [2026-10-03 莉莉子 BUG-20261002-24] 神格①「猎影援护」/③「猎影疾袭」触发
-                //
-                // ── 病根：`on_pull_exposed` 此前**只挂在 useGameState.challengeEnemy 一处**，
-                //    而本卡这条「额外攻击」是**另一条拉取路径**（装配语义已对齐 challengeEnemy，
-                //    触发却没跟上）⇒ 神格①+2/+0、③+3/+0&【快速攻击】在最常用的拉取上永远不生效。
-                //
-                // ── 时序：必须放在**装配完 nextCombatField 之后** ——
-                //    神格加成对象是「发起拉取的我方单位」，而 BUFF handler 走
-                //    `updateUnitById(ctx, id, …)` **按 id 在 ctx 数组里就地改**，
-                //    ⇒ 发起者此刻必须已经在 `ctx.combatField` 里（与 challengeEnemy 的时序一致）。
-                //
-                // ── 方向：只在 **context.owner === 'player'** 时触发 ——
-                //    神格是**玩家的 run 强化**（buffs.ts 里 divfx_marian_1/3 均为
-                //    playerEligible:false ⇒ 敌方不可能持有），与 challengeEnemy 同口径；
-                //    不这么做的话，敌方打猎影标记时会拿玩家的神格去 BUFF 敌方攻击者。
+                // [2026-10-10 莉莉子 · 程拍板] **神格①③ 的结算从这里挪走了**
+                // ── 原先在"拉取这一瞬间"就发 `on_pull_exposed`，于是加成在玩家**还能撤回进攻单位**时
+                //    就已经到手（程实测：「我本来预期这样会无限刷 BUFF」）；而撤回路径撞上空
+                //    `attacker` 的战線会直接黑屏（已在 `useGameState` 撤回处补空值护栏）。
+                // ── 现在这里**只打标记**（上方的 `fromExposePull`），真正的加成交给
+                //    `useGameState` 的 `commitAttack` / `confirmBlock` —— 也就是**玩家点进攻 / 确认防线**
+                //    这一刻，经 `grantExposePullBuffs()` 兑现，且兑现后**清标记**（不可能重复发）。
                 // =====================================
-                if (context.owner === 'player') {
-                    if (context.createFullCard) {
-                        const pullCtx: RogueTriggerCtx = {
-                            game: { ...nextGame },
-                            playerBench: nextPlayerBench,
-                            enemyBench: nextEnemyBench,
-                            combatField: nextCombatField,
-                            playerHand: nextPlayerHand,
-                            enemyHand: nextEnemyHand,
-                            playerDeck: nextPlayerDeck ?? [],
-                            enemyDeck: nextEnemyDeck ?? [],
-                            owner: 'player',
-                            trigger: 'on_pull_exposed',
-                            createFullCard: context.createFullCard,
-                            info: { playedCard: attacker }, // BUFF handler 的加成对象 = 发起拉取者
-                            dirty: { bench: new Set<Side>(), hand: new Set<Side>(), deck: new Set<Side>(), field: false, game: false },
-                        };
-                        runRogueTrigger(pullCtx, pullCtx.game.rogueEnhancements, 'on_pull_exposed');
-                        // 脏切片回写（与 useGameState.challengeEnemy 的同名片段同构）
-                        if (pullCtx.dirty.game) nextGame = { ...pullCtx.game };
-                        if (pullCtx.dirty.field) nextCombatField = [...pullCtx.combatField];
-                        if (pullCtx.dirty.bench.has('player')) nextPlayerBench = pullCtx.playerBench;
-                        if (pullCtx.dirty.bench.has('enemy')) nextEnemyBench = pullCtx.enemyBench;
-                        if (pullCtx.dirty.hand.has('player')) nextPlayerHand = pullCtx.playerHand;
-                        if (pullCtx.dirty.hand.has('enemy')) nextEnemyHand = pullCtx.enemyHand;
-                        // 牌库只在**本来就有**该切片时回写（否则会把 undefined 写成 [] ⇒ 吞牌库）
-                        if (pullCtx.dirty.deck.has('player') && nextPlayerDeck) nextPlayerDeck = pullCtx.playerDeck;
-                        if (pullCtx.dirty.deck.has('enemy') && nextEnemyDeck) nextEnemyDeck = pullCtx.enemyDeck;
-                    } else {
-                        console.warn('[猎影标记] 调用方未提供 createFullCard ⇒ 跳过 on_pull_exposed 神格触发'
-                            + '（神格①③ 本次不会加成，请检查 spells.ts / useSpellSystem 的传参）');
-                    }
-                }
 
                 events.push({ type: 'sfx_block', payload: null });
                 console.log(`[猎影标记] ${casterLabel}「${attacker.name}」额外攻击 ${foeLabel}「${liveTarget.name}」`
@@ -2603,6 +2569,10 @@ export const processEffect = (
             // [2026-08-28 莉莉子 修复] 镜爻同款保护：交战区满 6 格不再硬塞飞剑（防止超过 6 个一起进攻）。
             // 满场一把都没召出 → 整个飞剑效果跳过（计数/减费/阿尔维娜/玛格丽特充能都不触发），与镜爻满场不召唤语义一致。
             let anySwordSummoned = false;
+            // [2026-10-09 莉莉子 · BUG-20261009-01] **实际召出把数**（供信标引爆倒计时）
+            //   ⚠️ 不能用 `fsCount`（循环上界）：交战区满 6 格会 break ⇒ 会把"一把没召出"虚报成满额扣血
+            //   ⚠️ 不能用 `discountCount`（集束按 4 计减费）：会把 1 把剑扣成 4 点
+            let summonedSwordCount = 0;
             for (let i = 0; i < fsCount; i++) {
                 if (nextCombatField && nextCombatField.length >= 6) {
                     console.log(`[飞剑] 交战区已满（${nextCombatField.length}/6），停止召唤飞剑。`);
@@ -2633,13 +2603,20 @@ export const processEffect = (
                     //   （`rogueTrigger.ts:638 → :148`）⇒ 若把造剑时的裸 `sword`（animState 'idle'）当作加成对象，
                     //   会把这儿的 `'summoning'` **抹掉** ⇒ 飞剑的入场召唤演出不再播放（Card.tsx 以它驱动）。
                     //   ⇒ 传**落位副本**，演出与加成两不误。
-                    const placedSword = { ...sword, animState: 'summoning' as const };
+                    // [2026-10-09 莉莉子 · BUG-20261009-01] 打上「已计入信标倒计时」标记：
+                    //   本剑在循环后由 applyBeaconFuse 结算一次；但若它**已在交战区里**（例如玩家在
+                    //   attack_declare 期间用**快速**飞剑法术召剑），随后 commitAttack 的 initialFighters
+                    //   会**再数一次** ⇒ 双扣（2 把剑扣 4 血）。该标记让那边跳过。
+                    //   ⚠️ 标记挂在**卡对象**而非 fight 上：`on_summon` 强化整体替换战场对象时走
+                    //   `{...card}` 展开（rogueTrigger `updateUnitById` 路径）⇒ 标记能保留。
+                    const placedSword = { ...sword, animState: 'summoning' as const, beaconFuseCounted: true };
                     nextCombatField = [...nextCombatField, {
                         attacker: placedSword,
                         blocker: null,
                         owner: context.owner === 'player' ? 'player' : 'enemy',
                     }];
                     anySwordSummoned = true;
+                    summonedSwordCount += 1; // [2026-10-09 BUG-20261009-01] 真实召出把数（信标倒计时用）
 
                     // =====================================
                     // [2026-10-05 莉莉子 BUG修复 · 飞剑吃不到「召唤时」强化]
@@ -2696,6 +2673,34 @@ export const processEffect = (
             }
             // 满场一把都没召出 → 整个飞剑效果跳过（计数/减费/阿尔维娜/玛格丽特充能不触发）
             if (!anySwordSummoned) break;
+
+            // =====================================
+            // [2026-10-09 莉莉子 BUG修复 · BUG-20261009-01] 飞剑进场**计入信标引爆倒计时**
+            // ── 口径（程 2026-10-09 拍板）：**每把剑各算 1 次进攻**，按 `summonedSwordCount` 结算。
+            // ── 打的是**对面**备战席上的信标：本分支的剑归 `context.owner`，故由其对面承伤
+            //    （与 commitAttack 的「玩家进攻 → 敌方信标掉血」同向）。
+            // ── 飞剑**永不**贡献「拉取暴露单位格挡再 −1」：该信号（`fight.isChallenged`）只在宣告前可写，
+            //    而飞剑直到格挡阶段才存在 ⇒ 恒为 0。**这是设计如此，不是缺口**（程 2026-10-09 明确）。
+            // ── ⚠️ 位置刻意放在循环**之后**：循环内的 `on_summon` 会整体替换交战区里的 attacker
+            //    （见造剑处 `placedSword` 的别名警告），此刻结算便不再有重建数组、打断强化接线的风险。
+            // =====================================
+            {
+                const swordOwner: BeaconSide = context.owner === 'player' ? 'player' : 'enemy';
+                const attackersBySide: Record<BeaconSide, number> = { player: 0, enemy: 0 };
+                attackersBySide[swordOwner] = summonedSwordCount;
+                const fused = applyBeaconFuse({
+                    playerBench: nextPlayerBench,
+                    enemyBench: nextEnemyBench,
+                    combatField: nextCombatField ?? [],
+                    attackersBySide,
+                    challengedBySide: { player: 0, enemy: 0 },
+                    source: `飞剑×${summonedSwordCount}`,
+                });
+                if (fused.playerBench !== nextPlayerBench) nextPlayerBench = fused.playerBench;
+                if (fused.enemyBench !== nextEnemyBench) nextEnemyBench = fused.enemyBench;
+                // combatField 无变化时工具返回原引用；仅"真的变了且原本存在"才回写
+                if (nextCombatField && fused.combatField !== nextCombatField) nextCombatField = fused.combatField;
+            }
 
             // [2026-07-29 安卡希雅] 飞剑计数系统（按 discountCount 累计，确保集中模式等效 4 剑）
             if (context.owner === 'player') {
@@ -4618,7 +4623,21 @@ export const processEffect = (
             // 伤害源只在首击解析一次（我方场上茉莉安当前攻击力；Lv2 = 6 → 斩杀线 6）
             let strikeDmg = prev?.strikeDmg ?? 0;
             let step = prev?.step ?? 0;
-            const prevPhase = prev?.prevPhase ?? context.game.phase;
+            // ══════════════════════════════════════════════════════════════════
+            // [2026-10-10 莉莉子 BUG修复 · 程实测「茉莉安大招连杀后敌方 AI 宕机」]
+            //   ── 病根：这里直接取 `context.game.phase` 当"链之前的 phase"，但**法术堆叠结算
+            //      在跑效果之前就把 phase 锁成了 `'animating'`**（`useSpellSystem.ts:1612-1613`）
+            //      ⇒ 捕获到的正是**那个临时锁本身** ⇒ 连斩收尾"还原"成 `'animating'`
+            //      （`useGameState.ts:3419`）= **什么都没还原** ⇒ 对局永久卡在 `animating`
+            //      （AI 的阻塞理由是 `not_ai_turn`、玩家也动不了），直到 25s 的 animating 看门狗强推。
+            //   ── 量级对账：链本身只有几秒（实战最多清 6~7 个单位、每击 1s）
+            //      ⇒ 剩下十几秒全是这个假还原造成的锁死，与程日志的 20s 警告 / 25s 强推吻合。
+            //   ── 修法：与本仓库**既有口径**对齐（`useSpellSystem.ts:955` 与 `:1460` 同款）——
+            //      捕获到 `'animating'` 时按 `'main'` 处理（`'animating'` 是临时锁，不是可停留的阶段）。
+            //   ⚠️ 本 case 全仓库只有「最终指令」在用（见 `useGameState.ts` 连斩驱动器的注释），
+            //      而它是**慢速法术**（只在 main 阶段施放）⇒ 归一化成 `'main'` 是安全的。
+            // ══════════════════════════════════════════════════════════════════
+            const prevPhase = prev?.prevPhase ?? (context.game.phase === 'animating' ? 'main' : context.game.phase);
             if (!isResume) {
                 // [2026-10-04 莉莉子 BUG修复 · 审计 #1] 交战区归属收口：
                 //   **attacker 属 `f.owner`、blocker 属其对面** —— 原实现无条件

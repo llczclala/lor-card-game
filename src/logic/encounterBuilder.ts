@@ -143,7 +143,8 @@ const QUALITY_WEIGHTS: Record<EquipmentRarity, number> = { common: 15, uncommon:
  *  ── 旧口径（**已废**）：整副牌组里只挑 count 张卡各挂 1 件（普通难度仅 1 张）
  *     ⇒ 程判定「对手就太弱了」，改为下述新口径。
  *  ── 新口径：**牌组里所有"有可用装备池"的非天启者卡**都挂，每张挂 `件数` 件：
- *        件数 = 难度基础（普通 1 / 机密 2 / 绝密 3） + 节点追加（精英 +1 / Boss +2）
+ *        件数 = 难度基础（普通 0 / 机密 1 / 绝密 2） + 节点追加（精英 +1 / Boss +2）
+ *              ⚠️ [2026-10-10 程拍板] 难度基础由 1/2/3 下调为 **0/1/2**（程：「现在又太强了」）
  *  ── 品质仍按难度：上限 普通≤蓝 / 机密≤金 / 绝密全红，且按固定权重加权（白绿为主，高档渐稀）。
  *
  *  ⚠️ 装备按 **卡 key** 挂载（`Record<cardKey, string[]>`），同 key 的副本共享 ⇒
@@ -160,11 +161,24 @@ const QUALITY_WEIGHTS: Record<EquipmentRarity, number> = { common: 15, uncommon:
  *     修复前：整副牌组零单位卡的纯法术流派（倒计时7回合 / 鬼影森森）一件装备都拿不到。
  *  🎛️ 程调整处：只改下面两个常量即可整体升降档，不必动逻辑。
  */
-const EQUIP_PIECES: Record<RogueDifficulty, number> = { normal: 1, secret: 2, topsecret: 3 };
+// [2026-10-10 程拍板 · 平衡调整] 件数整体**下调一档**：1/2/3 → **0/1/2**
+//   （程：「现在又太强了」）⇒ 普通难度的**普通战斗节点 = 0 件**（敌人裸装）；
+//   节点追加件数（精英 +1 / Boss +2）**不变** ⇒ 普通 Boss 仍有 2 件、绝密 Boss 4 件。
+const EQUIP_PIECES: Record<RogueDifficulty, number> = { normal: 0, secret: 1, topsecret: 2 };
 const NODE_EXTRA_PIECES: Record<'battle' | 'elite' | 'boss', number> = { battle: 0, elite: 1, boss: 2 };
 
 const rollEnemyEquipments = (deck: string[], nodeType: 'battle' | 'elite' | 'boss', difficulty: RogueDifficulty): Record<string, string[]> => {
-    const pieces = (EQUIP_PIECES[difficulty] ?? 1) + (NODE_EXTRA_PIECES[nodeType] ?? 0);
+    // [2026-10-10 独立审查 P7 · 二轮 F3 更正 · **三轮 F5 再更正**] 兜底由 `?? 1` 改为 `?? 0`。
+    //   我先后写错/说过头两句，如实留档（免得下一次审计被这两句误导）：
+    //     ① "旧写法会给未知难度配 1 件" —— **错**（二轮证伪）：相邻的
+    //        `RARITY_RANK[QUALITY_MAX[difficulty]]` 同样无兜底 ⇒ `maxRank = undefined`
+    //        ⇒ 品质过滤恒 false ⇒ 池空 ⇒ 件数**本来就恒为 0**。
+    //     ② "这个 `??` 实际不可达" —— **证据不足**（三轮指出）：类型层确实不可达
+    //        （`RogueDifficulty` 三键、两张表全覆盖），但 `loadPendingRun` 把存档 run **整对象塞回
+    //        且不校验 `difficulty`** ⇒ 脏/旧存档可带非三值键，那时 `?? 0` 会被求值。
+    //   ⇒ 净结论：对**合法难度**与**脏存档**都**行为中性**（脏键下 `pieces` 是 1 还是 0 都挂不上装备，
+    //      因为池恒空）。改它只为不留下一个"读起来像默认给 1 件"的假兜底。
+    const pieces = (EQUIP_PIECES[difficulty] ?? 0) + (NODE_EXTRA_PIECES[nodeType] ?? 0);
 
     // [2026-10-08 程拍板] 可配装的卡 = 牌组里**所有有可用装备池的非天启者卡**（不再抽样挑卡）：
     //   · 单位卡 → 通用装备池（getEquipPoolForCard 自动只给非 spellOnly）

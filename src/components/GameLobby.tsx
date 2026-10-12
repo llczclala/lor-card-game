@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { motion, AnimatePresence } from 'framer-motion';
+// [2026-10-10 P1] 循环视频统一实现（并发预算 + 探针 + 卸载释放）
+import { LoopVideo } from './LoopVideo';
 import { useUserSystem } from '../hooks/useUserSystem';
 import { HERO_IMAGES, CURRENCY_ICONS, LOADING_SCREEN_IMAGES, UNIT_IMAGES, SPELL_IMAGES, PERSONALIZATION_ASSETS } from '../data/imageData';
 import { getAccountExpToNext } from '../data/accountProgression'; // [2026-09-04 账号等级] 档案面板真实经验条
@@ -407,7 +409,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                         {previewBg.type === 'pic' ? (
                             <img src={previewBg.url} className="w-full h-full object-cover" alt="预览背景" />
                         ) : (
-                            <video src={previewBg.url} autoPlay loop muted className="w-full h-full object-cover" />
+                            <LoopVideo src={previewBg.url} className="w-full h-full object-cover" priority={-20} />
                         )}
                     </motion.div>
                 )}

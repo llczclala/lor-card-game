@@ -125,10 +125,21 @@ export const resolveSingleCombat = (
       }
 
       // 伤害累加（绝不减 health，只记 damageTaken 欠条）
+      // ══════════════════════════════════════════════════════════════════
+      // [2026-10-10 莉莉子 BUG修复 · 程实测「剧毒不生效」] **必须叠加 `deadlyLethalInject`**
+      //   ── 剧毒是**负面**词条（带毒单位「受到任何伤害即被消灭」，判定入口 `logic/keywords.ts:41`），
+      //      它靠**每个伤害点各自注入**致死伤害来生效 —— 而本函数此前**一处都没调**！
+      //   ── 为什么一直没人发现：唯一实现了它的 `calculateCombatOutcome`（本文件 :479/:490）是
+      //      **零调用点的死代码**（全项目只有一句注释提到它），而真正跑战斗的是本函数与
+      //      `resolveDoubleStrikeCombat`（调用点 `useGameState.ts:3550-3551`）。
+      //      法术路径（`effectProcessor` 的 11 处）都调了 ⇒ 症状正好是"**战斗中不生效、法术里生效**"。
+      //   ── 口径：注入量按**本次实际打出的伤害**算（`deadlyLethalInject` 内部要求 `> 0`）
+      //      ⇒ 被屏障/坚韧完全吸收的 0 伤害不触发（"没有擦伤就不解构"，与法术路径同口径）。
+      // ══════════════════════════════════════════════════════════════════
       if (blk) {
-        blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage;
+        blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage + deadlyLethalInject(blk, inter.blockerDamage);
       }
-      atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage;
+      atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage + deadlyLethalInject(atk, inter.attackerDamage);
 
       // 水晶伤害（空气墙过滤）
       let nexus = inter.nexusDamage;
@@ -305,8 +316,11 @@ export const resolveDoubleStrikeCombat = (
         const inter = calculateCombatInteraction(strikeAtk, blk);
         if (inter.attackerBarrierPopped) atk.depletedKeywords = [...(atk.depletedKeywords || []), 'Barrier'];
         if (blk && inter.blockerBarrierPopped) blk.depletedKeywords = [...(blk.depletedKeywords || []), 'Barrier'];
-        if (blk) blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage;
-        atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage;
+        // [2026-10-10 莉莉子 BUG修复 · 剧毒不生效] 同 `resolveSingleCombat`：**这里也必须注入**。
+        //   本函数是**连击**的活路径（`useGameState.ts:3550`），此前同样一处都没调 ⇒
+        //   连击打带毒单位也不会被解构。两边必须逐字一致，否则单段/连击的剧毒行为会分裂。
+        if (blk) blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage + deadlyLethalInject(blk, inter.blockerDamage);
+        atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage + deadlyLethalInject(atk, inter.attackerDamage);
         let nexus = inter.nexusDamage;
         if (isGhosted && !atk.keywords.includes('Overwhelm')) {
             nexus = 0;

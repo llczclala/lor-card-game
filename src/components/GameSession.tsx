@@ -29,6 +29,9 @@ import { ManaGemSystem } from './ManaGemSystem';
 import { calculateNewMana } from '../utils/gameRules';
 // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔进度：撤回进攻等"回备战席"出口的幂等贴值
 import { applyMauxirProgress } from '../utils/mauxirProgress';
+// [2026-10-10 莉莉子 BUG修复] 升级影片**出队口**的存活判据 —— 复用仓库唯一出口（!isDead + animState + 真实血量>0），
+//   理由见下方升级仲裁 effect 的注释：法术路径（单挑/王见王）打死人**不写** `animState='dying'`，只看 animState 判不出来。
+import { isStrikeTargetAlive } from '../logic/rogueBattle';
 import { getCardBackUrl} from '../utils/styleUtils';
 import { getCardBackVideo } from '../data/cardBackVideos'; // [2026-08-23 莉莉子] 动态卡背视频
 // [修改] 引用新的 Hook
@@ -358,13 +361,42 @@ export const GameSession: React.FC<GameSessionProps> = ({
         if (tutorialPauseUpgradeRef.current) return;
         if (!game.levelUpCard && game.pendingLevelUps && game.pendingLevelUps.length > 0) {
             const nextHero = game.pendingLevelUps[0];
+            // ══════════════════════════════════════════════════════════════════
+            // [2026-10-10 莉莉子 BUG修复 · 第三道门] **出队口现场复查生死**
+            // ── 病根：队列里那张卡是**入队那一刻的快照**（`useGameState` 升级派单造的是
+            //    `{...getLeveledUpCard(card), id}`），它的 `damageTaken` / `animState` / `isDead`
+            //    **永远停在入队时** ⇒ 拿票根直接判生死等于没判。必须**按 id 回到当前状态里找活体**；
+            //    若人已被收走（尸首进墓地），票据同样作废。
+            // ── 为什么要这道门：前两道门（升级扫描 / `queueLevelUp`）只能保证"**入队那一刻**还活着"，
+            //    而"打击一次 ⇒ 达标入队"与"被敌方「单挑」打死"可以落在**同一个战斗窗口**内
+            //    （战斗路径先入队，法术堆叠随后结算）⇒ 队里就躺着一位死人。
+            // ── 判据复用统一出口 `isStrikeTargetAlive`（!isDead + animState + 真实血量>0）：
+            //    单挑 / 王见王这类法术路径打死人**只累加 damageTaken**、不写 `animState='dying'`
+            //    （effectProcessor.ts:1266 只写 'hit'），只看 animState 的旧判据对它们形同虚设。
+            // ── 处置：**没收排队券**（丢掉这一位）**且不锁 phase** —— 队列一变本 effect 自动重跑，
+            //    去考虑下一位；队里空了就彻底不播（刹车片随之放行，不会冻住对局）。
+            //    ⚠️ 只在"查到活体且已死"或"尸首已入墓地"时作废；查不到且未入墓 ⇒ **保持原行为**，
+            //       不臆造规则（例如她只是被移回手牌/牌库，那属于另一条链路）。
+            // ══════════════════════════════════════════════════════════════════
+            const liveHero = playerBench.find(c => c.id === nextHero.id)
+                || enemyBench.find(c => c.id === nextHero.id)
+                || combatField.flatMap(f => [f.attacker, f.blocker]).find((c): c is CardData => !!c && c.id === nextHero.id);
+            const heroInGraveyard = (game.playerGraveyard || []).some(g => g.id === nextHero.id)
+                || (game.enemyGraveyard || []).some(g => g.id === nextHero.id);
+
+            if ((liveHero && !isStrikeTargetAlive(liveHero)) || heroInGraveyard) {
+                console.log(`[LevelUp System] 出队口拦下已阵亡英雄 ${nextHero.name}（${heroInGraveyard ? '尸首已入墓地' : '场上已判死'}）⇒ 不播升级影片。`);
+                setGame(prev => ({ ...prev, pendingLevelUps: prev.pendingLevelUps.slice(1) }));
+                return;
+            }
+
             setGame(prev => ({
                 ...prev,
                 phase: 'animating', // 霸道锁死底层舞台，禁止任何操作
                 levelUpCard: nextHero // 触发全屏视频
             }));
         }
-    }, [game.pendingLevelUps, game.levelUpCard, setGame, tutorialUpgradeTrigger]);
+    }, [game.pendingLevelUps, game.levelUpCard, game.playerGraveyard, game.enemyGraveyard, playerBench, enemyBench, combatField, setGame, tutorialUpgradeTrigger]);
 
     // [新增] 使用 Mulligan Hook 接管换牌逻辑
     const mulligan = useMulligan({
@@ -2997,7 +3029,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
             </button>
 
             {/* 5. 游戏主界面 */}
-            <div className={`w-full h-full relative ${game.screenShake ? 'animate-shake' : ''}`}>
+            <div className={`w-full h-full relative ${game.screenShake
+                // [2026-10-07 莉莉子 · 打击感] true = 旧档（法术路径，.animate-shake 原样）
+                //                              'sm'|'md'|'lg' = 撞水晶路径的分档震屏
+                ? (game.screenShake === true ? 'animate-shake' : `animate-shake-${game.screenShake}`)
+                : ''}`}>
 
                 {/* [2026-08-29] 移除右上角常驻强化列表 RogueModPanel（08-28 RogueEnhancementPanel 总览已替代，程拍板）；保留触发时水晶闪烁 */}
                 <RogueBuffFlash />
