@@ -4,9 +4,10 @@
 // 性能：平移/缩放直接操作 ref + DOM transform（不走 React 高频重渲染）
 // ==========================================
 import React, { useRef, useCallback, useEffect, useState, useMemo } from 'react';
-import { Heart, RefreshCw, RotateCcw, ArrowLeft, Plus, Minus, Send, Package } from 'lucide-react'; // [2026-08-26] Plus/Minus 缩放按钮、Send 纸飞机定位 ｜ [2026-10-02] Package 待开匣子入口
+import { Heart, RefreshCw, RotateCcw, ArrowLeft, Plus, Minus, Send, Package, ListChecks } from 'lucide-react'; // [2026-08-26] Plus/Minus 缩放按钮、Send 纸飞机定位 ｜ [2026-10-02] Package 待开匣子入口 ｜ [2026-10-10] ListChecks 事件审阅台入口
 import {
     MAP_WIDTH, MAP_HEIGHT, generateMapLayout, nodeColumnIndex,
+    RANDOM_NODE_NAME, RANDOM_NODE_DESC, // [2026-10-10 程实测] 进入面板的随机节点掩码
     type RogueNode, type RogueNodeType,
 } from '../../data/roguelike/mapLayout';
 import type { RoguelikeRunState } from '../../hooks/useRoguelikeRun';
@@ -14,6 +15,7 @@ import { MapNode, type MapNodeState } from './MapNode';
 import { CroppedAvatar } from '../CroppedAvatar'; // [2026-08-10] 圆形头像读取 avatar 裁剪配置
 import { CURRENCY_ICONS } from '../../data/imageData';
 import { NodeEventModal } from './modals/NodeEventModal';
+import { DevEventPickerModal, type DevEventAnchor } from './modals/DevEventPickerModal'; // [2026-10-10 莉莉子 开发者] 事件审阅台（任意切换事件重选）
 import { pickRandomEnhancements, type MazeEnhancement } from '../../data/roguelike/enhancements';
 import { PLAYER_ENHANCEMENTS, ENEMY_ELIGIBLE_BUFFS } from '../../data/roguelike/buffs'; // [2026-08-31 莉莉子 开发者] 全量强化池
 import { BattleRewardModal } from './modals/BattleRewardModal';
@@ -32,7 +34,7 @@ import { TreasureModal } from './modals/TreasureModal'; // [2026-08-12 宝箱节
 import type { RewardCardOption, HeroRecruitOption } from '../../data/roguelike/rewards'; // [2026-08-25] 胜利奖励候选卡；[2026-09-04] 首战天启者招募
 import type { RandomTreasureResult } from '../../data/roguelike/treasure'; // [2026-08-12 宝箱节点]
 import { getHeroLevelBonus } from '../../data/roguelike/heroProgression'; // [2026-08-28] 商店页签位（等级奖励）
-import { rollRogueEvent, type RogueEvent } from '../../data/roguelike/events'; // [2026-08-28 事件]
+import { rollRogueEvent, ROGUE_EVENTS, ROGUE_EVENT_BY_ID, type RogueEvent } from '../../data/roguelike/events'; // [2026-08-28 事件] · [2026-10-09] +按 id 直取（指定固定事件）· [2026-10-10] +ROGUE_EVENTS（开发者事件审阅台全量列表）
 import type { EnhancementRarity } from '../../data/roguelike/buffs'; // [2026-08-28 事件] 强化品质提升
 import type { ChestInstance } from '../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
 import { motion } from 'framer-motion'; // [2026-08-25] 头像平滑移动动画层
@@ -59,6 +61,9 @@ const NODE_INFO: Record<RogueNodeType, { title: string; desc: string }> = {
     rest: { title: '篝火·休整', desc: '短暂休息，回复 30% 生命。' },
     shop: { title: '商店', desc: '用数据金购买卡牌、强化与装备。' },
     event: { title: '未知事件', desc: '前方迷雾重重，选择会带来不同的结果。' },
+    // [2026-10-09 莉莉子 · 随机节点] 仅为补键；实际不可达（真身在开局已改写进 `type`）。
+    //   占位文案与 `mapLayout.RANDOM_NODE_NAME / DESC` 同源，改文案时两处都要动（此处仅兜底）。
+    random: { title: '？？？', desc: '？？？？' },
     treasure: { title: '宝箱', desc: '打开宝箱，随机获得一份奖励。' },
 };
 
@@ -136,6 +141,14 @@ interface RogueMapScreenProps {
     // [2026-08-31 莉莉子 开发者] 任意选强化（开发者账号走全量选择器）
     isDev?: boolean;
     onDevPick?: (playerIds: string[], enemyIds: string[]) => void; // 多选确认：玩家强化叠加 + 敌方强化注入下一场战斗
+    /**
+     * [2026-10-10 莉莉子 · 开发者「事件审阅台」]
+     *   把整局状态**原样回滚**到传入的快照（`useRoguelikeRun.restoreRun`，由 App 透传）。
+     *   用途：开发者在事件节点用右上角「事件列表」切换事件重选时，先把上一次选择已结算的效果
+     *   （掉的血 / 加的金 / 删掉的卡 / 待战登记 / resolvedNodes）退回"刚进这个节点那一刻"。
+     *   传入才启用事件审阅台 ⇒ 普通对局（不传）功能整体不存在。
+     */
+    onDevRestoreRun?: (snapshot: RoguelikeRunState) => void;
 }
 
 const MAX_ZOOM = 2.0;
@@ -153,6 +166,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     reveal, onRevealEnd, // [2026-08-28 莉莉子 推演开场]
     runEnd, // [2026-08-29] 通关/败亡结算
     isDev, onDevPick, // [2026-08-31 莉莉子 开发者] 任意选强化
+    onDevRestoreRun, // [2026-10-10 莉莉子 开发者] 事件审阅台：切换事件时把整局状态回滚到快照
 }) => {
     // =====================================
     // [2026-10-05 莉莉子 BUG修复 · 20261005-13 / 方案 P1]
@@ -200,6 +214,13 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     const shopTabsRef = useRef<Record<string, ShopTab[]>>({}); // [2026-08-28] 商店节点 → 开启页签（进节点随机确定，重复开窗不重随）
     const [currentEvent, setCurrentEvent] = useState<RogueEvent | null>(null); // [2026-08-28 事件] 当前事件
     const seenEventsRef = useRef<string[]>([]); // [2026-08-28 事件] 一局内已出现事件（最近 8 个去重）
+    // ═══ [2026-10-10 莉莉子 · 开发者「事件审阅台」] ═══
+    const [devPickerOpen, setDevPickerOpen] = useState(false); // 事件列表窗口开关
+    //   每次切换事件 +1 ⇒ 拼进 NodeEventModal 的 key，**强制重挂载**把内部步骤（选择/删卡/剧情/结果/深层回响）复位
+    const [devEventSeq, setDevEventSeq] = useState(0);
+    //   快照**绑定节点**、不绑定弹窗：只在"首次进入某个事件节点"时捕获一次，之后反复切换都回到这同一份。
+    //   ⚠️ 若改成每次开窗都重取快照，第一次选择造成的血金变化就永久留下了 —— 那等于没回滚。
+    const devEventSnapRef = useRef<{ nodeId: string; run: RoguelikeRunState } | null>(null);
     const [entryNode, setEntryNode] = useState<RogueNode | null>(null); // [2026-08-27] 节点进入面板当前节点
     const [entryPos, setEntryPos] = useState({ x: 0, y: 0 }); // [2026-08-27] 面板锚点（节点屏幕坐标）
     const entryNodeRef = useRef<RogueNode | null>(null); // [2026-08-27] applyTransform 同步锚点用（避开陈旧闭包）
@@ -359,7 +380,11 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
         if (node.id === run.currentNodeId) {
             if (entryNode) { setEntryNode(null); entryNodeRef.current = null; }
             // [2026-08-27] 当前战斗节点未击败 → 弹右侧详情提供「战斗」入口（必须打败才解锁后续）
-            if ((node.type === 'battle' || node.type === 'elite' || node.type === 'boss') && !defeatedSet.has(node.id)) {
+            // [2026-10-10 莉莉子 BUG修复 · 程实测] **待战节点也要走这条路** ——
+            //   它在地图上显示成「精英」（`MapNode.tsx:50` 用 `pendingBattle` 改写显示类型），
+            //   但 `node.type` 仍是 `'event'` ⇒ 判据不能只看 type；否则左键点它**毫无反应**，那场仗永远打不了。
+            const isPendingBattleNode = !!run.pendingBattles?.[node.id];
+            if ((isPendingBattleNode || node.type === 'battle' || node.type === 'elite' || node.type === 'boss') && !defeatedSet.has(node.id)) {
                 setPreviewNode(node);
             }
             return;
@@ -421,13 +446,63 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     }, [run.heroLevel, run.rarityBonus, run.passUnlockedEnhancements, run.equippedCards, run.enhancements, run.difficulty]);
 
     // [2026-08-28 事件] 事件抽取：一局内最近 8 个不重复（权重由 rollRogueEvent 处理）
-    const rollEvent = (): RogueEvent => {
-        const ev = rollRogueEvent(seenEventsRef.current);
+    // [2026-10-09 莉莉子 · 事件指定] 地图上**指定了固定事件**的事件节点 ⇒ **必出**该事件（绕开去重）；
+    //   两条路径都记入"看过"账本（固定事件重复出现是设计允许的，程 2026-10-09 拍板）
+    const rollEvent = (node?: RogueNode): RogueEvent => {
+        const fixed = node?.eventId ? ROGUE_EVENT_BY_ID[node.eventId] : undefined;
+        const ev = fixed ?? rollRogueEvent(seenEventsRef.current);
         // [2026-10-05 莉莉子 · 方案 P1] **整局唯一**：原来只对"最近 8 个"去重（滑动窗口）⇒ 一局内会重复遇到同一事件。
         //   依据：《参考-肉鸽事件设计》§F 明写"事件去重：一局内避免重复同事件"；一局事件节点仅 1~2 个/Act、池子 23 条足够。
         //   （池子抽空时 `rollRogueEvent` 会自动退回全集，不会抽不出事件。）
         seenEventsRef.current = [...seenEventsRef.current, ev.id];
         return ev;
+    };
+
+    // ═══ [2026-10-10 莉莉子 · 开发者「事件审阅台」] ═══
+    /**
+     * 建立/复用回滚锚点：**同一节点只取第一次**（切事件、关窗重开都不覆盖）。
+     *   ⚠️ 存的是 run 的**引用**而非深拷贝 —— 安全，因为 `useRoguelikeRun` 的 setter 全部是不可变更新
+     *     （新对象 / 新数组），旧快照不会被后续操作原地改写（独立审查已逐条核过，未发现 mutation）。
+     */
+    const ensureDevEventSnapshot = () => {
+        const nid = run.currentNodeId;
+        if (!nid) return;
+        if (devEventSnapRef.current?.nodeId === nid) return;
+        devEventSnapRef.current = { nodeId: nid, run };
+    };
+
+    /**
+     * 快照捕获时机：**事件弹窗打开时**（另外从地图端按钮开审阅台时也会补一份，见下方按钮 onClick）。
+     *   · 放在 effect 里而不是 `doEnterNode` 内联 —— 进事件节点时 `onEnterNode` 会**发节点经验**，
+     *     内联捕获拿到的是"发经验之前"的闭包 run，回滚后这个节点的经验会白丢一次；
+     *     等 effect 跑时经验已提交，快照更贴近"刚进节点"的真实状态。
+     */
+    useEffect(() => {
+        if (!isDev || !onDevRestoreRun) return;
+        if (eventModal !== 'event') return;
+        ensureDevEventSnapshot();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [eventModal, run.currentNodeId, isDev, onDevRestoreRun]);
+
+    /**
+     * 开发者切换事件：**先回滚 → 再换事件 → 打开弹窗并复位步骤**。
+     *   ① 回滚整局状态 ⇒ 上一次选择的效果全部退回
+     *      （含 `resolvedNodes` / `pendingBattles`，"待战登记"也一起消失，不会残留）
+     *   ② 换 `currentEvent` ⇒ 弹窗按新事件渲染
+     *   ③ `setEventModal('event')` ⇒ 从**地图端按钮**进来时（弹窗本来是关着的）也能立刻开始体验；
+     *      从弹窗内按钮进来时这一步是幂等的
+     *   ④ `devEventSeq + 1` ⇒ key 变化 ⇒ 弹窗重挂载，内部步骤回到 `'choices'`
+     *   ⚠️ 刻意**不走 `rollEvent`**：切换是"定向指定"，不该污染"一局内已出现过"的去重账本。
+     */
+    const devSwitchEvent = (ev: RogueEvent) => {
+        const snap = devEventSnapRef.current;
+        // [2026-10-10 · 第3轮独立审查修复] 回滚条件与**界面显示判据保持一致**（都要求锚点属于当前节点）：
+        //   否则一旦出现"窗口开着时当前节点被改动"的情形，界面会说"不适用"，而动作却把整局拽回**上一个节点**的快照。
+        if (snap && snap.nodeId === run.currentNodeId && onDevRestoreRun) onDevRestoreRun(snap.run);
+        setCurrentEvent(ev);
+        setEventModal('event');
+        setDevEventSeq(s => s + 1);
+        setDevPickerOpen(false);
     };
     // [2026-08-28 事件] 强化节点抽选：托付遗物投资 → 第一个强化品质+1（一次性消费标记）
     const rankUpRarity = (r: EnhancementRarity): EnhancementRarity => {
@@ -481,6 +556,10 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                 return;
             }
             // [2026-10-05 · 方案 P1] 该节点的服务/奖励已用掉 ⇒ 不再进入（防右键反复进入刷取）
+            // ⚠️ [2026-10-10 莉莉子 · 事件审阅台] **不要**在这里为开发者开旁路 —— 实测（独立审查 C1 复核）：
+            //   本函数只由"点**非当前节点**"那条链触发（`handleNodeClick` 对当前节点 :379 直接 return），
+            //   而事件节点一旦结算就被 `markNodeResolved`，玩家**根本走不到这里**（`NodePreviewPanel` 连「进入」按钮都不给）
+            //   ⇒ 旁路是死代码。开发者重新打开事件节点的路径改由**地图右上角「事件审阅」按钮**承担。
             if (resolvedNodeSet.has(node.id)) {
                 console.warn(`[RogueMap] 节点 ${node.id}(${node.type}) 已完成，忽略重复进入`);
                 return;
@@ -495,7 +574,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             } else if (node.type === 'treasure') {
                 setTreasureOpen(true);
             } else if (node.type === 'event') {
-                setCurrentEvent(rollEvent()); // [2026-08-28 事件] 进事件节点随机抽事件（一局内去重）
+                setCurrentEvent(rollEvent(node)); // [2026-08-28 事件] 进事件节点抽事件（一局内去重）· [2026-10-09] 若地图指定了固定事件则必出
                 setEventModal('event');
             } else if (node.type === 'rest') {
                 setEventModal('rest');
@@ -506,6 +585,27 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     // [完整三重迷宫] 渲染全部 Act 节点 + 白色虚线连线（基于节点 next 真实路径）
     const allNodes = layout.flatMap(act => act.nodes);
     const nodeById = new Map(allNodes.map(n => [n.id, n]));
+    // [2026-10-10 莉莉子 开发者 · 事件审阅台] 当前是否站在**事件节点**上
+    //   —— 地图端「事件审阅」按钮的显示条件（回滚锚点就是"刚进这个节点那一刻"，不在此处点它没有意义）
+    const currentIsEventNode = !!run.currentNodeId && nodeById.get(run.currentNodeId)?.type === 'event';
+    // [2026-10-10 莉莉子 开发者 · 事件审阅台] 当前节点的**回滚锚点摘要**（供列表窗口显示"会回滚到哪"）。
+    //   没有锚点时返回 null ⇒ 列表窗口会明确提示"切换不会回滚"，而不是让人误以为已经回滚了。
+    const devAnchor: DevEventAnchor | null = (() => {
+        const snap = devEventSnapRef.current;
+        if (!snap || snap.nodeId !== run.currentNodeId) return null;
+        return {
+            nodeId: snap.nodeId,
+            hp: snap.run.hp,
+            maxHp: snap.run.maxHp,
+            gold: snap.run.gold,
+            deckCount: snap.run.deck.length,
+            enhancementCount: snap.run.enhancements.length,
+            // [2026-10-10 · 第3轮独立审查修复] 锚点是否取自"本节点**已结算之后**"（= 快照里 resolvedNodes 已含它）。
+            //   首次进入节点时节点尚未 resolved ⇒ false（干净）；地图进战斗 / 暂离后重挂载补的锚点通常是 true（脏）。
+            //   界面据此把"回滚目标其实是当前值"这件事**显式标出来**，避免开发者把当前值当回滚目标。
+            settled: (snap.run.resolvedNodes ?? []).includes(snap.nodeId),
+        };
+    })();
 
     // [2026-08-28 莉莉子 推演开场] 节点从左到右依次点亮（按 x 列分桶做视觉排序，仅演出用；
     // 非迷宫深度语义——迷宫深度用 mapLayout.computeGraphDepth，见 generateMapLayout）
@@ -567,9 +667,17 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     const visitedSet = new Set(run.visited ?? []); // [2026-08-27] 走过的节点（灰显不可回退）
     // （`resolvedNodeSet` 已提前到组件顶部定义 —— `doEnterNode` 更早用到它）
     // [2026-08-27 莉莉子] 当前战斗节点未击败 → 后续不解锁（必须打败该节点敌人才解锁下一段）
+    // [2026-10-10 莉莉子 · 第 4 轮独立审查修复 · BUG5 残项] **待战节点也算"没打完的战斗"**：
+    //   事件把它登记成待战后，它的 `type` 仍是 `'event'`，此前这里三个类型判据都不认它
+    //   ⇒ 玩家可以**直接往前走**；一走，该节点就进 `visited`（`getNodeState` 返回 `'missed'`）
+    //   ⇒ 节点再也点不动，而 `pendingBattles` 永久残留、地图上却还渲染成「精英」。
+    //   现在待战未清 ⇒ 后续不解锁，逼玩家先打掉这一场（与"必须打败才解锁"同一口径；
+    //   打赢后 App 会 `clearPendingBattle`，封锁自动解除）。
     const curEntryNode = nodeById.get(run.currentNodeId ?? '');
+    const isPendingBattleHere = !!run.currentNodeId && !!run.pendingBattles?.[run.currentNodeId];
     const isCombatBlocked = !!curEntryNode
-        && (curEntryNode.type === 'battle' || curEntryNode.type === 'elite' || curEntryNode.type === 'boss')
+        && (isPendingBattleHere
+            || curEntryNode.type === 'battle' || curEntryNode.type === 'elite' || curEntryNode.type === 'boss')
         && !defeatedSet.has(curEntryNode.id);
     // [2026-08-11 节点预览] 节点状态机抽成辅助函数：地图渲染循环 + 预览面板复用，保证一致
     const getNodeState = (node: RogueNode): MapNodeState => {
@@ -705,6 +813,10 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                                 enemyKey={node.enemyKey} // [2026-08-10] 战斗节点预分配敌人头像
                                 // [2026-10-08 莉莉子 · 瓦尔基里大赛] 该节点已登记「待战」⇒ 渲染成战斗节点
                                 pendingBattle={!!run.pendingBattles?.[node.id]}
+                                // [2026-10-09 莉莉子 · 随机节点] 开局预掷的真身**不在地图上公开** ⇒ 渲染成「未知」
+                                // [2026-10-10 程实测] 与预览面板**同口径**：站上去（＝当前节点）就算已揭示 ——
+                                //   否则地图图标写着「？？？」，右键面板却已经报出真身，两处互相打架
+                                unrevealed={!!node.wasRandom && node.id !== run.currentNodeId}
                                 onActivate={() => handleNodeClick(node)}
                                 onPreview={() => handleNodeContextMenu(node)} // [2026-08-11] 右键预览
                                 revealDelay={reveal ? (nodeRevealDelays.get(node.id) ?? 0.45) : undefined} // [2026-08-28 莉莉子 推演开场] 按列从暗弹出
@@ -868,9 +980,36 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                 </div>
             )}
 
+            {/* [2026-10-10 莉莉子 开发者 · 事件审阅台] 地图端入口（放在「评估嘉勉」下方 top-16，避免两个按钮挤在一起）。
+                为什么必须单独有它：事件弹窗一旦关闭（点「继续」/「确定」），该节点已被 `markNodeResolved` 记成"用掉"，
+                而 `handleNodeClick` 对当前节点直接 return、`NodePreviewPanel` 在 resolved 后也不给「进入」按钮
+                ⇒ **弹窗外没有任何原生路径能重新打开它**（这就是原先在 `doEnterNode` 开旁路属于死代码的原因）。
+                只在站在事件节点上时出现：回滚锚点即"刚进这个节点那一刻"，站别处点它没有意义。 */}
+            {isDev && onDevRestoreRun && currentIsEventNode && (
+                <div className="absolute top-16 right-3 z-40">
+                    <button
+                        onClick={() => {
+                            // 补锚点：覆盖"从未打开过事件弹窗"与"地图重挂载后 ref 丢失"两种情形。
+                            // ⚠️ 这里补出来的锚点是**当前状态**；若此前已在本节点结算过，它就带着那次结算的结果
+                            //   ⇒ 列表窗口会把这个锚点的数值显示出来，让"会回滚到哪"成为可见事实，而不是一句假设。
+                            ensureDevEventSnapshot();
+                            setDevPickerOpen(true);
+                        }}
+                        title="开发者：事件审阅台 —— 任意切换事件重新体验（切换时整局状态回滚到进入本节点那一刻）"
+                        className="flex items-center gap-2 rounded-full border border-violet-300/50 bg-violet-600/30 hover:bg-violet-600/60 backdrop-blur-sm pl-3.5 pr-4 py-2 text-violet-100 transition-all"
+                    >
+                        <ListChecks size={18} />
+                        <span className="text-sm font-black tracking-wider">事件审阅</span>
+                    </button>
+                </div>
+            )}
+
             {/* 节点事件弹窗 */}
             {eventModal && (
                 <NodeEventModal
+                    // [2026-10-10 莉莉子 开发者] 切换事件后 devEventSeq/currentEvent 变化 ⇒ 重挂载 ⇒ 内部步骤复位回「选择」
+                    //   （普通流程下这两个值稳定 ⇒ key 稳定 ⇒ 行为零变化）
+                    key={`${eventModal}_${currentEvent?.id ?? ''}_${devEventSeq}`}
                     type={eventModal}
                     hp={run.hp}
                     maxHp={run.maxHp}
@@ -894,6 +1033,22 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                     devEnemyPool={ENEMY_ELIGIBLE_BUFFS}
                     ownedEnhancements={run.enhancements}
                     onDevPick={onDevPick}
+                    // [2026-10-10 莉莉子 开发者 · 事件审阅台] 传了才在事件分支右上角渲染「事件列表」按钮
+                    //   （非开发者 / 没透传 restoreRun ⇒ undefined ⇒ 按钮整体不存在）
+                    onOpenDevEventPicker={isDev && onDevRestoreRun ? () => setDevPickerOpen(true) : undefined}
+                />
+            )}
+
+            {/* [2026-10-10 莉莉子 开发者 · 事件审阅台] 事件列表窗口。
+                z-[900] > 事件弹窗 z-[700]，所以能从弹窗里直接点开并盖住它。
+                选中事件 → devSwitchEvent（回滚整局状态 + 换事件 + 复位弹窗步骤）。 */}
+            {devPickerOpen && isDev && (
+                <DevEventPickerModal
+                    events={ROGUE_EVENTS}
+                    currentId={currentEvent?.id}
+                    anchor={devAnchor} // [2026-10-10] 回滚目标数值（无锚点则 null ⇒ 窗口如实提示"不会回滚"）
+                    onPick={devSwitchEvent}
+                    onClose={() => setDevPickerOpen(false)}
                 />
             )}
 
@@ -982,8 +1137,14 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                 onDevWin={onDevWin} // [2026-08-29] 开发者一键胜利
                 onInteractCurrent={(n) => {
                     setPreviewNode(null);
+                    // [2026-10-10 莉莉子 BUG修复 · 程实测] **待战节点：直接开打**（事件结算时登记的那场仗）。
+                    //   ⚠️ 必须放在下方 `resolvedNodes` 检查**之前** —— 事件做出选择时该节点已被记为"用掉"，
+                    //     先查 resolved 会把这条路挡死（与 `doEnterNode` 里同款顺序，见其 `pendingBattles` 分支）。
+                    if (run.pendingBattles?.[n.id]) { onEventFight?.(); return; }
                     // [2026-10-05 莉莉子 · 方案 P1] **该节点的服务/奖励已用掉 ⇒ 右键不再能进入**（防刷取）
                     //   覆盖事件/强化/休整/宝箱/商店 —— 地图单向不可回退，这里就是唯一的重入路径。
+                    // ⚠️ [2026-10-10 莉莉子 · 事件审阅台] 同上：不为开发者开旁路（本回调的「进入」按钮在 resolved 后
+                    //   由 `NodePreviewPanel` 直接不渲染 ⇒ 开了也够不到）。开发者重开路径 = 地图右上角「事件审阅」。
                     if (resolvedNodeSet.has(n.id)) {
                         console.warn(`[RogueMap] 节点 ${n.id}(${n.type}) 已完成，右键「进入」已禁用`);
                         return;
@@ -998,32 +1159,44 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                         setTreasureOpen(true);
                         return;
                     }
-                    if (n.type === 'event') { // [2026-08-28 事件] 重复进事件节点：抽新事件（一局内去重）
-                        setCurrentEvent(rollEvent());
+                    if (n.type === 'event') { // [2026-08-28 事件] 重复进事件节点：抽事件（一局内去重）· [2026-10-09] 指定固定事件则必出
+                        setCurrentEvent(rollEvent(n));
                         setEventModal('event');
                         return;
                     }
                     // [安全窄化] NodePreviewPanel 保证此回调只在非战斗节点触发（battle/elite/boss 走 onBattle）
+                    // [2026-10-10 程实测 BUG修复] **不再依赖那句"保证"，把它落成显式分支**：
+                    //   随机节点曾绕过该保证（掩码令 `isCombat` 判 false ⇒ 面板给的是「进入」而不是「战斗」）
+                    //   ⇒ `battle` 被强转塞进事件弹窗 ⇒ 它的 `TITLES` 表里没有这个键 ⇒ `meta.icon` 白屏崩溃。
+                    //   即使将来还有别的路径漏进来，这里也不会再把战斗类型交给事件弹窗。
+                    if (n.type === 'battle' || n.type === 'elite' || n.type === 'boss') {
+                        onBattle(n.type, n.enemyArchetypeId, n.id, n.enemyBuffs);
+                        return;
+                    }
                     setEventModal(n.type as Exclude<RogueNodeType, 'battle' | 'elite' | 'boss'>);
                 }}
             />
 
             {/* [2026-08-27 莉莉子] 节点进入方形面板：点击节点正上方弹出，点「前往」才移动+走进 */}
+            {/* [2026-10-10 程实测 BUG修复] **随机节点在这里也必须掩码**：
+                此前只有"地图图标"与"右键预览面板"做了掩码，这块**点节点弹出的进入面板**漏了 ⇒
+                随机掷出的真身（是战斗？是事件？对手是谁？）会被提前报出来 —— 正是程说的"提前暴露节点信息"。
+                本面板出现在**「前往」之前** ⇒ 一律用占位文案（与 `mapLayout.RANDOM_NODE_*` 同源）。 */}
             {entryNode && (
                 <NodeEntryModal
                     key={entryNode.id}
                     pos={entryPos}
                     bg={entryBg}
-                    title={
-                        (entryNode.type === 'battle' || entryNode.type === 'elite' || entryNode.type === 'boss')
+                    title={entryNode.wasRandom
+                        ? RANDOM_NODE_NAME
+                        : ((entryNode.type === 'battle' || entryNode.type === 'elite' || entryNode.type === 'boss')
                             ? (entryNode.enemyArchetypeId ? ENEMY_ARCHETYPES[entryNode.enemyArchetypeId]?.name ?? NODE_INFO[entryNode.type].title : NODE_INFO[entryNode.type].title)
-                            : NODE_INFO[entryNode.type].title
-                    }
-                    desc={
-                        (entryNode.type === 'battle' || entryNode.type === 'elite' || entryNode.type === 'boss')
+                            : NODE_INFO[entryNode.type].title)}
+                    desc={entryNode.wasRandom
+                        ? RANDOM_NODE_DESC
+                        : ((entryNode.type === 'battle' || entryNode.type === 'elite' || entryNode.type === 'boss')
                             ? (entryNode.enemyArchetypeId ? ENEMY_ARCHETYPES[entryNode.enemyArchetypeId]?.description ?? NODE_INFO[entryNode.type].desc : NODE_INFO[entryNode.type].desc)
-                            : NODE_INFO[entryNode.type].desc
-                    }
+                            : NODE_INFO[entryNode.type].desc)}
                     onEnter={() => handleEntryEnter(entryNode)}
                 />
             )}

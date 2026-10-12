@@ -95,7 +95,7 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     // [2026-09-28 莉莉子 神格神经] 进攻宣告类
     | 'RALLY_IF_ATTACK_POWER'   // 芬妮②④：我方进攻单位攻击力总和 > 阈值 → 备战（params.threshold）
     | 'CLONE_ON_DECLARE'        // 卜卜①③：进攻宣告时复制我方单位，以"进攻中"入场（params.strongest / power / health）
-    | 'NEXUS_REPEAT_STRIKE'    // 卜卜⑥：打击敌方水晶时记账 → 回合结束由我方最强单位再打一次
+    | 'NEXUS_REPEAT_STRIKE'    // 卜卜⑥：**每回合首次**打击敌方水晶时记账 → 回合结束由我方最强单位再打一次
     // [2026-09-28 神格神经 · 猫汐尔]
     | 'MANA_PER_SUMMON_ROUND'     // ①回合开始：每有 1 个召唤衍生物 → **本回合**最大法力 +1
     | 'MANA_PER_SUMMON_PERMANENT' // ③每召唤 1 个衍生物 → **本场永久**最大法力 +1（计数存 questProgress）
@@ -166,13 +166,16 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: false,
     },
     // [2026-10-08 莉莉子 · 瓦尔基里大赛] **世纪和解**（仅「瓦尔基里大赛」绝密档可得）
-    //   效果：开局时**从牌库**召唤里芙与芬妮到备战席（移出牌库，带装备随卡而来）
+    //   效果：开局时**从牌库与手牌**召唤里芙与芬妮到备战席（从原处移出，带装备随卡而来）
+    //   ⚠️ [2026-10-10 莉莉子 BUG修复 · 程实测] 原先**只查牌库** ⇒ 有一张被起手抽进手牌时就不会被召唤
+    //      （程：「有时候只召唤出里芙和芬妮其中的一个」）⇒ 现改为牌库 + 手牌都查
+    //      （实现见 `logic/rogueTrigger.ts` 的 `SUMMON_FROM_DECK`）
     //   ⚠️ `playerEligible: false` ⇒ **不进任何随机池**（同神格神经 `divfx_*` 的做法），
     //      玩家唯一的获取途径是该事件的 `addEnhancementFrom`。
     //   ⚠️ `enemyEligible: true` ⇒ 绝密档「在哪里参赛？」的敌方**也持有一条**（程的表里明确写了）。
     {
         id: 'enhance_century_reconciliation', name: '世纪和解',
-        description: '开局时，从牌库召唤里芙与芬妮到备战席。',
+        description: '开局时，从牌库与手牌召唤里芙与芬妮到备战席。',
         rarity: 'mythic', icon: SPELL_IMAGES.lyfe_fenny, effect: { type: 'passive' },
         battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['lyfe', 'fenny'] } },
         playerEligible: false, enemyEligible: true,
@@ -798,7 +801,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
     },
     {
         id: 'divfx_bubu_6', name: '镜阵回响',
-        description: '我方每次打击敌方水晶时：回合结束时，我方备战席上攻击力最高的单位再次打击敌方水晶。',
+        description: '我方每回合首次打击敌方水晶后：回合结束时，我方备战席上攻击力最高的单位再次打击敌方水晶。',
         rarity: 'legendary', icon: SPELL_IMAGES.pupu_specular_soul_spell, effect: { type: 'passive' },
         // 一条强化两段式：记账（on_nexus_strike）+ 兑现（round_end）
         battleEffects: [
@@ -834,27 +837,33 @@ export const MAZE_BUFFS: MazeBuff[] = [
     },
     {
         id: 'divfx_mauxir_6', name: '莲台无垠',
-        description: '我方所有法术费用 -1；「臆莲基座」的攻击力不再有上限限制。',
+        description: '我方所有法术费用 -1；「臆莲基座」的攻击力不再有上限限制；回合开始时获得一张「顷刻莲潮」（若手牌中已有，则改为使那张的费用 -1）。',
         rarity: 'legendary', icon: SPELL_IMAGES.mauxir_lotus_spell, effect: { type: 'passive' },
-        // 一条强化三个效果：开局法术减费 + 开局/此后召唤都解除基座攻击上限
+        // 一条强化四个效果：开局法术减费 + 开局/此后召唤都解除基座攻击上限 + 每回合投递大招
         battleEffects: [
             { trigger: 'game_start', effectClass: 'SPELL_COST_DOWN_ALL', params: { amount: 1 } },
             { trigger: 'game_start', effectClass: 'REMOVE_MAX_POWER', params: { cardKey: 'mauxir_lotus_pedestal' } },
             { trigger: 'on_summon', effectClass: 'REMOVE_MAX_POWER', params: { cardKey: 'mauxir_lotus_pedestal' } },
+            // [2026-10-10 程的口径] 加强：**每回合**给一张「顷刻莲潮」；手牌里已有 ⇒ 不重复生成，
+            //   改为把那张费用 -1。
+            //   ── 复用 `effectProcessor` 里 **GENERATE 的既有分支 `reduceCostIfDuplicate`**
+            //      （2026-07-17 为鸦眼小队写的**同款语义**，不是新机制）：
+            //      取手牌中**第一张**同名卡，`cost = max(0, cost - 1)` 且 `customProgress |= 2`（绿色费用标记）。
+            { trigger: 'round_start', effectClass: 'GENERATE', params: { generateKey: 'mauxir_lotus_ultimate', count: 1, reduceCostIfDuplicate: true } },
         ],
         playerEligible: false, enemyEligible: false,
     },
     // ── [2026-09-28 莉莉子 神格神经 · 茉莉安（信标猎场）] 节点载体（程的设计）──
     {
-        id: 'divfx_marian_1', name: '猎影援护', description: '我方拉取暴露单位时，本回合给予发起拉取的我方单位 +2/+0。',
+        id: 'divfx_marian_1', name: '猎影援护', description: '我方拉取暴露单位时，永久给予发起拉取的我方单位 +2/+0。',
         rarity: 'common', icon: SPELL_IMAGES.marian_rush, effect: { type: 'passive' },
-        battleEffect: { trigger: 'on_pull_exposed', effectClass: 'BUFF', params: { power: 2, health: 0 } },
+        battleEffect: { trigger: 'on_pull_exposed', effectClass: 'BUFF', params: { power: 2, health: 0, permanent: true } },
         playerEligible: false, enemyEligible: false,
     },
     {
-        id: 'divfx_marian_3', name: '猎影疾袭', description: '我方拉取暴露单位时，本回合给予发起拉取的我方单位 +3/+0 与【快速攻击】。（升级「猎影援护」）',
+        id: 'divfx_marian_3', name: '猎影疾袭', description: '我方拉取暴露单位时，永久给予发起拉取的我方单位 +3/+0 与【快速攻击】。（升级「猎影援护」）',
         rarity: 'uncommon', icon: SPELL_IMAGES.marian_rush, effect: { type: 'passive' },
-        battleEffect: { trigger: 'on_pull_exposed', effectClass: 'BUFF', params: { power: 3, health: 0, keywords: ['QuickAttack'] } },
+        battleEffect: { trigger: 'on_pull_exposed', effectClass: 'BUFF', params: { power: 3, health: 0, keywords: ['QuickAttack'], permanent: true } },
         playerEligible: false, enemyEligible: false,
     },
     {

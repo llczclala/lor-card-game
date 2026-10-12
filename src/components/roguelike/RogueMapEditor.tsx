@@ -8,7 +8,9 @@
 //    选框/节点都渲染在画布容器内部，用「画布内部坐标」；换算统一用
 //    canvasRef.getBoundingClientRect()（实时视觉坐标）÷ 缩放系数。换算与渲染共用
 //    同一个 rect，数学自洽，且自动适应侧边栏挤压/视口变化。
-// ⚠️ 数据源与游戏地图一致（三张难度图 ROGUE_MAPS，顶部切换 普通/机密/绝密 分别编辑）。导出后粘贴回 mapLayout.ts 对应常量生效。
+// ⚠️ 数据源与游戏地图一致（[2026-10-09 图池] **每难度多张地图**：顶部切难度 → 第二行切/新建/删除/重命名地图）。
+//    「导出本难度全部图」一次复制全部常量；粘贴回 mapLayout.ts 对应常量，并替换 ROGUE_MAPS 里该难度那一行。
+//    新增地图的常量名依次为 `ROGUE_MAP_<难度>_2` / `_3` …（第 1 张沿用历史名）。
 // ==========================================
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
@@ -16,19 +18,46 @@ import { X, Plus, Trash2, Copy, Undo2, Redo2, Map as MapIcon, MousePointerClick,
 import {
     ROGUE_MAPS, MAP_WIDTH, MAP_HEIGHT,
     type RogueNode, type RogueNodeType,
+    RANDOM_NODE_POOL, // [2026-10-09 随机节点] 白名单（编辑器"试掷"预览用；唯一真源仍在 mapLayout）
 } from '../../data/roguelike/mapLayout';
 import { ROGUE_DIFFICULTIES, type RogueDifficulty } from '../../data/roguelike/difficulties'; // [2026-08-28] 三难度切换
 import { MapNode } from './MapNode';
 import mapZero from '../../image/map/map_zero.webp';
 import { DIALOGUE_BG_KEYS } from '../../data/roguelike/dialogueBg'; // [2026-08-27] 进入面板背景图选项
+import { ROGUE_EVENTS, ROGUE_EVENT_TYPE_LABELS } from '../../data/roguelike/events'; // [2026-10-09 事件指定] 固定事件下拉选项
 
-const NODE_TYPE_OPTIONS: RogueNodeType[] = ['start', 'enhance', 'battle', 'elite', 'boss', 'rest', 'shop', 'event', 'treasure'];
+const NODE_TYPE_OPTIONS: RogueNodeType[] = ['start', 'enhance', 'battle', 'elite', 'boss', 'rest', 'shop', 'event', 'treasure', 'random'];
 const TYPE_LABELS: Record<RogueNodeType, string> = {
     start: '起点战旗', enhance: '迷宫强化', battle: '战斗', elite: '精英',
     boss: 'Boss', rest: '休息', shop: '商店', event: '事件', treasure: '宝箱',
+    random: '未知（随机）', // [2026-10-09] 进入前不可知；真身开局预掷，白名单见 RANDOM_NODE_POOL
 };
 const MAX_HISTORY = 50;
 const MAX_SCALE = 3;
+
+/**
+ * [2026-10-09 莉莉子 · 图池] 从源码图池构造编辑器的**工作副本**：`难度 → [{ 名称, 节点[] }]`。
+ * ⚠️ 编辑只作用于这份内存副本，点「导出源码」才生成可粘贴的常量 —— 与既有"导出即保存"口径一致。
+ * ⚠️ 每个难度**保底 1 张**，避免出现"该难度没有图"导致开局抽图落空。
+ */
+const buildInitialMaps = (): Record<RogueDifficulty, { name: string; nodes: RogueNode[] }[]> => {
+    const out = {} as Record<RogueDifficulty, { name: string; nodes: RogueNode[] }[]>;
+    ROGUE_DIFFICULTIES.forEach(({ key }) => {
+        const list = (ROGUE_MAPS[key] ?? []).map((m, i) => ({
+            name: m[0]?.name ?? `地图 ${i + 1}`,
+            nodes: (m[0]?.nodes ?? []).map(n => ({ ...n })),
+        }));
+        out[key] = list.length > 0 ? list : [{ name: '新地图', nodes: [] }];
+    });
+    return out;
+};
+
+/**
+ * [2026-10-09 莉莉子 · 图池] 常量名：序号 0 **沿用历史名**（`ROGUE_MAP_NORMAL`）——
+ * 这样第一次编辑既有图再粘贴，不会与源码里已有的常量重名；新增图依次是 `_2` / `_3` …
+ */
+const mapConstName = (d: RogueDifficulty, idx: number): string =>
+    idx === 0 ? `ROGUE_MAP_${d.toUpperCase()}` : `ROGUE_MAP_${d.toUpperCase()}_${idx + 1}`;
 
 interface RogueMapEditorProps {
     onClose: () => void;
@@ -37,9 +66,14 @@ interface RogueMapEditorProps {
 export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
     // ── 编辑数据（三张难度地图，切换编辑对应难度） ──
     const [difficulty, setDifficulty] = useState<RogueDifficulty>('normal'); // [2026-08-28] 当前编辑难度
-    const [nodes, setNodes] = useState<RogueNode[]>(() =>
-        (ROGUE_MAPS.normal[0]?.nodes ?? []).map(n => ({ ...n }))
-    );
+    // ── [2026-10-09 莉莉子 · 图池] 难度内的**多张地图**（内存工作副本）──
+    //   `maps[难度]` = 该难度的地图列表（名字 + 节点）；`mapIdx` = 当前编辑第几张；
+    //   `nodes` 仍是"当前编辑缓冲"（撤销/重做只作用于它）⇒ 切难度/切图/新建/删除前先 flush 回 maps。
+    const [maps, setMaps] = useState(() => buildInitialMaps());
+    const [mapIdx, setMapIdx] = useState(0);
+    // [2026-10-09 随机节点] "试掷一次"预览：纯辅助（看随机节点可能变成什么），**不落源码、不写回节点**
+    const [rollPreview, setRollPreview] = useState<RogueNodeType | null>(null);
+    const [nodes, setNodes] = useState<RogueNode[]>(() => (maps.normal[0]?.nodes ?? []).map(n => ({ ...n })));
     const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
     const [past, setPast] = useState<RogueNode[][]>([]);
     const [future, setFuture] = useState<RogueNode[][]>([]);
@@ -57,6 +91,13 @@ export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
 
     // refs（避免闭包读旧值）
     const nodesRef = useRef(nodes);
+    /**
+     * [2026-10-09 莉莉子 · 图池] `maps` 的 ref 镜像：切图 / 新建 / 删除 / 导出都要在事件处理里
+     * **同步**读写最新副本（`setMaps` 是异步的，直接读 state 会拿到旧值）。
+     * 写回口径：直接改 `mapsRef.current` 里的对象/数组，再 `setMaps({ ...mapsRef.current })` 触发渲染。
+     */
+    const mapsRef = useRef(maps);
+    useEffect(() => { mapsRef.current = maps; }, [maps]);
     useEffect(() => { nodesRef.current = nodes; }, [nodes]);
     const selectedRef = useRef(selectedIds);
     useEffect(() => { selectedRef.current = selectedIds; }, [selectedIds]);
@@ -311,18 +352,69 @@ export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
         secret: 'text-sky-400 border-sky-400/40',
         topsecret: 'text-red-400 border-red-400/40',
     };
-    const switchDifficulty = (d: RogueDifficulty) => {
-        if (d === difficulty) return;
-        const dirty = past.length > 0 || future.length > 0;
-        if (dirty && !window.confirm('切换难度将丢弃当前未导出的编辑，继续？')) return;
+    /** [2026-10-09 图池] 把当前编辑缓冲 flush 回 `maps`（切图/新建/删除/导出前调用；同步生效） */
+    const flushCurrent = () => {
+        const list = mapsRef.current[difficulty];
+        if (!list?.[mapIdx]) return;
+        list[mapIdx] = { ...list[mapIdx], nodes: nodesRef.current.map(n => ({ ...n })) };
+        setMaps({ ...mapsRef.current });
+    };
+
+    /** 载入「某难度第 i 张图」到编辑缓冲（重置撤销栈，与旧口径一致） */
+    const loadMap = (d: RogueDifficulty, i: number) => {
+        const m = mapsRef.current[d]?.[i];
         setDifficulty(d);
-        setNodes((ROGUE_MAPS[d][0]?.nodes ?? []).map(n => ({ ...n })));
+        setMapIdx(i);
+        setNodes((m?.nodes ?? []).map(n => ({ ...n })));
         setSelectedIds(new Set());
-        setLinkMode(false);      // [2026-09-04 连线编辑] 切难度重置连线状态
+        setLinkMode(false);      // [2026-09-04 连线编辑] 切图重置连线状态
         setLinkFromId(null);
         setPast([]);
         setFuture([]);
         setCopied(false);
+        setRollPreview(null);
+    };
+
+    const hasUnexportedEdits = () => past.length > 0 || future.length > 0;
+
+    /** [2026-10-09 图池] 切难度（落到该难度第 1 张）或切图 */
+    const switchMap = (d: RogueDifficulty, i: number) => {
+        if (d === difficulty && i === mapIdx) return;
+        if (hasUnexportedEdits() && !window.confirm('切换地图将丢弃当前未导出的编辑，继续？')) return;
+        flushCurrent();
+        loadMap(d, i);
+    };
+    const switchDifficulty = (d: RogueDifficulty) => switchMap(d, 0); // 兼容旧调用点（难度按钮）
+
+    /** [2026-10-09 图池] 新建地图 = **复制当前图**（程拍板），追加到本难度末尾并切过去 */
+    const addMap = () => {
+        flushCurrent();
+        const list = mapsRef.current[difficulty];
+        const src = list[mapIdx];
+        list.push({
+            name: `${src?.name ?? '地图'} 副本`,
+            nodes: (src?.nodes ?? []).map(n => ({ ...n })),
+        });
+        setMaps({ ...mapsRef.current });
+        loadMap(difficulty, list.length - 1);
+    };
+
+    /** [2026-10-09 图池] 删除当前图（**保底留 1 张**，避免"该难度没有图"导致开局抽图落空） */
+    const deleteMap = () => {
+        const list = mapsRef.current[difficulty];
+        if (list.length <= 1) { window.alert('每个难度至少保留 1 张地图'); return; }
+        if (!window.confirm(`删除「${list[mapIdx]?.name ?? '本图'}」？此操作不可撤销。`)) return;
+        list.splice(mapIdx, 1);
+        setMaps({ ...mapsRef.current });
+        loadMap(difficulty, Math.min(mapIdx, list.length - 1));
+    };
+
+    /** [2026-10-09 图池] 重命名当前图（名字存在 `act.name`，会随导出写进源码常量） */
+    const renameMap = (name: string) => {
+        const list = mapsRef.current[difficulty];
+        if (!list?.[mapIdx]) return;
+        list[mapIdx] = { ...list[mapIdx], name };
+        setMaps({ ...mapsRef.current });
     };
 
     // ── 增删节点 ──
@@ -392,28 +484,51 @@ export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
         setSelectedIds(new Set([node.id])); // 目标高亮；起点仍 pending（linkFromId 不变）便于扇出
     };
 
-    // ── 导出源码 ──
-    const exportCode = () => {
-        const list = nodesRef.current.map(n => {
-            const sizePart = n.size ? `, size: ${n.size}` : '';
-            const bgPart = n.dialogueBg ? `, dialogueBg: '${n.dialogueBg}'` : ''; // [2026-08-27] 进入面板背景图
-            const nextPart = n.next.length ? `[${n.next.map(id => `'${id}'`).join(', ')}]` : '[]';
-            return `            { id: '${n.id}', type: '${n.type}', x: ${n.x}, y: ${n.y}${sizePart}${bgPart}, next: ${nextPart} },`;
-        }).join('\n');
-        const constName = `ROGUE_MAP_${difficulty.toUpperCase()}`; // [2026-08-28] 按当前难度导出对应常量
-        const code = `export const ${constName}: RogueAct[] = [
-    {
-        index: 1,
-        name: '悖论迷宫',
-        nodes: [
-${list}
-        ],
-    },
-];`;
+    // ── 导出源码（[2026-10-09 图池] 支持"单张"与"本难度全部"） ──
+    const copyCode = (code: string) => {
         navigator.clipboard?.writeText(code).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
         });
+    };
+
+    /** 序列化一张图为源码常量（节点行含 `eventId` —— 漏序列化会让"指定固定事件"**静默丢失**） */
+    const serializeMap = (d: RogueDifficulty, idx: number, name: string, list: RogueNode[]): string => {
+        const body = list.map(n => {
+            const sizePart = n.size ? `, size: ${n.size}` : '';
+            const bgPart = n.dialogueBg ? `, dialogueBg: '${n.dialogueBg}'` : ''; // [2026-08-27] 进入面板背景图
+            const evPart = n.eventId ? `, eventId: '${n.eventId}'` : '';          // [2026-10-09] 指定固定事件
+            const nextPart = n.next.length ? `[${n.next.map(id => `'${id}'`).join(', ')}]` : '[]';
+            return `            { id: '${n.id}', type: '${n.type}', x: ${n.x}, y: ${n.y}${sizePart}${bgPart}${evPart}, next: ${nextPart} },`;
+        }).join('\n');
+        return `export const ${mapConstName(d, idx)}: RogueAct[] = [
+    {
+        index: 1,
+        name: '${name}',
+        nodes: [
+${body}
+        ],
+    },
+];`;
+    };
+
+    /** 导出**当前这一张**图（小改时用） */
+    const exportCode = () => {
+        const cur = mapsRef.current[difficulty]?.[mapIdx];
+        copyCode(serializeMap(difficulty, mapIdx, cur?.name ?? '悖论迷宫', nodesRef.current));
+    };
+
+    /**
+     * 导出**当前难度的全部地图**（一次复制粘贴，省掉 N 次手工活）。
+     * ⚠️ 刻意**不**生成可直接粘贴的 `ROGUE_MAPS` 赋值语句 —— 那样一次粘贴会把另外两个难度的池整段覆盖掉。
+     *    改为给一行**注释形式**的提示，由程手动替换对应难度那一行。
+     */
+    const exportAllMaps = () => {
+        flushCurrent();
+        const list = mapsRef.current[difficulty] ?? [];
+        const blocks = list.map((m, i) => serializeMap(difficulty, i, m.name, m.nodes)).join('\n\n');
+        const hint = `// ── 图池（把本难度这一行替换进 mapLayout.ts 的 ROGUE_MAPS）──\n// ${difficulty}: [${list.map((_, i) => mapConstName(difficulty, i)).join(', ')}],`;
+        copyCode(`// ===== ${difficulty.toUpperCase()} 难度 · 共 ${list.length} 张地图（肉鸽地图编辑器导出） =====\n\n${blocks}\n\n${hint}\n`);
     };
 
     // 连线（地图坐标，svg viewBox 自动缩放）；携带 fromId/toId 供连线模式点选删除
@@ -450,8 +565,9 @@ ${list}
             animate={{ opacity: 1 }}
             className="w-full h-full flex flex-col bg-black text-white font-sans select-none"
         >
-            {/* 顶部工具栏 */}
-            <div className="h-14 shrink-0 flex items-center gap-2 px-4 bg-slate-900 border-b border-white/10">
+            {/* 顶部工具栏（[2026-10-09 图池] 改为两行：① 难度 + 操作 ② 地图标签条） */}
+            <div className="shrink-0 flex flex-col bg-slate-900 border-b border-white/10">
+                <div className="h-14 flex items-center gap-2 px-4">
                 <MapIcon size={20} className="text-emerald-400" />
                 <span className="font-black tracking-widest mr-2">肉鸽地图编辑器</span>
                 {/* [2026-08-28] 三难度切换（普通/机密/绝密分别编辑保存） */}
@@ -499,6 +615,40 @@ ${list}
                 <button onClick={onClose} className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-sm font-bold flex items-center gap-1.5">
                     <X size={16} /> 关闭
                 </button>
+                </div>
+
+                {/* [2026-10-09 莉莉子 · 图池] 当前难度内的**地图标签条**：切换 / 新建（复制当前）/ 删除 / 重命名 / 导出全部 */}
+                <div className="h-11 flex items-center gap-2 px-4 border-t border-white/5 bg-slate-950/60">
+                    <span className="text-xs text-gray-500 font-mono shrink-0">地图</span>
+                    {(maps[difficulty] ?? []).map((m, i) => (
+                        <button key={i} onClick={() => switchMap(difficulty, i)}
+                            title={`${m.name || `地图 ${i + 1}`}（${m.nodes.length} 个节点）`}
+                            className={`px-2.5 py-1 rounded-md text-xs font-bold border transition-colors max-w-[170px] truncate ${
+                                i === mapIdx
+                                    ? 'bg-white/10 border-violet-400/50 text-violet-300'
+                                    : 'bg-white/5 border-transparent text-gray-500 hover:bg-white/10 hover:text-gray-300'
+                            }`}>
+                            {i + 1}. {m.name || `地图 ${i + 1}`}
+                        </button>
+                    ))}
+                    <button onClick={addMap} title="新建地图：**复制当前图**后再改（比从空白画起快得多）"
+                        className="px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-600/80 hover:bg-emerald-500 flex items-center gap-1 shrink-0">
+                        <Plus size={13} /> 新建（复制当前）
+                    </button>
+                    <button onClick={deleteMap} disabled={(maps[difficulty] ?? []).length <= 1}
+                        title="删除当前地图（每难度保底 1 张）"
+                        className="px-2.5 py-1 rounded-md text-xs font-bold bg-red-700/80 hover:bg-red-600 disabled:opacity-30 flex items-center gap-1 shrink-0">
+                        <Trash2 size={13} /> 删除本图
+                    </button>
+                    <input value={maps[difficulty]?.[mapIdx]?.name ?? ''} onChange={e => renameMap(e.target.value)}
+                        placeholder="地图名（会写进源码 act.name）"
+                        className="px-2 py-1 rounded-md bg-slate-800 border border-white/10 text-xs w-52 shrink-0" />
+                    <div className="flex-1" />
+                    <button onClick={exportAllMaps} title="导出当前难度的**全部**地图（一次复制，粘贴时只需替换对应难度的常量与那一行图池）"
+                        className="px-3 py-1 rounded-md text-xs font-bold bg-blue-700 hover:bg-blue-600 flex items-center gap-1.5 shrink-0">
+                        <Copy size={13} /> 导出本难度全部图
+                    </button>
+                </div>
             </div>
 
             <div className="flex-1 flex overflow-hidden">
@@ -634,6 +784,40 @@ ${list}
                                 <option value="">随机（进入时随机一张）</option>
                                 {DIALOGUE_BG_KEYS.map(k => <option key={k} value={k}>dialogue/{k}.png</option>)}
                             </select>
+
+                            {/* [2026-10-09 莉莉子 · 事件指定] 仅事件节点：默认随机 / 可指定固定某个事件（指定则**必出**） */}
+                            {selected.type === 'event' && (
+                                <>
+                                    <label className="block text-xs text-gray-400 mb-1">
+                                        事件 <span className="text-gray-600 font-mono">{selected.eventId ? '已指定（必出）' : '随机'}</span>
+                                    </label>
+                                    <select value={selected.eventId ?? ''}
+                                        onChange={e => applyToSelected({ eventId: e.target.value || undefined })}
+                                        className="w-full mb-4 px-3 py-2 rounded-md bg-slate-800 border border-white/10 text-sm font-bold">
+                                        <option value="">随机（从事件池抽，一局内不重复）</option>
+                                        {ROGUE_EVENTS.map(ev => (
+                                            <option key={ev.id} value={ev.id}>{ev.name}（{ROGUE_EVENT_TYPE_LABELS[ev.type]}）</option>
+                                        ))}
+                                    </select>
+                                </>
+                            )}
+
+                            {/* [2026-10-09 莉莉子 · 随机节点] 说明 + 试掷预览（纯辅助：不写回节点、不落源码） */}
+                            {selected.type === 'random' && (
+                                <div className="mb-4 p-2.5 rounded-md bg-slate-800/60 border border-white/10">
+                                    <p className="text-[11px] text-gray-400 leading-relaxed mb-2">
+                                        未知节点：玩家**进入前**不可知（地图显示 ？？？）。真身在**开局**预掷一次、同局稳定，
+                                        且只会掷出 <span className="text-violet-300">战斗 / 事件 / 商店 / 宝箱</span>（不含精英·Boss·休息·强化）。
+                                    </p>
+                                    <button onClick={() => setRollPreview(RANDOM_NODE_POOL[Math.floor(Math.random() * RANDOM_NODE_POOL.length)])}
+                                        className="px-2 py-1 rounded bg-violet-600/80 hover:bg-violet-500 text-[11px] font-bold">
+                                        试掷一次（仅预览）
+                                    </button>
+                                    {rollPreview && (
+                                        <span className="ml-2 text-[11px] font-mono text-violet-300">→ {TYPE_LABELS[rollPreview]}</span>
+                                    )}
+                                </div>
+                            )}
 
                             <label className="block text-xs text-gray-400 mb-1">连接（next）<span className="text-gray-600 font-mono"> {selected.next.length} 条</span></label>
                             {selected.next.length > 0 ? (

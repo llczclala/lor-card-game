@@ -17,6 +17,8 @@ export const NODE_META: Record<RogueNodeType, { icon: React.ReactNode; color: st
     shop: { icon: <ShoppingBag size={18} />, color: 'bg-emerald-600', label: '商店' },
     event: { icon: <HelpCircle size={18} />, color: 'bg-cyan-600', label: '事件' },
     treasure: { icon: <Gem size={18} />, color: 'bg-yellow-500', label: '宝箱' },
+    // [2026-10-09 莉莉子 · 随机节点] 未揭示的"未知节点"：图标仍是问号，但配**石板灰**以区别于青色事件节点
+    random: { icon: <HelpCircle size={18} />, color: 'bg-slate-600', label: '未知' },
 };
 
 export type MapNodeState = 'available' | 'current' | 'done' | 'locked' | 'missed'; // [2026-08-10] missed：错过（灰）
@@ -33,19 +35,27 @@ interface MapNodeProps {
     revealDelay?: number; // [2026-08-28 莉莉子] 推演开场：该节点从暗弹出的延迟秒数（不传则无动画，地图编辑器不受影响）
     /** [2026-10-08 莉莉子 · 瓦尔基里大赛] 该节点已登记「**待战**」⇒ 渲染成**战斗节点**（事件结算后它会变成战斗） */
     pendingBattle?: boolean;
+    /**
+     * [2026-10-09 莉莉子 · 随机节点] **未揭示**：该节点是"随机节点"且真身尚未对玩家公开（`node.wasRandom`）。
+     * 为真时一律渲染成"未知"（图标/配色/不显示敌人头像）—— 否则玩家在地图上直接看出真身＝泄露。
+     * 由 `RogueMapScreen` 传 `node.wasRandom`。
+     */
+    unrevealed?: boolean;
 }
 
-export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate, enemyKey, size, onPreview, revealDelay, pendingBattle }) => {
+export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate, enemyKey, size, onPreview, revealDelay, pendingBattle, unrevealed }) => {
     // [2026-10-08 莉莉子 · 瓦尔基里大赛] **待战节点用"精英战斗"的元信息渲染**（图标/配色/敌人头像位）
     //   —— 它原本是事件节点，事件结算 + 选择后"变成战斗节点"（程的设计）
-    const effectiveType: RogueNodeType = pendingBattle ? 'elite' : type;
-    const meta = NODE_META[effectiveType];
+    // [2026-10-09 莉莉子 · 随机节点] **未揭示 ⇒ 一律渲染成「未知」**（真身已在开局预掷进 `type`）
+    const renderedType: RogueNodeType = unrevealed ? 'random' : (pendingBattle ? 'elite' : type);
+    const meta = NODE_META[renderedType];
     const isClickable = state === 'available' || state === 'current';
     const isCurrent = state === 'current';
-    const isDiamond = type === 'enhance'; // [2026-08-04] 迷宫强化节点：菱形而非圆形
+    const isDiamond = !unrevealed && type === 'enhance'; // [2026-08-04] 迷宫强化节点：菱形而非圆形
     const nodeSize = size ?? (isCurrent ? 64 : 44);
     // [2026-08-10] 战斗节点（战斗/精英/Boss）优先显示预分配敌人头像，替代通用图标
-    const isCombatNode = effectiveType === 'battle' || effectiveType === 'elite' || effectiveType === 'boss';
+    //   ⚠️ [2026-10-09] 未揭示节点**即使真身是战斗也不显示敌人头像**（否则等于公开真身）
+    const isCombatNode = !unrevealed && (renderedType === 'battle' || renderedType === 'elite' || renderedType === 'boss');
     const showEnemyAvatar = isCombatNode && !!enemyKey; // [2026-08-04] 编辑器可自定义尺寸
     // [2026-08-26 莉莉子] 当前节点：蓝色高光包裹白色核心——白色描边 + 外层蓝色光晕（霓虹管效果）
     const nodeStyle = isCurrent ? { boxShadow: '0 0 22px rgba(59,130,246,0.85)' } : undefined;

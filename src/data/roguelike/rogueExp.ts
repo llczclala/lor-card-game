@@ -19,6 +19,9 @@ import type { RogueDifficulty } from './difficulties';
 export const NODE_EXP_BASE: Record<RogueNodeType, number> = {
     start: 0, battle: 40, elite: 60, boss: 120,
     rest: 20, shop: 25, treasure: 30, event: 30, enhance: 35,
+    // [2026-10-09 莉莉子 · 随机节点] 程拍板：取**四类内容型均值** = (战斗40 + 事件30 + 商店25 + 宝箱30) / 4 = 31.25 → 31
+    //   （真身等概率出自 `RANDOM_NODE_POOL`，故用均值最贴近期望；改白名单后需重算此值）
+    random: 31,
 };
 
 /** 深度系数：0=起点→0.6，1=Boss→1.0（深度越深经验越多） */
@@ -138,7 +141,7 @@ const depthCache = new Map<RogueDifficulty, Map<string, number>>();
 export const getNodeDepth = (difficulty: RogueDifficulty): Map<string, number> => {
     let m = depthCache.get(difficulty);
     if (!m) {
-        m = computeGraphDepth(ROGUE_MAPS[difficulty]);
+        m = computeGraphDepth(ROGUE_MAPS[difficulty][0] ?? []); // [2026-10-09 图池] 取该难度池的第 1 张（⚠️ 多图后深度应按"本局抽到那张"算，见 TODO）
         depthCache.set(difficulty, m);
     }
     return m;

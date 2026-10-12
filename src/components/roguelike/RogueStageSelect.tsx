@@ -11,6 +11,8 @@ import { ROGUE_DIFFICULTIES } from '../../data/roguelike/difficulties';
 import type { RogueDifficulty } from '../../data/roguelike/difficulties';
 import mapZero from '../../image/map/map_zero.webp';
 import mapZeroVideo from '../../movie/map/map_zero.webm'; // [2026-09-26 莉莉子] 动态地图背景（MiniMax H3 生成）
+// [2026-10-10] 诊断探针加全：本页的视频是独立元素（没走 LoopVideo），单独挂探针（默认静默）
+import { attachVideoProbe } from '../../utils/videoDiagnostics';
 import type { useUserSystem } from '../../hooks/useUserSystem';
 
 // 缩略图切片：map_zero/1.png ~ 8.png（1 秒轮播）
@@ -54,6 +56,8 @@ export const RogueStageSelect: React.FC<RogueStageSelectProps> = ({ onBack, onSt
         el.muted = true;
         const p = el.play();
         if (p !== undefined) p.catch(() => {});
+        // [2026-10-10] 挂探针（只读）：让"关卡背景"也进 `__VPROBE()` 的视野
+        return attachVideoProbe(el, () => el.getAttribute('src'), 'stagebg', -20);
     }, []);
 
     // 轮播缩略图：先亮噪声 0.45s → 切下一张 → 噪声熄灭（老电视开机切换）

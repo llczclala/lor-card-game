@@ -8,6 +8,12 @@
 //    两者共用同一张 `EVENT_EFFECT_META` 元信息（图标 + 名称），因此**不可能再不一致**。
 // ── `apply*` 会**返回它实际做了什么**（抽到哪张卡/哪个强化/哪件装备）⇒ 事件弹窗的「结果」步骤直接渲染它
 //    （玩家不用再靠猜血条金币判断拿到了什么）。
+//
+// [2026-10-10 莉莉子 · 事件演出 v2] 两处扩展：
+//   ① `EventApplyResult.showcase` —— **结构化载荷**（卡 key / 装备 id / 强化 id / 数值），
+//      让"奖励弹窗"能渲染**真实卡面与装备图**（装备还支持 A+B→C 三栏对照），而不是只有一行文字。
+//   ② `previewEffect(s)` 按程的文案口径重排：**代价写清楚、奖励不写太清楚**，
+//      且小字里**代价排在奖励之前**（"如果有代价则写代价+奖励"）。
 // ==========================================
 import { CARD_DB } from '../cards';
 import { pickRandomEnhancements } from './enhancements';
@@ -21,11 +27,27 @@ import type { RogueDifficulty } from './difficulties';
 import type { RoguelikeRunState } from '../../hooks/useRoguelikeRun';
 import type { RogueEventEffect, RogueInvestment } from './events';
 
-/** 一条"给玩家看的结果"（结果步骤按 kind 分两栏渲染） */
+/**
+ * [2026-10-10 莉莉子 · 事件演出 v2] 结果项的**结构化载荷**。
+ * 用途：奖励弹窗据此渲染真实卡面 / 装备三栏 / 强化卡；缺省（undefined）表示该条只以文字出现。
+ */
+export type EventShowcaseItem =
+    /** 获得一张卡（`newEquipIds` 非空 = 这张卡同时带了新装备，卡面按挂载后渲染） */
+    | { shape: 'card'; cardKey: string; newEquipIds?: string[] }
+    /** 获得一件装备并挂到某张卡上 ⇒ 弹窗渲染 **A（原卡）+ B（装备）→ C（挂载后）** 三栏 */
+    | { shape: 'equip'; equipId: string; cardKey: string }
+    /** 获得一个迷宫强化 */
+    | { shape: 'buff'; buffId: string }
+    /** 数值变动（金币 / 生命 / 上限 / 复活 / 刷新） */
+    | { shape: 'stat'; stat: 'gold' | 'hp' | 'maxHp' | 'revive' | 'refresh'; amount: number };
+
+/** 一条"给玩家看的结果"（结果步骤 / 奖励弹窗按 kind 分两栏渲染） */
 export interface EventApplyResult {
     kind: 'gain' | 'cost' | 'info';
     icon: string;
     text: string;
+    /** [2026-10-10] 结构化载荷（见 `EventShowcaseItem`）*/
+    showcase?: EventShowcaseItem;
 }
 
 /**
@@ -46,7 +68,7 @@ export interface EventApi {
     /** ⚠️ `equipId` 必填：所有调用点都已确认拿到具体装备（见 addEquippedCard 分支的 if 判定） */
     addEquippedCard(cardKey: string, equipId: string): void;
     removeCard(cardKey: string): void;
-    removeRandomEquipment(): void;
+    removeRandomEquipment(): string | null;
     applyEnhancement(id: string): void;
     addInvestment(inv: RogueInvestment): void;
     addFightDebuff(d: NonNullable<RogueEventEffect['fightDebuff']>): void;
@@ -67,71 +89,113 @@ const ICONS: Record<string, string> = {
 const pct = (n: number) => `${n > 0 ? '+' : ''}${n}%`;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n}`;
 
-/** 单条效果 → 玩家可读文案（**预演**用；不含"实际抽到了什么"） */
+/** 一条效果对玩家而言是"代价"还是"收益"（决定小字里谁排前面：程口径 = **代价在前**） */
+const isCostEffect = (ef: RogueEventEffect): boolean => {
+    if (ef.removeCards || ef.polluteDeck || ef.removeEquipment || ef.fightDebuff) return true;
+    if (ef.fight) return true; // 要打一场（可能输）⇒ 代价
+    if (typeof ef.gold === 'number' && ef.gold < 0) return true;
+    if (typeof ef.hp === 'number' && ef.hp < 0) return true;
+    if (typeof ef.hpPct === 'number' && ef.hpPct < 0) return true;
+    if (typeof ef.maxHp === 'number' && ef.maxHp < 0) return true;
+    if (typeof ef.revive === 'number' && ef.revive < 0) return true;
+    if (typeof ef.refresh === 'number' && ef.refresh < 0) return true;
+    return false;
+};
+
+/**
+ * 单条效果 → 玩家可读文案（**预演**用；不含"实际抽到了什么"）。
+ *
+ * [2026-10-10 莉莉子 · 程的文案口径]
+ *   · **代价写清楚** —— 掉多少血、花多少金、删几张卡，一律给准确数字。
+ *   · **奖励不写太清楚** —— 只说"是什么类别"（一件装备 / 一个强化 / 一张卡），不剧透具体内容；
+ *     结果取决于**难度档或随机**的（`addEnhancementFrom` / `grantHeroCard`）统一模糊成
+ *     「可能获得丰厚的奖励」（程指定的措辞）。
+ */
 export const previewEffect = (ef: RogueEventEffect, difficulty?: RogueDifficulty): string => {
     // [2026-10-08 难度分层] 预演文案必须吃**同一倍率** —— 否则"选项写 +60、实际给 +96"，
     //   正是 2026-10-05 那次「提示与执行同源」重构要防的事
     const m = gainMultFor(difficulty);
     const g = (v: number) => (v > 0 ? Math.round(v * m) : v);
-    if (ef.gold) return `数据金 ${signed(g(ef.gold))}`;
-    if (ef.hp) return `生命 ${signed(g(ef.hp))}`;
-    if (ef.hpPct) return `生命 ${pct(g(ef.hpPct))}`;
-    if (ef.maxHp) return `生命上限 ${signed(g(ef.maxHp))}`;
-    if (ef.revive) return `复活 ×${ef.revive}`;
-    if (ef.refresh) return `刷新 ×${ef.refresh}`;
-    if (ef.addEquippedCard) return '带装备的卡';
-    if (ef.addRandomCard) return '随机卡牌';
-    if (ef.polluteDeck) return '牌组污染（+1 张非收集卡）';
-    if (ef.upgradeCard) return '给一张卡追加装备';
-    if (ef.addEnhancement) return '迷宫强化';
-    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 指定强化（从给定 id 里随机 1）—— 把名字直接写出来，玩家才知道要拿什么
-    if (ef.addEnhancementFrom?.length) {
-        const names = ef.addEnhancementFrom.map(id => getBuffById(id)?.name ?? id);
-        return names.length === 1 ? `迷宫强化「${names[0]}」` : `迷宫强化（${names.join(' / ')}，随机 1）`;
-    }
-    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 固定赠送天启者卡 + N 件装备
-    if (ef.grantHeroCard) {
-        const nm = CARD_DB[ef.grantHeroCard.heroKey]?.name?.replace(/\n/g, '') ?? ef.grantHeroCard.heroKey;
-        return `天启者「${nm}」+ ${ef.grantHeroCard.equipCount} 件装备`;
-    }
-    if (ef.addEquipment) return '装备';
-    if (ef.removeEquipment) return '交出装备';
-    if (ef.removeCards) return `删卡 ×${ef.removeCards}`;
+    // ⚠️ [2026-10-10 莉莉子 · 第 4 轮独立审查修复] **一个 effect 对象可以同时含多个字段**
+    //   （如 `{ gold: 60, addEnhancement: true, maxHp: -4 }`，见「灼手的契约」）。
+    //   旧写法是 `if (x) return …` 链 —— 命中第一个字段就返回 ⇒ **后面的字段被整段吃掉**：
+    //   那个 −4 生命上限、以及多处的 `fightDebuff` / `removeCards` 从来就没在选项上显示过。
+    //   程的口径是"**代价要写清楚**" ⇒ 这里必须**收集全部命中字段**，再按"代价在前"拼接。
+    const costs: string[] = [];
+    const gains: string[] = [];
+    const push = (text: string, isCost: boolean) => (isCost ? costs : gains).push(text);
+
+    if (ef.gold) push(`数据金 ${signed(g(ef.gold))}`, ef.gold < 0);
+    if (ef.hp) push(`生命 ${signed(g(ef.hp))}`, ef.hp < 0);
+    if (ef.hpPct) push(`生命 ${pct(g(ef.hpPct))}`, ef.hpPct < 0);
+    if (ef.maxHp) push(`生命上限 ${signed(g(ef.maxHp))}`, ef.maxHp < 0);
+    if (ef.revive) push(`复活 ×${ef.revive}`, ef.revive < 0);
+    if (ef.refresh) push(`刷新 ×${ef.refresh}`, ef.refresh < 0);
+    // ── 奖励侧：程的口径是"**不用写太清楚**" ⇒ 只说类别，不剧透具体是哪一件 ──
+    if (ef.addEquippedCard) push('一张带装备的卡', false);
+    if (ef.addRandomCard) push('一张卡牌', false);
+    if (ef.upgradeCard) push('给一张卡追加装备', false);
+    if (ef.addEnhancement) push('一个迷宫强化', false);
+    // 结果随难度档或随机决定的，统一模糊（程指定的措辞）
+    if (ef.addEnhancementFrom?.length) push('可能获得丰厚的奖励', false);
+    if (ef.grantHeroCard) push('可能获得丰厚的奖励', false);
+    if (ef.addEquipment) push('一件装备', false);
+    // ── 代价侧 ──
+    if (ef.polluteDeck) push('牌组污染（+1 张非收集卡）', true);
+    if (ef.removeEquipment) push('交出一件随机装备', true);
+    if (ef.removeCards) push(`删卡 ×${ef.removeCards}`, true);
+    if (ef.fightDebuff) push(`未来 ${ef.fightDebuff.fights} 场敌人水晶 +${ef.fightDebuff.enemyHpBonus}`, true);
     if (ef.invest) {
-        if (ef.invest.kind === 'battleWinGold') return `投资：战斗胜利时 +${ef.invest.value ?? 0} 数据金`;
-        if (ef.invest.kind === 'restHeal') return ef.invest.value ? `投资：休息回血 ×${ef.invest.value}` : '投资：下次休息回血翻倍';
-        return '投资：下次强化品质 +1';
+        // 投资是"承诺"，必须写清楚（否则玩家没法判断值不值）
+        if (ef.invest.kind === 'battleWinGold') push(`投资：战斗胜利时 +${ef.invest.value ?? 0} 数据金`, false);
+        else if (ef.invest.kind === 'restHeal') push(ef.invest.value ? `投资：休息回血 ×${ef.invest.value}` : '投资：下次休息回血翻倍', false);
+        else push('投资：下次强化品质 +1', false);
     }
-    if (ef.fightDebuff) return `未来 ${ef.fightDebuff.fights} 场：敌人水晶 +${ef.fightDebuff.enemyHpBonus}`;
-    return '';
+    return [...costs, ...gains].join(' · ');
 };
 
-/** 一个选项的全部效果 → 提示字符串（多效果用 · 连接） */
+/**
+ * 一个选项的全部效果 → 提示字符串。
+ * [2026-10-10] 顺序按程的口径重排：**代价在前、奖励在后**（多效果用 · 连接）。
+ */
 export const previewEffects = (effects: RogueEventEffect[], difficulty?: RogueDifficulty): string => {
-    const parts: string[] = [];
+    const costs: string[] = [];
+    const gains: string[] = [];
+    // [2026-10-10 莉莉子 · 程实测] **同文案去重**：一个选项常挂多个同类奖励
+    //   （瓦尔基里大赛 3 个效果里有两个映射成「可能获得丰厚的奖励」）⇒ 旧写法会把同一句重复好几遍。
+    //   ⚠️ 这里只是兜底；那种"多奖励但只需一句概括 / 同事件不同选项难度分档"的场合，
+    //      应当直接用 `RogueEventChoice.hint` 手写覆盖。
+    const seen = new Set<string>();
+    const add = (text: string, isCost: boolean) => {
+        if (!text || seen.has(text)) return;
+        seen.add(text);
+        (isCost ? costs : gains).push(text);
+    };
     for (const ef of effects) {
         // 赌局/强制/战斗：把"里面是什么"展开（这三类是过去最容易漏的地方）
         if (ef.gamble) {
             const p = Math.round(ef.gamble.prob * 100);
-            parts.push(`胜(${p}%)：${previewEffects(ef.gamble.win, difficulty)} · 负(${100 - p}%)：${previewEffects(ef.gamble.lose, difficulty)}`);
+            // 赌局天然"有代价也有收益" ⇒ 整体视作代价侧（玩家最需要看清风险）
+            add(`胜(${p}%)：${previewEffects(ef.gamble.win, difficulty)} · 负(${100 - p}%)：${previewEffects(ef.gamble.lose, difficulty)}`, true);
             continue;
         }
-        if (ef.forced) { parts.push(`命运转盘：${ef.forced.length} 种结果随机 1 种`); continue; }
-        if (ef.fight) { parts.push(`迎战 → 胜利后${ef.fight.reward === 'choose2' ? '二选一奖励' : '迷宫强化'}`); continue; }
+        if (ef.forced) { add(`命运转盘：${ef.forced.length} 种结果随机 1 种`, true); continue; }
+        if (ef.fight) { add(`迎战 → 胜利后${ef.fight.reward === 'choose2' ? '获得丰厚奖励' : '获得一个迷宫强化'}`, true); continue; }
         const one = previewEffect(ef, difficulty);
-        if (one) parts.push(one);
+        if (!one) continue;
+        add(one, isCostEffect(ef));
     }
-    return parts.join(' · ') || '……';
+    return [...costs, ...gains].join(' · ') || '……';
 };
 
 /**
  * 执行一个效果（含 gamble/forced 的递归），**返回它实际做了什么**。
- * ⚠️ 行为与重构前的 `App.applyEventEffects` 逐条一致（仅多了结果收集）。
+ * ⚠️ 行为与重构前的 `App.applyEventEffects` 逐条一致（仅多了结果收集 + 结构化载荷）。
  */
 export const applyEffect = (ef: RogueEventEffect, api: EventApi): EventApplyResult[] => {
     const out: EventApplyResult[] = [];
-    const gain = (icon: string, text: string) => out.push({ kind: 'gain', icon, text });
-    const cost = (icon: string, text: string) => out.push({ kind: 'cost', icon, text });
+    const gain = (icon: string, text: string, showcase?: EventShowcaseItem) => out.push({ kind: 'gain', icon, text, showcase });
+    const cost = (icon: string, text: string, showcase?: EventShowcaseItem) => out.push({ kind: 'cost', icon, text, showcase });
 
     // [2026-10-08 莉莉子 · 难度分层] **只放大"玩家获得"的部分**（正值 ×倍率）；代价（负值）原样不动。
     //   理由：绝密敌人已经更强，收益放大 + 代价不变才是净鼓励；代价也放大会变成双重惩罚。
@@ -139,25 +203,42 @@ export const applyEffect = (ef: RogueEventEffect, api: EventApi): EventApplyResu
     //      "机密不变、绝密 +2"的跳变，玩家无法从选项文案推断，反而更难解释。
     const gainMult = gainMultFor(api.difficulty);
     const scaled = (v: number) => (v > 0 ? Math.round(v * gainMult) : v);
-    if (ef.gold) { const v = scaled(ef.gold); api.addGold(v); (v > 0 ? gain : cost)(ICONS.gold, `数据金 ${signed(v)}`); }
+    if (ef.gold) {
+        const v = scaled(ef.gold);
+        api.addGold(v);
+        (v > 0 ? gain : cost)(ICONS.gold, `数据金 ${signed(v)}`, { shape: 'stat', stat: 'gold', amount: v });
+    }
     if (ef.hp) {
         const v = scaled(ef.hp);
-        if (v > 0) { api.heal(v); gain(ICONS.hp, `生命 +${v}`); }
-        else { api.setHp(api.run.hp + v); cost(ICONS.hp, `生命 ${v}`); }
+        if (v > 0) { api.heal(v); gain(ICONS.hp, `生命 +${v}`, { shape: 'stat', stat: 'hp', amount: v }); }
+        else { api.setHp(api.run.hp + v); cost(ICONS.hp, `生命 ${v}`, { shape: 'stat', stat: 'hp', amount: v }); }
     }
     if (ef.hpPct) {
         const p = scaled(ef.hpPct); // 放大的是**百分比本身**，保证与预览文案一致
         const amt = Math.floor(api.run.maxHp * p / 100);
-        if (amt > 0) { api.heal(amt); gain(ICONS.hp, `生命 +${amt}（${pct(p)}）`); }
-        else { api.setHp(api.run.hp + amt); cost(ICONS.hp, `生命 ${amt}（${pct(p)}）`); }
+        if (amt > 0) { api.heal(amt); gain(ICONS.hp, `生命 +${amt}（${pct(p)}）`, { shape: 'stat', stat: 'hp', amount: amt }); }
+        else { api.setHp(api.run.hp + amt); cost(ICONS.hp, `生命 ${amt}（${pct(p)}）`, { shape: 'stat', stat: 'hp', amount: amt }); }
     }
-    if (ef.maxHp) { const v = scaled(ef.maxHp); api.adjustMaxHp(v); (v > 0 ? gain : cost)(ICONS.maxHp, `生命上限 ${signed(v)}`); }
-    if (ef.revive) { api.addRevive(ef.revive); (ef.revive > 0 ? gain : cost)(ICONS.revive, `复活 ×${ef.revive}`); }
-    if (ef.refresh) { api.addRefresh(ef.refresh); (ef.refresh > 0 ? gain : cost)(ICONS.refresh, `刷新 ×${ef.refresh}`); }
+    if (ef.maxHp) {
+        const v = scaled(ef.maxHp);
+        api.adjustMaxHp(v);
+        (v > 0 ? gain : cost)(ICONS.maxHp, `生命上限 ${signed(v)}`, { shape: 'stat', stat: 'maxHp', amount: v });
+    }
+    if (ef.revive) {
+        api.addRevive(ef.revive);
+        (ef.revive > 0 ? gain : cost)(ICONS.revive, `复活 ×${ef.revive}`, { shape: 'stat', stat: 'revive', amount: ef.revive });
+    }
+    if (ef.refresh) {
+        api.addRefresh(ef.refresh);
+        (ef.refresh > 0 ? gain : cost)(ICONS.refresh, `刷新 ×${ef.refresh}`, { shape: 'stat', stat: 'refresh', amount: ef.refresh });
+    }
 
     if (ef.addRandomCard) {
         const k = api.randomCollectibleCard();
-        if (k) { api.addCard(k); gain(ICONS.addRandomCard, `卡牌「${CARD_DB[k]?.name?.replace(/\n/g, '') ?? k}」`); }
+        if (k) {
+            api.addCard(k);
+            gain(ICONS.addRandomCard, `卡牌「${CARD_DB[k]?.name?.replace(/\n/g, '') ?? k}」`, { shape: 'card', cardKey: k });
+        }
     }
     if (ef.addEquippedCard) {
         // [不叠加] 装备候选排除该卡已有装备
@@ -168,15 +249,19 @@ export const applyEffect = (ef: RogueEventEffect, api: EventApi): EventApplyResu
             if (offer.equipId) {
                 api.addEquippedCard(offer.cardKey, offer.equipId);
                 api.recordCodexUnlock('equipment', offer.equipId);
-                gain(ICONS.addEquippedCard, `带装备的卡「${nm}」`);
+                // 这张卡**同时**带了一件新装备 ⇒ 奖励弹窗按三栏（A+B→C）展示
+                gain(ICONS.addEquippedCard, `带装备的卡「${nm}」`, { shape: 'equip', equipId: offer.equipId, cardKey: offer.cardKey });
             } else {
-                gain(ICONS.addRandomCard, `卡牌「${nm}」`);
+                gain(ICONS.addRandomCard, `卡牌「${nm}」`, { shape: 'card', cardKey: offer.cardKey });
             }
         }
     }
     if (ef.polluteDeck) {
         const k = api.randomJunkCard();
-        if (k) { api.addCard(k); cost(ICONS.polluteDeck, `牌组污染：+1 张「${CARD_DB[k]?.name?.replace(/\n/g, '') ?? k}」`); }
+        if (k) {
+            api.addCard(k);
+            cost(ICONS.polluteDeck, `牌组污染：+1 张「${CARD_DB[k]?.name?.replace(/\n/g, '') ?? k}」`, { shape: 'card', cardKey: k });
+        }
     }
     if (ef.upgradeCard) {
         const nonHero = api.run.deck.filter(k => !CARD_DB[k]?.isChampion);
@@ -190,7 +275,7 @@ export const applyEffect = (ef: RogueEventEffect, api: EventApi): EventApplyResu
             const equip = weightedPick(equipPool, e => equipTable[e.rarity] ?? 0)!;
             api.addEquippedCard(cardKey, equip.id);
             api.recordCodexUnlock('equipment', equip.id);
-            gain(ICONS.upgradeCard, `「${CARD_DB[cardKey]?.name?.replace(/\n/g, '') ?? cardKey}」追加装备`);
+            gain(ICONS.upgradeCard, `「${CARD_DB[cardKey]?.name?.replace(/\n/g, '') ?? cardKey}」追加装备`, { shape: 'equip', equipId: equip.id, cardKey });
         } else {
             out.push({ kind: 'info', icon: ICONS.upgradeCard, text: '没有可追加装备的卡（已全满）' });
         }
@@ -210,11 +295,19 @@ export const applyEffect = (ef: RogueEventEffect, api: EventApi): EventApplyResu
         // [不叠加] 排除本局已拥有
         // [2026-10-08 难度分层] 原第二参写死 `undefined`（假参与）⇒ 现传本局难度
         const enh = pickRandomEnhancements(1, api.difficulty, api.run.rarityBonus, api.run.passUnlockedEnhancements, api.run.enhancements)[0];
-        if (enh) { api.applyEnhancement(enh.id); api.recordCodexUnlock('enhancement', enh.id); gain(ICONS.addEnhancement, `迷宫强化「${enh.name}」`); }
+        if (enh) {
+            api.applyEnhancement(enh.id);
+            api.recordCodexUnlock('enhancement', enh.id);
+            gain(ICONS.addEnhancement, `迷宫强化「${enh.name}」`, { shape: 'buff', buffId: enh.id });
+        }
     }
     if (ef.addEquipment) {
         const equipId = api.pickNewEquipForHero();
-        if (equipId) { api.addEquippedCard(api.run.heroKey, equipId); api.recordCodexUnlock('equipment', equipId); gain(ICONS.addEquipment, '装备 ×1（已挂在天启者身上）'); }
+        if (equipId) {
+            api.addEquippedCard(api.run.heroKey, equipId);
+            api.recordCodexUnlock('equipment', equipId);
+            gain(ICONS.addEquipment, '装备 ×1（已挂在天启者身上）', { shape: 'equip', equipId, cardKey: api.run.heroKey });
+        }
     }
     // ── [2026-10-08 莉莉子 · 瓦尔基里大赛] 两种「确定性」奖励 ──
     //   与 `addEnhancement`（随机池）的区别：这里是**从给定 id 里选**，用于"三档给不同强化"
@@ -223,7 +316,7 @@ export const applyEffect = (ef: RogueEventEffect, api: EventApi): EventApplyResu
         const def = getBuffById(id);
         api.applyEnhancement(id);
         api.recordCodexUnlock('enhancement', id);
-        gain(ICONS.addEnhancement, `迷宫强化「${def?.name ?? id}」`);
+        gain(ICONS.addEnhancement, `迷宫强化「${def?.name ?? id}」`, { shape: 'buff', buffId: id });
     }
     //   固定赠送天启者卡（含装备）——
     //   ⚠️ 装备取池走手册的**池铁律** `getEquipPoolForCard(card)`，品质走难度加权，
@@ -244,7 +337,11 @@ export const applyEffect = (ef: RogueEventEffect, api: EventApi): EventApplyResu
             api.addEquippedCard(heroKey, eq.id);
             api.recordCodexUnlock('equipment', eq.id);
         }
-        gain(ICONS.addRandomCard, `天启者「${heroName}」${picked.length ? `（带 ${picked.length} 件装备）` : ''}`);
+        gain(
+            ICONS.addRandomCard,
+            `天启者「${heroName}」${picked.length ? `（带 ${picked.length} 件装备）` : ''}`,
+            { shape: 'card', cardKey: heroKey, newEquipIds: picked },
+        );
     }
     if (ef.removeEquipment) { api.removeRandomEquipment(); cost(ICONS.removeEquipment, '交出一件随机装备'); }
 

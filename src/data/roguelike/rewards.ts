@@ -15,7 +15,17 @@ import { ROGUE_HEROES } from './rogueStarterDecks'; // [2026-09-04] 首战英雄
 
 export interface RewardCardOption {
     cardKey: string;
-    equipId?: string; // 随机佩戴的装备（undefined = 裸卡）
+    equipId?: string; // 本次随机佩戴的**新**装备（undefined = 本候选不带新装备）
+    /**
+     * [2026-10-10 程拍板] 该卡在**当前牌组里已有的装备**（按卡 key 挂载，见 `run.equippedCards`）。
+     *
+     * 展示端必须把它与 `equipId` **一起**渲染 —— 程的原话：
+     *   「如果他出现在三选一里时，有新增的装备 B，我们在那里看到的应该是这张卡牌
+     *      **既有装备 A 又有装备 B**，而不是我们现在的只有装备 B」。
+     *
+     * ⚠️ 领取端本来就正确（装备按卡 key 存、`addEquippedCard` 是**追加**）⇒ 这里补的是**展示口径**。
+     */
+    existingEquipIds?: string[];
 }
 
 // ═══════════════════════════════════════════════
@@ -23,6 +33,17 @@ export interface RewardCardOption {
 // ═══════════════════════════════════════════════
 /** 普通战斗三张一起佩戴装备的概率（0~1）；精英/Boss 传 forceEquip=true 必带 */
 const EQUIP_CHANCE = 0.6;
+
+// ───────────────────────────────────────────────
+// [2026-10-10 程拍板 · 战斗奖励三选一三条调整] 可调旋钮
+//   ① 允许**天启者**进候选（原先被 `!c.isChampion` 排除）
+//   ② 候选优先取**牌组里已有的卡**（不然"很多次战斗胜利都是无效提升"）
+//   ③ 但**至少有一张不是**牌组里的卡
+// ───────────────────────────────────────────────
+/** 逐张判定：该候选抽成**天启者**的概率（程：「允许出现，但概率低一点」） */
+const CHAMPION_CHANCE = 0.08;
+/** 逐张判定：该候选**优先从牌组已有卡里取**的概率（最后一格强制新卡、不吃这个概率） */
+const DECK_PREFER_CHANCE = 0.75;
 
 /** 装备品质 rank（难度上限截断用） */
 const RARITY_RANK: Record<EquipmentRarity, number> = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 };
@@ -92,23 +113,66 @@ const pickEquipByAct = (act: number, card: { type: string }, difficulty: RogueDi
 export const generateRewardOptions = (
     act: number,
     count: number,
-    opts?: { difficulty?: RogueDifficulty; equipRarityBonus?: number; forceEquip?: boolean; equippedCards?: Record<string, string[]> },
+    opts?: {
+        difficulty?: RogueDifficulty;
+        equipRarityBonus?: number;
+        forceEquip?: boolean;
+        equippedCards?: Record<string, string[]>;
+        /** [2026-10-10 程拍板 ②③] 本局牌组的卡 key 列表（可含重复）—— 用于"优先出牌组已有卡" */
+        deckKeys?: string[];
+    },
 ): RewardCardOption[] => {
     const difficulty = opts?.difficulty ?? 'normal';
     const equipRarityBonus = opts?.equipRarityBonus ?? 0;
     const equippedCards = opts?.equippedCards;
+    const deckSet = new Set(opts?.deckKeys ?? []);
     const withEquip = opts?.forceEquip ? true : Math.random() < EQUIP_CHANCE; // 精英/Boss 必带
+
+    // [2026-10-10 程拍板 ①] 候选池**不再排除天启者** —— 天启者单列一池，按 CHAMPION_CHANCE 低概率取用
+    const eligible = Object.values(CARD_DB).filter(c => c.isCollectible !== false);
+    const plain = eligible.filter(c => !c.isChampion);
+    const champs = eligible.filter(c => c.isChampion);
+
     const options: RewardCardOption[] = [];
     const used = new Set<string>();
-    const pool = Object.values(CARD_DB).filter(c => c.isCollectible !== false && !c.isChampion);
-    let guard = 0;
-    while (options.length < count && used.size < pool.length && guard < 300) {
-        guard++;
-        const card = pool[Math.floor(Math.random() * pool.length)];
-        if (used.has(card.key)) continue;
+    /** 从给定池里随机取一张**没用过**的 */
+    const pickFrom = (list: typeof eligible): (typeof eligible)[number] | undefined => {
+        const avail = list.filter(c => !used.has(c.key));
+        if (avail.length === 0) return undefined;
+        return avail[Math.floor(Math.random() * avail.length)];
+    };
+
+    for (let slot = 0; slot < count; slot++) {
+        // ③ **最后一格强制"牌组里没有"** ⇒ 无论前面怎么抽，都保证"至少有一张不是牌组里的卡"
+        const mustBeNew = slot === count - 1;
+        // ① 低概率走天启者池
+        const wantChampion = champs.length > 0 && Math.random() < CHAMPION_CHANCE;
+        const base = wantChampion ? champs : plain;
+
+        const card =
+            mustBeNew
+                ? (pickFrom(base.filter(c => !deckSet.has(c.key)))
+                    ?? pickFrom(eligible.filter(c => !deckSet.has(c.key)))  // 天启者池取不到 ⇒ 放宽到全池
+                    ?? pickFrom(base)
+                    ?? pickFrom(eligible))
+                // ② 优先牌组已有卡（牌组为空时自然跳过这一步）
+                : ((deckSet.size > 0 && Math.random() < DECK_PREFER_CHANCE
+                        ? pickFrom(base.filter(c => deckSet.has(c.key)))
+                        : undefined)
+                    ?? pickFrom(base)
+                    ?? pickFrom(eligible));
+
+        if (!card) break; // 池子被抽干（正常不会发生）
         used.add(card.key);
-        const equipId = withEquip ? pickEquipByAct(act, card, difficulty, equipRarityBonus, equippedCards?.[card.key]) : undefined;
-        options.push({ cardKey: card.key, equipId });
+        const equipId = withEquip
+            ? pickEquipByAct(act, card, difficulty, equipRarityBonus, equippedCards?.[card.key])
+            : undefined;
+        options.push({
+            cardKey: card.key,
+            equipId,
+            // [2026-10-10 程拍板 ②] 把"牌组里已有的装备"一并交给展示端 ⇒ 渲染成 A + B
+            existingEquipIds: equippedCards?.[card.key] ?? [],
+        });
     }
     return options;
 };

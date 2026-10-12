@@ -463,21 +463,44 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         const bench = sideBench(ctx, ctx.owner);
         // 用**副本**做 splice 再整体写回 —— 不原地改 ctx 里的数组
         const deck = ctx.owner === 'player' ? [...ctx.playerDeck] : [...ctx.enemyDeck];
+        // ══════════════════════════════════════════════════════════════════
+        // [2026-10-10 莉莉子 BUG修复 · 程实测「世纪和解有时只召出里芙和芬妮其中一个」]
+        //   ── 病根：原实现**只查牌库**（`deck.findIndex(...)`，查不到就 `continue`）⇒
+        //      里芙 / 芬妮 只要有一张被**起手抽到手牌**，那一次就不会被召唤。
+        //      （程的怀疑成立：确实等价于"只从牌库召唤"，代码已证实。）
+        //   ── 修法：**牌库 + 手牌都查**（顺序固定：**牌库优先**，保持既有行为）；
+        //      两处都是**移出**（与牌库同口径，不是复制），两边都没有才跳过。
+        //   ── 敌我同款（本 handler 全程按 `ctx.owner` 分侧）⇒ 敌方那张也一并修好。
+        // ══════════════════════════════════════════════════════════════════
+        const hand = ctx.owner === 'player' ? [...ctx.playerHand] : [...ctx.enemyHand];
         const placedIds: string[] = [];
+        let deckChanged = false;
+        let handChanged = false;
 
         for (const key of keys) {
             if (bench.length >= 6) break;          // 备战席满 ⇒ 剩余不召（程：开局不会发生，留作兜底）
-            const idx = deck.findIndex(c => c.key === key);
-            if (idx < 0) continue;                 // 牌库没有 ⇒ 跳过
-            const [card] = deck.splice(idx, 1);    // **移出**牌库
+            // ① 先查牌库 ② 再查手牌
+            let fromDeck = true;
+            let idx = deck.findIndex(c => c.key === key);
+            if (idx < 0) { fromDeck = false; idx = hand.findIndex(c => c.key === key); }
+            if (idx < 0) continue;                 // 两处都没有 ⇒ 跳过
+            const [card] = fromDeck ? deck.splice(idx, 1) : hand.splice(idx, 1); // **移出**原处
+            if (fromDeck) deckChanged = true; else handChanged = true;
             bench.push({ ...card, animState: 'summoning' as const });
             placedIds.push(card.id);
         }
         if (!placedIds.length) return;
 
-        if (ctx.owner === 'player') ctx.playerDeck = deck; else ctx.enemyDeck = deck;
+        // 只回写**真正取过卡**的那一侧（另一侧保持原数组身份，避免无谓的脏提交）
+        if (deckChanged) {
+            if (ctx.owner === 'player') ctx.playerDeck = deck; else ctx.enemyDeck = deck;
+            ctx.dirty.deck.add(ctx.owner);
+        }
+        if (handChanged) {
+            if (ctx.owner === 'player') ctx.playerHand = hand; else ctx.enemyHand = hand;
+            ctx.dirty.hand.add(ctx.owner);
+        }
         ctx.dirty.bench.add(ctx.owner);
-        ctx.dirty.deck.add(ctx.owner);
 
         // 逐个走「入场」门铃（照 SUMMON 的既有口径；返回的数组可能被整体替换，故每次都从 ctx 重取）
         for (const id of placedIds) {
@@ -826,12 +849,27 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         //    机不可失 / 蜂拥而至 / 月轮·引剑 / 满月·锋芒 ＋ on_pull_exposed 的
         //    猎影援护 / 猎影疾袭（**茉莉安 ①③ 是同一个坑**）。
         // =====================================
+        // [2026-10-10 莉莉子 · 程拍板] **`params.permanent: true` ⇒ 加成写进 `buffs`（永久）**，
+        //   否则维持原语义写 `roundBuffs`（本回合）。首个使用方：神格①③「猎影援护 / 猎影疾袭」
+        //   （程：「调整一下这个 BUFF 的加成效果，从本回合调整为永久」）。
+        //   ⚠️ 阈值/口径一行未改——只是**换桶**：`buffs` 与 `roundBuffs` 在 `getPower/getHealth`
+        //      （`logic/keywords.ts`）里**同权相加**，故数值表现连续。
+        const isPermanent = (def.battleEffect?.params as any)?.permanent === true;
         updateUnitById(ctx, card.id, (u) => ({
             ...u,
-            roundBuffs: {
-                power: (u.roundBuffs?.power || 0) + power,
-                health: (u.roundBuffs?.health || 0) + health,
-            },
+            ...(isPermanent
+                ? {
+                    buffs: {
+                        power: (u.buffs?.power || 0) + power,
+                        health: (u.buffs?.health || 0) + health,
+                    },
+                  }
+                : {
+                    roundBuffs: {
+                        power: (u.roundBuffs?.power || 0) + power,
+                        health: (u.roundBuffs?.health || 0) + health,
+                    },
+                  }),
             ...(extraKeywords.length
                 ? { keywords: Array.from(new Set([...(u.keywords || []), ...extraKeywords])) }
                 : {}),
@@ -959,7 +997,17 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         const key = `div:bubu6:r${round}`;
         const qp = ctx.game?.questProgress ?? {};
         if (ctx.trigger === 'on_nexus_strike') {
-            ctx.game.questProgress = { ...qp, [key]: (qp[key] ?? 0) + 1 };
+            // ══════════════════════════════════════════════════════════════════
+            // [2026-10-10 莉莉子 · 程拍板平衡调整] **只在"本回合首次"打击水晶时记账**
+            //   ── 原实现是**每次**打击都累加（`(qp[key] ?? 0) + 1`），而 round_end 按次数
+            //      **乘法结算**（下面 `total = perHit * times`）⇒ 一回合打 3 次水晶，
+            //      回合结束就一次性打出 **3 倍攻击力** ⇒ 程实测"很多时候直接就秒杀了"。
+            //   ── 现改为：本回合已记过就直接返回 ⇒ `times` 只可能是 0 或 1
+            //      ⇒ 每回合最多结算**一次**（由备战席最强单位再打一记）。
+            //   ── 键仍带回合号（`div:bubu6:r<round>`）⇒ 天然按回合重置，无需额外清理。
+            // ══════════════════════════════════════════════════════════════════
+            if ((qp[key] ?? 0) > 0) return; // 本回合已记过 ⇒ 不再累加（零副作用）
+            ctx.game.questProgress = { ...qp, [key]: 1 };
             ctx.dirty.game = true;
             return;
         }
@@ -982,7 +1030,23 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             : { ...ctx.game, playerNexus: Math.max(0, ctx.game.playerNexus - total) };
         ctx.game.questProgress = { ...(ctx.game.questProgress ?? {}), [key]: 0 };
         ctx.dirty.game = true;
-        eventBus.emit('unit_damage', { id: ctx.owner === 'player' ? 'nexus_enemy' : 'nexus_player', amount: total });
+        // ══════════════════════════════════════════════════════════════════
+        // [2026-10-10 莉莉子 BUG修复 · 程实测「镜阵回响造成的伤害没有飘字」]
+        //   ── 病根：原先发的是 `unit_damage` + 水晶锚点（`nexus_enemy`），而
+        //      ①**单位飘字**（`Card.tsx:737`）按**卡 id** 查卡 ⇒ 水晶锚点查不到任何卡；
+        //      ②**水晶飘字/震屏**（`GameUI.tsx:83`）只听 `NEXUS_STRIKED`；
+        //      ③微队列的 `UNIT_DAMAGED` 也按单位 id 找（`useGameState.ts:2802`）⇒ 同样找不到。
+        //      ⇒ 这一击**三方都不认**：无飘字、无音效、无震屏，也不记账（整段静默）。
+        //   ── 为什么当初不发 `NEXUS_STRIKED`：怕再次触发 `on_nexus_strike` 形成回环
+        //      （`useGameState.ts:1263` 会把它排进微队列 ⇒ 卜卜目睹计数 + 强化触发）。
+        //   ── 修法：**照发正牌 `NEXUS_STRIKED`（飘字 / 震屏 / 音效一次到位），但带 `floatOnly: true`** ——
+        //      微队列见标记直接跳过 ⇒ 演出齐全，记账与回环都不会发生。
+        // ══════════════════════════════════════════════════════════════════
+        eventBus.emit(GameEvents.NEXUS_STRIKED, {
+            target: ctx.owner === 'player' ? 'enemy' : 'player',
+            amount: total,
+            floatOnly: true, // [2026-10-10] 只演出：不排微队列（不计数、不重触发）
+        });
         flashRogueBuff(def);
     },
 

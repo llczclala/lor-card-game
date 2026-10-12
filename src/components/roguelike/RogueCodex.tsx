@@ -44,8 +44,11 @@ export const TRIGGER_LABELS: Record<BattleTrigger, string> = {
 export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     GENERATE: '生成',
     SUMMON: '召唤',
-    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 从牌库召唤（世纪和解）—— 与上方"造卡召唤"区分
-    SUMMON_FROM_DECK: '从牌库召唤',
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] 从原处（牌库 / 手牌）召唤（世纪和解）—— 与上方"造卡召唤"区分
+    // [2026-10-10 莉莉子 BUG修复] **文案同步**：该 handler 现在**牌库 + 手牌都查**
+    //   （原先只查牌库 ⇒ 有一张被起手抽进手牌时就不会被召唤）⇒ 这里的标签必须跟着改，
+    //   否则玩家在**图鉴 / 敌人详情 / 悬浮预览**里看到的仍是旧说法「从牌库召唤」。
+    SUMMON_FROM_DECK: '从牌库与手牌召唤',
     BUFF: '增益',
     RALLY: '备战',
     CLONE_AND_SUMMON: '克隆召唤',

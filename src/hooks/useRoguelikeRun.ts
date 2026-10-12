@@ -7,7 +7,7 @@
 //   - 全局 HP 仅作展示（战斗内水晶 HP 衔接是细节，后续完善）
 // ==========================================
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ROGUE_MAPS, generateMapLayout, type RogueAct } from '../data/roguelike/mapLayout'; // [2026-08-28] 三张难度图按难度取 · [2026-09-01] 预分配地图（含敌人）存 run 防放弃战斗刷新
+import { generateMapLayout, type RogueAct } from '../data/roguelike/mapLayout'; // [2026-08-28] 三张难度图按难度取 · [2026-09-01] 预分配地图（含敌人）存 run 防放弃战斗刷新 · [2026-10-10] 不再需要 ROGUE_MAPS（通关判据改看节点，见 advanceAct 注释）
 import { MAZE_ENHANCEMENTS } from '../data/roguelike/enhancements';
 import { PLAYER_ENHANCEMENTS, MAZE_BUFF_BY_ID } from '../data/roguelike/buffs'; // [2026-08-31 莉莉子 开发者] 全量玩家强化池（含通行证锁定）· [2026-09-25] 拾荒的 run 层结算
 import type { RogueDifficulty } from '../data/roguelike/difficulties'; // [2026-08-07 难度系统]
@@ -74,7 +74,9 @@ export interface RoguelikeRunState {
     /**
      * [2026-10-08 莉莉子 · 瓦尔基里大赛] **待战节点**：事件结算后该节点"**变成战斗节点**"。
      *   `nodeId → 战斗配置`；玩家**点该节点**才真正开打（而不再在事件弹窗里直接切进战斗）。
-     *   打赢 / 复活跳过 ⇒ `clearPendingBattle` 清掉。
+     *   **打赢** ⇒ `clearPendingBattle` 清掉。
+     *   ⚠️ [2026-10-10 程拍板] 原先还写着"**复活跳过**也清掉" —— 那条特例已删：
+     *      待战失败现在按**普通战斗**处理，用复活后**回到同一节点重打** ⇒ 标记**保留**。
      *   ⚠️ 与 `resolvedNodes` 的关系：事件做出选择时节点**已被记为"用掉"**（防刷取），
      *      但"待战"是**另一件事** ⇒ 节点交互必须**优先查 pendingBattles**（否则会被"已完成"挡掉）。
      */
@@ -89,7 +91,8 @@ export interface RoguelikeRunState {
          * [2026-10-08 莉莉子 · 瓦尔基里大赛] **胜利后才发放的奖励效果**。
          *   程的规格：「每个战斗都是**赢了之后**会获得」⇒ 选择时这些效果**先不发**，
          *   存在这里、打赢了再 `applyEventEffects` 逐个执行（然后弹"强化奖励 → 卡牌三选一"）。
-         *   打输 ⇒ 什么都不给（连同这些效果一起作废）。
+         *   打输 ⇒ 本场拿不到；**若整局就此败北**，这些效果随局一起作废
+         *   （[2026-10-10 程拍板] 待战失败已按普通战斗处理：用复活回同一节点重打 ⇒ 打赢仍能拿到）
          */
         rewards?: import('../data/roguelike/events').RogueEventEffect[];
     }>;
@@ -224,7 +227,7 @@ export const useRoguelikeRun = () => {
             gold,
             enhancements: [...extraEnh, ...divinityIds], // 等级给的强化都记录（即时型开局已生效；战斗型由 battleEffect 分发）· [2026-09-28] + 神格神经节点
             act: 1,
-            currentNodeId: ROGUE_MAPS[difficulty][0]?.nodes[0]?.id ?? null, // [2026-08-04] 初始定位到第一重起点 [2026-08-28] 按难度取图
+            currentNodeId: layout[0]?.nodes[0]?.id ?? null, // [2026-08-04] 初始定位到起点 [2026-10-09 图池] 改用本局实际抽到的图
             settledShards: 0,   // [2026-09-29] 本局结算神格碎片（结算时计算）
             earnedChests: [],   // [2026-09-29] 本局获得的奖励匣（结算时入待打开队列）
             refreshCount: 1 + (bonus?.refreshCount ?? 0),
@@ -291,7 +294,8 @@ export const useRoguelikeRun = () => {
             if (!prev) return prev;
             // [2026-08-10] 记录错过：从当前节点移动时，当前节点 next 中未选择的分支 → 永久错过（地图灰色）
             // 用静态布局查 next（generateMapLayout 只改 type，id/next 与静态一致）
-            const curNode = ROGUE_MAPS[prev.difficulty].flatMap(a => a.nodes).find(n => n.id === prev.currentNodeId); // [2026-08-28] 按难度取图
+            // [2026-10-09 图池] 改用**本局实际抽到的图**（`prev.layout`）：多图后按难度取池中第 0 张会查错图
+            const curNode = (prev.layout ?? []).flatMap(a => a.nodes).find(n => n.id === prev.currentNodeId);
             const missed = new Set(prev.missed ?? []);
             curNode?.next.forEach(nid => { if (nid !== nodeId) missed.add(nid); });
             // [2026-08-27] 走过的节点记录：离开当前节点即已走过（地图灰显，不可回退）
@@ -330,7 +334,9 @@ export const useRoguelikeRun = () => {
         setRun(prev => prev ? { ...prev, pendingBattles: { ...(prev.pendingBattles ?? {}), [nodeId]: cfg } } : prev);
     }, []);
 
-    /** 打完 / 复活跳过 ⇒ 清掉待战标记（之后该节点不再要求战斗） */
+    /** **打赢** ⇒ 清掉待战标记（之后该节点不再要求战斗）
+     *  ⚠️ [2026-10-10 程拍板] 原注释写的是"打完 / **复活跳过**" —— 复活跳过那条特例已删
+     *     （待战失败按普通战斗处理：用复活 ⇒ 回同一节点重打 ⇒ 标记保留）。 */
     const clearPendingBattle = useCallback((nodeId: string) => {
         setRun(prev => {
             if (!prev?.pendingBattles?.[nodeId]) return prev;
@@ -481,18 +487,32 @@ export const useRoguelikeRun = () => {
         setRun(prev => prev ? { ...prev, devEnemyEnhancements: ids } : prev);
     }, []);
 
-    // 推进到下一 Act；若已过最后一 Act → 通关
-    const advanceAct = useCallback(() => {
+    // 推进到下一 Act；**是否通关由调用方按"刚打赢的是不是最终 BOSS"给出**（默认 false = 继续推进）
+    const advanceAct = useCallback((finalBossCleared = false) => {
         setRun(prev => {
             if (!prev) return prev;
-            const nextAct = prev.act + 1;
-            if (nextAct > ROGUE_MAPS[prev.difficulty].length) {
+            // ══════════════════════════════════════════════════════════════════
+            // [2026-10-10 莉莉子 BUG修复 · 程拍板口径]
+            //   **「是不是最后一关」以"是否通过了 BOSS 节点"判断**（由调用方 `App.handleRogueVictory`
+            //   的 boss 分支按**节点语义**算好后传入），**不再数 act 数量**。
+            //   ── 为什么不能数：旧写法是 `nextAct > ROGUE_MAPS[prev.difficulty].length`，而
+            //      **图池改造（2026-10-09）之后 `.length` 的含义变成了"该难度图池里有几张图"**
+            //      （普通 4 / 机密 5 / 绝密 5 —— `mapLayout.ts:588-592`），而一局只抽其中**一张**图
+            //      （`startRun` → `generateMapLayout` → 存进 `run.layout`；且 `RogueMap` 的惯例是
+            //      **只放 1 个 act**，见 `mapLayout.ts:56`）。
+            //      ⇒ 拿关卡序号去比 4/5/5 ⇒ **永远追不上** ⇒ `status` 永不置 'won'
+            //      ⇒ 结算窗（渲染条件 `run.status !== 'active'`，`RogueMapScreen.tsx:1112`）永不弹出，
+            //        而升级画面照弹 ⇒ 程实测「打完最终 Boss 只弹升级、不弹结算」。
+            //      ⇒ 而且还会**空推进**到不存在的关卡（`currentNodeId = null`）＝软锁。
+            // ══════════════════════════════════════════════════════════════════
+            if (finalBossCleared) {
                 // [2026-09-29 程拍板] 悖论点已废弃 → 通关发碎片
                 // [2026-10-03 程拍板] 改为**万能碎片**、按难度分档（普通5/机密10/绝密15；败亡不给）
                 return { ...prev, status: 'won' as const, settledShards: computeRunShards(true, prev.difficulty) };
             }
+            const nextAct = prev.act + 1;
             // [2026-08-04] 推进后定位到下一重迷宫起点
-            const nextStart = ROGUE_MAPS[prev.difficulty][nextAct - 1]?.nodes[0]?.id ?? null; // [2026-08-28] 按难度取图
+            const nextStart = (prev.layout ?? [])[nextAct - 1]?.nodes[0]?.id ?? null; // [2026-10-09 图池] 改用本局实际图（原语义=取第 nextAct 个 act 的起点）
             return { ...prev, act: nextAct, currentNodeId: nextStart };
         });
     }, []);
@@ -525,6 +545,16 @@ export const useRoguelikeRun = () => {
     /** 结算/开新局：清除未结算对局存档 */
     const clearPendingRun = useCallback(() => {
         StorageUtils.remove(getPendingKey());
+    }, []);
+
+    // ═══ [2026-10-10 莉莉子 · 开发者「事件审阅台」] 整局状态**原样回滚** ═══
+    //   场景：开发者账号在事件节点反复切换事件重选时，要把"上一次选择已经结算掉的效果"
+    //   （掉的血 / 加的金 / 删掉的卡 / `pendingBattles` 待战登记 / `resolvedNodes` 用掉记录）
+    //   一次性还原到**刚进这个节点那一刻**，否则测几条文案血金就乱了。
+    //   实现与 `loadPendingRun` 同构（都是"整对象塞回"）⇒ 风险面极小；
+    //   ⚠️ **普通对局没有任何调用点**，只在 `isDev` 的事件审阅台流程里被调用。
+    const restoreRun = useCallback((snapshot: RoguelikeRunState) => {
+        setRun(snapshot);
     }, []);
 
     // ═══ [2026-09-25 莉莉子 三线任务化框架 · 武装线] 整局任务进度 ═══
@@ -683,5 +713,5 @@ export const useRoguelikeRun = () => {
         setRun(prev => prev ? { ...prev, startedAt: Date.now() } : prev);
     }, []);
 
-    return { run, startRun, moveTo, completeBattle, heal, setHp, addGold, addCard, markHeroRecruited, applyEnhancement, applyDevEnhancements, setDevEnemyEnhancements, advanceAct, endRun, resetRun, markDefeated, markNodeResolved, setPendingBattle, clearPendingBattle, spendGold, useRefresh, addEquippedCard, removeCard, addRevive, addRefresh, adjustMaxHp, addInvestment, consumeInvestments, addFightDebuff, consumeFightDebuff, removeRandomEquipment, grantNodeExp, resetStartedAt, startScout, advanceScout, savePendingRun, loadPendingRun, clearPendingRun, resetBattleFlags, settleArmamentBattleEnd, consumeRevive };
+    return { run, startRun, moveTo, completeBattle, heal, setHp, addGold, addCard, markHeroRecruited, applyEnhancement, applyDevEnhancements, setDevEnemyEnhancements, advanceAct, endRun, resetRun, markDefeated, markNodeResolved, setPendingBattle, clearPendingBattle, spendGold, useRefresh, addEquippedCard, removeCard, addRevive, addRefresh, adjustMaxHp, addInvestment, consumeInvestments, addFightDebuff, consumeFightDebuff, removeRandomEquipment, grantNodeExp, resetStartedAt, startScout, advanceScout, savePendingRun, loadPendingRun, clearPendingRun, resetBattleFlags, settleArmamentBattleEnd, consumeRevive, restoreRun };
 };

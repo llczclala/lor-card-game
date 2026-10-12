@@ -144,7 +144,16 @@ export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, opti
                                                     [2026-08-29] 不再在卡牌下方标注装备名/「无装备」——玩家自己看卡面（程拍板） */}
                                                 <div style={{ width: 130 * HAND_CARD_SCALE, height: 202 * HAND_CARD_SCALE }}>
                                                     <div style={{ transform: `scale(${HAND_CARD_SCALE})`, transformOrigin: 'top left' }}>
-                                                        <Card data={o.equipId ? attachEquipment(card, o.equipId) : card} location="hand" isFaceUp={true} skinId={0} />
+                                                        {/* [2026-10-10 程拍板 ②] **牌组里已有的装备 + 本次新增的**一起挂上去渲染 ——
+                                                            程：「看到的应该是这张卡牌既有装备 A 又有新增装备 B，而不是只有 B」。
+                                                            ⚠️ 领取端本来就对（装备按卡 key 存、`addEquippedCard` 是**追加**）⇒ 这里补的是**展示口径**。 */}
+                                                        <Card
+                                                            data={[...(o.existingEquipIds ?? []), ...(o.equipId ? [o.equipId] : [])]
+                                                                .reduce((c, id) => attachEquipment(c, id), card)}
+                                                            location="hand"
+                                                            isFaceUp={true}
+                                                            skinId={0}
+                                                        />
                                                     </div>
                                                 </div>
                                             </div>
