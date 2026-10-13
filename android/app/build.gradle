@@ -1,5 +1,20 @@
 apply plugin: 'com.android.application'
 
+// ══════════════════════════════════════════════════════════════════════
+// release 签名
+//   密码绝不进仓库 —— 从 android/keystore.properties 读取（已在 .gitignore 中）。
+//   该文件由 tools/create-keystore.ps1 生成。
+//
+//   为什么必须固定签名：安卓只允许「同包名 + 同签名」覆盖安装。
+//   换了签名 → 用户必须卸载重装 → localStorage 被清空 → 存档全丢。
+// ══════════════════════════════════════════════════════════════════════
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+def hasReleaseKeystore = keystorePropsFile.exists()
+if (hasReleaseKeystore) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
 android {
     namespace = "com.snowbreak.rivals.official"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,10 +31,27 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    // 只有存在 keystore.properties 时才配置 release 签名，
+    // 否则空的 signingConfig 会让 assembleRelease 直接报错。
+    if (hasReleaseKeystore) {
+        signingConfigs {
+            release {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

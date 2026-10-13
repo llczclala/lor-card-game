@@ -20,3 +20,8 @@ Thumbs.db
 *.corrupt.bak
 
 dist-android/
+
+# ---- 安卓签名（绝不入库：这是唯一不可再生的身份凭证）----
+android/keystore/*.jks
+android/keystore/*.keystore
+android/keystore.properties
