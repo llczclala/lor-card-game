@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- ⚠️ 不能是白色：源图 titile.webp 的实体主色是冰白/浅青
+         （#d8e8e8 / #c8d8e8 / #b8e8e8 …），纯白底上几乎看不见。
+         这里取「雪境夜色」深蓝，既压得住浅色标题，又呼应画面的青色。
+         想换成别的颜色，改这一行即可（改完只需重跑 gradlew assembleDebug）。 -->
+    <color name="ic_launcher_background">#0B1B24</color>
 </resources>
