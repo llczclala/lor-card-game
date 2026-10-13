@@ -15,6 +15,23 @@ if (hasReleaseKeystore) {
     keystoreProps.load(new FileInputStream(keystorePropsFile))
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// 版本号从 package.json 读 —— 不在这里手写第二份
+//   理由：安卓的 versionCode 必须**单调递增**，否则新包无法覆盖安装。
+//   两处各写一遍，早晚会忘掉一处。
+//   编码：major*1000000 + minor*10000 + patch*100 + build
+//         1.0.19    → 1001900
+//         1.0.18.5  → 1001805   （仍小于 1.0.19，顺序不乱）
+// ══════════════════════════════════════════════════════════════════════
+def pkgJson = new groovy.json.JsonSlurper().parseText(file('../../package.json').getText('UTF-8'))
+def appVersionName = pkgJson.version
+def vParts = appVersionName.tokenize('.').collect { it.replaceAll(/[^0-9]/, '') ?: '0' }
+def appVersionCode =
+    (vParts[0] as int) * 1000000 +
+    ((vParts.size() > 1 ? vParts[1] : '0') as int) * 10000 +
+    ((vParts.size() > 2 ? vParts[2] : '0') as int) * 100 +
+    (vParts.size() > 3 ? (vParts[3] as int) : 0)
+
 android {
     namespace = "com.snowbreak.rivals.official"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -22,8 +39,8 @@ android {
         applicationId "com.snowbreak.rivals.official"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 19
-        versionName "1.0.19"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
