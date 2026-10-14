@@ -90,7 +90,7 @@ export const RogueMissionPanel: React.FC<RogueMissionPanelProps> = ({ isOpen, on
                 <motion.div
                     className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    onClick={closeAll}
+                    onClick={() => {eventBus.emit(GameEvents.UI_BACK); closeAll(); }}
                 />
                 <motion.div
                     initial={{ scale: 0.95, opacity: 0, y: 20 }}
@@ -187,7 +187,7 @@ export const RogueMissionPanel: React.FC<RogueMissionPanelProps> = ({ isOpen, on
                                                 <span className="font-mono font-bold text-xs text-purple-200 max-w-[100px] truncate">{rewardLabel(mission)}</span>
                                             </div>
                                             {isCompleted ? (
-                                                <button onClick={() => handleClaim(mission)}
+                                                <button onClick={() => {eventBus.emit(GameEvents.UI_CLICK); handleClaim(mission); }}
                                                     className="px-4 py-2 rounded-lg bg-gradient-to-r from-yellow-600 to-amber-400 text-black font-black text-sm shrink-0 hover:scale-105 transition-all">
                                                     领取
                                                 </button>

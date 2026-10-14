@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { useFullscreen } from './FullScreenToggle'; // [2026-10-14 程拍板] 全屏开关（原右上角独立按钮收进此处）
 import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power, RotateCw, Home, Swords, RotateCcw } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -132,6 +133,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
     // [2026-08-16] 当前激活的标签页
     const [activeTab, setActiveTab] = useState<SettingsTab>('audio');
 
+    // [2026-10-14 程拍板] 全屏开关（原为右上角独立悬浮按钮）
+    const { isFullscreen, toggleFullscreen } = useFullscreen();
+
     // ESC 键监听
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -253,6 +257,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                                         </div>
                                                     </div>
                                                 )}
+
+                                                {/* [2026-10-14 程拍板] 全屏开关 —— 原右上角独立按钮收进设置窗口「显示」区 */}
+                                                <div className="space-y-4 pt-2">
+                                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Display</h3>
+                                                    <ToggleRow title="全屏显示" desc="以全屏模式运行游戏（等同 F11）" enabled={isFullscreen} onToggle={toggleFullscreen} />
+                                                </div>
                                                 <div className="space-y-4 pt-2">
                                                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">动态特效</h3>
                                                     <ToggleRow title="动态牌桌" desc="使用动态视频牌桌（15 张牌桌全部支持）" enabled={deskDynamic} onToggle={onToggleDeskDynamic} />

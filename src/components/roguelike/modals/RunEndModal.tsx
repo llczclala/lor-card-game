@@ -11,6 +11,7 @@
 //   顺序 = 入场 →(有共鸣)白光打经验→ 经验滚动 →(有重修升档)升槽光芒 → 统计
 // ==========================================
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trophy, Skull, Clock } from 'lucide-react';
 import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
@@ -318,7 +319,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                                     //      否则整格点不动（这正是"看起来能点、点了没反应"的经典成因）
                                     <button
                                         key={c.label}
-                                        onClick={() => c.onClick!()}
+                                        onClick={() => {eventBus.emit(GameEvents.UI_CLICK); c.onClick!(); }}
                                         title="查看本局构筑"
                                         className="pointer-events-auto group w-28 rounded-xl border border-violet-400/35 bg-violet-500/10 px-2 py-2 text-center backdrop-blur-sm transition hover:scale-105 hover:border-violet-300/70 hover:bg-violet-500/20"
                                     >
@@ -352,7 +353,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                     {isWin && phase === 'stats' && pendingPacks > 0 && (
                         <motion.button
                             initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                            onClick={() => setPackOpen(true)}
+                            onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setPackOpen(true); }}
                             className="px-6 py-2.5 rounded-xl bg-purple-600/30 border-2 border-purple-400/60 text-purple-200 font-black tracking-widest hover:bg-purple-600/50 hover:scale-105 transition-all shadow-[0_0_25px_rgba(168,85,247,0.4)]"
                         >
                             🎁 打开卡包 ×{pendingPacks}
@@ -363,7 +364,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                     {isWin && phase === 'stats' && pendingChests.length > 0 && (
                         <motion.button
                             initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                            onClick={() => setChestOpen(true)}
+                            onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setChestOpen(true); }}
                             className="px-6 py-2.5 rounded-xl bg-amber-500/25 border-2 border-amber-400/60 text-amber-100 font-black tracking-widest hover:bg-amber-500/45 hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.4)]"
                         >
                             💠 打开匣子 ×{pendingChests.length}
@@ -375,7 +376,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                         {phase === 'stats' && (
                             <motion.button
                                 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-                                onClick={onConfirm}
+                                onClick={() => {eventBus.emit(GameEvents.UI_CLICK); onConfirm(); }}
                                 className={`px-12 py-3 rounded-xl font-black text-lg tracking-widest hover:scale-105 transition-all shadow-[0_0_30px_rgba(168,85,247,0.5)] ${
                                     isWin
                                         ? 'bg-gradient-to-r from-yellow-600 to-amber-400 text-black'

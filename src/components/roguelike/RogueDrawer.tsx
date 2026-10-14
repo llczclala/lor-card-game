@@ -6,6 +6,7 @@
 //   强化列表：左侧圆形强化图容器 + 右侧上名称下效果
 // ==========================================
 import React, { useState, useEffect } from 'react';
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Swords, Sparkles, MapPin } from 'lucide-react'; // [2026-10-08 批次3] MapPin：探路状态条
 import { CARD_DB } from '../../data/cards';
@@ -66,7 +67,7 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
                         <motion.div
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                             className="fixed inset-0 z-[600] bg-black/40"
-                            onClick={onClose}
+                            onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                         />
                         {/* 抽屉主体 */}
                         <motion.div
@@ -82,7 +83,7 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
                                     return (
                                         <button
                                             key={k}
-                                            onClick={() => setTab(k)}
+                                            onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setTab(k); }}
                                             title={meta.label}
                                             className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all border-2
                                                 ${active
@@ -102,7 +103,7 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
                                     <h3 className="font-black text-gray-100 tracking-widest">
                                         {tab === 'cards' ? '当前牌组' : '迷宫强化'}
                                     </h3>
-                                    <button onClick={onClose} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors">
+                                    <button onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors">
                                         <X size={18} />
                                     </button>
                                 </div>

@@ -6,6 +6,7 @@
 //   ③ 单选选中上浮/金色光晕 + 底部居中「确定」按钮（不再每张卡下方一个"选择这张"）
 // ==========================================
 import React, { useState, useEffect } from 'react';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { Coins, Sparkles } from 'lucide-react';
 import { CARD_DB } from '../../../data/cards';
@@ -82,7 +83,7 @@ export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, opti
                             {/* [2026-08-29] 正常战斗胜利附带一次抽卡包机会 */}
                             {onOpenPack && pendingPacks > 0 && (
                                 <button
-                                    onClick={() => setPackOpen(true)}
+                                    onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setPackOpen(true); }}
                                     disabled={packOpen}
                                     className="ml-2 px-4 py-1.5 rounded-full bg-purple-600/30 border border-purple-400/50 text-purple-200 hover:bg-purple-600/50 transition-all disabled:opacity-50"
                                 >
@@ -132,7 +133,7 @@ export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, opti
                                             initial="enter"
                                             animate={animPhase}
                                             exit="exit"
-                                            onClick={() => { if (animPhase === 'select') setSelectedKey(o.cardKey); }}
+                                            onClick={() => { if (animPhase === 'select') { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setSelectedKey(o.cardKey); } }}
                                         >
                                             {/* 选中金色光晕 */}
                                             {isSelected && animPhase === 'select' && (
@@ -173,7 +174,7 @@ export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, opti
                         {onRefresh && (
                             <motion.button
                                 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                                onClick={(e) => { e.stopPropagation(); if (refreshCount > 0) onRefresh(); }}
+                                onClick={(e) => { e.stopPropagation(); if (refreshCount > 0) { eventBus.emit(GameEvents.UI_CLICK); onRefresh(); } }}
                                 disabled={refreshCount <= 0}
                                 className={`px-8 py-3 rounded-xl bg-white/10 font-black text-lg tracking-widest transition-all hover:scale-105 ${refreshCount > 0 ? 'text-cyan-300 hover:bg-cyan-500/20' : 'text-gray-600 cursor-not-allowed'}`}
                             >
@@ -182,7 +183,7 @@ export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, opti
                         )}
                         <motion.button
                             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                            onClick={(e) => { e.stopPropagation(); handleConfirm(); }}
+                            onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleConfirm(); }}
                             disabled={!selectedKey}
                             className={`px-12 py-3 rounded-xl font-black text-lg tracking-widest transition-all
                                 ${selectedKey
@@ -194,7 +195,7 @@ export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, opti
                         {onSkip && (
                             <motion.button
                                 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                                onClick={(e) => { e.stopPropagation(); setConfirmSkip(true); }}
+                                onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); setConfirmSkip(true); }}
                                 className="px-8 py-3 rounded-xl bg-white/10 hover:bg-white/20 font-black text-lg tracking-widest text-gray-300 transition-all hover:scale-105"
                             >
                                 跳过

@@ -100,7 +100,7 @@ export const StageSelectScreen: React.FC<StageSelectScreenProps> = ({
                             return (
                                 <div
                                     key={stage.id}
-                                    onClick={() => setSelectedStageId(stage.id)}
+                                    onClick={() => {eventBus.emit(GameEvents.SFX_SELECT_UNIT); setSelectedStageId(stage.id); }}
                                     className={`
                                         group relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all h-24
                                         ${selectedStage?.id === stage.id

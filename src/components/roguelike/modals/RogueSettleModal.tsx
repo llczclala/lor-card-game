@@ -4,6 +4,7 @@
 // [2026-09-15 程拍板] 中途放弃完全不算一局 → detail.abandoned 时隐藏经验/倍率明细，只留进度统计
 // ==========================================
 import React from 'react';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion } from 'framer-motion';
 import { Coins } from 'lucide-react';
 import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
@@ -83,7 +84,7 @@ export const RogueSettleModal: React.FC<RogueSettleModalProps> = ({ run, expGain
                 )}
 
                 <button
-                    onClick={onConfirm}
+                    onClick={() => {eventBus.emit(GameEvents.UI_BACK); onConfirm(); }}
                     className="px-10 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-purple-400 text-lg font-black tracking-widest hover:scale-105 transition-all hover:shadow-[0_0_30px_rgba(168,85,247,0.6)]"
                 >
                     返回大厅

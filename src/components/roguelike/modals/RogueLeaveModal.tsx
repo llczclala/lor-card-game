@@ -5,6 +5,7 @@
 //   「暂离对局」= 存盘回大厅，稍后可「继续」从上次进度接着游玩
 // ==========================================
 import React from 'react';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion } from 'framer-motion';
 
 interface RogueLeaveModalProps {
@@ -17,7 +18,7 @@ export const RogueLeaveModal: React.FC<RogueLeaveModalProps> = ({ onSettle, onLe
     return (
         <div
             className="fixed inset-0 z-[900] flex items-center justify-center bg-black/80 backdrop-blur-md"
-            onClick={onClose}
+            onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
         >
             <motion.div
                 initial={{ scale: 0.92, opacity: 0, y: 16 }}
@@ -33,19 +34,19 @@ export const RogueLeaveModal: React.FC<RogueLeaveModalProps> = ({ onSettle, onLe
                 </p>
                 <div className="flex gap-4 w-full mt-1">
                     <button
-                        onClick={onSettle}
+                        onClick={() => {eventBus.emit(GameEvents.UI_CLICK); onSettle(); }}
                         className="flex-1 py-3 rounded-xl bg-gradient-to-r from-red-600 to-red-400 text-lg font-black tracking-widest hover:scale-105 transition-all hover:shadow-[0_0_25px_rgba(239,68,68,0.5)]"
                     >
                         结算对局
                     </button>
                     <button
-                        onClick={onLeave}
+                        onClick={() => {eventBus.emit(GameEvents.UI_CLICK); onLeave(); }}
                         className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-400 text-lg font-black tracking-widest hover:scale-105 transition-all hover:shadow-[0_0_25px_rgba(16,185,129,0.5)]"
                     >
                         暂离对局
                     </button>
                 </div>
-                <button onClick={onClose} className="text-gray-500 hover:text-white text-sm transition-colors">
+                <button onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="text-gray-500 hover:text-white text-sm transition-colors">
                     取消
                 </button>
             </motion.div>

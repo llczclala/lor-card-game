@@ -26,6 +26,7 @@
 // ⚠️ 本组件**只读**：奖励的发放早在 `App.handleRogueEvent` 里由注册表完成了。
 // ==========================================
 import React, { useMemo } from 'react';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion } from 'framer-motion';
 import { Plus, ArrowRight, RotateCcw, RefreshCw, HeartCrack } from 'lucide-react';
 import type { CardData } from '../../../types';
@@ -294,7 +295,7 @@ export const EventRewardShowcase: React.FC<EventRewardShowcaseProps> = ({ result
                     initial={{ opacity: 0, scale: 0.7 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: 0.12 * items.length + 0.25 }}
-                    onClick={onClose}
+                    onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                     className="shrink-0 pointer-events-auto px-12 py-3.5 rounded-xl font-black tracking-[0.25em] text-white border border-white/25 bg-white/10 hover:bg-white/20 backdrop-blur-sm transition-all"
                 >
                     收下

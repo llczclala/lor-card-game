@@ -8,6 +8,7 @@
 //   一处实现、两个弹窗共用，避免"卡包一份、匣子又一份"（本项目历史上同类病反复出现）。
 // ==========================================
 import React from 'react';
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Sparkles } from 'lucide-react';
 import { RARITY_META } from './RarityIcon';
@@ -40,7 +41,7 @@ export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open
             <motion.div
                 className="fixed inset-0 z-[1400] flex items-center justify-center bg-black/85 backdrop-blur-md"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                onClick={onClose}
+                onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
             >
                 <motion.div
                     initial={{ opacity: 0, scale: 0.94, y: 14 }}
@@ -57,7 +58,7 @@ export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open
                         <h3 className="text-xl font-black tracking-[0.16em] text-cyan-200">{title}</h3>
                         <span className="font-mono text-sm text-gray-400">共 {items.length} 项</span>
                         <button
-                            onClick={onClose}
+                            onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                             className="ml-auto flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-400 transition hover:bg-white/10 hover:text-white"
                         >
                             <X size={16} />
@@ -99,7 +100,7 @@ export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open
                     </div>
 
                     <button
-                        onClick={onClose}
+                        onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                         className="mt-5 shrink-0 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-400 py-3 font-black tracking-widest text-white transition hover:scale-[1.02]"
                     >
                         知道了

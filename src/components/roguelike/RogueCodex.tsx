@@ -319,7 +319,7 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
                             className="w-44 pl-8 pr-7 py-1.5 rounded-full bg-white/[0.06] border border-white/15 focus:border-purple-400/60 focus:bg-white/[0.09] outline-none text-sm placeholder-gray-500 transition-all"
                         />
                         {search && (
-                            <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                            <button onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setSearch(''); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
                                 <X size={14} />
                             </button>
                         )}
@@ -334,7 +334,7 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
                             return (
                                 <button
                                     key={q}
-                                    onClick={() => toggleQuality(q)}
+                                    onClick={() => {eventBus.emit(GameEvents.UI_CLICK); toggleQuality(q); }}
                                     className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border transition-all text-xs"
                                     style={{
                                         borderColor: active ? `${meta.color}aa` : 'rgba(255,255,255,0.12)',
@@ -353,7 +353,7 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
                     {/* 重置筛选 */}
                     {hasFilter && (
                         <button
-                            onClick={resetFilter}
+                            onClick={() => {eventBus.emit(GameEvents.UI_CLICK); resetFilter(); }}
                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-200 text-xs hover:bg-amber-500/25 transition-all"
                         >
                             <RotateCcw size={13} />
@@ -368,7 +368,7 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
                 {/* 左侧侧边栏：装备 / 强化 tab */}
                 <div className="w-44 shrink-0 border-r border-white/10 bg-black/20 flex flex-col gap-1.5 p-3">
                     <button
-                        onClick={() => setTab('equipment')}
+                        onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setTab('equipment'); }}
                         className={`flex items-center gap-2.5 px-3 py-3 rounded-xl border transition-all text-sm
                             ${tab === 'equipment'
                                 ? 'bg-purple-500/20 border-purple-400/50 text-white shadow-[0_0_16px_rgba(168,85,247,0.3)]'
@@ -379,7 +379,7 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
                         <span className="ml-auto text-[10px] font-mono opacity-60">{EQUIPMENT_DEFS.length}</span>
                     </button>
                     <button
-                        onClick={() => setTab('enhancement')}
+                        onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setTab('enhancement'); }}
                         className={`flex items-center gap-2.5 px-3 py-3 rounded-xl border transition-all text-sm
                             ${tab === 'enhancement'
                                 ? 'bg-purple-500/20 border-purple-400/50 text-white shadow-[0_0_16px_rgba(168,85,247,0.3)]'

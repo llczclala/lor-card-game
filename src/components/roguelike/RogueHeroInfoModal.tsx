@@ -273,7 +273,7 @@ export const OverviewContent: React.FC<{
                         <HeroHandContent heroKey={heroKey} noLabels scale={OVERVIEW_GEOMETRY.handScale} equipIds={armValues.filter((v): v is string => !!v)} />
                         {onConfirm && (
                             <button
-                                onClick={onConfirm}
+                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onConfirm(); }}
                                 disabled={confirmDisabled}
                                 className="px-10 py-3 rounded-xl text-lg font-black tracking-widest hover:scale-105 transition-all disabled:opacity-40 disabled:grayscale disabled:cursor-not-allowed"
                                 style={themeColor ? { background: `linear-gradient(to right, ${themeColor}, ${themeColor}99)`, boxShadow: `0 0 30px ${themeColor}55` } : undefined}
@@ -479,7 +479,7 @@ const LevelRewardsModal: React.FC<{ isOpen: boolean; currentLevel: number; onClo
             <motion.div
                 className="fixed inset-0 z-[950] flex items-center justify-center bg-black/80 backdrop-blur-sm font-sans select-none"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                onClick={onClose}
+                onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
             >
                 <motion.div
                     initial={{ scale: 0.92, opacity: 0, y: 20 }}
@@ -1203,7 +1203,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                                     src={def.icon}
                                                     alt={def.name}
                                                     className="w-full h-full object-cover cursor-grab active:cursor-grabbing"
-                                                    onPointerDown={e => { e.stopPropagation(); e.preventDefault(); beginDrag('slot', slotId!, i, e.clientX, e.clientY); }}
+                                                    onPointerDown={e => { e.stopPropagation(); e.preventDefault(); eventBus.emit(GameEvents.UI_CLICK); beginDrag('slot', slotId!, i, e.clientX, e.clientY); }}
                                                     /* [2026-09-10 莉莉子 修复] 摘掉「拿起拖出可卸载」原生提示（与武装大卡双弹）；
                                                        旁边的红色减号卸载按钮本就带同样文案的 title，信息不丢 */
                                                     {...bindArmamentGaze(slotId!)}
@@ -1430,7 +1430,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                             <div
                                                 className="relative shrink-0 cursor-grab active:cursor-grabbing"
                                                 style={{ width: 60, height: 60 * 1.14 }}
-                                                onPointerDown={disabled ? undefined : (e) => { e.stopPropagation(); e.preventDefault(); beginDrag('lib', def.id, -1, e.clientX, e.clientY); }}
+                                                onPointerDown={disabled ? undefined : (e) => { e.stopPropagation(); e.preventDefault(); eventBus.emit(GameEvents.UI_CLICK); beginDrag('lib', def.id, -1, e.clientX, e.clientY); }}
                                                 {...bindArmamentGaze(def.id)}
                                             >
                                                 <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: disabled ? '#374151' : EQUIP_RARITY_COLOR[def.rarity] }} />

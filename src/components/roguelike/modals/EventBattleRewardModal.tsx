@@ -10,6 +10,7 @@
 //      又有"需要玩家挑选"的卡牌三选一；混在一个弹窗里玩家看不清自己拿到了什么。
 // ==========================================
 import React from 'react';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion } from 'framer-motion';
 import type { EventApplyResult } from '../../../data/roguelike/eventAppliers';
 
@@ -47,7 +48,7 @@ export const EventBattleRewardModal: React.FC<EventBattleRewardModalProps> = ({ 
                 </div>
 
                 <button
-                    onClick={onClose}
+                    onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                     className="w-full py-2.5 rounded-xl bg-yellow-500/90 hover:bg-yellow-400 text-black font-bold tracking-wider transition-all"
                 >
                     确定

@@ -1,17 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { Maximize, Minimize } from 'lucide-react';
-import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 全屏切换音效
+// ==========================================
+// 全屏控制
+// [2026-10-14 程拍板] **从「右上角独立按钮」收进设置窗口**：
+//   原来是一个 `fixed top-0 right-0 z-[9999]` 的悬浮按钮（全局常驻），
+//   与设置里的其他显示类开关割裂 ⇒ 现在只导出 `useFullscreen()` hook，
+//   由 `SettingsModal` 的「Video Quality → Display」区渲染成一行开关。
+//   ⚠️ 文件名保留（项目红线：不删文件），内容已由组件改为 hook。
+// ==========================================
+import { useState, useEffect } from 'react';
 
-export const FullScreenToggle: React.FC = () => {
+/** 全屏状态 + 切换（监听 fullscreenchange，含用户按 ESC / F11 自行退出） */
+export const useFullscreen = () => {
     const [isFullscreen, setIsFullscreen] = useState(false);
 
-    // 监听全屏状态变化 (包括用户按 ESC 退出)
     useEffect(() => {
-        const handleChange = () => {
-            setIsFullscreen(!!document.fullscreenElement);
-        };
-
-        // 绑定标准事件
+        const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
+        handleChange(); // 初次挂载先同步一次（可能已是全屏，如从浏览器记忆恢复）
         document.addEventListener('fullscreenchange', handleChange);
 
         return () => {
@@ -35,18 +38,5 @@ export const FullScreenToggle: React.FC = () => {
         }
     };
 
-    return (
-        <button
-            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFullscreen(); }}
-            // [修复] 将 right-4 修改为 left-4，将全屏按钮移至屏幕左上角
-            className="fixed top-0 right-0 z-[9999] p-2 bg-slate-900/50 hover:bg-slate-800/80 text-gray-400 hover:text-white rounded-full backdrop-blur-sm transition-all duration-200 border border-white/10 hover:scale-110 shadow-lg group"
-            title={isFullscreen ? "退出全屏" : "全屏模式"}
-        >
-            {isFullscreen ? (
-                <Minimize size={24} className="group-hover:text-blue-400 transition-colors" />
-            ) : (
-                <Maximize size={24} className="group-hover:text-yellow-400 transition-colors" />
-            )}
-        </button>
-    );
+    return { isFullscreen, toggleFullscreen };
 };

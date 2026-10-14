@@ -13,6 +13,7 @@
 //   费用圆点 + 名称 + 右侧 X数量 + **悬停出大图**（useCardGaze + FloatingCardPreview）。
 // ==========================================
 import React, { useState, useEffect } from 'react';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { Sparkles, Shield } from 'lucide-react';
 import { CARD_DB } from '../../../data/cards';
@@ -176,7 +177,7 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
                                 initial="enter"
                                 animate={animPhase}
                                 exit="exit"
-                                onClick={() => { if (animPhase === 'select') setSelectedKey(o.heroKey); }}
+                                onClick={() => { if (animPhase === 'select') { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setSelectedKey(o.heroKey); } }}
                             >
                                 {/* 选中金色光晕 */}
                                 {isSelected && animPhase === 'select' && (
@@ -237,7 +238,7 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
                     <div className="absolute bottom-[8%] left-0 right-0 z-30 flex justify-center gap-4">
                         <motion.button
                             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                            onClick={(e) => { e.stopPropagation(); handleConfirm(); }}
+                            onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleConfirm(); }}
                             disabled={!selectedKey}
                             className={`px-12 py-3 rounded-xl font-black text-lg tracking-widest transition-all
                                 ${selectedKey
@@ -248,7 +249,7 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
                         </motion.button>
                         <motion.button
                             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                            onClick={(e) => { e.stopPropagation(); setConfirmSkip(true); }}
+                            onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); setConfirmSkip(true); }}
                             className="px-8 py-3 rounded-xl bg-white/10 hover:bg-white/20 font-black text-lg tracking-widest text-gray-300 transition-all hover:scale-105"
                         >
                             跳过

@@ -8,7 +8,7 @@ import { useAudio } from './hooks/useAudio';
 import { useSfx } from './hooks/useSfx';
 import { useMovie } from './hooks/useMovie';
 import { VideoPlayer } from './components/VideoPlayer';
-import { FullScreenToggle } from './components/FullScreenToggle';
+// [2026-10-14 程拍板] FullScreenToggle 已收进设置窗口（SettingsModal「显示」区），不再全局悬浮
 import { LoadingScreen } from './components/LoadingScreen';
 import { CARD_DB } from './data/cards';
 import { useUserSystem } from './hooks/useUserSystem';
@@ -1979,7 +1979,7 @@ export default function App() {
 
   return (
   <ScaleWrapper>
-  <FullScreenToggle />
+  {/* [2026-10-14 程拍板] 全屏按钮已迁入设置窗口 → SettingsModal「Video Quality / Display」 */}
     <div className="relative w-full h-full bg-slate-950 overflow-hidden">
 
 

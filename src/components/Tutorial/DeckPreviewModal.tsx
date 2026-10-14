@@ -177,7 +177,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
         <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-[500] bg-black/85 backdrop-blur-xl flex items-center justify-between px-16 select-none font-sans"
-            onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+            onClick={(e) => { if (e.target === e.currentTarget) { eventBus.emit(GameEvents.UI_BACK); onClose(); } }}
         >
             {/* 顶部退出大叉号 */}
             <button

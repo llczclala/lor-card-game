@@ -284,7 +284,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                                     price={item.price}
                                                     affordable={affordable(item.price)}
                                                     sold={sold}
-                                                    onClick={() => { if (onBuyCard(item.cardKey, item.equipId, item.price)) mark(item.cardKey); }}
+                                                    onClick={() => { if (onBuyCard(item.cardKey, item.equipId, item.price)) { eventBus.emit(GameEvents.UI_CLICK); mark(item.cardKey); } }}
                                                 />
                                             </div>
                                         );
@@ -308,7 +308,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                                 price={stock.enhancement.price}
                                                 affordable={affordable(stock.enhancement.price)}
                                                 sold={sold}
-                                                onClick={() => { if (onBuyEnhancement(enh.id, stock.enhancement!.price)) mark(`enh_${enh.id}`); }}
+                                                onClick={() => { if (onBuyEnhancement(enh.id, stock.enhancement!.price)) { eventBus.emit(GameEvents.UI_CLICK); mark(`enh_${enh.id}`); } }}
                                             />
                                         </>
                                     );
@@ -498,7 +498,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                                     <div key={key} className="flex flex-col items-center gap-2">
                                                         <button
                                                             type="button"
-                                                            onClick={(e) => { e.stopPropagation(); setRemovePick(isPick ? null : key); }}
+                                                            onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.SFX_SELECT_UNIT); setRemovePick(isPick ? null : key); }}
                                                             className={`relative flex flex-col items-center gap-1.5 outline-none transition-all ${
                                                                 isPick ? 'scale-105' : 'hover:scale-[1.04] hover:-translate-y-1 cursor-pointer'
                                                             }`}
@@ -536,7 +536,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                                                     sold={false}
                                                     label={`确认删除 🪙${REMOVE_CARD_PRICE}`}
                                                     onClick={() => {
-                                                        if (removePick && onRemoveCard(removePick, REMOVE_CARD_PRICE)) {
+                                                        eventBus.emit(GameEvents.UI_CLICK); if (removePick && onRemoveCard(removePick, REMOVE_CARD_PRICE)) {
                                                             setRemovePick(null);
                                                         }
                                                     }}
