@@ -130,7 +130,7 @@ export interface UseRoundLifecycleParams {
     setMessage: React.Dispatch<React.SetStateAction<string>>;
 
     // 4. 共享工具函数
-    createFullCard: (key: string) => CardData;
+    createFullCard: (key: string, side: 'player' | 'enemy') => CardData;
     flushMicroQueue: () => boolean;
     judgeLifeAndDeath: () => void;  // [SBA] 生死簿同步判决
     wait: (ms: number) => Promise<void>;
@@ -202,13 +202,17 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                 return nextCard;
             };
 
+            // [2026-10-12 莉莉子 BUG修复 · 基座扫射伤害被旧快照抹掉] 记录**被改写的切片**
+            //   —— 原来无条件写回三片数组，会把另外两片里"同批次排队中的更新"一起回滚，
+            //      是丢伤害的放大器（对齐本项目惯例：只写真正变化的那一片）。
             let found = false;
-            nextPlayerBench = nextPlayerBench.map(c => { if(c.id === targetId) { found=true; return applyDamage(c); } return c; });
-            if(!found) nextEnemyBench = nextEnemyBench.map(c => { if(c.id === targetId) { found=true; return applyDamage(c); } return c; });
+            let hitSlice: 'player' | 'enemy' | 'field' | null = null;
+            nextPlayerBench = nextPlayerBench.map(c => { if(c.id === targetId) { found=true; hitSlice='player'; return applyDamage(c); } return c; });
+            if(!found) nextEnemyBench = nextEnemyBench.map(c => { if(c.id === targetId) { found=true; hitSlice='enemy'; return applyDamage(c); } return c; });
             if(!found) nextCombatField = nextCombatField.map(f => {
                 let newF = { ...f };
-                if (newF.attacker?.id === targetId) { newF.attacker = applyDamage(newF.attacker); found=true; }
-                if (newF.blocker?.id === targetId) { newF.blocker = applyDamage(newF.blocker); found=true; }
+                if (newF.attacker?.id === targetId) { newF.attacker = applyDamage(newF.attacker); found=true; hitSlice='field'; }
+                if (newF.blocker?.id === targetId) { newF.blocker = applyDamage(newF.blocker); found=true; hitSlice='field'; }
                 return newF;
             });
             // [新增] 如果都没找到，检查是否是水晶受击——直接扣水晶血量
@@ -236,9 +240,27 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                 }
             }
 
-            setPlayerBench(nextPlayerBench);
-            setEnemyBench(nextEnemyBench);
-            setCombatField(nextCombatField as any);
+            // [2026-10-12 莉莉子 BUG修复 · 基座扫射伤害被旧快照抹掉] 只写命中的那一片，并**立刻同步 stateRef**
+            // ── 病根 1（段内丢更新）：同一次弹幕里多发 HIT 可能落在同一个 React 批次，
+            //    后一发读到的还是陈旧 stateRef ⇒ 写回时把前一发的伤害覆盖掉。
+            //    stateRef 的唯一自动刷新点是 commit 之后的 passive effect（useGameState.ts:374-376），
+            //    等它跑完，伤害已经丢了。
+            // ── 病根 2（回合末被抹掉）：executeRoundEndSequence 在 `await wait(50)` 之后重读 stateRef
+            //    并**整数组写回**（:1619-1622 → :1754-1756）。若此时 stateRef 落后，
+            //    最后几发的伤害会被整体抹掉 ⇒ 目标残血活着、卡面数字回跳（玩家口径："掉血又回血"）。
+            // ── 本项目既有惯例就是「值式写回后手动同步 stateRef」（见 :1331-1342 精灵鳄鱼、
+            //    :1930-1935 盖弥尔 AOE、useGameState.ts:6361-6368 夜巡猫头鹰；前两处还专门注释了这个坑）。
+            //    **此处是全项目唯一漏掉的一处**，而基座弹幕偏偏是全项目唯一的 100ms 连发十几发。
+            if (hitSlice === 'player') {
+                setPlayerBench(nextPlayerBench);
+                stateRef.current.playerBench = nextPlayerBench;
+            } else if (hitSlice === 'enemy') {
+                setEnemyBench(nextEnemyBench);
+                stateRef.current.enemyBench = nextEnemyBench;
+            } else if (hitSlice === 'field') {
+                setCombatField(nextCombatField as any);
+                stateRef.current.combatField = nextCombatField;
+            }
 
             if (damage > 0) {
                 eventBus.emit('unit_damage', { id: targetId, amount: damage });
@@ -467,7 +489,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                             });
 
                         if (!hasSummon) {
-                            const newCard = createFullCard(summonKey);
+                            const newCard = createFullCard(summonKey, owner); // [2026-10-13 F3·L1] 归属 = 本分支的 owner
                             const cardWithAbility = newCard.ability
                                 ? { ...newCard, abilityState: 'breathing' as const, abilityCharges: newCard.ability.maxCharges }
                                 : newCard;
@@ -594,7 +616,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                                             console.log(`[Kelo_Debug] 开始回收(${owner})，maxCopy=${maxCopy}，当前手牌数=${currentHand.length}`);
                                             for (let i = 0; i < maxCopy; i++) {
                                                 const cardKey = lastCards[i];
-                                                const newCard = createFullCard(cardKey);
+                                                const newCard = createFullCard(cardKey, owner); // [2026-10-13 F3·L1] 归属 = 回收方 owner
                                                 if (!newCard) {
                                                     console.warn(`[Kelo_Debug] 无法创建卡牌: cardKey=${cardKey}`);
                                                     continue;
@@ -690,7 +712,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                     // ④ 落场：走公共装配器（虹彩上限修正）+ **盖归属戳**
                     //    （09-19 起 SUMMON 分支的标准做法；旧补兵扫描没盖章，靠"倒在敌方 ⇒ 玩家召唤"反推 ——
                     //      `-13` 里"找错边就不贴亡语"的风险正出在这个推论上）
-                    const unit = assembleBeaconCard(createFullCard(BEACON_KEY), tempGame.beaconMaxHealthMod);
+                    const unit = assembleBeaconCard(createFullCard(BEACON_KEY, landSide), tempGame.beaconMaxHealthMod); // [2026-10-13 F3·L1] 归属 = landSide（不是 owner）
                     unit.unitOwner = landSide;
                     const wrapped = { ...unit, animState: 'summoning' as const };
                     if (landSide === 'player') tempPBench = [...tempPBench, wrapped];
@@ -1512,12 +1534,25 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                             return nc;
                         };
 
-                        simPlayerBench = simPlayerBench.map(c => c.id === targetCard.id ? applySimDmg(c) : c);
-                        simEnemyBench = simEnemyBench.map(c => c.id === targetCard.id ? applySimDmg(c) : c);
-                        simCombatField = simCombatField.map(f => {
+                        // [2026-10-12 莉莉子 BUG修复 · 预演/真实口径对齐]
+                        // ── 病根：真实落点 handleStrikeHit（:205-213）有 `found` 短路 —— 只涂**第一处**命中的切片；
+                        //    而这里的预演会把伤害**同时贴到三片**。同一个 id 若同时存在于备战席与交战区，
+                        //    预演就按「一发扣 2 点」算，真实只扣 1 点 ⇒ 预演提前判定目标已死 ⇒
+                        //    :1479 的 `break` 提前触发 ⇒ **生成的弹数不足** ⇒ 真实伤害打不死目标。
+                        // ── 修法：与真实路径同构，首次命中即止（正常单份在场时行为完全不变）。
+                        let simFound = false;
+                        simPlayerBench = simPlayerBench.map(c => {
+                            if (!simFound && c.id === targetCard.id) { simFound = true; return applySimDmg(c); }
+                            return c;
+                        });
+                        if (!simFound) simEnemyBench = simEnemyBench.map(c => {
+                            if (!simFound && c.id === targetCard.id) { simFound = true; return applySimDmg(c); }
+                            return c;
+                        });
+                        if (!simFound) simCombatField = simCombatField.map(f => {
                             let newF = { ...f };
-                            if (newF.attacker?.id === targetCard.id) newF.attacker = applySimDmg(newF.attacker);
-                            if (newF.blocker?.id === targetCard.id) newF.blocker = applySimDmg(newF.blocker);
+                            if (newF.attacker?.id === targetCard.id) { newF.attacker = applySimDmg(newF.attacker); simFound = true; }
+                            if (newF.blocker?.id === targetCard.id) { newF.blocker = applySimDmg(newF.blocker); simFound = true; }
                             return newF;
                         });
                     }
@@ -1711,16 +1746,27 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         //   触发顺序与 useGameState.processDeaths 一致：强化触发先于亡语入队（judgeLifeAndDeath 在其后）。
         //   ⚠️ 排除复活类（亡灵军团 / 不死军团）：飞剑是量产幻象，复活会形成"死了又活"的循环。
         //   ⚠️ 不封顶：飞剑4 一轮多次触发本就是安卡的强势点（程拍板保留）。
-        //   ⚠️ 现排除了唯一会改 bench 的 RESURRECT，故可安全早于下方 setPlayerBench(nextPlayerBench)；
-        //      若将来新增改 bench 的 unit_die 效果类，需把本段后移到 stateRef 同步之后。
+        //   ⚠️ [2026-10-12 莉莉子 BUG修复 · 龟甲承魂/返祖改动被覆盖] 本段原先只排除了 `RESURRECT`，
+        //      并假定"没有别的 unit_die 效果类会改 bench" ⇒ 后来新增的「龟甲承魂」(`targets:'all'`)
+        //      与既有的「返祖」(`enhance_atavism`) 都会改 bench，而它们的改动被下方
+        //      `setPlayerBench(nextPlayerBench)`（**强化跑之前**的副本）整体盖掉 ⇒ 白给。
+        //      ⇒ 现改为：① 两侧都从**盖章后的快照**播种 ctx；② 提交后记账"哪一片已被强化写过"，
+        //      下方不再用快照覆盖那一片。详细说明见 `setPlayerBench(nextPlayerBench)` 处。
+        //   ⚠️ 另一侧为什么也要用盖章快照：原先取 `stateRef.current.X` 原值（**连死亡盖章都没有**），
+        //      一旦某个 unit_die 效果改了另一侧（如献祭回响打敌方备战席）并回写，
+        //      就会把幻象的 `ephemeral_dying` 盖章一起丢掉 —— 此前纯靠下方整数组覆盖"兜"住，属侥幸。
+        // 记账：哪一片已被 unit_die 强化写过（写过就不能再被盖章快照整体覆盖）
+        let enhWrotePlayerBench = false;
+        let enhWroteEnemyBench = false;
+        let enhWroteField = false;
         (['player', 'enemy'] as const).forEach(dieSide => {
             const myDead = allEphemeralDead.filter(d => d.owner === dieSide);
             if (myDead.length === 0) return;
             const dieEnh = dieSide === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements;
             const ctx: RogueTriggerCtx = {
                 game: { ...stateRef.current.game },
-                playerBench: dieSide === 'player' ? [...nextPlayerBench] : [...stateRef.current.playerBench],
-                enemyBench: dieSide === 'enemy' ? [...nextEnemyBench] : [...stateRef.current.enemyBench],
+                playerBench: [...nextPlayerBench],
+                enemyBench: [...nextEnemyBench],
                 combatField: [...nextCombatField],
                 playerHand: [...stateRef.current.playerHand],
                 enemyHand: [...stateRef.current.enemyHand],
@@ -1742,24 +1788,40 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                 markUnitDieDispatched(d.card);
             });
             // 回写被强化改动的切片（与 useGameState.processDeaths 同构）
-            if (ctx.dirty.bench.has('player')) setPlayerBench(ctx.playerBench);
-            if (ctx.dirty.bench.has('enemy')) setEnemyBench(ctx.enemyBench);
-            if (ctx.dirty.field) setCombatField(ctx.combatField);
+            // [2026-10-12 莉莉子] 值式写回后顺手**同步 stateRef**（对齐本项目惯例），并记账"这一片已被强化写过"
+            if (ctx.dirty.bench.has('player')) { setPlayerBench(ctx.playerBench); stateRef.current.playerBench = ctx.playerBench; enhWrotePlayerBench = true; }
+            if (ctx.dirty.bench.has('enemy')) { setEnemyBench(ctx.enemyBench); stateRef.current.enemyBench = ctx.enemyBench; enhWroteEnemyBench = true; }
+            if (ctx.dirty.field) { setCombatField(ctx.combatField); stateRef.current.combatField = ctx.combatField; enhWroteField = true; }
             if (ctx.dirty.hand.has('player')) setPlayerHand(ctx.playerHand);
             if (ctx.dirty.hand.has('enemy')) setEnemyHand(ctx.enemyHand);
             if (ctx.dirty.deck.has('player')) setPlayerDeck(ctx.playerDeck);
             if (ctx.dirty.deck.has('enemy')) setEnemyDeckState(ctx.enemyDeck);
         });
 
-        setPlayerBench(nextPlayerBench);
-        setEnemyBench(nextEnemyBench);
-        if (hasCombatDeath) setCombatField(nextCombatField);
+        // ==========================================
+        // [2026-10-12 莉莉子 BUG修复 · unit_die 强化的改动被盖章快照整体覆盖]
+        // ── 病根：下面三行（原为无条件）用 `nextXxx` 整数组写回 bench/field。
+        //    而 `nextXxx` = **强化跑之前** + 只有死亡盖章 ⇒ 会把上面刚提交的
+        //    「盖章 + 强化改动」合并体整个盖回旧值。
+        // ── 受害者（已逐行证实）：
+        //      · 龟甲承魂 `divfx_bubu_4`（`targets:'all'`）—— 随机命中**备战席/交战区**即白给，
+        //        只有命中手牌才生效（约 2/3 概率白给）；
+        //      · 返祖 `enhance_atavism` —— 它的 handler 只改备战席（`rogueTrigger.ts:774-777`）
+        //        ⇒ 在这条路径上 **100% 白给、从未生效**。
+        //    ⚠️ 英魂传承 / 卜骨遗响 **不受影响**：它们只改手牌，手牌不在这三行的覆盖范围内。
+        // ── 修法：只对"强化没写过"的那一片用盖章快照写入；写过的那一片保留强化结果。
+        //    （ctx 的数组本就以盖章快照为底、再叠加强化改动 ⇒ 它才是该片的权威值。）
+        // ==========================================
+        if (!enhWrotePlayerBench) setPlayerBench(nextPlayerBench);
+        if (!enhWroteEnemyBench) setEnemyBench(nextEnemyBench);
+        if (hasCombatDeath && !enhWroteField) setCombatField(nextCombatField);
 
         // [2026-07-15 修复] 同步 stateRef，否则 judgeLifeAndDeath 读到的还是旧数据，
         // 无法检测到 ephemeral_dying 标记，导致幻象亡语不触发
-        stateRef.current.playerBench = nextPlayerBench;
-        stateRef.current.enemyBench = nextEnemyBench;
-        if (hasCombatDeath) stateRef.current.combatField = nextCombatField;
+        // [2026-10-12] 已被强化写过的那一片，stateRef 在上面提交时已同步 ⇒ 此处不重复覆盖
+        if (!enhWrotePlayerBench) stateRef.current.playerBench = nextPlayerBench;
+        if (!enhWroteEnemyBench) stateRef.current.enemyBench = nextEnemyBench;
+        if (hasCombatDeath && !enhWroteField) stateRef.current.combatField = nextCombatField;
 
         // [2026-07-09 修复] 幻象标记后再次清算生死簿，触发亡语（如猫头鹰抽牌）
         if (hasEphemeralDeath) {

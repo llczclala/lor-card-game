@@ -15,7 +15,7 @@ import { UltimateStrikeLayer } from './UltimateStrikeLayer'; // [2026-09-19 1.0.
 import { CostReduceVFXLayer } from './CostReduceVFXLayer'; // [2026-10-08 莉莉子] 减费特效层「绿潮降临」（P1）
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
-import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason, canPlayerRetractBlocker } from '../utils/gameRules';
+import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason, canPlayerRetractBlocker, getChoiceCardCost } from '../utils/gameRules'; // [2026-10-12] + getChoiceCardCost（抉择三价同源）
 import { Battlefield } from './Battlefield';
 import { CARD_DB, createCard } from '../data/cards';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
@@ -767,7 +767,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
         previewSpellManaCost = currentSpellMana - newSpellMana;
 
         // [新增] 如果是单位牌、法力值足够、且备战席未满（满员时走替换打出，不显示部署位）
-        if (isUnit && canAffordCard(hoveredCard, game.playerMana, game.playerSpellMana) && playerBench.length < 6) {
+        // [2026-10-13 F2] 悬停单位＝玩家侧
+        if (isUnit && canAffordCard(hoveredCard, game.playerMana, game.playerSpellMana, undefined, 'player') && playerBench.length < 6) {
             isHoveringPlayableUnit = true;
         }
     }
@@ -2482,17 +2483,19 @@ export const GameSession: React.FC<GameSessionProps> = ({
             for (const key of choices) {
                 const data = CARD_DB[key] as CardData;
                 if (data) {
-                    // [2026-07-30 飞剑减费] AI侧同样应用飞剑折扣
-                    const FLYING_SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
-                    let checkData = data;
-                    if (FLYING_SWORD_DISCOUNT_KEYS.includes(key)) {
-                        const fsTotal = game.enemyFlyingSwordsTotal || 0;
-                        if (fsTotal > 0) {
-                            checkData = { ...data, cost: Math.max(0, (data.cost || 0) - fsTotal) };
-                        }
-                    }
+                    // [2026-10-12 莉莉子 BUG修复 · 抉择三价同源] AI 侧门禁价改走**唯一算价入口**
+                    //   （原实现只手抄了飞剑折扣 ⇒ 莲台无垠 / 凯特琳光环 / 装备条件减费都不放行，
+                    //    于是 AI 会把"其实打得起"的选项判成打不起、直接撤回抉择 = 白绕一圈）
+                    // ⚠️ bench 取 `enemyBench`（本组件的活体 state），**不是** `game.enemyBench`
+                    const checkData = {
+                        ...data,
+                        cost: getChoiceCardCost(
+                            data, enemyBench, game.enemyMaxMana, 'enemy',
+                            game.enemyFlyingSwordsTotal || 0,
+                        ),
+                    };
                     const { canPlay } = evaluateChoiceCondition(
-                        checkData, game.enemyMana, game.enemySpellMana,
+                        checkData, game.enemyMana, game.enemySpellMana, 'enemy', // [2026-10-13 F2] 归属方 = AI（本 effect 上来就守卫 choiceOwner === 'enemy'）
                         game.spellCasting?.isHeroLeveled,
                         game.phase,
                         // [2026-10-05 莉莉子 BUG修复 · 20261005-01] AI 侧同样受慢速时机枷锁约束
@@ -2734,29 +2737,38 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 //   选项被误显示为「法力值不足」而点不动（界面看着能点、实际 canPlay=false）。
                                 const isEnemyChoice = game.spellCasting?.choiceOwner === 'enemy';
 
-                                // [2026-07-30 飞剑减费] 为朔望之期 + 剑痕时空按本牌局飞剑数折扣
-                                const FLYING_SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
-                                let displayChoiceData = choiceData;
-                                let isCostDiscounted = false;
-                                if (FLYING_SWORD_DISCOUNT_KEYS.includes(choiceKey)) {
-                                    const fsTotal = isEnemyChoice
-                                        ? (game.enemyFlyingSwordsTotal || 0)
-                                        : (game.playerFlyingSwordsTotal || 0);
-                                    if (fsTotal > 0) {
-                                        const oldCost = choiceData.cost || 0;
-                                        displayChoiceData = {
-                                            ...choiceData,
-                                            cost: Math.max(0, oldCost - fsTotal),
-                                        };
-                                        isCostDiscounted = true;
-                                    }
-                                }
+                                // =====================================
+                                // [2026-10-12 莉莉子 BUG修复 · 抉择「显示价 / 门禁价 / 实扣价」三价同源]
+                                // ── 病根：这套「飞剑折扣」在仓库里被**手抄 4 份**，而**只有实扣那一份**
+                                //    在折扣之后又走了 `getEffectiveSpellCost`（莲台无垠 / 凯特琳光环 /
+                                //    装备条件减费）⇒ **显示与门禁比实扣贵**：玩家法力差 1 点时，
+                                //    抉择选项显示「法力值不足」、点不动（看着像减费完全没生效）。
+                                // ── 修法：显示价与门禁价改走 `gameRules.getChoiceCardCost`（唯一算价入口）。
+                                // ⚠️ `isCostDiscounted` 也一并改成「**实算价 ≠ 原价**」——
+                                //    原先只反映飞剑（莲台减了也不显绿），这是"不同源"的第二个表现。
+                                // ⚠️ bench / maxMana 必须取**归属方**（`isEnemyChoice`）那一侧：
+                                //    玩家可在对方优先权阶段打出极速抉择（见上方 :2732 注释）。
+                                // =====================================
+                                const choiceBench = isEnemyChoice ? enemyBench : playerBench;
+                                const choiceMaxMana = isEnemyChoice ? game.enemyMaxMana : game.playerMaxMana;
+                                const choiceFsTotal = isEnemyChoice
+                                    ? (game.enemyFlyingSwordsTotal || 0)
+                                    : (game.playerFlyingSwordsTotal || 0);
+                                const displayChoiceData = {
+                                    ...choiceData,
+                                    cost: getChoiceCardCost(
+                                        choiceData, choiceBench, choiceMaxMana,
+                                        isEnemyChoice ? 'enemy' : 'player', choiceFsTotal,
+                                    ),
+                                };
+                                const isCostDiscounted = displayChoiceData.cost !== (choiceData.cost || 0);
 
                                 // 呼叫法务和裁判：这个卡能不能放？
                                 const { canPlay, lockedMessage } = evaluateChoiceCondition(
                                     displayChoiceData,
                                     isEnemyChoice ? game.enemyMana : game.playerMana,
                                     isEnemyChoice ? game.enemySpellMana : game.playerSpellMana,
+                                    isEnemyChoice ? 'enemy' : 'player', // [2026-10-13 F2] 归属方（**不是** turnOwner）
                                     game.spellCasting?.isHeroLeveled,
                                     game.phase,
                                     // [2026-10-05 莉莉子 BUG修复 · 20261005-01] 慢速子卡的时机枷锁

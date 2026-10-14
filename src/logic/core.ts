@@ -41,7 +41,9 @@ export const startManaBonusOf = (g: GameState): number => {
     //   计数由 rogueTrigger 的 MANA_PER_SUMMON_PERMANENT 写进 questProgress；这里只做"规则查询"
     //   （上限仍受 calculateRoundStart 里的 min(10, …) 约束，不会无限涨）
     if ((g.rogueEnhancements ?? []).includes('divfx_mauxir_3')) {
-        bonus += g.questProgress?.['div:mauxir:mana'] ?? 0;
+        // [2026-10-13 F3·L4] 读**玩家侧**那一份（本函数是玩家口径）——
+        //   原实现读的是**无侧别**的共享键，敌方召唤会加到这里来。
+        bonus += g.questProgress?.['div:mauxir:mana:player'] ?? 0;
     }
     return bonus;
 };

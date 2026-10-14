@@ -94,14 +94,20 @@ Good "用时 $([math]::Round($sw.Elapsed.TotalSeconds,1)) 秒"
 Step "4/5" "打包 APK（gradlew assemble$variantCap）"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 Push-Location (Join-Path $repoRoot 'android')
-& '.\gradlew.bat' "assemble$variantCap" --console=plain 2>&1 |
-    Select-Object -Last 6
+# [修复 2026-10-14] 原来直接 `... | Select-Object -Last 6` —— 一旦失败，编译错误会被一起截掉，
+#   只剩下「打包失败」四个字，根本不知道错在哪（当天就因此瞎猜了一轮）。
+#   改为先收全量输出：成功只显示尾部 6 行，失败则完整打印。
+$gradleOut = & '.\gradlew.bat' "assemble$variantCap" --console=plain 2>&1
 $code = $LASTEXITCODE
 Pop-Location
 $sw.Stop()
 if ($code -ne 0) {
-    Fail "Gradle 打包失败。提示：若报签名相关错误，先跑 tools\create-keystore.ps1"
+    Write-Host "`n──── Gradle 完整输出（失败时全量打印，方便定位）────" -ForegroundColor Yellow
+    $gradleOut | ForEach-Object { Write-Host $_ }
+    Write-Host "──── Gradle 输出结束 ────`n" -ForegroundColor Yellow
+    Fail "Gradle 打包失败（原因见上方 Gradle 输出）。提示：若报签名相关错误，先跑 tools\create-keystore.ps1"
 }
+$gradleOut | Select-Object -Last 6
 Good "用时 $([math]::Round($sw.Elapsed.TotalSeconds,1)) 秒"
 
 # ── ⑤ 产物归置 + 校验 ────────────────────────────────────────────────

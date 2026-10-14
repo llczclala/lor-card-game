@@ -264,7 +264,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 const negates = hand.filter(c =>
                     c && c.type && c.type.includes('spell')
                     && c.ai?.pattern === 'NEGATE'
-                    && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench));
+                    && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench, 'enemy'));
                 if (negates.length === 0) return false; // 没带反制牌 ⇒ 完全不介入
 
                 const scored = negates
@@ -552,7 +552,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                     console.log(`[AI-SPELL] 手牌数=${hand.length} 法力=${g.enemyMana}/${g.enemySpellMana} 敌方水晶=${g.playerNexus}`);
 
                     // 遍历手牌中的所有法术，按优先级评分选出最佳选择
-                    const playableSpells = hand.filter(c => c && c.type.includes('spell') && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench));
+                    const playableSpells = hand.filter(c => c && c.type.includes('spell') && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench, 'enemy'));
                     console.log(`[AI-SPELL] 可打出法术数=${playableSpells.length}`, playableSpells.map(s => `${s.key}(${s.name})`));
 
                     // 用策略引擎评估所有可打出的法术，选评分最高的
@@ -607,10 +607,10 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 // 策略：有费就打，铺场优先
                 // [2026-07-08 新增日志] 打出全手牌详情
                 console.log(`[AI] 👋 全手牌详情:`, hand.map(c =>
-                    `${c.key}(${c.name}) type=${c.type} cost=${c.cost} 可购买=${canAffordCard(c, g.enemyMana, g.enemySpellMana, bench)}`
+                    `${c.key}(${c.name}) type=${c.type} cost=${c.cost} 可购买=${canAffordCard(c, g.enemyMana, g.enemySpellMana, bench, 'enemy')}`
                 ));
                 const playableUnit = hand.find((c: CardData) =>
-                    c && c.type && c.type.includes('unit') && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench)
+                    c && c.type && c.type.includes('unit') && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench, 'enemy')
                 );
 
                 if (playableUnit && bench.length < 6) {
@@ -788,7 +788,7 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 console.log(`[AI] ⏭️ 无事可做，让过 (phase=${g.phase} hand=${hand.length} bench=${bench.length} mana=${g.enemyMana} tok=${g.attackToken.enemy})`);
                 if (hand.length > 0) {
                     console.log(`[AI] ⏭️ 手牌剩余原因分析:`, hand.map(c =>
-                        `${c.key}(${c.name}) type=${c.type} cost=${c.cost} afford=${canAffordCard(c, g.enemyMana, g.enemySpellMana, bench)} isUnit=${c.type?.includes('unit')} isSpell=${c.type?.includes('spell')}`
+                        `${c.key}(${c.name}) type=${c.type} cost=${c.cost} afford=${canAffordCard(c, g.enemyMana, g.enemySpellMana, bench, 'enemy')} isUnit=${c.type?.includes('unit')} isSpell=${c.type?.includes('spell')}`
                     ));
                 }
                 setMessage("敌方过。");

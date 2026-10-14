@@ -36,7 +36,7 @@ export interface SpellContext {
    * 目前唯一的消费者是「拉取暴露单位」触发（神格①③）：RogueTriggerCtx.createFullCard 是必填，
    * 而猎影标记的额外攻击在 effectProcessor 内装配战场 ⇒ 必须由这里把工厂带进去。
    */
-  createFullCard?: (key: string) => CardData;
+  createFullCard?: (key: string, side: 'player' | 'enemy') => CardData;
 }
 
 // [重构] 通用法术执行器

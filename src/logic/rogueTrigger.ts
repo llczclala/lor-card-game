@@ -11,7 +11,7 @@
 //   - handler 铁律：只读写 ctx（不读 stateRef、不散装 setState）；闪烁在真正生效处按序 flash。
 //     新增迷宫强化 = 数据加一条 + 这里注册一个 handler，不再触碰任何核心 hook。
 // ==========================================
-import { getRogueDefs, flashRogueBuff, applyPermanentBuff, pickRandomAlly, findStrongestUnit, applyStatBalance, applyStrikeEnhancement, isStrikeTargetAlive } from './rogueBattle';
+import { getRogueDefs, flashRogueBuff, applyPermanentBuff, pickRandomAlly, findStrongestUnit, applyStatBalance, applyStrikeEnhancement, isStrikeTargetAlive, isRallyByAttackPowerMet } from './rogueBattle';
 import { applyFrostbite, getPower, getHealth } from './keywords';
 import { isQuestDone, questKey } from './questTracker'; // [2026-09-25 莉莉子] 三线任务化框架：任务解锁判定
 import { runSummonEntry } from './summonEntry'; // [2026-10-06 程拍板 · A 方案] 「入场」门铃唯一实现（依赖由 effectProcessor 注入 ⇒ 本 import 不成环）
@@ -92,7 +92,7 @@ export interface RogueTriggerCtx {
     enemyDeck: CardData[];
     owner: Side;                       // 本 pass 强化来源方（该方享受友军增益）
     trigger: BattleTrigger;            // 当前触发时机（runRogueTrigger 每次覆盖）
-    createFullCard: (key: string) => CardData;
+    createFullCard: (key: string, side: 'player' | 'enemy') => CardData;
     info: RogueTriggerInfo;
     dirty: RogueDirty;
 }
@@ -184,12 +184,44 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         // [2026-09-28 神格神经 · 猫汐尔②④] 新增 `count`：一次生成 N 张（每张独立实例 + 独立 id）
         const genKey = def.battleEffect?.params?.generateKey as string | undefined;
         if (!genKey) return;
-        const count = Math.max(1, (def.battleEffect?.params?.count as number) ?? 1);
         const hand = sideHand(ctx, ctx.owner);
+
+        // ==========================================
+        // [2026-10-12 莉莉子 BUG修复 · 莲台无垠「顷刻莲潮」每回合无条件多发一张]
+        // ── 症状（程实测）：`divfx_mauxir_6`「莲台无垠」每回合开始都往手牌塞一张「顷刻莲潮」，
+        //    手牌里明明已经有，照样再给一张（程口径："似乎会无限给"）。
+        // ── 根因：**本 handler 从未实现 `reduceCostIfDuplicate`**。
+        //    `buffs.ts:852` 传的 `{ generateKey:'mauxir_lotus_ultimate', count:1, reduceCostIfDuplicate:true }`
+        //    里那个标志位被静默忽略 ⇒ 直接落到下方**无条件**的生成循环。
+        //    而 `buffs.ts:849-851` 的注释写的是"复用 `effectProcessor` 里 GENERATE 的既有分支"
+        //    —— **复用错了对象**：卡牌效果走 `effectProcessor.ts:3815-3827`（那里有实现），
+        //    迷宫强化走的是本文件这一份（没有实现）。**同语义两套实现，新参数只加在其中一套。**
+        // ── 程的口径（唯一正确语义）：
+        //      · 回合开始时**手牌里已有** ⇒ **只把那张费用 -1**，**不再给新的一张**；
+        //      · 手牌里**没有**       ⇒ **只给一张**，且**不减费**。
+        //    （实现与 `effectProcessor.ts:3815-3827` 逐字同构，含 `customProgress |= 2` 绿色费用标记。）
+        // ==========================================
+        if (def.battleEffect?.params?.reduceCostIfDuplicate) {
+            const existingIdx = hand.findIndex(c => c.key === genKey);
+            if (existingIdx !== -1) {
+                const updated = { ...hand[existingIdx] };
+                const oldCost = updated.cost || 0;
+                updated.cost = Math.max(0, oldCost - 1);
+                updated.customProgress = (updated.customProgress || 0) | 2; // 标记绿色费用
+                hand[existingIdx] = updated;
+                ctx.dirty.hand.add(ctx.owner);
+                eventBus.emit('sfx_generate', updated);
+                flashRogueBuff(def);
+                console.log(`[Generate·迷宫强化] 手牌中已有 ${updated.name}，费用 ${oldCost}→${updated.cost}（不重复生成）`);
+                return;
+            }
+        }
+
+        const count = Math.max(1, (def.battleEffect?.params?.count as number) ?? 1);
         let added = 0;
         for (let i = 0; i < count; i++) {
             if (hand.length >= 10) break; // 手牌上限兜底（满了就少发，不爆牌）
-            const card = ctx.createFullCard(genKey);
+            const card = ctx.createFullCard(genKey, ctx.owner); // [2026-10-13 F3·L1] ctx 里本就有 owner
             if (!card) break;
             // [2026-10-06 程实测 BUG修复] 追加 `Volatile` 前**先去重**：
             //   卡面**自带** `Volatile` 的卡（安卡的扩散 / 月镰剑势）会被堆成 `['Volatile','Volatile']`
@@ -407,7 +439,7 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         if (once && !once(ctx.owner, summonKey)) return; // 该侧本局已召唤过该单位
         const bench = sideBench(ctx, ctx.owner);
         if (bench.some(c => c.key === summonKey) || bench.length >= 6) return;
-        const summoned = { ...ctx.createFullCard(summonKey), animState: 'summoning' as const };
+        const summoned = { ...ctx.createFullCard(summonKey, ctx.owner), animState: 'summoning' as const }; // [2026-10-13 F3·L1]
         bench.push(summoned);
         ctx.dirty.bench.add(ctx.owner);
         // ⚠️ [2026-10-06 独立审查 · 次要项] 闪图标的时机放在**入场结算之后** ——
@@ -538,6 +570,10 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
 
     CHAMPION_TO_HAND: (def, ctx) => {
         // 天启共鸣：开局从牌库随机抽一张天启者到手牌（提高上手率）
+        // ⚠️ [2026-10-12 莉莉子] 下面的 `c.isChampion ?` 是**反向筛选（只要天启者）** —— 它是本效果的语义本身，
+        //   与"手牌池误排天启者"那一类 BUG **方向相反、不是同一回事**：
+        //   卡面（`buffs.ts:602` 天启共鸣 / `:624` 王权之证）写的就是"随机抽一张**天启者**"/"**天启者**必定入手"。
+        //   ⇒ **别把它当成同类 BUG 一起"修"掉。**
         const deck = sideDeck(ctx, ctx.owner);
         const champIdxs = deck.map((c, i) => (c.isChampion ? i : -1)).filter(i => i >= 0);
         if (champIdxs.length === 0) return;
@@ -604,14 +640,29 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
     RALLY_IF_ATTACK_POWER: (def, ctx) => {
         // [2026-09-28 莉莉子 神格神经 · 芬妮②④] 发起进攻时，若我方进攻单位攻击力**总和** > 阈值 → 备战
         //   备战 = 再给一个进攻标识（与 RALLY handler 同款写法）
-        const threshold = (def.battleEffect?.params?.threshold as number) ?? 10;
+        // ==========================================
+        // [2026-10-12 莉莉子 BUG修复 · 芬妮②④ 100% 不生效]
+        // ── 病根：本 handler 由 `on_attack_declare`（**宣告进攻**）分发，而**进攻标识要到本次战斗
+        //    结算才被消耗**（`useGameState.ts:4670` 是全项目唯一置 null 处）。发备战的唯一出口
+        //    `grantExtraAttackTurn` 的语义是「**已有标识 ⇒ 不重复授予**」（`core.ts:74`，2026-10-03 拍板）
+        //    ⇒ 宣告时攻击方必然还持着 `normal` ⇒ **必然被拒** ⇒ 芬妮②④ 从实装起就没生效过。
+        // ── 修法（**不动标识设计**，只挪"预约点"）：判定与下发改在**本次战斗结算的备战下发点**做
+        //    （`useGameState.ts` 结算段 → 并入既有的 `ralliedOwners`，与"激励之声"同一条路）。
+        //    那里标识已被收走 ⇒ 按 2026-10-03 的口径**正好该补一张** ✅
+        //    而"额外攻击"那一路不改标识 ⇒ 结算段 `ralliedOwners` 的守卫天然挡住 ✅
+        // ── 本 handler 保留为"宣告时"的实现（当前不会被分发到实处），并顺手修掉一个**假播报**：
+        //    原写法在 `grantExtraAttackTurn` **没授予成功**时，也无条件 `dirty.game = true`
+        //    + `gain_token_rally` 播报 + 强化图标闪 ⇒ 玩家会看到"备战了"但标识根本没变。
+        // ==========================================
         const attackers = ctx.combatField
             .flatMap(f => (f.owner === ctx.owner ? [f.attacker] : []))
             .filter(Boolean) as CardData[];
-        const total = attackers.reduce((s, u) => s + getPower(u), 0);
-        if (total <= threshold) return;
+        const enhIds = ctx.owner === 'player' ? ctx.game.rogueEnhancements : ctx.game.enemyEnhancements;
+        if (!isRallyByAttackPowerMet(enhIds, attackers)) return;
         // [2026-10-03 莉莉子 · ②] 统一出口（芬妮②④「发起进攻时备战」= 本回合追加一次进攻）
-        ctx.game = grantExtraAttackTurn(ctx.game, ctx.owner, def.name ?? '备战(进攻时)');
+        const granted = grantExtraAttackTurn(ctx.game, ctx.owner, def.name ?? '备战(进攻时)');
+        if (granted === ctx.game) return; // 未真正授予（已有标识）⇒ 不标脏、不播报、不闪
+        ctx.game = granted;
         ctx.dirty.game = true;
         eventBus.emit('gain_token_rally', { owner: ctx.owner });
         flashRogueBuff(def);
@@ -694,7 +745,10 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         const value = (def.battleEffect?.params?.value as number) ?? 2;
         const count = (def.battleEffect?.params?.count as number) ?? 3;
         const hand = sideHand(ctx, 'enemy');
-        const idxs = hand.map((c, i) => (!c.isChampion && !c.type?.includes('spell') ? i : -1)).filter(i => i >= 0);
+        // [2026-10-12 莉莉子 口径统一 · 程拍板] **天启者也算"单位卡"** —— 删掉原先的 `!c.isChampion`
+        //   卡面（`buffs.ts:630`）写的是"敌方手牌中随机 3 张**单位卡**费用 +2"，未提"不含天启者"；
+        //   与今天统一的 `DEATH_GIFT` 口径一致。天启者卡 `type:'unit'`（`cards.ts:8/273`）⇒ 去掉后能入选。
+        const idxs = hand.map((c, i) => (!c.type?.includes('spell') ? i : -1)).filter(i => i >= 0);
         if (idxs.length === 0) return;
         for (let i = idxs.length - 1; i > 0; i--) { // 洗牌取前 count 个 = 随机 count 张
             const j = Math.floor(Math.random() * (i + 1));
@@ -994,7 +1048,15 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         //   round_end       → 按记账次数，由我方备战席攻击力最高的单位**再次打击敌方水晶**
         // ⚠️ 兑现时不 emit NEXUS_STRIKED —— 那会再次触发 on_nexus_strike 形成回环；只发飘字。
         const round = ctx.game?.round ?? 0;
-        const key = `div:bubu6:r${round}`;
+        // [2026-10-13 F3·L3 · **键必须带侧别**]
+        //   ── 病根：原键 `div:bubu6:r<round>` **不含 owner** ⇒ 敌我共用同一本账：
+        //      A 方打击水晶记了账，B 方 `round_end` 兑现时也读到同一格 ⇒ **替对方多打一记**。
+        //   ── 本 handler 的**全部读写**（记账 `:1064` / 兑现 `:1069` / 清零 `:1085`）
+        //      都经这个局部 `key` ⇒ **只此一处收口**。
+        //   ── ⚠️ 防回归：questProgress 是**扁平共享表**（`types.ts:333`），
+        //      **凡是"我方进度"语义的计数键都必须带侧别段**（与命名空间
+        //      `enh:<id>` / `gear:<卡实例id>:<装备id>` 的前缀分段约定一致）。
+        const key = `div:bubu6:r${round}:${ctx.owner}`;
         const qp = ctx.game?.questProgress ?? {};
         if (ctx.trigger === 'on_nexus_strike') {
             // ══════════════════════════════════════════════════════════════════
@@ -1004,7 +1066,7 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             //      回合结束就一次性打出 **3 倍攻击力** ⇒ 程实测"很多时候直接就秒杀了"。
             //   ── 现改为：本回合已记过就直接返回 ⇒ `times` 只可能是 0 或 1
             //      ⇒ 每回合最多结算**一次**（由备战席最强单位再打一记）。
-            //   ── 键仍带回合号（`div:bubu6:r<round>`）⇒ 天然按回合重置，无需额外清理。
+            //   ── 键仍带回合号（`div:bubu6:r<round>:<owner>`）⇒ 天然按回合重置，无需额外清理。
             // ══════════════════════════════════════════════════════════════════
             if ((qp[key] ?? 0) > 0) return; // 本回合已记过 ⇒ 不再累加（零副作用）
             ctx.game.questProgress = { ...qp, [key]: 1 };
@@ -1074,7 +1136,17 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         //      当场的 +1 只补"本回合"，下回合那份由计数统一给。
         const summoned = ctx.info.playedCard ?? benchLast(ctx, ctx.owner);
         if (!summoned || !(summoned.race || []).includes('summon')) return;
-        const key = 'div:mauxir:mana';
+        // [2026-10-13 F3·L4 · **键必须带侧别**]
+        //   ── 病根：原键 `div:mauxir:mana` **不含 owner**，而读取端 `core.ts:44` 的
+        //      `startManaBonusOf` 是**玩家侧专用查询**（敌方那份是另一个
+        //      `enemyStartManaBonusOf`，只累加 START_MANA_BONUS）
+        //      ⇒ **敌方召唤会把玩家的最大法力一起加**。
+        //   ── ⚠️ 顺带记录（未处理）：切分后敌方那份计数**当前无人读取** ⇒
+        //      敌方持有 `divfx_mauxir_3` 时，这条强化在"下回合起的查询"上不再见效
+        //      （本回合那 +1 仍由下方 `maxField` 的 owner 分支照常给）。
+        //      这是**原有功能缺口**（敌方侧从未实现过查询端），不是本次引入；
+        //      要不要给敌方补上查询，已列入待办请程定。
+        const key = `div:mauxir:mana:${ctx.owner}`;
         const cur = ctx.game?.questProgress?.[key] ?? 0;
         if (cur >= 10) return; // 法力上限本身是 10（calculateRoundStart 内 min(10,…)），计数到顶即可
         ctx.game.questProgress = { ...(ctx.game?.questProgress ?? {}), [key]: cur + 1 };
@@ -1159,7 +1231,10 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         const played = ctx.info.playedCard;
         if (!played) return;
         const hand = sideHand(ctx, ctx.owner);
-        const unitHand = hand.map((c, i) => (!c.isChampion && c.type?.includes('unit') ? i : -1)).filter(i => i >= 0);
+        // [2026-10-12 莉莉子 口径统一 · 程拍板] **天启者也算"单位卡"** —— 删掉原先的 `!c.isChampion`
+        //   卡面（`buffs.ts:468`）写的是"手牌中随机一张**单位卡**费用减少"，未提"不含天启者"。
+        //   ⚠️ 本条是**敌我双开关**（`playerEligible/enemyEligible` 均为 true），影响面最大。
+        const unitHand = hand.map((c, i) => (c.type?.includes('unit') ? i : -1)).filter(i => i >= 0);
         if (unitHand.length === 0) return;
         const idx = unitHand[Math.floor(Math.random() * unitHand.length)];
         hand[idx] = {
@@ -1281,7 +1356,18 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             : Math.max(0, (dead.health || 0) + (dead.buffs?.health || 0) + (dead.roundBuffs?.health || 0));
         if (power === 0 && health === 0) return;
         const hand = sideHand(ctx, ctx.owner);
-        const handIdx = hand.map((c, i) => (!c.isChampion && c.type?.includes('unit') ? i : -1)).filter(i => i >= 0);
+        // [2026-10-12 莉莉子 口径统一 · 程拍板「该给」] **天启者也算"单位"** —— 删掉原先的 `!c.isChampion`
+        // ── 程的判定：给。依据三条 ——
+        //    ① 卡面文案写的就是"单位"，一个字没提"不含天启者"（`buffs.ts:474/790/797`）；
+        //    ② 项目里所有「随机一个我方单位」类强化（回旋余力/回合加护/战意高涨/军势鼓舞…）
+        //       都走 `pickRandomAlly`（`rogueBattle.ts:71-88`），其过滤只有"没死/不在死亡动画/非指定排除"，
+        //       **从不排天启者** ⇒ 这里原先的排除是全项目唯一的例外；
+        //    ③ 手册无任何"排除天启者"的设计记录（`设计-神格神经.md:728-729` 只写了 powerOnly / targets）。
+        // ── 影响面：英魂传承 `death_gift` · 卜骨遗响 `divfx_bubu_2` · 龟甲承魂 `divfx_bubu_4`
+        //    这三条的手牌候选池。⚠️ `targets:'all'` 的备战席/交战区候选**本来就没排除天启者**
+        //    ⇒ 改完这三条口径才真正一致（此前是"手牌不给、场上给"的自相矛盾）。
+        // ── 已核实：天启者卡 `type: 'unit'`（`cards.ts:8` 里芙 / `:273` 猫汐尔）⇒ 去掉 `!isChampion` 后确实能入选。
+        const handIdx = hand.map((c, i) => (c.type?.includes('unit') ? i : -1)).filter(i => i >= 0);
         type Cand = { kind: 'hand'; idx: number } | { kind: 'unit'; id: string };
         const cands: Cand[] = handIdx.map(i => ({ kind: 'hand' as const, idx: i }));
         if (p.targets === 'all') {

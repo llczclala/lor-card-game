@@ -31,9 +31,56 @@ import { getSpellConditionalCost } from '../data/equipment';
 export const getEffectiveSpellCost = (
     card: CardData,
     bench: CardData[],
-    maxMana?: number,
-    side: 'player' | 'enemy' = 'player',
+    // [2026-10-13 莉莉子 BUG修复 · F2「side 缺省参泄漏」]
+    //   ── 改动 ①：`maxMana?: number` → `number | undefined`。
+    //      TS 不允许**必填参跟在可选参之后**（TS1016），而下方 `side` 即将改为必填。
+    //      语义不变：调用方显式传 `undefined` 即可（原本不传 = undefined）。
+    maxMana: number | undefined,
+    // [2026-10-13 莉莉子 BUG修复 · F2「side 缺省参泄漏」· L2 主病灶]
+    //   ── 改动 ②：删掉缺省值 `= 'player'`，**改为必填**。
+    //   ── 病根：缺省方向**恒为玩家**，而漏传**不会报错** ⇒ 敌方 AI 的每一次
+    //      「买不买得起」判定都读**玩家侧**快照（`spellCostDownAllSnapshot[side]` /
+    //      `spellCastSnapshot[side]`）。而 `commitSpell` 的**敌方路径没有任何可负担性守卫**
+    //      （`playCard` 的守卫在 `if (owner === 'player')` 内）⇒ AI 被玩家减费骗成"买得起"，
+    //      扣费 `Math.max(0, …)` 钳到 0 ⇒ **法术照常结算 = 玩家买的神格让敌方白嫖法术**。
+    //   ── 修法（程已批准「一类通治」）：删缺省值 ⇒ `tsc` 把**全部漏传点一次报出来**，
+    //      再逐处**按该处 bench 的归属**补 `side`。
+    //   ⚠️ **不许机械填 `'player'`** —— 每处都必须先确认该处 bench 属于哪一侧。
+    side: 'player' | 'enemy',
+    // [2026-10-12 莉莉子 BUG修复 · 活页夹页/双生符「条件减费」恒不成立]
+    //   ── 病根：`useSpellSystem.commitSpell` 在**实扣之前**（第一行）就 `noteSpellCast` 累加了计数，
+    //      而实扣价在这里读的是**同一份**计数 ⇒ 「本回合**尚未**打出过法术」（活页夹页 −1）
+    //      与「本场已打出 ≥N 个」（双生符归零）这两个条件，都被**本次施法自己**破坏：
+    //      · 活页夹页：永远读到 thisRound=1 ⇒ **−1 恒不生效**；
+    //      · 双生符：读到 thisRun 已含本次 ⇒ **提前一次**归零。
+    //      而门禁/卡面在 `commitSpell` **之前**读（尚未累加）⇒ **显示价 ≠ 实扣价**。
+    //   ── 修法：记账位置**不动**（`useSpellSystem.ts:873-875` 的既有约定不能破），
+    //      改为把「**本次施法之前**的计数快照」由调用方显式传进来 ⇒ 本次扣费按旧值算，
+    //      下一张法术的门禁/卡面按新值算 ⇒ **门禁价 / 卡面价 / 实扣价三者同源**。
+    //      （不传则回落到当前值，行为与改前一致 —— 其余调用点无需改动。）
+    castBasis?: { thisRound: number; thisRun: number },
 ): number => {
+    // ==========================================
+    // [2026-10-12 莉莉子 BUG修复 · 「莲台无垠」全法术减费漏到单位卡]
+    // ── 程拍板（2026-10-12）：**这条减费设计之初就是只给法术**。
+    // ── 病根：「全法术减费」有**三条腿**，另两条都带法术类型门 ——
+    //      · 建卡烘焙 `applySpellCostDownToNewCard`（本文件 `:137` 附近）
+    //      · 建卡烘焙 `logic/rogueTrigger.ts`（`SPELL_COST_DOWN_ALL` handler）
+    //      ——**只有本查询口径这条腿没有门** ⇒ 4 处手牌显示 + 2 处门禁会把 −1 漏给单位卡。
+    //      （具体表现：单位卡是"**门禁按减费价、实扣按裸价**"（`useGameState.ts:4809` vs `:4938`），
+    //        只有法力恰好 = 费用−1 时才真便宜 ⇒ 价格自相矛盾。）
+    // ── 修法：与另两条腿**逐字同判据** `startsWith('spell')`
+    //      （不用 `includes('unit')` —— 将来新增卡型时会反向漏）。
+    //      `CardType` 是闭合四值联合（`types.ts`：`'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow'`）
+    //      ⇒ **不可能漏掉任何法术类型**。
+    // ── 放在函数**最顶端**：下面四类减费**全部只对法术有语义** ——
+    //      觉悟归零（按 key，且该 key 是法术）、莲台无垠（本行修的就是它）、
+    //      装备条件减费（只读 `spellResolve` 型装备）、凯特琳光环（本就按类型限定）。
+    // ── ⚠️ 玩家可见变化（**程已认下**）：单位卡的手牌费用角标从"绿色 −1"回到原价；
+    //      且"法力恰好 = 费用−1"时原本能打出去的单位会变成点不动 —— 按设计口径这是**修正**。
+    // ==========================================
+    if (!card.type?.startsWith('spell')) return card.cost || 0;
+
     // [2026-07-15 梵音] 觉悟减费：巨偶一瞥在法力上限≥10时费用为0
     if (maxMana !== undefined && maxMana >= 10 && card.key === 'Shalo_Golem_Glimpse') {
         return 0;
@@ -53,7 +100,7 @@ export const getEffectiveSpellCost = (
     // [2026-10-08 莉莉子 · 法术专属装备 第二波] **装备的条件减费**（读对局状态快照，见下方 spellCastSnapshot）：
     //   · 活页夹页：本回合**尚未打出过法术** ⇒ −1
     //   · 双生符　：本场已打出 ≥N 个法术 ⇒ **费用归零**
-    const cond = getSpellConditionalCost(card, spellCastSnapshot[side]);
+    const cond = getSpellConditionalCost(card, castBasis ?? spellCastSnapshot[side]);
     if (cond.zero) return 0;
     const condBase = Math.max(0, base + cond.mod);
     // 只有极速(burst)和快速(fast)法术受凯特琳减费影响
@@ -91,6 +138,13 @@ export const noteSpellCast = (side: 'player' | 'enemy'): void => {
     s.thisRound += 1;
     s.thisRun += 1;
 };
+/** [2026-10-12 莉莉子 BUG修复 · 活页夹页] 读「当前」计数快照的副本。
+ *  用途：`commitSpell` 在 `noteSpellCast` **累加之前**取一份，作为**本次施法**的条件减费判据基准，
+ *  再作为第 5 参传给 `getEffectiveSpellCost`（见该函数签名注释）。 */
+export const getSpellCastSnapshot = (side: 'player' | 'enemy'): { thisRound: number; thisRun: number } => ({
+    thisRound: spellCastSnapshot[side]?.thisRound ?? 0,
+    thisRun: spellCastSnapshot[side]?.thisRun ?? 0,
+});
 
 // [2026-10-06 莉莉子 BUG修复 · 莲台无垠] 「全法术减费」的本场快照（**按方**）。
 //   ⚠️ 为什么用模块级快照而不是塞进 GameState：`getEffectiveSpellCost` 是个**纯查询函数**，
@@ -184,13 +238,28 @@ export const buffAllUnitsInDeck = (deck: CardData[], power: number, health: numb
     });
 };
 
-export const canAffordCard = (card: CardData, mana: number, spellMana: number, bench?: CardData[]): boolean => {
+// ==========================================
+// [2026-10-13 莉莉子 BUG修复 · F2「side 缺省参泄漏」· **L2**]
+// ── 病根：本函数**连 `side` 形参都没有**（想传也传不了）⇒ 全部调用点被**结构性锁死**，
+//    内部 `getEffectiveSpellCost` 只能走缺省 `'player'`。而 `useAI` 的 5 处调用传的是
+//    **敌方法力 + 敌方备战席**（`useAI.ts:240` `enemyBench: bench`）⇒ 实际读到**玩家侧**减费快照。
+// ── 修法：`side` 必填并**透传**下去。
+// ⚠️ `bench?` → `CardData[] | undefined`：TS 不允许必填参跟在可选参之后（TS1016）；
+//    调用方显式传 `undefined` 语义完全不变（= 原「不传 bench」）。
+// ==========================================
+export const canAffordCard = (
+  card: CardData,
+  mana: number,
+  spellMana: number,
+  bench: CardData[] | undefined,
+  side: 'player' | 'enemy',
+): boolean => {
   // [修正] 防御性检查：防止因"幽灵卡牌"（数据缺失）导致的崩溃
   if (!card || !card.type) {
       return false;
   }
 
-  const cost = bench ? getEffectiveSpellCost(card, bench) : card.cost;
+  const cost = bench ? getEffectiveSpellCost(card, bench, undefined, side) : card.cost;
 
   if (card.type.includes('unit')) {
     return mana >= cost;
@@ -660,6 +729,48 @@ export const demoteAcaciaHand = (hand: CardData[]): CardData[] => {
     });
 };
 
+// ==========================================
+// [2026-10-12 莉莉子 BUG修复 · 抉择法术「显示价 / 门禁价 / 实扣价」三价同源]
+//
+// ── 病根：这套「**飞剑折扣**」（按本牌局飞剑总数给 朔望之期 / 剑痕时空 减费）
+//    在仓库里被**手抄了 4 份**：
+//      · `components/GameSession.tsx`   玩家选项**显示价**（原 :2738）
+//      · `components/GameSession.tsx`   AI 自动选**门禁价**（原 :2486）
+//      · `logic/aiSpellStrategies.ts`   AI 策略**门禁价**（原 :965）
+//      · `hooks/useSpellSystem.ts`      抉择确认**实扣价**（`resolveChoice`）
+//    而**只有实扣那一份**在折扣之后又走了 `getEffectiveSpellCost`
+//    （= 莲台无垠 / 凯特琳光环 / 装备条件减费）⇒ **显示价与门禁价比实扣价贵**：
+//      表现：玩家法力差 1 点时，抉择大招/小技能选项**显示「法力值不足」、点不动**
+//            （看着像减费完全不生效）。
+//      可预测例：`lyfe_rush` 费 1，莲台 −1 ⇒ 显示 1 / 门禁 1 / **实扣 0**。
+//
+// ── 修法（程 2026-10-12 已批准"抽共享函数"）：把这套算法收成**唯一入口**，4 处全部改调它。
+//    ⚠️ 顺序与实扣**逐字一致**：先飞剑、后查询 ⇒ **不会双减**
+//       （`CARD_DB` 出来的卡 `spellCostDown` 是 `undefined`，查询腿只补差额）。
+//    ⚠️ 飞剑折扣**刻意不并入** `getEffectiveSpellCost` —— 另外 9 个调用点
+//       （常规手牌显示 / 单位门禁）今天都吃不到飞剑折扣，并进去等于顺手改常规价，**超范围**。
+//    ⚠️ 第 5 参 `flyingSwordCount` 传 0 = 调用方**已经把飞剑折扣烘焙进 `card.cost`**
+//       （`useSpellSystem.resolveChoice` 就是这种）⇒ 只走查询腿，不重复减。
+// ==========================================
+export const CHOICE_FLYING_SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
+
+/** 抉择子卡的**唯一算价入口**：卡面原价 → 飞剑折扣 → 统一查询口径（与实扣逐字同源）。 */
+export const getChoiceCardCost = (
+    card: CardData,
+    bench: CardData[] | undefined,
+    maxMana: number | undefined,
+    side: 'player' | 'enemy',
+    flyingSwordCount: number = 0,
+): number => {
+    let cost = card.cost || 0;
+    if (CHOICE_FLYING_SWORD_DISCOUNT_KEYS.includes(card.key) && flyingSwordCount > 0) {
+        cost = Math.max(0, cost - flyingSwordCount);
+    }
+    // ⚠️ `maxMana` 只对「觉悟：巨偶一瞥」的归零有语义；调用方要传**该侧**的 `MaxMana`
+    // ⚠️ bench 兜一手空数组：`getEffectiveSpellCost` 内部 `hasPoetCaitlinAura(bench)` 会直接 `.some`
+    return getEffectiveSpellCost({ ...card, cost }, bench ?? [], maxMana, side);
+};
+
 // --- 以下为新增代码 ---
 
 // [新增] 命运抉择选项的通用安检机制
@@ -681,8 +792,15 @@ export interface ChoiceSlowTiming {
 
 export const evaluateChoiceCondition = (
     choiceCardData: CardData,
-    playerMana: number,
-    playerSpellMana: number,
+    // [2026-10-13 莉莉子 BUG修复 · F2「side 缺省参泄漏」]
+    //   ── 形参改名：`playerMana/playerSpellMana` → `mana/spellMana`（= **施法归属方**的法力）。
+    //      原名是**假名** —— AI 侧调用传的是 `state.enemyMana` / `game.enemyMana`
+    //      （`aiSpellStrategies.evaluateCHOICE` / `GameSession` AI 自动选）⇒ 名与内容相反。
+    //   ── 新增必填 `side`：本函数是 `canAffordCard` 的调用点之一，原实现连 side 都没有。
+    // ==========================================
+    mana: number,
+    spellMana: number,
+    side: 'player' | 'enemy',
     isHeroLeveled: boolean = false,
     gamePhase?: string, // [2026-07-27 莉莉子] 阶段检查（慢速法术拦截）
     slowTiming?: ChoiceSlowTiming // [2026-10-05 莉莉子] 慢速子卡的时机检查（与普通慢速法术同口径）
@@ -702,7 +820,14 @@ export const evaluateChoiceCondition = (
     }
 
     // [枷锁判定 2：法力值限制]
-    if (!canAffordCard(choiceCardData, playerMana, playerSpellMana)) {
+    // [2026-10-13 莉莉子 BUG修复 · F2] 补传第 5 参 `side`。
+    //   ⚠️ `bench` 刻意传 `undefined`（**保持原行为**）：本函数的调用方已经把**实算价**
+    //      烘焙进 `choiceCardData.cost` 再传进来（见 `GameSession` / `aiSpellStrategies`
+    //      的 `checkData = { ...data, cost: getChoiceCardCost(...) }` 写法）
+    //      ⇒ 这里**不能再走一遍** `getEffectiveSpellCost`（会双减），只做"够不够"比较。
+    //      也正因如此，此处的 `side` **当前无实际效果**，但必须显式声明 —— 否则将来有人
+    //      给这里补上 `bench` 时，缺省 `'player'` 会立刻变成一条真泄漏。
+    if (!canAffordCard(choiceCardData, mana, spellMana, undefined, side)) {
         return { canPlay: false, lockedMessage: "法力值不足" };
     }
 

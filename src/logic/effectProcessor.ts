@@ -96,7 +96,7 @@ export interface EffectContext {
      * 没有就**跳过触发并 warn**（不静默、也不伪造一个"长得像"的建卡器）。
      * 现有 on_pull_exposed 的两个 handler（BUFF）都不建卡，故此字段当前只是类型刚需。
      */
-    createFullCard?: (key: string) => CardData;
+    createFullCard?: (key: string, side: 'player' | 'enemy') => CardData;
 }
 
 export interface EffectParams {
@@ -5099,7 +5099,7 @@ export function processOnGetAttackToken(
         enemyDeck?: CardData[];
         combatField?: any[];
         // [2026-10-06 程拍板 · 新增强化「霜锋乘势」] 迷宫强化也要能挂这个时机 ⇒ 需要建卡工厂
-        createFullCard?: (key: string) => CardData;
+        createFullCard?: (key: string, side: 'player' | 'enemy') => CardData;
     }
 ): {
     game: GameState;

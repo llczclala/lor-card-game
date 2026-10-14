@@ -72,7 +72,7 @@ export const runSummonEntry = (
     landedId: string,
     side: Side,
     state: SummonEntryState,
-    createFullCard?: (key: string) => CardData,
+    createFullCard?: (key: string, side: 'player' | 'enemy') => CardData,
     onEvents?: (events: any[]) => void,
 ): SummonEntryResult => {
     let { game, playerBench, enemyBench, playerHand, enemyHand, playerDeck, enemyDeck, combatField } = state;

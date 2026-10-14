@@ -13,7 +13,7 @@
  */
 import type { CardData, GameState, AIConfig } from '../types';
 import { CARD_DB } from '../data/cards';
-import { evaluateChoiceCondition } from '../utils/gameRules';
+import { evaluateChoiceCondition, getChoiceCardCost } from '../utils/gameRules';
 import { getHealth, getPower } from './keywords'; // [2026-09-22 修复] 收口到统一攻血口径
 
 // ==========================================
@@ -961,18 +961,24 @@ function evaluateCHOICE(
   const hasAffordable = spell.choices.some(key => {
     const data = CARD_DB[key] as CardData | undefined;
     if (!data) return false;
-    // [2026-07-30 飞剑减费] AI侧飞剑折扣
-    const SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
-    let checkData = data;
-    if (SWORD_DISCOUNT_KEYS.includes(key)) {
-      const fsTotal = state.enemyFlyingSwordsTotal || 0;
-      if (fsTotal > 0) {
-        checkData = { ...data, cost: Math.max(0, (data.cost || 0) - fsTotal) };
-      }
-    }
+    // [2026-10-12 莉莉子 BUG修复 · 抉择「显示价 / 门禁价 / 实扣价」三价同源]
+    //   ── 原实现只手抄了飞剑折扣 ⇒ 莲台无垠 / 凯特琳光环 / 装备条件减费都不放行，
+    //      AI 会把"其实打得起"的抉择基牌判成打不起（配了等于没配）。
+    //   ⚠️ **参数归属**（本文件 `HANDLERS` 的约定，容易看反，务必留意）：
+    //      第 3 参 `_enemyBench` = **敌方 = 玩家**备战席；第 4 参 `_playerBench` = **己方 = AI**备战席。
+    //      交换发生在 `evaluate` 的 `handler(spell, state, playerBench, enemyBench, …)`（见该处注释），
+    //      与 `evaluateCLONE_TO_HAND` 的「enemyBench→敌方 / playerBench→己方」用法一致。
+    //      AI 永远是 enemy 侧 ⇒ bench 取第 4 参。
+    const checkData = {
+      ...data,
+      cost: getChoiceCardCost(
+        data, _playerBench, state.enemyMaxMana, 'enemy',
+        state.enemyFlyingSwordsTotal || 0,
+      ),
+    };
     // [2026-10-05 莉莉子 BUG修复 · 20261005-01] 补传慢速时机枷锁：只有当**至少一个选项此刻真能施放**时，
     //   AI 才该打出这张抉择基牌（否则会"打出→无一可选→当场撤回"，白绕一圈）
-    const { canPlay } = evaluateChoiceCondition(checkData, state.enemyMana, state.enemySpellMana, false, state.phase, {
+    const { canPlay } = evaluateChoiceCondition(checkData, state.enemyMana, state.enemySpellMana, 'enemy', /* [2026-10-13 F2] 归属方 = AI */ false, state.phase, {
       owner: 'enemy',
       turnOwner: state.turnOwner,
       stackLength: (state.spellStack || []).length,

@@ -87,6 +87,40 @@ export const pickRandomAlly = (
     return allies[Math.floor(Math.random() * allies.length)];
 };
 
+/**
+ * [2026-10-12 莉莉子 BUG修复 · 芬妮②④「万人合唱 / 安可返场」100% 不生效]
+ * 「达标即备战」的**纯判定**：给定该侧的迷宫强化 id 列表与"本次进攻的单位们"，
+ * 是否存在一条 `RALLY_IF_ATTACK_POWER` 且**攻击力总和 > 其阈值**。
+ *
+ * ⚠️ 单独抽成**纯函数**的原因：这个判定的**执行时机**要挪，而判定本身**只能有一份实现**。
+ *    · 原先它内联在 `rogueTrigger.ts` 的 `RALLY_IF_ATTACK_POWER` handler 里，
+ *      由 `on_attack_declare`（**宣告进攻**）分发 —— 但那个时点**进攻标识还没被消耗**，
+ *      而发备战的唯一出口 `grantExtraAttackTurn`（`core.ts:74`，2026-10-03 拍板）的语义是
+ *      「**已有标识 ⇒ 不重复授予**」⇒ 宣告时必然被拒 ⇒ **条件再满足也发不出来**。
+ *    · 现改为在**本次战斗结算的备战下发点**判定（那里标识已被收走，正好该补一张）。
+ *      两处共用本函数 ⇒ 不会出现"两份判定各写各的"。
+ *
+ * @param enhancementIds 该侧的强化 id 列表（`game.rogueEnhancements` / `enemyEnhancements`）
+ * @param attackers      本次进攻的**该侧**单位（只统计己方战线，与旧实现口径一致）
+ */
+export const isRallyByAttackPowerMet = (
+    enhancementIds: string[] | undefined,
+    attackers: CardData[],
+): boolean => {
+    if (attackers.length === 0) return false;
+    const total = attackers.reduce((s, u) => s + getPower(u), 0);
+    for (const id of enhancementIds ?? []) {
+        const def = MAZE_BUFFS.find(b => b.id === id);
+        if (!def) continue;
+        for (const be of getBattleEffects(def)) {
+            if (be.effectClass !== 'RALLY_IF_ATTACK_POWER') continue;
+            const threshold = (be.params?.threshold as number) ?? 10;
+            if (total > threshold) return true;
+        }
+    }
+    return false;
+};
+
 // ==========================================
 // [2026-08-20 莉莉子] 成长型装备触发查询（挂在单张卡上，须在场存活才成长）
 // 复用本文件的 applyPermanentBuff（永久+攻血）；调用点扫描在场单位 → getEquipTriggers 命中 → 应用

@@ -9,10 +9,10 @@ import { executeSpellEffect } from '../logic/spells';
 import { awaitLevelUpDrain as awaitLevelUpDrainCore } from '../utils/levelUpDrain';
 import { applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
 import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
-import { noteSpellCast } from '../utils/gameRules'; // [2026-10-08 第二波] 施法计数（条件减费判据）
+import { noteSpellCast, getSpellCastSnapshot } from '../utils/gameRules'; // [2026-10-08 第二波] 施法计数（条件减费判据）· [2026-10-12] + 施法前基准
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { CARD_DB } from '../data/cards';
-import { calculateNewMana, getEffectiveSpellCost, buffTopUnitInDeck, getLeveledUpCard, isLeveledUpForSide } from '../utils/gameRules';
+import { calculateNewMana, getEffectiveSpellCost, getChoiceCardCost, CHOICE_FLYING_SWORD_DISCOUNT_KEYS, buffTopUnitInDeck, getLeveledUpCard, isLeveledUpForSide } from '../utils/gameRules'; // [2026-10-12] + 抉择算价唯一入口
 import { attachEquipment } from '../data/equipment'; // [2026-10-04 莉莉子 BUG修复] 法术回库生成的英雄副本要补挂装备/武装
 import { StrikeEvents } from '../utils/eventBus'; // [新增] 引入全新的打击信号总线
 import { getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
@@ -157,7 +157,7 @@ export interface UseSpellSystemParams {
     setEnemyDeckState: Dispatch<SetStateAction<CardData[]>>;
     setMessage: Dispatch<SetStateAction<string>>;
 
-    createFullCard: (key: string) => CardData;
+    createFullCard: (key: string, side: 'player' | 'enemy') => CardData;
     flushMicroQueue: () => boolean;
     judgeLifeAndDeath: () => void;  // [SBA] 生死簿同步判决
     wait: (ms: number) => Promise<void>;
@@ -829,7 +829,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         // 英雄已升级时生成 Lv2 副本，与变形系统 processHandTransformation 的取牌口径一致
         // [2026-10-04 莉莉子 BUG修复 · I5] 判据改为**按方**：原先读全局 `leveledChampions`
         //   ⇒ 镜像对局里"玩家把某英雄练到 Lv2"会让**敌方**那张同名卡回库时也生成 Lv2 副本（跨侧泄漏）。
-        let champCard = createFullCard(champKey);
+        let champCard = createFullCard(champKey, owner); // [2026-10-13 F3·L1] 归属 = 法术归属方
         if (isLeveledUpForSide(stateRef.current.game, owner, champKey)) {
             champCard = getLeveledUpCard(champCard);
         }
@@ -869,22 +869,33 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         console.log(`[ChampionSpell] ✅ ${src.name} 使用后，牌库生成一张 ${champCard.name}`);
     };
 
-    const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
-        // [2026-10-08 莉莉子 · 法术专属装备 第二波] **施法计数累加**（唯一入口）
-        //   ⚠️ 必须在**扣费之前/同时**记：条件减费判据是"本回合**尚未**打出过法术"，
-        //      若在结算后才记，同回合的第二张法术会误判成"还没打过"。
-        noteSpellCast(owner);
-        // [2026-09-19] 确定打出法术音效 —— 极速法术紧随「打出」；快速/慢速在玩家点「确定」时走到这里
-        eventBus.emit(GameEvents.SFX_SPELL_CONFIRM);
-        // [2026-07-20 对局记录修复] 使用 setTimeout 将事件推入宏任务队列，
-        // 确保它在 commitSpell 后续所有的 setGame(cleanSnapshot) 同步状态覆盖完成后再执行
-        setTimeout(() => {
-            eventBus.emit('spell_record', { card, owner, targets });
-        }, 0);
-
-        // [2026-08-19 莉莉子] 迷宫强化 on_cast_spell：打出法术时随机友军永久 +1/+1（法术共鸣/法术渗透）
-        // [2026-09-09 莉莉子 重构] 收编统一串行触发引擎（commitSpell 顶部，无并发 bench 队列，脏切片一次性提交安全）
-        if ((owner === 'player' || owner === 'enemy') && stateRef.current.game[owner === 'player' ? 'rogueEnhancements' : 'enemyEnhancements']?.length) {
+    // ==========================================
+    // [2026-10-12 莉莉子 BUG修复 · 施法侧「触发时机太早」族（#1/#2/#4/#5）]
+    // ── 病根：这一整段（迷宫强化 `on_cast_spell` + 装备 `player_cast_spell` 成长）原先写在
+    //    `commitSpell` 的**第二行**，也就是**还在可撤回窗口之内**：
+    //      · 玩家打出快速/慢速法术 ⇒ 加成当场到手 ⇒ 点「取消」(`cancelPendingSpell`)
+    //        **退卡 + 全额退费**（本文件 `:1615-1632`）⇒ **零成本无限刷**；
+    //      · 极速法术另有一条「1 秒悬停退回手牌」的路径。
+    //    quest `cast_spell`（共鸣回路）与「共鸣涌流」同理 —— 原在 `useGameState.playCard`
+    //    里**点下去就推进**，同一张法术"打出→取消"N 次即可白刷。
+    // ── 现改为**统一挪到"法术真正结算之后"**兑现，三个调用点：
+    //    ①  极速法术：`commitSpell` 的悬停熔断检查之后、`executeSpellEffect` + `flushMicroQueue` 之后；
+    //    ②  堆栈法术（快速/慢速）：`resolveStack` 的同一位置；
+    //    ③  **被无效化（NEGATE）的法术**：`resolveStack` 的 `continue` **之前** ——
+    //        程的口径（2026-10-12）：**被反制掉的法术「算施放过」**，故同样要兑现。
+    //    窗口内不再分发 ⇒ **撤回后不残留任何加成**，天然不可刷。
+    // ── quest 那两条（#4/#5）走 `eventBus` 回抛给 `useGameState` 跑它自己的 `runGearQuest`
+    //    （那是 hook 内的局部 `useCallback`，**不能 import、也不该复制第二份**）。
+    // ==========================================
+    // [2026-10-13 莉莉子] 形参 `card` → `_card`：本函数体内**从未使用**它
+    //   （`on_cast_spell` 走 ctx、③④ 由 `SPELL_CAST_SETTLED` 回抛，都刻意不读卡本身）。
+    //   ⚠️ 本项由**真类型检查**（`tsc -b`）报出 `TS6133` —— 见本次交接：
+    //   `npx tsc --noEmit` 因 `tsconfig.json` 是 `files: []` 的解决方案式配置而**空转**，
+    //   它会让 `npm run build`（`tsc -b`）失败 ⇒ 项目当时**打不出包**。
+    //   三个调用点仍照旧传卡（保留"将来可能需要"的接口形状，与本仓库 `_enemyBench` 等惯例一致）。
+    const dispatchSpellCastSideEffects = (_card: CardData, owner: 'player' | 'enemy') => {
+        // ── ① 迷宫强化 on_cast_spell：随机友军永久 +1/+1（法术共鸣 / 法术渗透）
+        if (stateRef.current.game[owner === 'player' ? 'rogueEnhancements' : 'enemyEnhancements']?.length) {
             const enhList = owner === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements;
             const sCtx: RogueTriggerCtx = {
                 game: { ...stateRef.current.game },
@@ -907,14 +918,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (sCtx.dirty.field) setCombatField(sCtx.combatField);
         }
 
-        // [2026-08-20 莉莉子] 成长装备 player_cast_spell：我方施法后，在场成长装触发（歌莉娅的课题权杖〔原法术温养〕/乐手的疗愈独奏〔原灵气传导〕）
-        // 仅扫描我方交战区存活单位（装备卡须在场才成长）；self → 装备卡自己；random_ally → 随机在场友军
+        // ── ② 成长装备 player_cast_spell（歌莉娅的课题权杖 / 乐手的疗愈独奏 / arm_grow_spell_ally）
+        //    仅扫描我方备战席存活 + 交战区我方存活（装备卡须在场才成长）；
+        //    self → 装备卡自己；random_ally → 随机在场友军
         if (owner === 'player') {
-            // [2026-10-06 莉莉子 · 审计收口] **补上备战席** —— 原实现**只扫交战区**，
-            //   而 main 阶段交战区按引擎不变量**恒为空** ⇒ **主阶段施法（绝大多数）零成长**，
-            //   只有恰好在战斗阶段（attack_declare / block_declare / react_to_block）施法才涨。
-            //   装备文案的条件只是"装备卡**在场**"，备战席显然算在场（这也是卡牌的常驻位置）。
-            //   ⇒ 与「攻击后成长」同口径：扫描 = 备战席存活 + 交战区己方存活。
             const isLiveUnit = (c: any): c is CardData =>
                 !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
             const fieldUnits: CardData[] = [
@@ -942,6 +949,19 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     });
                 });
                 if (growth.length) {
+                    // [2026-10-12 莉莉子 BUG修复 · 施法成长装备对【备战席】单位不生效]
+                    //   原写回**只有 `setCombatField`**，而扫描列表早就含备战席 ⇒ 备战席单位的成长
+                    //   「算出来了却写不回去」；而 main 阶段交战区按引擎不变量恒为空 ⇒ 绝大多数施法零写回。
+                    //   修法：两片各自函数式写回（照 `useGameState.ts:3926-3929` 攻击后成长的既有写法）。
+                    setPlayerBench(prev => {
+                        let changed = false;
+                        const next = prev.map(c => {
+                            const hit = growth.find(x => x.id === c.id);
+                            if (hit) { changed = true; return hit.buffed; }
+                            return c;
+                        });
+                        return changed ? next : prev; // 无变化则原样返回（React 直接 bail out）
+                    });
                     setCombatField(prev => prev.map(f => {
                         const hit = growth.find(x => x.id === f.attacker?.id);
                         return hit && f.owner === 'player' ? { ...f, attacker: hit.buffed } : f;
@@ -949,6 +969,40 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 }
             }
         }
+
+        // ── ③ quest `cast_spell`（共鸣回路）+ ④ 「共鸣涌流」法力上限成长
+        //    [2026-10-12] 这两条原来在 `useGameState.playCard` 里**点下去就推进**（可撤回窗口内）
+        //    ⇒ 同一张法术"打出→取消"N 次即可白刷（取消全额退费）。
+        //    现随法术一起挪到结算后；由 `useGameState` 侧监听本事件、跑它自己的 `runGearQuest`
+        //    （不复制实现、也不改 `useSpellSystem` 的入参签名）。
+        if (owner === 'player') {
+            eventBus.emit('SPELL_CAST_SETTLED', { owner });
+        }
+    };
+
+    const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
+        // [2026-10-08 莉莉子 · 法术专属装备 第二波] **施法计数累加**（唯一入口）
+        //   ⚠️ 必须在**扣费之前/同时**记：条件减费判据是"本回合**尚未**打出过法术"，
+        //      若在结算后才记，同回合的第二张法术会误判成"还没打过"。
+        // [2026-10-12 莉莉子 BUG修复 · 活页夹页「−1 恒不生效」]
+        //   上面那条约定**保持不变**（记账仍在此处、仍早于下一次施法）；
+        //   但**本次施法**的扣费必须按"累加之前"的计数算 —— 否则本次施法会破坏自己的条件
+        //   （活页夹页要求 thisRound===0，而这里刚把它变成 1）。
+        //   ⇒ 先在累加**之前**取一份基准，再作为第 5 参传给下面两处 `getEffectiveSpellCost`。
+        //   （门禁/卡面本来就在 commitSpell 之前读，天然是旧值 ⇒ 三者由此同源。）
+        const preCastBasis = getSpellCastSnapshot(owner);
+        noteSpellCast(owner);
+        // [2026-09-19] 确定打出法术音效 —— 极速法术紧随「打出」；快速/慢速在玩家点「确定」时走到这里
+        eventBus.emit(GameEvents.SFX_SPELL_CONFIRM);
+        // [2026-07-20 对局记录修复] 使用 setTimeout 将事件推入宏任务队列，
+        // 确保它在 commitSpell 后续所有的 setGame(cleanSnapshot) 同步状态覆盖完成后再执行
+        setTimeout(() => {
+            eventBus.emit('spell_record', { card, owner, targets });
+        }, 0);
+
+        // [2026-10-12 莉莉子 BUG修复] `on_cast_spell`（迷宫强化）与 `player_cast_spell`（成长装备）
+        //   的分发**已从"这里"挪走** —— 它们原本就在本行位置兑现，即**可撤回窗口之内**。
+        //   现统一由 `dispatchSpellCastSideEffects()` 在**法术真正结算之后**调用（三处调用点见该函数注释）。
 
         const existingPending = stateRef.current.game.pendingSpell;
         let cleanSnapshot = { ...stateRef.current.game };
@@ -989,7 +1043,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (!card.parentCard) {
                 // [2026-07-10 诗人] 凯特琳减费影响实际扣费（双方均适配）
                 const benchForCost = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
-                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana, owner);
+                // [2026-10-12 莉莉子 BUG修复] 传"施法前基准"⇒ 条件减费（活页夹页/双生符）按**本次之前**的计数算
+                const effectiveCost = getEffectiveSpellCost(card, benchForCost, owner === 'player' ? cleanSnapshot.playerMaxMana : cleanSnapshot.enemyMaxMana, owner, preCastBasis); // [2026-10-13 F3·L5] maxMana 改按 owner 取该侧（原恒取 playerMaxMana）
                 const { newMana, newSpellMana } = calculateNewMana(
                     effectiveCost,
                     owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
@@ -1101,6 +1156,11 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             const isQueueProcessed = flushMicroQueue();
             if (isQueueProcessed) await wait(50);
 
+            // [2026-10-12 莉莉子 BUG修复 · 触发时机太早] **法术已真正结算** ⇒ 到这里才兑现
+            //   （`on_cast_spell` / 成长装备 / quest `cast_spell` / 共鸣涌流）。① 极速法术路径。
+            //   若它在 1 秒悬停期内被撤回，上方熔断分支已 `return` ⇒ 这里根本不会执行 ⇒ **不可刷**。
+            dispatchSpellCastSideEffects(card, owner);
+
             // [2026-07-11 绿灵·艾娃] 极速法术触发艾娃光环
             checkEvaAura(card, owner, '[BURST]');
 
@@ -1146,7 +1206,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (!card.parentCard) {
                 // [2026-07-15 梵音] 慢速法术也应用减费（觉悟/凯特琳）
                 const benchForCost = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
-                const effectiveCost = getEffectiveSpellCost(card, benchForCost, cleanSnapshot.playerMaxMana, owner);
+                // [2026-10-12 莉莉子 BUG修复] 同极速分支：传"施法前基准"，避免本次施法破坏自己的条件
+                const effectiveCost = getEffectiveSpellCost(card, benchForCost, owner === 'player' ? cleanSnapshot.playerMaxMana : cleanSnapshot.enemyMaxMana, owner, preCastBasis); // [2026-10-13 F3·L5] maxMana 改按 owner 取该侧（原恒取 playerMaxMana）
                 const { newMana, newSpellMana } = calculateNewMana(
                     effectiveCost,
                     owner === 'player' ? cleanSnapshot.playerMana : cleanSnapshot.enemyMana,
@@ -1282,7 +1343,11 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         //   ⇒ 收紧为「有 parentCard **且** 已离开 choose_mode」= 真·已抉择（玩家正在选目标）。
         //   （玩家侧本就自洽：choose_mode 时 activeCard 是母卡、无 parentCard ⇒ 不退；进 select_* 后才退 ✅）
         const pickedCost = ((currentActive as any)?.parentCard && sc?.step !== 'choose_mode')
-            ? (currentActive!.cost || 0)
+            // [2026-10-12 莉莉子 BUG修复 · 退款 ≠ 实扣] 优先退**实扣量**（`resolveChoice` 扣费时记的 `paidCost`）。
+            //   原实现读 `currentActive.cost`（实例价）—— 只含"烘焙型"减费，遇到凯特琳光环 /
+            //   装备条件减费这类**只在查询时生效**的减费就会 **退 > 扣**（可反复刷法力）。
+            //   程口径：花多少退多少。取不到时（老路径 / 非抉择）回落 `cost` ⇒ 行为不变。
+            ? ((currentActive as any).paidCost ?? currentActive!.cost ?? 0)
             : 0;
         if (pickedCost > 0) {
             if (choiceOwner === 'enemy') {
@@ -1324,7 +1389,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         const choiceOwner = game.spellCasting.choiceOwner
             ?? (game.turnOwner === 'enemy' ? 'enemy' : 'player');
 
-        const transformed = createFullCard(chosenCardKey);
+        const transformed = createFullCard(chosenCardKey, choiceOwner); // [2026-10-13 F3·L1] 归属 = choiceOwner（**不是** turnOwner）
         transformed.parentCard = originalCard;
 
         // =====================================
@@ -1355,15 +1420,14 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         console.log(`[抉择] ${originalCard.name}(${originalCard.key}) → 「${transformed.name}」 owner=${choiceOwner} turnOwner=${game.turnOwner} phase=${originalPhase}`);
 
         // [2026-07-30 飞剑减费] 抉择确认时应用飞剑折扣（朔望之期 + 剑痕时空）
-        const SWORD_DISCOUNT_KEYS = ['acacia_chrono_echo_ultimate', 'acacia_sword_timeline'];
-        if (SWORD_DISCOUNT_KEYS.includes(chosenCardKey)) {
-            const gameState = stateRef.current.game;
-            const fsTotal = choiceOwner === 'player'
-                ? (gameState.playerFlyingSwordsTotal || 0)
-                : (gameState.enemyFlyingSwordsTotal || 0);
-            if (fsTotal > 0) {
-                transformed.cost = Math.max(0, (transformed.cost || 0) - fsTotal);
-            }
+        //   ⚠️ [2026-10-12 莉莉子 · 三价同源] 这里烘焙的是**子卡实例价**（下游读 `transformed.cost`）；
+        //      **算价**统一走下方 `getChoiceCardCost`。因为实例价已含飞剑，
+        //      那里第 5 参必须传 **0**，否则飞剑会被减两次（双减）。
+        const choiceFsTotal = choiceOwner === 'player'
+            ? (stateRef.current.game.playerFlyingSwordsTotal || 0)
+            : (stateRef.current.game.enemyFlyingSwordsTotal || 0);
+        if (CHOICE_FLYING_SWORD_DISCOUNT_KEYS.includes(chosenCardKey) && choiceFsTotal > 0) {
+            transformed.cost = Math.max(0, (transformed.cost || 0) - choiceFsTotal);
         }
 
         // [新增] 触发天启者技能语音
@@ -1398,9 +1462,28 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         //   原实现直接取 `transformed.cost` 裸值 ⇒ 抉择子卡一直吃不到减费；
         //   改动前这个差异被"扣费被覆盖"掩盖着（等于没扣），修好扣费后它**首次真实可见** ⇒ 必须对齐。
         const costBench = choiceOwner === 'player' ? stateRef?.current.playerBench : stateRef?.current.enemyBench;
+        // [2026-10-12 莉莉子 BUG修复 · 抉择「显示价 / 门禁价 / 实扣价」三价同源]
+        //   改走 `getChoiceCardCost` = 抉择子卡的**唯一算价入口**，与
+        //   卡面显示（`GameSession` 抉择面板）/ AI 自动选 / AI 策略门禁**同一个函数**。
+        //   ⚠️ 飞剑折扣已在上方烘焙进 `transformed.cost` ⇒ 第 5 参传 **0**（传总数会双减）。
+        //   ⚠️ [2026-10-13 F3·L5 **已收口**] `maxMana` 曾恒传 `costGame.playerMaxMana`
+        //      ⇒ 敌方抉择子卡是按**玩家的法力上限**定价的。虽只对「觉悟：巨偶一瞥」
+        //      （`maxMana ≥ 10` 归零）有语义、而那张卡不是抉择子卡 ⇒ 实际影响为零，
+        //      但**侧别取错就是侧别取错**，留着就是下一处泄漏的模板
+        //      （F2 的教训：恒定方向偏玩家 = 漏传不报错 = 静默错侧）。
         const effectiveSubCost = costBench
-            ? getEffectiveSpellCost(transformed, costBench, costGame.playerMaxMana, choiceOwner)
+            ? getChoiceCardCost(
+                transformed, costBench,
+                choiceOwner === 'player' ? costGame.playerMaxMana : costGame.enemyMaxMana,
+                choiceOwner, 0,
+            )
             : (transformed.cost || 0);
+        // [2026-10-12 莉莉子 BUG修复 · 抉择「取消退款 ≠ 实扣量」] **把实扣量记在子卡上**。
+        //   ── 退款处（下方 `cancelPendingSpell` 的 `pickedCost`）原来读 `currentActive.cost`（实例价），
+        //      只含**烘焙型**减费（莲台无垠），**不含只在查询时生效的**（凯特琳光环 / 装备条件减费）
+        //      ⇒ 那些场合 **退 > 扣**，可"打出 → 取消"刷法力。
+        //   ── 程口径（2026-10-12）：「**花多少退多少**」⇒ 不重算（重算会因时点不同再次算错），改为记账。
+        transformed.paidCost = effectiveSubCost;
         const { newMana, newSpellMana } = calculateNewMana(
             effectiveSubCost,
             choiceOwner === 'player' ? costGame.playerMana : costGame.enemyMana,
@@ -1647,6 +1730,11 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (!stillOnStack) {
                 setMessage(`${spell.card.name} 已被无效化`);
                 console.log(`[resolveStack] ${spell.card.name} 已被无效化，跳过结算`);
+                // [2026-10-12 莉莉子 BUG修复 · 触发时机太早] ③ **被无效化（NEGATE）的法术**：
+                //   程的口径（2026-10-12）—— **「算施放过」** ⇒ 这里同样要兑现
+                //   （否则被反制的法术会连"施法"这件事都不算，与口径相反）。
+                //   注意：此分支发生在**堆栈结算期**，早已脱离"可撤回窗口" ⇒ 不会引入可刷性。
+                dispatchSpellCastSideEffects(spell.card, spell.owner);
                 continue;
             }
             setMessage(`结算: ${spell.card.name}`);
@@ -1729,6 +1817,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             await wait(50);
             const isQueueProcessed = flushMicroQueue();
             if (isQueueProcessed) await wait(50);
+
+            // [2026-10-12 莉莉子 BUG修复 · 触发时机太早] **法术已真正结算** ⇒ 到这里才兑现。
+            //   ② 堆栈法术（快速/慢速）路径。
+            dispatchSpellCastSideEffects(spell.card, spell.owner);
 
             // [2026-07-11 绿灵·艾娃] 栈内法术触发艾娃光环
             checkEvaAura(spell.card, spell.owner, '[STACK]');

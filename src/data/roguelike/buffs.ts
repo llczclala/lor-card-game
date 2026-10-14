@@ -615,7 +615,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: false, enemyEligible: false,
     },
     {
-        id: 'armfx_devour_box', name: '噬牌之匣', description: '每回合开始：弃掉手牌中费用最低的一张，天启者 +1/+1。',
+        id: 'armfx_devour_box', name: '噬牌之匣', description: '每回合开始：弃掉手牌中费用最低的一张（天启者除外），天启者 +1/+1。',
         rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
         battleEffect: { trigger: 'round_start', effectClass: 'DISCARD_LOWEST_BUFF_CHAMPION' },
         playerEligible: false, enemyEligible: false,
@@ -846,9 +846,14 @@ export const MAZE_BUFFS: MazeBuff[] = [
             { trigger: 'on_summon', effectClass: 'REMOVE_MAX_POWER', params: { cardKey: 'mauxir_lotus_pedestal' } },
             // [2026-10-10 程的口径] 加强：**每回合**给一张「顷刻莲潮」；手牌里已有 ⇒ 不重复生成，
             //   改为把那张费用 -1。
-            //   ── 复用 `effectProcessor` 里 **GENERATE 的既有分支 `reduceCostIfDuplicate`**
-            //      （2026-07-17 为鸦眼小队写的**同款语义**，不是新机制）：
+            //   ── 语义对齐 `effectProcessor.ts:3815-3827`（2026-07-17 为鸦眼小队写的**同款语义**）：
             //      取手牌中**第一张**同名卡，`cost = max(0, cost - 1)` 且 `customProgress |= 2`（绿色费用标记）。
+            //   ⚠️ [2026-10-12 莉莉子 BUG修复] 本行注释原先写的是"复用 `effectProcessor` 里 GENERATE 的既有分支"
+            //      —— **复用错了对象**：迷宫强化**不走** `effectProcessor`，走 `rogueTrigger.ts` 的
+            //      `ROGUE_EFFECT_HANDLERS.GENERATE`；而那一份当时**根本没读** `reduceCostIfDuplicate`
+            //      ⇒ 本参数被静默忽略 ⇒ 回合开始**无条件多发一张**（程实测："似乎会无限给顷刻莲潮"）。
+            //      现已在 `rogueTrigger.ts` 侧补齐同语义分支。
+            //      **今后动这个参数，两处实现都要看**（同语义两套实现的坑，参见 `审计-强化生效-总报告` 病理表）。
             { trigger: 'round_start', effectClass: 'GENERATE', params: { generateKey: 'mauxir_lotus_ultimate', count: 1, reduceCostIfDuplicate: true } },
         ],
         playerEligible: false, enemyEligible: false,
