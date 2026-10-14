@@ -60,7 +60,7 @@ export const RogueEnhancementPanel: React.FC<RogueEnhancementPanelProps> = ({ pl
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape') { eventBus.emit(GameEvents.UI_BACK);
                 e.stopImmediatePropagation();
                 setOpen(false);
             }

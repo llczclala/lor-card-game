@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Maximize, Minimize } from 'lucide-react';
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 全屏切换音效
 
 export const FullScreenToggle: React.FC = () => {
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -36,7 +37,7 @@ export const FullScreenToggle: React.FC = () => {
 
     return (
         <button
-            onClick={toggleFullscreen}
+            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFullscreen(); }}
             // [修复] 将 right-4 修改为 left-4，将全屏按钮移至屏幕左上角
             className="fixed top-0 right-0 z-[9999] p-2 bg-slate-900/50 hover:bg-slate-800/80 text-gray-400 hover:text-white rounded-full backdrop-blur-sm transition-all duration-200 border border-white/10 hover:scale-110 shadow-lg group"
             title={isFullscreen ? "退出全屏" : "全屏模式"}

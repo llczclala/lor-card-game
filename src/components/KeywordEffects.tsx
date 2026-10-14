@@ -942,7 +942,7 @@ export const KeywordEffects: React.FC<KeywordEffectsProps> = ({
                 <div
                     // [核心逻辑] 平时隐藏(opacity-0)，Hover时显露；但如果处于激活状态，则无视Hover强制常亮！
                     className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] cursor-pointer w-20 h-20 flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 ${isCombat ? 'block' : 'hidden'} ${isChallengerActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                    onClick={(e) => { e.stopPropagation(); onChallengerClick(); }}
+                    onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.SFX_SELECT_UNIT); onChallengerClick(); }}
                 >
                     <img
                         src={KEYWORD_DB['Challenger'].icon}

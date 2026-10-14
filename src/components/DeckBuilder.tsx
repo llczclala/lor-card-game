@@ -844,7 +844,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             {visibleDecks.map((deck: any) => (
                                 <div key={deck.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setHubDeckId(deck.id); }} className="w-full flex justify-center mt-12 relative group/del"> {/* [新增] 音效 */}
                                     <DeckDiorama deck={deck} covers={getDeckCovers(deck.cards, deck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isGridView={true} />
-                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteDeck(deck.id); }} className="absolute -top-6 -right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20"><Trash2 size={16} className="text-white" /></button>
+                                    <button onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleDeleteDeck(deck.id); }} className="absolute -top-6 -right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20"><Trash2 size={16} className="text-white" /></button>
                                 </div>
                             ))}
                         </div>
@@ -880,6 +880,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation(); // [极其关键] 必须阻断冒泡，防止触发进入卡组的 onClick 动作！
+                                                  eventBus.emit(GameEvents.UI_CLICK);
                                                 handleDeleteDeck(deck.id);
                                             }}
                                             className="absolute top-2 right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20 shadow-xl"
@@ -899,7 +900,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         <motion.div
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                             className="absolute inset-0 z-[100] bg-black/85 backdrop-blur-xl flex items-center justify-center select-none"
-                            onContextMenu={(e) => { e.preventDefault(); setHubDeckId(null); }} // [体验核心] 背景高斯模糊处右键立刻退出
+                            onContextMenu={(e) => { e.preventDefault(); eventBus.emit(GameEvents.UI_BACK); setHubDeckId(null); }} // [体验核心] 背景高斯模糊处右键立刻退出
                         >
                             {/* 关闭枢纽大按钮 */}
                             <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setHubDeckId(null); }} className="absolute top-8 right-8 text-gray-400 hover:text-white bg-white/5 border border-white/10 p-3 rounded-full transition-all hover:bg-red-500/80 z-50"><X size={24} /></button> {/* [新增] 音效 */}
@@ -1257,7 +1258,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">费用 (COST)</span>
                                             <div className="flex flex-wrap gap-1.5">
                                                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(c => (
-                                                    <button key={c} onClick={() => toggleFilter(setSelectedCosts, c)}
+                                                    <button key={c} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedCosts, c); }}
                                                             className={`w-8 h-8 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${selectedCosts.includes(c) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
                                                         {c}{c === 10 ? '+' : ''}
                                                     </button>
@@ -1280,7 +1281,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                     { key: 'Logistics', label: '后勤' },
                                                     { key: 'TEST', label: '测试' },
                                                 ].map(r => (
-                                                    <button key={r.key} onClick={() => toggleFilter(setSelectedRegions, r.key)}
+                                                    <button key={r.key} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedRegions, r.key); }}
                                                             className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${selectedRegions.includes(r.key) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
                                                         {r.label}
                                                     </button>
@@ -1297,7 +1298,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                         { id: 'Fast', icon: <Zap size={16} className="text-white" />, title: '快速' },
                                                         { id: 'Slow', icon: <Clock size={16} className="text-purple-300" />, title: '慢速' },
                                                     ].map(s => (
-                                                        <button key={s.id} onClick={() => toggleFilter(setSelectedSpellSpeeds, s.id)} title={s.title}
+                                                        <button key={s.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedSpellSpeeds, s.id); }} title={s.title}
                                                                 className={`w-8 h-8 rounded flex items-center justify-center transition-all border ${selectedSpellSpeeds.includes(s.id) ? 'bg-purple-500/20 border-purple-400 shadow-[inset_0_0_10px_purple]' : 'bg-slate-700 border-transparent hover:bg-slate-600'}`}>
                                                             {s.icon}
                                                         </button>
@@ -1312,7 +1313,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             <span className="text-xs text-green-400 font-bold tracking-widest block mb-2">关键词筛选</span>
                                             <div className="flex flex-wrap gap-1.5">
                                                 {Object.entries(KEYWORD_DB).map(([kw, config]) => (
-                                                    <button key={kw} onClick={() => toggleFilter(setSelectedKeywords, kw)}
+                                                    <button key={kw} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedKeywords, kw); }}
                                                             title={`${config.label}\n${config.description}`}
                                                             className={`w-8 h-8 rounded flex justify-center items-center transition-all border ${selectedKeywords.includes(kw) ? 'bg-green-500/20 border-green-400 shadow-[inset_0_0_10px_rgba(74,222,128,0.5)]' : 'bg-slate-700 border-transparent hover:bg-slate-600 opacity-70 hover:opacity-100'}`}>
                                                         {config.icon ? (
@@ -1365,7 +1366,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 className={`group relative transition-all duration-300 ${isInteractive ? 'hover:scale-105 hover:z-10' : ''}`}
                                 onContextMenu={(e) => {
                                     e.preventDefault();
-                                    handleViewCard(fullCard, 'grid');
+                                    eventBus.emit(GameEvents.UI_CLICK); handleViewCard(fullCard, 'grid');
                                 }}
                             >
                                 <div
@@ -1443,7 +1444,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            handleViewCard(fullCard, 'grid'); // 点击购物车打开详情页(含购买逻辑)
+                                            eventBus.emit(GameEvents.UI_CLICK); handleViewCard(fullCard, 'grid'); // 点击购物车打开详情页(含购买逻辑)
                                         }}
                                         // 保持 z-10 防止遮挡右侧侧边栏
                                         className="absolute -top-2 -left-2 z-10 w-10 h-10 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white shadow-lg border-2 border-white/20 transition-transform hover:scale-110"
@@ -1470,7 +1471,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 {/* 快速添加闪电按钮 (保持不变) */}
                                 {!isLocked && !isMaxed && (
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); quickAdd(card.key); }}
+                                        onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); quickAdd(card.key); }}
                                         className="absolute top-1/2 right-4 -translate-y-1/2 w-12 h-12 bg-blue-600/90 hover:bg-blue-500 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all shadow-xl border-2 border-white/50 z-10 hover:scale-110 backdrop-blur-sm"
                                         title="快速添加(最多3张)"
                                     >
@@ -1523,19 +1524,19 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     <span className="text-[10px] font-bold tracking-widest text-gray-500 block mb-2">排序方式</span>
                     <div className="flex bg-slate-800 rounded-lg p-1 gap-1">
                         <button
-                            onClick={() => setSortMode('default')}
+                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSortMode('default'); }}
                             className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'default' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
                         >
                             默认
                         </button>
                         <button
-                            onClick={() => setSortMode('rarity')}
+                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSortMode('rarity'); }}
                             className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'rarity' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
                         >
                             稀有度
                         </button>
                         <button
-                            onClick={() => setSortMode('cost')}
+                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSortMode('cost'); }}
                             className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'cost' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
                         >
                             费用
@@ -1595,7 +1596,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     onClick={() => removeFromDeck(key)}
                                     onContextMenu={(e) => {
                                         e.preventDefault();
-                                        handleViewCard(fullCard, 'list');
+                                        eventBus.emit(GameEvents.UI_CLICK); handleViewCard(fullCard, 'list');
                                     }}
                                     {...bindGazeEvents(card as CardData)}
                                 >

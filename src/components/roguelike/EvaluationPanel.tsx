@@ -16,6 +16,7 @@ import { PackOpenModal } from './PackOpenModal'; // [2026-08-29] 卡包 → 抽�
 import { ChestOpenModal, type ChestOpenResult } from './ChestOpenModal'; // [2026-09-29 程拍板] 打开匣子 → 得道具
 import type { ChestInstance } from '../../data/roguelike/divinityShards'; // [2026-09-29] 奖励匣
 import { RARITY_META } from './RarityIcon'; // [2026-09-04] 武装品质元数据
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 面板关闭/开包 音效
 import { bindArmamentGaze } from './ArmamentPreview'; // [2026-09-04] 悬停大图检视
 import { EnhancementPreview, type EnhancementPreviewHover } from './EnhancementPreview'; // [2026-09-04] 强化悬停大图
 
@@ -66,7 +67,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
     useEffect(() => {
         if (!isOpen) return;
         const handler = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
+            if (e.key !== 'Escape') return; eventBus.emit(GameEvents.UI_BACK);
             e.stopImmediatePropagation();
             if (packOpen) { setPackOpen(false); return; }
             if (chestOpen) { setChestOpen(false); return; }
@@ -171,7 +172,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                 <motion.div
                     className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    onClick={onClose}
+                    onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                 />
                 <motion.div
                     initial={{ scale: 0.94, opacity: 0, y: 20 }}
@@ -209,7 +210,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                             )}
                             <div className="relative">
                                 <button
-                                    onClick={handleOpenPack}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleOpenPack(); }}
                                     disabled={!pendingPacks || pendingPacks <= 0}
                                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black tracking-wider transition-all ${
                                         pendingPacks && pendingPacks > 0
@@ -230,7 +231,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                             {/* [2026-09-29 程拍板] 待打开匣子：卡包抽到的匣子在这里开启 */}
                             <div className="relative">
                                 <button
-                                    onClick={() => setChestOpen(true)}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setChestOpen(true); }}
                                     disabled={pendingChests.length <= 0}
                                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black tracking-wider transition-all ${
                                         pendingChests.length > 0
@@ -248,7 +249,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                                     </span>
                                 )}
                             </div>
-                            <button onClick={onClose} className="p-2 rounded-full text-gray-400 hover:bg-white/10 hover:text-white transition-all">
+                            <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="p-2 rounded-full text-gray-400 hover:bg-white/10 hover:text-white transition-all">
                                 <X size={20} />
                             </button>
                         </div>

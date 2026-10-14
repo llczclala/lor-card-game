@@ -8,6 +8,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 「前往」音效
 
 interface NodeEntryModalProps {
     pos: { x: number; y: number }; // 节点屏幕中心坐标（面板锚点，绘制在其正上方）
@@ -61,7 +62,7 @@ export const NodeEntryModal: React.FC<NodeEntryModalProps> = ({ pos, bg, title, 
                             </div>
 
                             <button
-                                onClick={onEnter}
+                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onEnter(); }}
                                 className="mt-2 w-full py-3 rounded-xl font-black tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg flex items-center justify-center gap-2"
                                 style={{ background: 'linear-gradient(to right, #6366f1, #8b5cf6)' }}
                             >

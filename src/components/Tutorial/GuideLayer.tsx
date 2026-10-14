@@ -148,7 +148,7 @@ const AnnotationBubble: React.FC<AnnotationBubbleProps> = ({ annotation, targetR
       className="fixed z-[100] cursor-pointer"
       // [2026-08-26 莉莉子] 无可点击回调时气泡不拦截鼠标（纯提示），避免挡住下层元素
       style={{ ...positionStyle, pointerEvents: onBubbleClick ? 'auto' : 'none' }}
-      onClick={onBubbleClick}
+      onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onBubbleClick?.(); }}
     >
       <div
         className="px-4 py-3 rounded-xl
@@ -320,7 +320,7 @@ export const GuideLayer: React.FC<GuideLayerProps> = ({ step, onDismiss }) => {
       >
         <div
           className="px-5 py-4 rounded-xl bg-slate-900/95 border border-cyan-500/40 shadow-lg shadow-cyan-500/20 text-white text-sm leading-relaxed whitespace-pre-line text-center pointer-events-auto cursor-pointer max-w-md"
-          onClick={step.dismissOnClick ? onDismiss : undefined}
+          onClick={step.dismissOnClick ? () => { eventBus.emit(GameEvents.UI_CLICK); onDismiss(); } : undefined}
         >
           {step.fixedPrompt}
         </div>
@@ -366,7 +366,7 @@ export const GuideLayer: React.FC<GuideLayerProps> = ({ step, onDismiss }) => {
       <div
         className="absolute inset-0"
         style={{ pointerEvents: 'auto' }}
-        onClick={handleOverlayClick}
+        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleOverlayClick(); }}
         onContextMenu={(e) => e.preventDefault()}
       />
 
@@ -380,7 +380,7 @@ export const GuideLayer: React.FC<GuideLayerProps> = ({ step, onDismiss }) => {
             key={`right-click-${h.selector}`}
             className="absolute"
             style={{ top: h.top, left: h.left, width: h.width, height: h.height, pointerEvents: 'auto' }}
-            onClick={handleOverlayClick}
+            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleOverlayClick(); }}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();

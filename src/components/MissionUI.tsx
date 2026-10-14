@@ -116,7 +116,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
             <motion.div
                 className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                onClick={onClose}
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
             />
 
             {/* 面板主体 */}
@@ -145,7 +145,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                     <div className="flex flex-col gap-3">
                         <TabButton id="daily" active={activeTab} icon={<Calendar size={18} />} label="每日委派" showDot={claimableByTab.daily === true} onClick={() => { setActiveTab('daily'); eventBus.emit(GameEvents.UI_CLICK); }} />
                         <TabButton id="weekly" active={activeTab} icon={<Zap size={18} />} label="每周清剿" showDot={claimableByTab.weekly === true} onClick={() => { setActiveTab('weekly'); eventBus.emit(GameEvents.UI_CLICK); }} />
-                        <TabButton id="achievement" active={activeTab} icon={<Award size={18} />} label="生涯成就" showDot={claimableByTab.achievement === true} onClick={() => { setActiveTab('achievement'); }} />
+                        <TabButton id="achievement" active={activeTab} icon={<Award size={18} />} label="生涯成就" showDot={claimableByTab.achievement === true} onClick={() => { setActiveTab('achievement'); eventBus.emit(GameEvents.UI_CLICK); }} />
 								<TabButton id="version" active={activeTab} icon={<Sparkles size={18} />} label="版本活动" showDot={claimableByTab.version === true} onClick={() => { setActiveTab('version'); eventBus.emit(GameEvents.UI_CLICK); }} />
                     </div>
                 </div>
@@ -353,7 +353,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                         {/* 状态按钮 */}
                                         {mission.rewardDirect && !isClaimed ? (
                                             <button
-                                                onClick={() => handleClaim(mission)}
+                                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleClaim(mission); }}
                                                 className="px-6 py-2.5 rounded-lg bg-green-500 hover:bg-green-400 text-black font-black text-sm shadow-[0_0_15px_rgba(34,197,94,0.5)] transition-all animate-pulse-slow active:scale-95"
                                             >
                                                 领取奖励
@@ -364,7 +364,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                             </div>
                                         ) : isCompleted ? (
                                             <button
-                                                onClick={() => handleClaim(mission)}
+                                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleClaim(mission); }}
                                                 className="px-6 py-2.5 rounded-lg bg-yellow-500 hover:bg-yellow-400 text-black font-black text-sm shadow-[0_0_15px_rgba(234,179,8,0.5)] transition-all animate-pulse-slow active:scale-95"
                                             >
                                                 领取奖励

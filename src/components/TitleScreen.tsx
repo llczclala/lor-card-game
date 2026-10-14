@@ -7,6 +7,70 @@ import { AccountSelectionModal } from './AccountSelectionModal';
 import type { useUserSystem } from '../hooks/useUserSystem';
 import chengAvatar from '../image/icon/CQWRSZDSA432.webp'; // [哨兵] 程的头像
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 标题页/登录页 · 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 点掉「点击进入游戏」之后、带「开始游戏」按钮的那一屏。
+// 管：标题 logo /「开始游戏」/ PRESS START / 头像+B站 / 左上账号按钮 / 屏与块的留白。
+// 改完存盘即生效（HMR 直接刷新，电脑上就能看到，不用出包）。
+// 用法：先调【主旋钮】scale 把整块大小定下来，再动下面的细节值。
+// ⚠️ scale 的支点在【底部】——放大时内容往上长；若顶部被裁，把组件里的
+//    transformOrigin 改成 'center center' 变成上下平分。
+// ══════════════════════════════════════════════════════════════════════
+export const TITLE_UI = {
+    /** 【主旋钮】核心内容块整体缩放（1 = 原样）。左上账号按钮不在这个块里。 */
+    scale: 1,
+
+    // ══ 屏与块 ════════════════════════════════════════════════════════
+    /** 整个屏幕的底部留白 px（原 pb-12，根容器） */
+    screenPadBottom: 48,
+    /** 核心内容块的底部留白 px（原 pb-20）—— 想让标题整体上移就加大这个 */
+    blockPadBottom: 80,
+    /** 背景暗纹浓度 0~1（原 opacity-20） */
+    bgTextureOpacity: 0.2,
+
+    // ══ ① 标题 logo ══════════════════════════════════════════════════
+    logoWidth: 675,     // 宽度 px（原 w-[450px]）
+    logoGap: 16,        // logo ↓「开始游戏」的间距 px（原 mb-8）
+
+    // ══ ② 「开始游戏」主按钮 ═════════════════════════════════════════
+    startFontSize: 30,  // 字号 px（原 text-xl）
+    startIconSize: 36,  // 剑图标尺寸 px（lucide 默认 24）
+    startPadX: 72,      // 左右内边距 px（原 px-12）
+    startPadY: 24,      // 上下内边距 px（原 py-4）
+    startIconGap: 24,   // 图标与文字的间距 px（原 gap-4）
+
+
+    // ══ ④ 底部行（头像 + B站入口）════════════════════════════════════
+    footerGap: 15,      // 提示语 ↓ 底部行的间距 px（原 mt-10）
+    avatarSize: 84,     // 头像尺寸 px（原 w-14 / h-14）
+    footerItemGap: 30,  // 头像与 B站按钮的间距 px（原 gap-5）
+    biliFontSize: 21,   // B站文字字号 px（原 text-sm）
+    biliIconSize: 42,   // B站小电视图标 px（原 w-7 / h-7）
+    biliPadX: 24,       // B站按钮左右内边距 px（原 px-4）
+    biliPadY: 12,        // B站按钮上下内边距 px（原 py-2）
+    biliIconGap: 18,    // B站图标与文字的间距 px（原 gap-3）
+
+    // ══ ⑤ 左上角账号按钮 ═════════════════════════════════════════════
+    accountFontSize: 18,   // 字号 px（原 text-xs）
+    accountIconSize: 24,   // 账号图标尺寸 px（原 UserCircle size=16）
+    accountPadX: 24,       // 原 px-4
+    accountPadY: 12,        // 原 py-2
+    accountIconGap: 12,     // 图标与文字的间距 px（原 gap-2）
+    accountTop: 24,        // 距屏幕顶部 px（原 top-4）
+    accountLeft: 24,       // 距屏幕左侧 px（原 left-4）
+
+    // ══ ⑥ 临时反馈（切号遮罩 / 欢迎提示，正常情况不用动）══════════════
+    switchingIconSize: 48, // 切号转圈图标 px（原 size=48）
+    switchingFontSize: 14, // 「SWITCHING ACCOUNT...」字号 px（原 text-sm）
+    toastFontSize: 16,     // 欢迎提示字号 px（原未设，走继承 16）
+    toastPadX: 32,         // 原 px-8
+    toastPadY: 12,         // 原 py-3
+    toastGap: 12,          // 原 gap-3
+    toastDotSize: 8,       // 绿点尺寸 px（原 w-2 h-2）
+    toastY: 20,            // 出现后距屏幕顶部的落点 px（原 animate y:20）
+} as const;
+
 interface User {
     uid: string;
     displayName: string;
@@ -49,15 +113,29 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
     };
 
     return (
-        <div className="w-full h-full bg-transparent text-white flex flex-col items-center justify-end pb-12 relative overflow-hidden font-sans select-none z-10">
+        <div
+            className="w-full h-full bg-transparent text-white flex flex-col items-center justify-end relative overflow-hidden font-sans select-none z-10"
+            style={{ paddingBottom: TITLE_UI.screenPadBottom }}
+        >
 
-            <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] pointer-events-none animate-pulse-slow"></div>
+            <div
+                className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] pointer-events-none animate-pulse-slow"
+                style={{ opacity: TITLE_UI.bgTextureOpacity }}
+            ></div>
 
+                {/* 尺寸来自顶部 🎛️ TITLE_UI.account* */}
                 <button
-                    onClick={() => setShowAccountModal(true)}
-                    className="absolute top-4 left-4 z-[50] flex items-center gap-2 px-4 py-2 bg-black/40 hover:bg-white/10 rounded-full border border-white/10 hover:border-white/30 transition-all text-xs font-mono text-gray-400 hover:text-white group"
+                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setShowAccountModal(true); }}
+                    className="absolute z-[50] flex items-center bg-black/40 hover:bg-white/10 rounded-full border border-white/10 hover:border-white/30 transition-all font-mono text-gray-400 hover:text-white group"
+                    style={{
+                        top: TITLE_UI.accountTop,
+                        left: TITLE_UI.accountLeft,
+                        gap: TITLE_UI.accountIconGap,
+                        fontSize: TITLE_UI.accountFontSize,
+                        padding: `${TITLE_UI.accountPadY}px ${TITLE_UI.accountPadX}px`,
+                    }}
                 >
-                    <UserCircle size={16} className="text-blue-400 group-hover:text-white transition-colors" />
+                    <UserCircle size={TITLE_UI.accountIconSize} className="text-blue-400 group-hover:text-white transition-colors" />
                     {userSystem.profile?.displayName || 'GUEST ACCOUNT'}
                 </button>
 
@@ -80,10 +158,16 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[2000] bg-black flex flex-col items-center justify-center gap-4"
+                        className="fixed inset-0 z-[2000] bg-black flex flex-col items-center justify-center"
+                        style={{ gap: 16 }}
                     >
-                        <RefreshCw size={48} className="text-blue-500 animate-spin" />
-                        <span className="text-blue-200 font-mono tracking-widest text-sm animate-pulse">SWITCHING ACCOUNT...</span>
+                        <RefreshCw size={TITLE_UI.switchingIconSize} className="text-blue-500 animate-spin" />
+                        <span
+                            className="text-blue-200 font-mono tracking-widest animate-pulse"
+                            style={{ fontSize: TITLE_UI.switchingFontSize }}
+                        >
+                            SWITCHING ACCOUNT...
+                        </span>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -93,44 +177,68 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 {welcomeToast && (
                     <motion.div
                         initial={{ y: -100, opacity: 0 }}
-                        animate={{ y: 20, opacity: 1 }}
+                        animate={{ y: TITLE_UI.toastY, opacity: 1 }}
                         exit={{ y: -100, opacity: 0 }}
-                        className="fixed top-0 left-1/2 -translate-x-1/2 z-[1500] px-8 py-3 bg-white text-black font-bold rounded-full shadow-[0_10px_30px_rgba(255,255,255,0.3)] flex items-center gap-3 border-2 border-blue-500"
+                        className="fixed top-0 left-1/2 -translate-x-1/2 z-[1500] bg-white text-black font-bold rounded-full shadow-[0_10px_30px_rgba(255,255,255,0.3)] flex items-center border-2 border-blue-500"
+                        style={{
+                            fontSize: TITLE_UI.toastFontSize,
+                            gap: TITLE_UI.toastGap,
+                            padding: `${TITLE_UI.toastPadY}px ${TITLE_UI.toastPadX}px`,
+                        }}
                     >
-                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                        <div
+                            className="rounded-full bg-green-500 animate-pulse"
+                            style={{ width: TITLE_UI.toastDotSize, height: TITLE_UI.toastDotSize }}
+                        ></div>
                         {welcomeToast}
                     </motion.div>
                 )}
             </AnimatePresence>
 
-            {/* --- 标题页核心内容 --- */}
-            <div className="flex flex-col items-center animate-fade-in-up z-20 pb-20">
-                <img src={UI_IMAGES.titleLogo} className="w-[450px] mb-8 drop-shadow-[0_0_30px_rgba(255,255,255,0.3)]" alt="尘白禁区 Rivals" />
+            {/* --- 标题页核心内容（尺寸全部来自顶部 🎛️ TITLE_UI）--- */}
+            <div
+                className="flex flex-col items-center animate-fade-in-up z-20"
+                style={{
+                    paddingBottom: TITLE_UI.blockPadBottom,
+                    transform: `scale(${TITLE_UI.scale})`,
+                    transformOrigin: 'center bottom',
+                }}
+            >
+                <img
+                    src={UI_IMAGES.titleLogo}
+                    className="drop-shadow-[0_0_30px_rgba(255,255,255,0.3)]"
+                    style={{ width: TITLE_UI.logoWidth, marginBottom: TITLE_UI.logoGap }}
+                    alt="尘白禁区 Rivals"
+                />
 
                 <button
                     onClick={() => {
                         eventBus.emit(GameEvents.GAME_START);
                         if (onTitleStartClick) onTitleStartClick();
                     }}
-                    className="group relative px-12 py-4 bg-transparent overflow-hidden rounded-full transition-all hover:scale-105"
+                    className="group relative bg-transparent overflow-hidden rounded-full transition-all hover:scale-105"
+                    style={{ padding: `${TITLE_UI.startPadY}px ${TITLE_UI.startPadX}px` }}
                 >
                     <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-600 opacity-80 group-hover:opacity-100 transition-opacity"></div>
                     <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-30"></div>
-                    <span className="relative z-10 text-xl font-black tracking-[0.3em] flex items-center gap-4">
-                        <Sword className="fill-white" /> 开始游戏
+                    <span
+                        className="relative z-10 font-black tracking-[0.3em] flex items-center"
+                        style={{ fontSize: TITLE_UI.startFontSize, gap: TITLE_UI.startIconGap }}
+                    >
+                        <Sword size={TITLE_UI.startIconSize} className="fill-white" /> 开始游戏
                     </span>
                 </button>
 
-                <div className="mt-8 text-xs text-gray-500 font-mono tracking-widest">
-                    PRESS START TO INITIALIZE NEURO-LINK
-                </div>
-
                 {/* [哨兵] 程的头像 & B站链接 */}
-                <div className="mt-10 flex items-center justify-center gap-5 opacity-60 hover:opacity-100 transition-opacity duration-300">
+                <div
+                    className="flex items-center justify-center opacity-60 hover:opacity-100 transition-opacity duration-300"
+                    style={{ marginTop: TITLE_UI.footerGap, gap: TITLE_UI.footerItemGap }}
+                >
                     {/* 头像 */}
                     <img
                         src={chengAvatar}
-                        className="w-14 h-14 rounded-full object-cover border border-white/20 ring-2 ring-white/10"
+                        className="rounded-full object-cover border border-white/20 ring-2 ring-white/10"
+                        style={{ width: TITLE_UI.avatarSize, height: TITLE_UI.avatarSize }}
                         alt="大话丶EZ"
                         title="独立开发者：大话丶EZ"
                     />
@@ -139,17 +247,25 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         href="https://space.bilibili.com/45083978?spm_id_from=333.1007.0.0"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-3 px-4 py-2 rounded-full bg-white/5 hover:bg-pink-600/20 border border-white/10 hover:border-pink-400/40 transition-all group"
+                        className="flex items-center rounded-full bg-white/5 hover:bg-pink-600/20 border border-white/10 hover:border-pink-400/40 transition-all group"
+                        style={{
+                            gap: TITLE_UI.biliIconGap,
+                            padding: `${TITLE_UI.biliPadY}px ${TITLE_UI.biliPadX}px`,
+                        }}
                         title="B站主页：大话丶EZ"
                     >
                         {/* B站小电视 SVG */}
                         <svg
                             viewBox="0 0 24 24"
-                            className="w-7 h-7 fill-current text-white/60 group-hover:text-pink-400 transition-colors"
+                            className="fill-current text-white/60 group-hover:text-pink-400 transition-colors"
+                            style={{ width: TITLE_UI.biliIconSize, height: TITLE_UI.biliIconSize }}
                         >
                             <path d="M17.813 4.653h.854c1.51.054 2.769.578 3.773 1.574 1.004.995 1.524 2.249 1.559 3.76v7.36c-.035 1.51-.555 2.765-1.559 3.761-1.004.995-2.263 1.519-3.773 1.574H5.333c-1.51-.055-2.769-.579-3.773-1.574C.556 20.112.036 18.857 0 17.347v-7.36c.036-1.511.556-2.765 1.56-3.76 1.004-.996 2.263-1.52 3.773-1.574h.854L4.134 1.91a.428.428 0 01.058-.488.468.468 0 01.354-.168.467.467 0 01.373.158L7.2 4.653h9.6l2.281-3.241a.467.467 0 01.373-.158.468.468 0 01.354.168.428.428 0 01.058.488l-2.053 2.743zm-2.453 6.507c.211 0 .395-.075.554-.224a.742.742 0 00.229-.546.742.742 0 00-.229-.547.765.765 0 00-.554-.223c-.211 0-.394.074-.553.223a.742.742 0 00-.23.547c0 .22.077.404.23.546.159.15.342.224.553.224zm-6.72 0c.212 0 .396-.075.555-.224a.742.742 0 00.229-.546.742.742 0 00-.229-.547.765.765 0 00-.554-.223c-.212 0-.395.074-.554.223a.742.742 0 00-.23.547c0 .22.077.404.23.546.159.15.343.224.554.224zm5.253 1.973c-.264-.232-.594-.348-.99-.348-.396 0-.726.116-.99.348-.264.232-.396.537-.396.914 0 .377.132.682.396.914.264.232.594.348.99.348.396 0 .726-.116.99-.348.264-.232.396-.537.396-.914 0-.377-.132-.682-.396-.914zM12 17.733c1.912 0 3.507-.442 4.787-1.326a4.6 4.6 0 001.746-1.86.467.467 0 00-.186-.605.475.475 0 00-.6.177 3.722 3.722 0 01-1.4 1.498c-1.092.694-2.395 1.041-3.907 1.041-1.512 0-2.815-.347-3.907-1.041a3.722 3.722 0 01-1.4-1.498.475.475 0 00-.6-.177.467.467 0 00-.186.605 4.6 4.6 0 001.746 1.86c1.28.884 2.875 1.326 4.787 1.326z"/>
                         </svg>
-                        <span className="text-sm text-white/40 group-hover:text-pink-300 transition-colors tracking-wider font-medium">
+                        <span
+                            className="text-white/40 group-hover:text-pink-300 transition-colors tracking-wider font-medium"
+                            style={{ fontSize: TITLE_UI.biliFontSize }}
+                        >
                             大话丶EZ
                         </span>
                     </a>

@@ -825,6 +825,16 @@ export const useUserSystem = () => {
         const chest = list[index];
         if (!chest) return null;
 
+        // [2026-10-14 莉莉子 🖱️交互层革新] 开匣音效 —— 时机踩点：
+        //   ChestOpenModal 是**开匣动画结束才调 onOpenChest**（见其文件头 #11 注释），
+        //   所以这里发声 = 正好落在「光爆演出收束、内容揭示」那一刻。
+        //   按品质路由：紫/金/彩 → 出金音；白/绿/蓝 → 普通出货音（开匣权重 82% : 18%）。
+        eventBus.emit(
+            chest.rarity === 'epic' || chest.rarity === 'legendary' || chest.rarity === 'mythic'
+                ? GameEvents.GACHA_REVEAL_RARE
+                : GameEvents.GACHA_REVEAL_COMMON
+        );
+
         // 1. 先从队列移除（函数式更新，避免与 grantArmament 的更新互相覆盖——见 openPack 的踩坑注释）
         setSettings(prev => {
             if (!prev) return prev;
@@ -898,7 +908,7 @@ export const useUserSystem = () => {
         let rollingStock = readArmStock(settings);
         // [2026-10-04 莉莉子] 碎片同理要**滚动钱包**（见下方 dropShards 调用）
         let rollingShardWallet = peekShardWallet();
-        return list.map(chest => {
+        const results = list.map(chest => {
             if (chest.kind === 'armament') {
                 const { def, overflow } = pickArmamentFromChest(chest.rarity, rollingStock);
                 if (!def) return { kind: chest.kind, rarity: chest.rarity };
@@ -924,6 +934,15 @@ export const useUserSystem = () => {
                 wallet: drop.wallet,
             };
         });
+
+        // [2026-10-14 莉莉子 🖱️交互层革新] 批量开匣音效：整批**只播一次**
+        //   （N 个匣子逐个发声会糊成一片，而演出本就是一次性汇总窗）。
+        //   按本批**最高品质**路由 —— 只要有一个紫/金/彩就给「出金」音。
+        const batchHasRare = results.some(r =>
+            r.rarity === 'epic' || r.rarity === 'legendary' || r.rarity === 'mythic'
+        );
+        eventBus.emit(batchHasRare ? GameEvents.GACHA_REVEAL_RARE : GameEvents.GACHA_REVEAL_COMMON);
+        return results;
     }, [settings, grantArmament, grantDataGold, userId]);
 
     /** [2026-08-29 通行证] 获得一个待打开卡包（打开时才随机武装） */
@@ -985,7 +1004,7 @@ export const useUserSystem = () => {
     }, [analystPass, userId]);
 
     /** [2026-09-04 账号等级] 手动领取某等级通行证奖励（等级读 analystPass 独立键） */
-    const claimPassReward = useCallback((level: number): boolean => {
+    const claimPassReward = useCallback((level: number, opts?: { silent?: boolean }): boolean => {
         // [2026-10-04 程拍板 ④] **31+ 不走本函数**：那条线是"里程碑 + 水位、不许跳级"，
         //   见 `claimPostCapPassRewards`。这里只负责 ≤30 的固定奖励表。
         if (level > ANALYST_FIXED_REWARD_MAX) return false;
@@ -1005,6 +1024,9 @@ export const useUserSystem = () => {
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
             return newSettings;
         });
+        // [2026-10-14 莉莉子 🖱️交互层革新] 领取成功音（复用商店成交音）
+        //   一键领取时由 claimAllPassRewards 统一播一次，故循环内传 silent 抑制。
+        if (!opts?.silent) eventBus.emit(GameEvents.GACHA_CONVERT);
         return true;
     }, [analystPass, grantArmament, grantPendingPack, grantPassEnhancement, grantDataGold, userId]);
 
@@ -1016,9 +1038,11 @@ export const useUserSystem = () => {
         const upto = Math.min(analystPass.level, ANALYST_FIXED_REWARD_MAX);
         for (let lv = 1; lv <= upto; lv++) {
             if (getAnalystReward(lv) && !(settings.passClaimedRewards ?? []).includes(lv)) {
-                if (claimPassReward(lv)) count++;
+                if (claimPassReward(lv, { silent: true })) count++;
             }
         }
+        // [2026-10-14 莉莉子 🖱️交互层革新] 一键领取：整批只播一次（循环内已静默）
+        if (count > 0) eventBus.emit(GameEvents.GACHA_CONVERT);
         return count;
     }, [analystPass, settings, claimPassReward]);
 

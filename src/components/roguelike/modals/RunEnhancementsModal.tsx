@@ -20,6 +20,7 @@ import { motion } from 'framer-motion';
 import { X, Sparkles } from 'lucide-react';
 import { MAZE_BUFFS, type MazeBuff } from '../../../data/roguelike/buffs';
 import { RARITY_META } from '../RarityIcon';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] ESC 关闭音效
 
 interface RunEnhancementsModalProps {
     /** 本局的强化 id 列表（= `run.enhancements`，含神格神经） */
@@ -41,7 +42,7 @@ export const RunEnhancementsModal: React.FC<RunEnhancementsModalProps> = ({ enha
     // ESC 关闭：capture + 阻止冒泡，避免被 App 的全局 ESC 监听抢走（那个监听管的是 appState 层）
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
+            if (e.key !== 'Escape') return; eventBus.emit(GameEvents.UI_BACK);
             e.preventDefault();
             e.stopImmediatePropagation();
             onClose();

@@ -9,6 +9,7 @@ import { KEYWORD_DETAILS, type SandboxMode } from '../data/keywordDetails'; // [
 import { Card } from './Card';
 import { FullArtOverlay } from './Overlays';
 import type { CardData } from '../types';
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 图鉴 关闭/ESC 音效
 
 interface GalleryCodexProps {
     onClose: () => void;
@@ -27,6 +28,63 @@ const toFullCardData = (staticData: any): CardData => ({
 
 type TabType = 'tutorial' | 'keywords' | 'cards';
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 卡牌全图鉴 · 双页排版调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 结构：书本双页 —— 左页 cols×rows 张 ＋ 全息中缝 ＋ 右页 cols×rows 张
+//       ⇒ 一「跨页」(spread) = cols × rows × 2 张，靠底部左右箭头翻页。
+// 原来每页 3×3（一跨页 18 张）、卡片保持原生 130×202 ⇒ 太小；
+// 现在每页 2×2（一跨页 8 张）＋ 卡片放大 cardScale 倍。
+// 改完存盘即生效（HMR 直接刷新，电脑上就能看到，不用出包）。
+// ══════════════════════════════════════════════════════════════════════
+export const CODEX_UI = {
+    // ══ ① 全图鉴（卡牌双页）═══════════════════════════════════════════
+    /** 每页网格：列 × 行（左右两页相同）。2 × 2 = 每页 4 张、一跨页 8 张 */
+    cols: 2,
+    rows: 2,
+
+    /** 卡片整体缩放（1 = Card 在 collection 模式的原生尺寸 130×202） */
+    cardScale: 1.6,
+
+    /** 网格间距 px */
+    gapX: 24,
+    gapY: 20,
+
+    // ══ ② 文字口径（基础教程 / 机制档案 两个 Tab 共用）═════════════════
+    /** 内容区大标题（原 text-4xl = 36） */
+    titleSize: 44,
+    /** 副标题 —— 机制档案的英文名（原 text-sm = 14） */
+    subTitleSize: 20,
+    /** 小节标题（原：教程 text-sm ／ 机制档案 text-xs） */
+    headingSize: 24,
+    /** 正文（原 text-sm = 14） */
+    bodySize: 20,
+    /** 正文行高倍数（原 leading-[1.8]） */
+    bodyLineHeight: 1.9,
+    /** 正文最大宽度 px —— 控制每行字数，太宽反而不好读 */
+    bodyMaxWidth: 1080,
+
+    /** 左侧目录条目字号（原 text-xs = 12） */
+    menuSize: 17,
+    /** 左侧目录的次级小字 —— 机制档案的英文 key（原 text-[8px]） */
+    menuSubSize: 12,
+    /** 详细版解释的字号（比正文略小一档，因为它是补充说明） */
+    detailSize: 18,
+} as const;
+
+/** [详细版] 段落结构 + 可选的详细解释
+ *  数据在 `src/data/tutorials.ts` 的 `paragraphsDetail`（与 `paragraphs` 一一对应）。
+ *  这里用最小结构断言，避免与数据文件的类型演进耦合。 */
+type SectionDetail = {
+    heading?: string;
+    paragraphs: string[];
+    paragraphsDetail?: string[];
+};
+
+/** Card 在 collection 模式下的原生容器尺寸（与 Card.tsx 的 else 分支一致，勿随意改） */
+const CARD_W = 130;
+const CARD_H = 202;
+
 export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem }) => {
     const [activeTab, setActiveTab] = useState<TabType>('tutorial');
 
@@ -34,6 +92,9 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
     const [activeCategory, setActiveCategory] = useState<string | null>(null);
     // [新增] 教程内容状态机：记录当前选中的具体教程子词条 ID
     const [activeTutorialId, setActiveTutorialId] = useState<string | null>(null);
+
+    // [详细版] 哪些段落展开了「详解」（key = `${tutId}-${secIdx}-${pIdx}`）
+    const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({});
 
     // [新增] 机制档案专属状态机：记录当前选中的机制词条
     const [activeKeywordTab, setActiveKeywordTab] = useState<string | null>(null);
@@ -80,7 +141,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
     // [2026-08-15 莉莉子] ESC 关闭图鉴（capture 拦截，避免 App 呼出设置）；卡牌详情打开时交给 FullArtOverlay 优先处理
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
+            if (e.key !== 'Escape') return; eventBus.emit(GameEvents.UI_BACK);
             if (viewCard) return; // FullArtOverlay 的 capture 处理器负责关详情
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -138,12 +199,13 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
         return result;
     }, [searchTerm, selectedCosts, selectedRegions, selectedTypes, selectedSpellSpeeds, selectedKeywords]);
 
-    // [核心新增] 双页排版物理引擎 (每页 9 张，一展 18 张)
-    const CARDS_PER_SPREAD = 18;
+    // [核心新增] 双页排版物理引擎 —— 张数全部由顶部 🎛️ CODEX_UI 派生
+    const CARDS_PER_PAGE = CODEX_UI.cols * CODEX_UI.rows;       // 单页张数（默认 4）
+    const CARDS_PER_SPREAD = CARDS_PER_PAGE * 2;                // 一跨页 = 左右两页（默认 8）
     const totalPages = Math.max(1, Math.ceil(filteredCards.length / CARDS_PER_SPREAD));
     const currentSpreadCards = filteredCards.slice(currentPage * CARDS_PER_SPREAD, (currentPage + 1) * CARDS_PER_SPREAD);
-    const leftPageCards = currentSpreadCards.slice(0, 9);
-    const rightPageCards = currentSpreadCards.slice(9, 18);
+    const leftPageCards = currentSpreadCards.slice(0, CARDS_PER_PAGE);
+    const rightPageCards = currentSpreadCards.slice(CARDS_PER_PAGE, CARDS_PER_SPREAD);
 
     const toggleFilter = (setter: React.Dispatch<React.SetStateAction<any[]>>, val: any) => {
         setter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
@@ -191,7 +253,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
-                onClick={onClose} // 点击空白处也可关闭
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} // 点击空白处也可关闭
             />
 
             {/* 图鉴主体容器 - [核心修复] 彻底废除 h-[80vh] 与 w-full，改用完全契合大厅缩放引擎的绝对像素尺寸，彻底解决比例畸变与二次缩小问题 */}
@@ -236,7 +298,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                 {activeCategory === 'combat' && (
                                                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden flex flex-col gap-1 pl-4 mt-1 mb-2">
                                                         {TUTORIAL_DB.combat.map(tut => (
-                                                            <button key={tut.id} onClick={() => setActiveTutorialId(tut.id)} className={`text-left px-3 py-1.5 text-xs font-bold transition-all border-l-2 ${activeTutorialId === tut.id ? 'border-cyan-400 text-cyan-300 bg-cyan-900/40 shadow-[inset_10px_0_15px_-10px_rgba(34,211,238,0.3)]' : 'border-transparent text-cyan-500/60 hover:text-cyan-400 hover:bg-cyan-900/20 hover:border-cyan-500/30'}`}>
+                                                            <button key={tut.id} onClick={() => { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setActiveTutorialId(tut.id); }} style={{ fontSize: CODEX_UI.menuSize }} className={`text-left px-3 py-2 font-bold transition-all border-l-2 ${activeTutorialId === tut.id ? 'border-cyan-400 text-cyan-300 bg-cyan-900/40 shadow-[inset_10px_0_15px_-10px_rgba(34,211,238,0.3)]' : 'border-transparent text-cyan-500/60 hover:text-cyan-400 hover:bg-cyan-900/20 hover:border-cyan-500/30'}`}>
                                                                 {tut.title}
                                                             </button>
                                                         ))}
@@ -251,7 +313,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                 {activeCategory === 'gameplay' && (
                                                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden flex flex-col gap-1 pl-4 mt-1 mb-2">
                                                         {TUTORIAL_DB.gameplay.map(tut => (
-                                                            <button key={tut.id} onClick={() => setActiveTutorialId(tut.id)} className={`text-left px-3 py-1.5 text-xs font-bold transition-all border-l-2 ${activeTutorialId === tut.id ? 'border-cyan-400 text-cyan-300 bg-cyan-900/40 shadow-[inset_10px_0_15px_-10px_rgba(34,211,238,0.3)]' : 'border-transparent text-cyan-500/60 hover:text-cyan-400 hover:bg-cyan-900/20 hover:border-cyan-500/30'}`}>
+                                                            <button key={tut.id} onClick={() => { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setActiveTutorialId(tut.id); }} style={{ fontSize: CODEX_UI.menuSize }} className={`text-left px-3 py-2 font-bold transition-all border-l-2 ${activeTutorialId === tut.id ? 'border-cyan-400 text-cyan-300 bg-cyan-900/40 shadow-[inset_10px_0_15px_-10px_rgba(34,211,238,0.3)]' : 'border-transparent text-cyan-500/60 hover:text-cyan-400 hover:bg-cyan-900/20 hover:border-cyan-500/30'}`}>
                                                                 {tut.title}
                                                             </button>
                                                         ))}
@@ -266,7 +328,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                 {activeCategory === 'system' && (
                                                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden flex flex-col gap-1 pl-4 mt-1 mb-2">
                                                         {TUTORIAL_DB.system.map(tut => (
-                                                            <button key={tut.id} onClick={() => setActiveTutorialId(tut.id)} className={`text-left px-3 py-1.5 text-xs font-bold transition-all border-l-2 ${activeTutorialId === tut.id ? 'border-cyan-400 text-cyan-300 bg-cyan-900/40 shadow-[inset_10px_0_15px_-10px_rgba(34,211,238,0.3)]' : 'border-transparent text-cyan-500/60 hover:text-cyan-400 hover:bg-cyan-900/20 hover:border-cyan-500/30'}`}>
+                                                            <button key={tut.id} onClick={() => { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setActiveTutorialId(tut.id); }} style={{ fontSize: CODEX_UI.menuSize }} className={`text-left px-3 py-2 font-bold transition-all border-l-2 ${activeTutorialId === tut.id ? 'border-cyan-400 text-cyan-300 bg-cyan-900/40 shadow-[inset_10px_0_15px_-10px_rgba(34,211,238,0.3)]' : 'border-transparent text-cyan-500/60 hover:text-cyan-400 hover:bg-cyan-900/20 hover:border-cyan-500/30'}`}>
                                                                 {tut.title}
                                                             </button>
                                                         ))}
@@ -290,7 +352,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                             return (
                                                 <button
                                                     key={kw}
-                                                    onClick={() => setActiveKeywordTab(kw)}
+                                                    onClick={() => { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setActiveKeywordTab(kw); }}
                                                     className={`relative w-full py-2 px-3 flex items-center gap-3 transition-all duration-300 group rounded-sm border
                                                         ${isActive ? 'bg-cyan-900/40 border-cyan-400 shadow-[inset_0_0_15px_rgba(34,211,238,0.2)]' : 'border-transparent hover:bg-cyan-800/20'}`}
                                                 >
@@ -303,10 +365,10 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                         )}
                                                     </div>
 
-                                                    {/* 中间：带有动态色彩的文字排版 */}
-                                                    <div className="flex flex-col items-start leading-none gap-1">
-                                                        <span className={`text-xs font-black tracking-widest text-${config.color}-400 group-hover:brightness-125 transition-all`}>{config.label}</span>
-                                                        <span className="text-[8px] text-cyan-500/50 font-bold uppercase">{kw}</span>
+                                                    {/* 中间：带有动态色彩的文字排版（字号见 🎛️ CODEX_UI.menuSize） */}
+                                                    <div className="flex flex-col items-start leading-tight gap-1">
+                                                        <span style={{ fontSize: CODEX_UI.menuSize }} className={`font-black tracking-widest text-${config.color}-400 group-hover:brightness-125 transition-all`}>{config.label}</span>
+                                                        <span style={{ fontSize: CODEX_UI.menuSubSize }} className="text-cyan-500/50 font-bold uppercase">{kw}</span>
                                                     </div>
 
                                                     {/* 右侧：高科技激活指示灯 */}
@@ -336,7 +398,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden pl-3 border-l-2 border-cyan-500/20 ml-3">
                                                         <div className="flex flex-wrap gap-1 py-2">
                                                             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(c => (
-                                                                <button key={c} onClick={() => toggleFilter(setSelectedCosts, c)} className={`w-8 h-8 rounded text-sm font-black transition-colors ${selectedCosts.includes(c) ? 'bg-cyan-500 text-black shadow-[0_0_10px_cyan]' : 'bg-cyan-900/40 text-cyan-300 hover:bg-cyan-700/50'}`}>
+                                                                <button key={c} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedCosts, c); }} className={`w-8 h-8 rounded text-sm font-black transition-colors ${selectedCosts.includes(c) ? 'bg-cyan-500 text-black shadow-[0_0_10px_cyan]' : 'bg-cyan-900/40 text-cyan-300 hover:bg-cyan-700/50'}`}>
                                                                     {c}{c === 10 ? '+' : ''}
                                                                 </button>
                                                             ))}
@@ -355,7 +417,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                         {/* 一级分类：英雄 / 随从 / 法术 */}
                                                         <div className="flex flex-col gap-1.5 py-2">
                                                             {['HERO', 'UNIT', 'SPELL'].map(t => (
-                                                                <button key={t} onClick={() => toggleFilter(setSelectedTypes, t)} className={`text-left px-3 py-2 rounded text-xs font-bold transition-all ${selectedTypes.includes(t) ? 'bg-cyan-500 text-black border border-cyan-400' : 'bg-cyan-900/40 text-cyan-400 border border-transparent hover:bg-cyan-800/50'}`}>
+                                                                <button key={t} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, t); }} className={`text-left px-3 py-2 rounded text-xs font-bold transition-all ${selectedTypes.includes(t) ? 'bg-cyan-500 text-black border border-cyan-400' : 'bg-cyan-900/40 text-cyan-400 border border-transparent hover:bg-cyan-800/50'}`}>
                                                                     {t === 'HERO' ? '天启者' : t === 'UNIT' ? '随从' : '法术'}
                                                                 </button>
                                                             ))}
@@ -372,7 +434,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                                             { id: 'Fast', icon: <Zap size={16} className="text-white" />, title: '快速 (Fast)' },
                                                                             { id: 'Slow', icon: <Clock size={16} className="text-purple-300" />, title: '慢速 (Slow)' }
                                                                         ].map(s => (
-                                                                            <button key={s.id} onClick={() => toggleFilter(setSelectedSpellSpeeds, s.id)} title={s.title} className={`flex-1 py-1.5 rounded flex justify-center items-center transition-colors border ${selectedSpellSpeeds.includes(s.id) ? 'bg-purple-500/20 border-purple-400 shadow-[inset_0_0_10px_purple]' : 'bg-purple-900/40 border-transparent hover:bg-purple-800/50'}`}>
+                                                                            <button key={s.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedSpellSpeeds, s.id); }} title={s.title} className={`flex-1 py-1.5 rounded flex justify-center items-center transition-colors border ${selectedSpellSpeeds.includes(s.id) ? 'bg-purple-500/20 border-purple-400 shadow-[inset_0_0_10px_purple]' : 'bg-purple-900/40 border-transparent hover:bg-purple-800/50'}`}>
                                                                                 {s.icon}
                                                                             </button>
                                                                         ))}
@@ -390,7 +452,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                                         {Object.entries(KEYWORD_DB).map(([kw, config]) => (
                                                                             <button
                                                                                 key={kw}
-                                                                                onClick={() => toggleFilter(setSelectedKeywords, kw)}
+                                                                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedKeywords, kw); }}
                                                                                 title={`${config.label}\n${config.description}`}
                                                                                 className={`w-7 h-7 rounded flex justify-center items-center transition-all border ${selectedKeywords.includes(kw) ? 'bg-green-500/20 border-green-400 shadow-[inset_0_0_10px_rgba(74,222,128,0.5)]' : 'bg-cyan-900/40 border-transparent hover:bg-cyan-800/50 opacity-60 hover:opacity-100'}`}
                                                                             >
@@ -436,16 +498,28 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                         style={{ transformOrigin: 'right center' }}
                                         className="flex-1 bg-cyan-950/20 border border-cyan-800/40 rounded-2xl p-6 shadow-[inset_0_0_60px_rgba(34,211,238,0.02)]"
                                     >
-                                        <div className="grid grid-cols-3 grid-rows-3 gap-y-4 gap-x-2 h-full place-items-center">
+                                        <div
+                                            className="grid h-full place-items-center"
+                                            style={{
+                                                gridTemplateColumns: `repeat(${CODEX_UI.cols}, minmax(0, 1fr))`,
+                                                gridTemplateRows: `repeat(${CODEX_UI.rows}, minmax(0, 1fr))`,
+                                                columnGap: CODEX_UI.gapX,
+                                                rowGap: CODEX_UI.gapY,
+                                            }}
+                                        >
                                             {leftPageCards.map(c => (
                                                 /* [修正] 升级为 motion.div 并注入向左弹射淡入变体，形成由内向外的微粒破雾感 */
                                                 <motion.div
                                                     key={c.id}
                                                     variants={leftCardVariants}
-                                                    className="scale-[1] origin-center hover:scale-[1.1] transition-transform duration-300 cursor-pointer hover:z-20 hover:drop-shadow-[0_0_20px_cyan]"
-                                                    onClick={() => setViewCard(c)}
+                                                    className="relative flex items-center justify-center origin-center hover:scale-[1.1] transition-transform duration-300 cursor-pointer hover:z-20 hover:drop-shadow-[0_0_20px_cyan]"
+                                                    style={{ width: CARD_W * CODEX_UI.cardScale, height: CARD_H * CODEX_UI.cardScale }}
+                                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewCard(c); }}
                                                 >
-                                                    <Card data={c} location="collection" isFaceUp={true} isLocked={false} />
+                                                    {/* Card 原生是 130×202，这里整体放大 CODEX_UI.cardScale 倍 */}
+                                                    <div style={{ transform: `scale(${CODEX_UI.cardScale})`, transformOrigin: 'center center' }}>
+                                                        <Card data={c} location="collection" isFaceUp={true} isLocked={false} />
+                                                    </div>
                                                 </motion.div>
                                             ))}
                                         </div>
@@ -462,16 +536,27 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                         style={{ transformOrigin: 'left center' }}
                                         className="flex-1 bg-cyan-950/20 border border-cyan-800/40 rounded-2xl p-6 shadow-[inset_0_0_60px_rgba(34,211,238,0.02)]"
                                     >
-                                        <div className="grid grid-cols-3 grid-rows-3 gap-y-4 gap-x-2 h-full place-items-center">
+                                        <div
+                                            className="grid h-full place-items-center"
+                                            style={{
+                                                gridTemplateColumns: `repeat(${CODEX_UI.cols}, minmax(0, 1fr))`,
+                                                gridTemplateRows: `repeat(${CODEX_UI.rows}, minmax(0, 1fr))`,
+                                                columnGap: CODEX_UI.gapX,
+                                                rowGap: CODEX_UI.gapY,
+                                            }}
+                                        >
                                             {rightPageCards.map(c => (
                                                 /* [修正] 升级为 motion.div 并注入向右弹射淡入变体，形成由内向外的微粒破雾感 */
                                                 <motion.div
                                                     key={c.id}
                                                     variants={rightCardVariants}
-                                                    className="scale-[1] origin-center hover:scale-[1.1] transition-transform duration-300 cursor-pointer hover:z-20 hover:drop-shadow-[0_0_20px_cyan]"
-                                                    onClick={() => setViewCard(c)}
+                                                    className="relative flex items-center justify-center origin-center hover:scale-[1.1] transition-transform duration-300 cursor-pointer hover:z-20 hover:drop-shadow-[0_0_20px_cyan]"
+                                                    style={{ width: CARD_W * CODEX_UI.cardScale, height: CARD_H * CODEX_UI.cardScale }}
+                                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewCard(c); }}
                                                 >
-                                                    <Card data={c} location="collection" isFaceUp={true} isLocked={false} />
+                                                    <div style={{ transform: `scale(${CODEX_UI.cardScale})`, transformOrigin: 'center center' }}>
+                                                        <Card data={c} location="collection" isFaceUp={true} isLocked={false} />
+                                                    </div>
                                                 </motion.div>
                                             ))}
                                         </div>
@@ -480,17 +565,17 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
 
                                 {/* 底部翻页控制器 */}
                                 <div className="mt-8 flex justify-center items-center gap-12 h-16">
-                                    <button disabled={currentPage === 0} onClick={() => setCurrentPage(p => p - 1)} className="p-3 text-cyan-400 disabled:opacity-20 hover:bg-cyan-800/50 hover:text-white rounded-full transition-all hover:scale-125 disabled:hover:scale-100 border border-transparent hover:border-cyan-500/50"><ChevronLeft size={36} strokeWidth={3} /></button>
+                                    <button disabled={currentPage === 0} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setCurrentPage(p => p - 1); }} className="p-3 text-cyan-400 disabled:opacity-20 hover:bg-cyan-800/50 hover:text-white rounded-full transition-all hover:scale-125 disabled:hover:scale-100 border border-transparent hover:border-cyan-500/50"><ChevronLeft size={36} strokeWidth={3} /></button>
                                     <div className="flex flex-col items-center">
                                         <span className="font-mono text-cyan-200 font-black tracking-[0.5em] text-xl">PAGE_{currentPage + 1}</span>
                                         <span className="text-[10px] text-cyan-600 font-bold tracking-widest">OF {totalPages}</span>
                                     </div>
-                                    <button disabled={currentPage >= totalPages - 1} onClick={() => setCurrentPage(p => p + 1)} className="p-3 text-cyan-400 disabled:opacity-20 hover:bg-cyan-800/50 hover:text-white rounded-full transition-all hover:scale-125 disabled:hover:scale-100 border border-transparent hover:border-cyan-500/50"><ChevronRight size={36} strokeWidth={3} /></button>
+                                    <button disabled={currentPage >= totalPages - 1} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setCurrentPage(p => p + 1); }} className="p-3 text-cyan-400 disabled:opacity-20 hover:bg-cyan-800/50 hover:text-white rounded-full transition-all hover:scale-125 disabled:hover:scale-100 border border-transparent hover:border-cyan-500/50"><ChevronRight size={36} strokeWidth={3} /></button>
                                 </div>
                             </div>
                         ) : activeTab === 'tutorial' ? (
                             /* --- [核心一] 档案机密阅读器 --- */
-                            <div className="w-full h-full border border-cyan-500/20 bg-cyan-950/30 rounded-2xl flex flex-col relative overflow-hidden p-12 shadow-[inset_0_0_100px_rgba(34,211,238,0.03)]">
+                            <div className="w-full h-full border border-cyan-500/20 bg-cyan-950/30 rounded-2xl flex relative overflow-hidden shadow-[inset_0_0_100px_rgba(34,211,238,0.03)]">
                                 {/* 投影扫描线装饰 */}
                                 <div className="absolute inset-0 bg-[linear-gradient(rgba(6,182,212,0.05)_1px,transparent_1px)] bg-[size:100%_4px] pointer-events-none z-0" />
 
@@ -500,27 +585,76 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                     if (!tut) return null;
 
                                     return (
-                                        <motion.div key={tut.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 h-full flex flex-col custom-scrollbar overflow-y-auto pr-8">
-                                            <h2 className="text-4xl font-black text-white tracking-widest mb-4 drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]">
-                                                <TypewriterText text={tut.title} delayOffset={0} />
-                                            </h2>
-                                            <div className="h-px w-full bg-gradient-to-r from-cyan-400 to-transparent mb-10 opacity-50" />
+                                        /* [布局] 内容块水平垂直居中：外层可滚动 + 内层 w-full m-auto
+                                           ⚠️ 刻意不用 items-center 居中 —— 内容比容器高时它会把顶部裁掉，m-auto 不会 */
+                                        <motion.div
+                                            key={tut.id}
+                                            initial={{ opacity: 0, y: 20 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className="relative z-10 w-full h-full flex custom-scrollbar overflow-y-auto px-14 py-10"
+                                        >
+                                            <div className="w-full m-auto" style={{ maxWidth: CODEX_UI.bodyMaxWidth }}>
+                                                <h2
+                                                    className="font-black text-white tracking-widest mb-4 text-center drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]"
+                                                    style={{ fontSize: CODEX_UI.titleSize }}
+                                                >
+                                                    <TypewriterText text={tut.title} delayOffset={0} />
+                                                </h2>
+                                                <div className="h-px w-full bg-gradient-to-r from-cyan-400 to-transparent mb-10 opacity-50" />
 
-                                            <div className="flex flex-col gap-10">
-                                                {tut.sections.map((sec, secIdx) => (
-                                                    <div key={secIdx} className="flex flex-col gap-4">
-                                                        {sec.heading && (
-                                                            <h3 className="text-cyan-300 font-bold tracking-[0.2em] text-sm border-l-4 border-cyan-400 pl-4 py-1 bg-gradient-to-r from-cyan-900/40 to-transparent">
-                                                                <TypewriterText text={sec.heading} delayOffset={secIdx * 1.5 + 1} />
-                                                            </h3>
-                                                        )}
-                                                        {sec.paragraphs.map((p, pIdx) => (
-                                                            <p key={pIdx} className="text-cyan-50/90 leading-[1.8] text-sm tracking-wide text-justify">
-                                                                <TypewriterText text={p} delayOffset={secIdx * 1.5 + 1 + pIdx * 0.5} />
-                                                            </p>
-                                                        ))}
-                                                    </div>
-                                                ))}
+                                                <div className="flex flex-col" style={{ gap: 36 }}>
+                                                    {tut.sections.map((sec, secIdx) => (
+                                                        <div key={secIdx} className="flex flex-col" style={{ gap: 16 }}>
+                                                            {sec.heading && (
+                                                                <h3
+                                                                    className="text-cyan-300 font-bold tracking-[0.2em] border-l-4 border-cyan-400 pl-4 py-1 bg-gradient-to-r from-cyan-900/40 to-transparent"
+                                                                    style={{ fontSize: CODEX_UI.headingSize }}
+                                                                >
+                                                                    <TypewriterText text={sec.heading} delayOffset={secIdx * 1.5 + 1} />
+                                                                </h3>
+                                                            )}
+                                                            {sec.paragraphs.map((p, pIdx) => {
+                                                                const detail = (sec as SectionDetail).paragraphsDetail?.[pIdx];
+                                                                const dKey = `${tut.id}-${secIdx}-${pIdx}`;
+                                                                const isOpen = !!expandedDetails[dKey];
+                                                                return (
+                                                                    <div key={pIdx} className="flex flex-col" style={{ gap: 8 }}>
+                                                                        {/* 精炼版 —— 保留逐字打字机 */}
+                                                                        <p
+                                                                            className="text-cyan-50/90 tracking-wide"
+                                                                            style={{ fontSize: CODEX_UI.bodySize, lineHeight: CODEX_UI.bodyLineHeight }}
+                                                                        >
+                                                                            <TypewriterText text={p} delayOffset={secIdx * 1.5 + 1 + pIdx * 0.5} />
+                                                                        </p>
+
+                                                                        {/* 详细版 —— 展开后显示，**刻意不走打字机**：
+                                                                            它按字符生成 motion.span + blur 动画，长文本会把演出开销放大数倍 */}
+                                                                        {isOpen && detail && (
+                                                                            <p
+                                                                                className="text-cyan-100/85 tracking-wide rounded-lg border-l-4 border-cyan-400/60 bg-cyan-950/50 px-5 py-4"
+                                                                                style={{ fontSize: CODEX_UI.detailSize, lineHeight: CODEX_UI.bodyLineHeight }}
+                                                                            >
+                                                                                {detail}
+                                                                            </p>
+                                                                        )}
+
+                                                                        {/* 展开 / 收起 按钮 */}
+                                                                        {detail && (
+                                                                            <button
+                                                                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setExpandedDetails(prev => ({ ...prev, [dKey]: !prev[dKey] })); }}
+                                                                                className="self-start flex items-center gap-2 rounded border border-cyan-500/40 px-3 py-1 text-cyan-300 hover:bg-cyan-800/40 hover:text-white transition-all"
+                                                                                style={{ fontSize: CODEX_UI.menuSubSize + 3 }}
+                                                                            >
+                                                                                <ChevronRight size={14} className={`transition-transform duration-300 ${isOpen ? 'rotate-90' : ''}`} />
+                                                                                {isOpen ? '收起详解' : '展开详解'}
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </motion.div>
                                     );
@@ -561,10 +695,16 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                 </div>
 
                                                 <div className="flex flex-col mb-6 relative z-10">
-                                                    <h2 className="text-4xl font-black text-white tracking-widest drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]">
+                                                    <h2
+                                                        className="font-black text-white tracking-widest drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]"
+                                                        style={{ fontSize: CODEX_UI.titleSize }}
+                                                    >
                                                         <TypewriterText text={details.nameCn} delayOffset={0} />
                                                     </h2>
-                                                    <span className={`text-sm font-bold text-${themeColor}-400 tracking-[0.3em] uppercase mt-1`}>
+                                                    <span
+                                                        className={`font-bold text-${themeColor}-400 tracking-[0.3em] uppercase mt-1`}
+                                                        style={{ fontSize: CODEX_UI.subTitleSize }}
+                                                    >
                                                         <TypewriterText text={details.nameEn} delayOffset={0.5} />
                                                     </span>
                                                 </div>
@@ -575,12 +715,19 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                     {details.sections.map((sec, secIdx) => (
                                                         <div key={secIdx} className="flex flex-col gap-3">
                                                             {sec.heading && (
-                                                                <h3 className={`text-${themeColor}-300 font-bold tracking-[0.2em] text-xs border-l-4 border-${themeColor}-400 pl-3 py-1 bg-gradient-to-r from-cyan-900/40 to-transparent`}>
+                                                                <h3
+                                                                    className={`text-${themeColor}-300 font-bold tracking-[0.2em] border-l-4 border-${themeColor}-400 pl-3 py-1 bg-gradient-to-r from-cyan-900/40 to-transparent`}
+                                                                    style={{ fontSize: CODEX_UI.headingSize }}
+                                                                >
                                                                     <TypewriterText text={sec.heading} delayOffset={secIdx * 1.5 + 1} />
                                                                 </h3>
                                                             )}
                                                             {sec.paragraphs.map((p, pIdx) => (
-                                                                <p key={pIdx} className="text-cyan-50/90 leading-[1.8] text-sm tracking-wide text-justify">
+                                                                <p
+                                                                    key={pIdx}
+                                                                    className="text-cyan-50/90 tracking-wide"
+                                                                    style={{ fontSize: CODEX_UI.bodySize, lineHeight: CODEX_UI.bodyLineHeight }}
+                                                                >
                                                                     <TypewriterText text={p} delayOffset={secIdx * 1.5 + 1 + pIdx * 0.5} />
                                                                 </p>
                                                             ))}
@@ -618,7 +765,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                 <div className="w-full mt-6 bg-black/40 border border-cyan-500/30 rounded-xl p-3 flex justify-center gap-6 z-10 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
                                                     {details.availableModes.includes('bench') && (
                                                         <button
-                                                            onClick={() => setSandboxMode('bench')}
+                                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSandboxMode('bench'); }}
                                                             className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-black tracking-widest transition-all duration-300 border-2 ${sandboxMode === 'bench' ? 'bg-cyan-600/20 border-cyan-400 text-cyan-300 shadow-[inset_0_0_15px_rgba(34,211,238,0.3)] scale-105' : 'bg-cyan-950/50 border-transparent text-cyan-500/50 hover:bg-cyan-900/50 hover:text-cyan-300'}`}
                                                         >
                                                             <Shield size={18} /> 撤回 (BENCH)
@@ -626,7 +773,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
                                                     )}
                                                     {details.availableModes.includes('combat') && (
                                                         <button
-                                                            onClick={() => setSandboxMode('combat')}
+                                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSandboxMode('combat'); }}
                                                             className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-black tracking-widest transition-all duration-300 border-2 ${sandboxMode === 'combat' ? 'bg-red-600/20 border-red-500 text-red-400 shadow-[inset_0_0_20px_rgba(239,68,68,0.3)] scale-105' : 'bg-red-950/30 border-transparent text-red-500/50 hover:bg-red-900/40 hover:text-red-400'}`}
                                                         >
                                                             <Sword size={18} /> 进攻 (COMBAT)
@@ -674,7 +821,7 @@ export const GalleryCodex: React.FC<GalleryCodexProps> = ({ onClose, userSystem 
 
             {/* 右上角关闭按钮 (延迟淡入) */}
             <motion.button
-                onClick={onClose}
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                 className="absolute top-6 right-6 w-12 h-12 rounded-full border border-cyan-500/50 bg-black/50 text-cyan-400 flex items-center justify-center hover:bg-cyan-900/50 hover:text-white hover:scale-110 hover:shadow-[0_0_20px_rgba(34,211,238,0.5)] transition-all duration-200 z-[210]"
                 initial={{ opacity: 0, scale: 0.5, rotate: -90 }}
                 animate={{ opacity: 1, scale: 1, rotate: 0 }}
@@ -709,7 +856,7 @@ const TabButton = ({ id, active, icon, label, labelCn, onClick }: { id: string, 
     const isActive = active === id;
     return (
         <button
-            onClick={onClick}
+            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClick?.(); }}
             className={`relative w-full py-3 px-4 flex items-center justify-between overflow-hidden transition-all duration-300 group rounded-r-md
                 ${isActive ? 'bg-cyan-900/40 border-l-2 border-cyan-400 text-cyan-50 shadow-[inset_20px_0_20px_-20px_rgba(34,211,238,0.3)]' : 'border-l-2 border-transparent text-cyan-500/70 hover:bg-cyan-900/20 hover:text-cyan-300 hover:border-cyan-500/50'}`}
         >
@@ -741,7 +888,7 @@ const CategoryButton = ({ id, active, label, onClick }: { id: string, active: st
     const isActive = active === id;
     return (
         <button
-            onClick={onClick}
+            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClick?.(); }}
             className={`relative w-full py-2 px-3 flex items-center justify-between transition-all duration-300 group rounded-sm
                 ${isActive ? 'bg-cyan-800/30 text-white' : 'text-cyan-500/70 hover:bg-cyan-800/20 hover:text-cyan-300'}`}
         >

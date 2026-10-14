@@ -35,7 +35,7 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in" onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}>
             <div
                 className="w-[600px] bg-slate-900 border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
                 onClick={e => e.stopPropagation()}

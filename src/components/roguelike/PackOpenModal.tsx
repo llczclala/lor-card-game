@@ -32,6 +32,7 @@ import {
 } from '../../data/roguelike/divinityShards';
 import { getGameScale } from '../../utils/gameScale'; // [2026-09-04] 详情 portal 逃出 scale 容器后按 gameScale 补偿
 import { BulkOpenSummaryModal, type BulkSummaryItem } from './BulkOpenSummaryModal'; // [2026-10-04 程拍板] 一键全开的完整结果汇总窗
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 开卡包 / 关闭 / 详情 音效
 
 interface PackOpenModalProps {
     isOpen: boolean;
@@ -184,7 +185,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
     useEffect(() => {
         if (!isOpen) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
+            if (e.key !== 'Escape') return; eventBus.emit(GameEvents.UI_BACK);
             if (detailOpen) { e.stopImmediatePropagation(); setDetailOpen(false); return; }
             if (phaseRef.current === 'rolling') return;
             e.stopImmediatePropagation();
@@ -256,6 +257,9 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
         setBulkDone(0);
         const pick = onOpenPack?.();
         if (!pick) return;
+        // [2026-10-14 莉莉子 🖱️交互层革新] 开卡包音效（单抽）—— 放在**拿到结果之后**：
+        //   若放在 onOpenPack 之前，"没包可开"（返回 null）时也会空响一声。
+        eventBus.emit(GameEvents.GACHA_START_SINGLE);
         startRoll(pick);
     };
 
@@ -269,6 +273,8 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
             list.push(pick);
         }
         if (list.length === 0) return;
+        // [2026-10-14 莉莉子 🖱️交互层革新] 一键全开音效（十连抽）—— 整批只响这一声
+        eventBus.emit(GameEvents.GACHA_START_TEN);
         rollSpeedRef.current = ROLL_SPEED_BULK;   // [2026-10-04 方案B] 一键：加速滚动
         queueRef.current = list.slice(1);   // 第一发立刻滚，其余排队
         setBulkList(list);                  // [2026-10-04 程拍板] 留档完整结果 → 全部播完后开汇总窗
@@ -325,7 +331,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                     <motion.div
                         className="absolute inset-0 bg-black/85 backdrop-blur-md"
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        onClick={() => { if (phase !== 'rolling') onClose(); }}
+                        onClick={() => { if (phase !== 'rolling') { eventBus.emit(GameEvents.UI_BACK); onClose(); } }}
                     />
                     {/* [2026-10-02 #4] 面板整体按 gameScale 缩放 —— 与详情弹窗、开匣弹窗统一 */}
                     <div style={{ transform: `scale(${gameScale})` }}>
@@ -464,11 +470,11 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                 {/* [2026-10-02 #5] 结果态兜底：详情弹窗关掉后这里仍有可点，不再"底部空白" */}
                                 {phase === 'result' && (
                                     <>
-                                        <button onClick={() => setDetailOpen(true)}
+                                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setDetailOpen(true); }}
                                             className="px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all">
                                             🔍 查看详情
                                         </button>
-                                        <button onClick={onClose}
+                                        <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                                             className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-purple-400 text-white font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(168,85,247,0.45)]">
                                             {canOpen ? '收起' : '完成'}
                                         </button>
@@ -478,7 +484,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
 
                             {/* 右上关闭（滚动中禁用） */}
                             {phase !== 'rolling' && (
-                                <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-full text-gray-500 hover:bg-white/10 hover:text-white transition-all">
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="absolute top-4 right-4 p-2 rounded-full text-gray-500 hover:bg-white/10 hover:text-white transition-all">
                                     <X size={20} />
                                 </button>
                             )}
@@ -547,7 +553,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                     {/* 按钮：去开匣子 / 再开一包 / 收起 */}
                                     <div className="flex flex-wrap justify-center gap-2.5 mt-2">
                                         {onOpenChest && (
-                                            <button onClick={() => { onClose(); onOpenChest(); }}
+                                            <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClose(); onOpenChest(); }}
                                                 className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.5)]">
                                                 🔓 去开匣子
                                             </button>
@@ -558,7 +564,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                                 🎁 再开一包（×{pendingPacks}）
                                             </button>
                                         )}
-                                        <button onClick={() => { if (canOpen) backToIdle(); else onClose(); }}
+                                        <button onClick={() => { if (canOpen) { eventBus.emit(GameEvents.UI_CLICK); backToIdle(); } else { eventBus.emit(GameEvents.UI_BACK); onClose(); } }}
                                             className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all">
                                             {canOpen ? '收起' : '完成'}
                                         </button>

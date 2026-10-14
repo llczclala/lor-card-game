@@ -136,7 +136,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
         <>
             {/* 关闭按钮 - 独立 fixed 定位，完全脱离 flex 布局，永不被遮挡 */}
             <button
-                onClick={onClose}
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                 className="fixed top-8 right-8 z-[999] p-3 rounded-full
                            bg-black/70 border border-white/20 text-white
                            hover:bg-white/20 hover:border-white/60
@@ -297,7 +297,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                                 return (
                                     <div
                                         key={it.index}
-                                        onClick={() => setPreviewIndex(it.index)}
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setPreviewIndex(it.index); }}
                                         className={`
                                             relative cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300 group
                                             ${active ? 'border-orange-500 scale-105 shadow-[0_0_20px_orange]' : 'border-white/10 hover:border-white/50 opacity-60 hover:opacity-100'}
@@ -408,7 +408,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                         <button
                             onClick={() => {
                                 if (isPreviewUnlocked) {
-                                    onSelect(previewIndex);
+                                    eventBus.emit(GameEvents.UI_CLICK); onSelect(previewIndex);
                                 }
                             }}
                             // 禁用条件：已经是当前选择 OR 未解锁

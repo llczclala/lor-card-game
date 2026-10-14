@@ -2,6 +2,44 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SENTRY_IMAGE_HASH, SENTRY_IMAGE_PATH } from '../data/sentryHash';
 import titleLogo from '../image/icon/titile.webp'; // [哨兵] 游戏标题图片
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 首次点击音效
+
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 启动页 · 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 只管这一段流程：健康游戏忠告 → 免责声明。不碰别的界面。
+// 改完存盘即生效（HMR 直接刷新，电脑上就能看到，不用出包）。
+// 用法：先调【主旋钮】scale 把整体大小定下来，再动下面的细节值。
+// ══════════════════════════════════════════════════════════════════════
+export const SPLASH_UI = {
+    /** 【主旋钮】整屏内容整体缩放（1 = 原样） */
+    scale: 1,
+
+    /** ① 《健康游戏忠告》 */
+    health: {
+        titleSize: 120,      // 标题字号 px（原 text-4xl）
+        titleGap: 48,       // 标题 ↓ 正文的间距 px（原 mb-6）
+        bodySize: 48,       // 正文字号 px（原 text-2xl）
+        lineGap: 40,        // 行与行的间距 px（原 space-y-5）
+        offsetY: 0,         // 整块上下位置：正数下移 / 负数上移 px
+    },
+
+    /** ② 免责声明 */
+    legal: {
+        logoWidth: 630,     // 标题图宽度 px（原 w-[420px]）
+        logoGap: 60,        // 标题图 ↓ 文字的间距 px（原 mb-10）
+        strongSize: 27,     // 前 2 行字号 px（原 text-lg）
+        bodySize: 24,       // 其余行字号 px（原 text-base）
+        lineGap: 6,         // 行与行的间距 px（原 space-y-1）
+        blankHeight: 18,    // 空行占位高度 px（原 h-3）
+        textGap: 60,        // 文字块 ↓ 按钮的间距 px（原 mb-10）
+        btnFontSize: 21,    // 「点击进入游戏」字号 px（原 text-sm）
+        btnPadX: 60,        // 按钮左右内边距 px（原 px-10）
+        btnPadY: 18,        // 按钮上下内边距 px（原 py-3）
+        versionSize: 10,    // 底部版本号字号 px（原 text-[10px]）
+        versionBottom: 18,  // 版本号距屏幕底边 px（原 bottom-6）
+    },
+} as const;
 
 /** 使用 Web Crypto API 计算 SHA-256 */
 async function computeSHA256(url: string): Promise<string> {
@@ -162,15 +200,25 @@ const HealthAdviceScreen: React.FC<{ onComplete: () => void }> = ({ onComplete }
             animate={{ opacity: show ? 1 : 0 }}
             transition={{ duration: 1, ease: 'easeInOut' }}
         >
-            <div className="text-center space-y-5 px-8">
+            {/* 尺寸全部来自顶部 🎛️ SPLASH_UI.health */}
+            <div
+                className="text-center px-8 flex flex-col items-center"
+                style={{
+                    gap: SPLASH_UI.health.lineGap,
+                    marginTop: SPLASH_UI.health.offsetY,
+                    transform: `scale(${SPLASH_UI.scale})`,
+                    transformOrigin: 'center center',
+                }}
+            >
                 {HEALTH_ADVICE.map((line, i) => (
                     <p
                         key={i}
-                        className={`font-sans tracking-wider leading-relaxed ${
+                        className={`font-sans tracking-wider leading-relaxed ${i === 0 ? 'font-bold text-white' : 'text-white/90'}`}
+                        style={
                             i === 0
-                                ? 'text-4xl font-bold text-white mb-6'
-                                : 'text-2xl text-white/90'
-                        }`}
+                                ? { fontSize: SPLASH_UI.health.titleSize, marginBottom: SPLASH_UI.health.titleGap }
+                                : { fontSize: SPLASH_UI.health.bodySize }
+                        }
                     >
                         {line}
                     </p>
@@ -197,34 +245,46 @@ const DisclaimerScreen: React.FC<{
             {/* 背景微光 */}
             <div className="absolute inset-0 opacity-[0.04] bg-[radial-gradient(ellipse_at_center,_rgba(0,200,255,0.6)_0%,_transparent_70%)]" />
 
-            <div className="relative z-10 flex flex-col items-center">
+            {/* 尺寸全部来自顶部 🎛️ SPLASH_UI.legal */}
+            <div
+                className="relative z-10 flex flex-col items-center"
+                style={{
+                    transform: `scale(${SPLASH_UI.scale})`,
+                    transformOrigin: 'center center',
+                }}
+            >
                 {/* 标题图片 */}
                 <img
                     src={titleLogo}
-                    className="w-[420px] mb-10 drop-shadow-[0_0_30px_rgba(0,200,255,0.15)]"
+                    className="drop-shadow-[0_0_30px_rgba(0,200,255,0.15)]"
+                    style={{ width: SPLASH_UI.legal.logoWidth, marginBottom: SPLASH_UI.legal.logoGap }}
                     alt="尘白禁区 Rivals"
                 />
 
                 {/* 免责声明正文 — 蓝色数据流字体，倾斜加粗居中 */}
-                <div className="text-center max-w-lg mb-10 space-y-1">
+                <div
+                    className="text-center max-w-lg flex flex-col items-center"
+                    style={{
+                        gap: SPLASH_UI.legal.lineGap,
+                        marginBottom: SPLASH_UI.legal.textGap,
+                    }}
+                >
                     {DISCLAIMER_TEXT.map((line, i) => (
                         <p
                             key={i}
-                            className={`${
+                            className={line === '' ? '' : 'italic font-bold tracking-wide'}
+                            style={
                                 line === ''
-                                    ? 'h-3'
-                                    : 'italic font-bold'
-                            } ${
-                                i === 0 || i === 1
-                                    ? 'text-lg'
-                                    : 'text-base'
-                            } tracking-wide`
+                                    ? { height: SPLASH_UI.legal.blankHeight }
+                                    : {
+                                        fontSize: i === 0 || i === 1
+                                            ? SPLASH_UI.legal.strongSize
+                                            : SPLASH_UI.legal.bodySize,
+                                        color: '#00d4ff',
+                                        textShadow: '0 0 8px rgba(0, 212, 255, 0.3), 0 0 20px rgba(0, 212, 255, 0.1)',
+                                        fontFamily: "'Courier New', 'Noto Sans SC', monospace",
+                                    }
                             }
-                            style={{
-                                color: '#00d4ff',
-                                textShadow: '0 0 8px rgba(0, 212, 255, 0.3), 0 0 20px rgba(0, 212, 255, 0.1)',
-                                fontFamily: "'Courier New', 'Noto Sans SC', monospace",
-                            }}
                         >
                             {line}
                         </p>
@@ -239,12 +299,16 @@ const DisclaimerScreen: React.FC<{
                 >
                     {showContinue && (
                         <button
-                            onClick={onComplete}
-                            className="px-10 py-3 rounded-lg bg-white/5 border border-cyan-400/20 text-cyan-300/80
+                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onComplete(); }}
+                            className="rounded-lg bg-white/5 border border-cyan-400/20 text-cyan-300/80
                                        hover:bg-white/10 hover:border-cyan-400/50 hover:text-cyan-200
-                                       transition-all duration-300 tracking-[0.2em] text-sm font-mono
+                                       transition-all duration-300 tracking-[0.2em] font-mono
                                        active:scale-95"
-                            style={{ textShadow: '0 0 6px rgba(0, 212, 255, 0.2)' }}
+                            style={{
+                                fontSize: SPLASH_UI.legal.btnFontSize,
+                                padding: `${SPLASH_UI.legal.btnPadY}px ${SPLASH_UI.legal.btnPadX}px`,
+                                textShadow: '0 0 6px rgba(0, 212, 255, 0.2)',
+                            }}
                         >
                             点击进入游戏
                         </button>
@@ -253,7 +317,13 @@ const DisclaimerScreen: React.FC<{
             </div>
 
             {/* 底部版本 */}
-            <div className="absolute bottom-6 text-[10px] text-slate-800 tracking-wider font-mono">
+            <div
+                className="absolute text-slate-300 tracking-wider font-mono"
+                style={{
+                    bottom: SPLASH_UI.legal.versionBottom,
+                    fontSize: SPLASH_UI.legal.versionSize,
+                }}
+            >
                 v1.0.7 · FAN-MADE · FREE
             </div>
         </motion.div>

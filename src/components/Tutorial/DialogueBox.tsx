@@ -12,6 +12,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { DialogueStep } from '../../data/tutorialScript';
 import { HERO_IMAGES } from '../../data/imageData';
 import { CARD_CROP_CONFIG } from '../../data/cardCropConfig'; // [新增] 读取头像裁剪
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 对话推进音效
 
 // ════════════════════════════════════════════════════════════
 
@@ -116,7 +117,7 @@ export const DialogueBox: React.FC<DialogueBoxProps> = ({ step, onComplete }) =>
       className={`fixed bottom-0 left-0 right-0 z-[95] px-6 pb-6 pt-2
                   transition-all duration-500 ease-out
                   ${isVisible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
-      onClick={handleClick}
+      onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleClick(); }}
       style={{ pointerEvents: 'auto', cursor: isTextFullyShown ? 'pointer' : 'default', transform: `translateY(${isVisible ? '0' : '100%'}) scale(${scale})`, transformOrigin: 'bottom center' }}
     >
       {/* 对话框容器 */}

@@ -18,6 +18,7 @@ import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes';
 import { CARD_DB } from '../../data/cards';
 import { EnhancementPreview, type EnhancementPreviewHover } from './EnhancementPreview';
 import { EnhancementCard } from './EnhancementCard'; // [2026-08-27] 迷宫强化图鉴卡（逻辑研习同款样式）
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 预览面板 交互音效
 
 // 节点类型 → 显示名（对齐 NodeEventModal 文案）
 const NODE_TITLE: Record<RogueNodeType, string> = {
@@ -173,7 +174,7 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
                         {/* 头部 */}
                         <div className="p-4 flex items-center justify-between border-b border-white/10 shrink-0">
                             <h3 className="font-black tracking-widest text-gray-100 text-lg">{state === 'locked' ? '未抵达的节点' : (isCombat ? (pendingBattle ? '待战 · 强敌' : '敌人情报') : '节点情报')}</h3>
-                            <button onClick={onClose} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors">
+                            <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors">
                                 <X size={18} />
                             </button>
                         </div>
@@ -211,7 +212,7 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
                                         </button>
                                     )}
                                     <button
-                                        onClick={action.onClick}
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); action.onClick(); }}
                                         className="flex-1 py-3 rounded-xl font-black tracking-widest text-white transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg"
                                         style={{ background: 'linear-gradient(to right, #6366f1, #8b5cf6)' }}
                                     >

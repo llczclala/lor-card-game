@@ -6,6 +6,7 @@ import React from 'react';
 import { Sword, Skull, Crown, Flame, ShoppingBag, HelpCircle, Gem, Flag, Sparkles, X, Lock } from 'lucide-react'; // [2026-08-10] X：击败红叉；[2026-08-27] Lock：未抵达节点锁
 import type { RogueNodeType } from '../../data/roguelike/mapLayout';
 import { CroppedAvatar } from '../CroppedAvatar'; // [2026-08-10] 当前节点头像读取 avatar 裁剪配置
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 节点点击音效
 
 export const NODE_META: Record<RogueNodeType, { icon: React.ReactNode; color: string; label: string }> = { // [2026-08-11] 导出供 NodePreviewPanel 占位卡面复用
     start: { icon: <Flag size={18} />, color: 'bg-green-600', label: '起点' },
@@ -62,7 +63,7 @@ export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate,
 
     return (
         <button
-            onClick={() => { if (isClickable) onActivate(); }}
+            onClick={() => { if (isClickable) { eventBus.emit(GameEvents.UI_CLICK); onActivate(); } }}
             onContextMenu={(e) => {
                 // [2026-08-11 节点预览] 右键任意状态节点 → 弹预览；抑制浏览器菜单 + 阻止冒泡到视口（视口据此区分节点/空白右键）
                 e.preventDefault();

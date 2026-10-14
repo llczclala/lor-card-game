@@ -4,6 +4,7 @@ import { CARD_DB } from '../data/cards';
 import { Card } from './Card';
 import { useCardGaze } from '../hooks/useCardGaze';
 import { FloatingCardPreview } from './FloatingCardPreview';
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 记录面板 交互音效
 
 // ==========================================
 // 📜 对局记录面板
@@ -54,7 +55,7 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ records, isOpen, onClo
     return (
         <div className="fixed inset-0 z-[9999] pointer-events-auto">
             {/* 半透明遮罩 —— 点击关闭 */}
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+            <div className="absolute inset-0 bg-black/40" onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} />
 
             {/* 侧边面板 — 占屏幕一半宽度 */}
             <div className="absolute right-0 top-0 h-full w-1/2 max-w-[640px] bg-slate-900/95 border-l border-white/10 shadow-2xl shadow-black/50 flex flex-col">
@@ -62,7 +63,7 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ records, isOpen, onClo
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
                     <h2 className="text-xl font-bold text-white tracking-wider">📜 对局记录</h2>
                     <button
-                        onClick={onClose}
+                        onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                         className="w-8 h-8 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-all text-lg"
                     >✕</button>
                 </div>
@@ -180,7 +181,7 @@ const RecordCard: React.FC<{
             <div
                 className="relative rounded-lg overflow-hidden cursor-pointer transition-all hover:scale-105 hover:-translate-y-1"
                 style={{ boxShadow: `0 0 0 1.5px ${color.ring}, 0 4px 12px rgba(0,0,0,0.5)` }}
-                onClick={() => onClickCard(entity.cardKey)}
+                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClickCard(entity.cardKey); }}
                 onMouseEnter={gazeHandlers?.onMouseEnter as React.MouseEventHandler<HTMLDivElement> | undefined}
                 onMouseLeave={gazeHandlers?.onMouseLeave as React.MouseEventHandler<HTMLDivElement> | undefined}
             >

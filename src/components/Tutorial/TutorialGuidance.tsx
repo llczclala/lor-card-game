@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UI_IMAGES } from '../../data/imageData';
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 萌新/老玩家 选择音效
 
 interface TutorialGuidanceProps {
     /** 引导层弹出条件是否满足（未完成教程 + 未关闭过） */
@@ -117,7 +118,7 @@ export const TutorialGuidance: React.FC<TutorialGuidanceProps> = ({
                             >
                                 {/* 我是萌新 - 蓝色 */}
                                 <button
-                                    onClick={handleNewbie}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleNewbie(); }}
                                     className="flex-1 py-4 rounded-xl font-bold text-lg tracking-widest
                                         bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500
                                         text-white shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)]
@@ -128,7 +129,7 @@ export const TutorialGuidance: React.FC<TutorialGuidanceProps> = ({
 
                                 {/* 我是老玩家 - 橙色 */}
                                 <button
-                                    onClick={handleVeteran}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleVeteran(); }}
                                     className="flex-1 py-4 rounded-xl font-bold text-lg tracking-widest
                                         bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500
                                         text-white shadow-[0_0_20px_rgba(251,146,60,0.4)] hover:shadow-[0_0_30px_rgba(251,146,60,0.6)]

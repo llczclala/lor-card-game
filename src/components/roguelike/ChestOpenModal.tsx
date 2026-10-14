@@ -37,6 +37,7 @@ import { getArmamentChestPool } from '../../logic/armamentChestPool'; // [2026-1
 import { hasArmamentRoom, getArmamentOverflowDataGold, MAX_ARMAMENT_STOCK } from '../../data/roguelike/armamentStock'; // [2026-10-04 ②] 预览按库存标注（与抽取同源）
 import { CARD_DB } from '../../data/cards';
 import { getGameScale } from '../../utils/gameScale';
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 关闭/详情 音效
 import { BulkOpenSummaryModal, type BulkSummaryItem } from './BulkOpenSummaryModal'; // [2026-10-04 程拍板] 一键开匣的完整结果汇总窗
 import {
     CHEST_KIND_LABEL, SHARD_CHEST_AMOUNT, SHARD_GROUP_SIZE,
@@ -113,7 +114,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
     useEffect(() => {
         if (!isOpen) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
+            if (e.key !== 'Escape') return; eventBus.emit(GameEvents.UI_BACK);
             e.stopImmediatePropagation();
             if (detailIndex !== null) { setDetailIndex(null); return; }
             if (phaseRef.current === 'opening') return;
@@ -231,7 +232,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
                     key="chest-open-root"
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                     className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/85 backdrop-blur-md"
-                    onClick={() => { if (phaseRef.current !== 'opening') onClose(); }}
+                    onClick={() => { if (phaseRef.current !== 'opening') { eventBus.emit(GameEvents.UI_BACK); onClose(); } }}
                 >
                     <div style={{ transform: `scale(${gameScale})` }} onClick={(e) => e.stopPropagation()}>
                         <motion.div
@@ -300,7 +301,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
                                                     </div>
                                                     {/* [2026-10-02 N4] 查看详情（阻止冒泡，避免误触发开启） */}
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); setDetailIndex(i); }}
+                                                        onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); setDetailIndex(i); }}
                                                         className="relative z-10 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/25 text-white/85 text-[11px] font-bold tracking-wider transition-all"
                                                     >
                                                         🔍 查看详情
@@ -319,7 +320,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
                             {phase === 'select' && chests.length === 0 && (
                                 <div className="flex flex-col items-center gap-4 py-10">
                                     <p className="text-gray-400">没有待打开的匣子了</p>
-                                    <button onClick={onClose}
+                                    <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                                         className="px-8 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all">
                                         完成
                                     </button>
@@ -490,14 +491,14 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
                                     <div className="flex gap-2.5 mt-1">
                                         {chests.length > 0 && (
                                             <button
-                                                onClick={() => { setResult(null); setPh('select'); }}
+                                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setResult(null); setPh('select'); }}
                                                 className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.45)]"
                                             >
                                                 🔓 继续开匣（×{chests.length}）
                                             </button>
                                         )}
                                         <button
-                                            onClick={onClose}
+                                            onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                                             className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all"
                                         >
                                             {chests.length > 0 ? '收起' : '完成'}
@@ -508,7 +509,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
 
                             {/* 关闭 */}
                             {phase !== 'opening' && (
-                                <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-full text-gray-500 hover:bg-white/10 hover:text-white transition-all">
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="absolute top-4 right-4 p-2 rounded-full text-gray-500 hover:bg-white/10 hover:text-white transition-all">
                                     <X size={20} />
                                 </button>
                             )}
@@ -600,7 +601,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
                                         )}
 
                                         <button
-                                            onClick={() => setDetailIndex(null)}
+                                            onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setDetailIndex(null); }}
                                             className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all mt-1"
                                         >
                                             关闭

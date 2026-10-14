@@ -48,15 +48,115 @@ interface GameLobbyProps {
     hasClaimableReward?: boolean; // [新增] 接收是否有待领取的军功奖励信号
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 游戏大厅 · 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 管：顶部资源栏 / 左上玩家信息 / 左侧控制区 / 右侧行动区 / 右下工具区 / GM 入口。
+// 改完存盘即生效（HMR 直接刷新，电脑上就能看到，不用出包）。
+// 用法：先拧【主旋钮】btnScale 把按钮整体大小定下来，再动下面的细节值。
+// 换算：按钮/图标的最终尺寸 = 基础值 × btnScale；字号 = 基础值 × fontScale。
+// ══════════════════════════════════════════════════════════════════════
+export const LOBBY_UI = {
+    /** 【主旋钮】所有按钮 / 图标的尺寸倍率（1 = 原样） */
+    btnScale: 1.25,
+    /** 【次旋钮】所有文字的字号倍率（1 = 原样） */
+    fontScale: 1.25,
+
+    // ══ ① 按钮基础尺寸（逻辑 px）═══════════════════════════════════════
+    btn: {
+        topIcon:    { w: 48,  h: 40 },   // 顶部 公告 / 设置（原 w-12 h-10）
+        ctrlSmall:  { w: 64,  h: 48 },   // 左侧 显示 / 下一张 / 背景 / 场景（原 w-16 h-12）
+        mission:    { w: 80,  h: 80 },   // 任务（原 w-20 h-20）
+        /** ⚠️ h: 0 = 高度由内容撑开。原来写的 `h-30` 是**无效类**（Tailwind 没有 30 这一档），
+         *  所以它一直是内容撑开；想固定高度就填具体 px（如 120）。 */
+        battle:     { w: 192, h: 0 },    // 战斗（原 w-48 + h-30[无效]）
+        gacha:      { w: 256, h: 80 },   // 共鸣（原 w-64 h-20）
+        bottomTool: { w: 128, h: 48 },   // 图鉴 / 商店 / 编队（原 w-32 h-12）
+        gm:         { w: 64,  h: 64 },   // GM 开发者入口（原 w-16 h-16）
+        bgThumb:    { w: 128, h: 80 },   // 背景选择面板里的缩略图（原 w-32 h-20）
+    },
+
+    // ══ ② 按钮内图标尺寸（逻辑 px）═════════════════════════════════════
+    icon: {
+        topBar: 20,      // 公告 / 设置
+        ctrl: 20,        // 左侧控制四个
+        sceneBadge: 10,  // 场景按钮右下角的小刷新角标
+        mission: 24,
+        battle: 40,
+        gacha: 24,
+        bottomTool: 18,
+        gm: 28,
+    },
+
+    // ══ ③ 按钮通用 ═════════════════════════════════════════════════════
+    labelSize: 14,       // GlassButton 主标签字号（原 text-sm）
+    subLabelSize: 10,    // GlassButton 副标签字号（原 text-[10px]）
+    labelGap: 4,         // 主标签上方间距（原 mt-1）
+    hoverScale: 1.05,    // 悬停放大（原 whileHover 1.05）
+    tapScale: 0.95,      // 按下缩小（原 whileTap 0.95）
+    skewDeg: 2.5,        // 各区块的透视倾斜角（原 skewY(±2.5deg)；负值那一侧自动取反）
+
+    // ══ ④ 顶部资源栏（右上）════════════════════════════════════════════
+    res: {
+        margin: 24,       // 容器留白（原 p-6）
+        outerGap: 16,     // 资源组 ↔ 公告/设置按钮（原 gap-4）
+        rowGap: 12,       // 三条资源之间的横向间距（原 gap-3）
+        colGap: 8,        // 资源条的纵向堆叠间距（原 gap-2）
+        padX: 16,         // 资源条左右内边距（原 px-4）
+        padY: 8,          // 资源条上下内边距（原 py-2）
+        minW: 140,        // 资源条最小宽（原 min-w-[140px]）
+        minWBit: 120,     // 比特金那条（原 min-w-[120px]）
+        coinIcon: 20,     // 货币图标（原 w-5 h-5）
+        fontSize: 14,     // 数字字号（原 text-sm）
+        plusBox: 16,      // 加号方块（原 w-4 h-4）
+        plusIcon: 12,     // 加号图标（原 size 12）
+    },
+
+    // ══ ⑤ 左上玩家信息 ═════════════════════════════════════════════════
+    player: {
+        top: 32, left: 32,  // 原 top-8 left-8
+        avatar: 64,         // 头像（原 w-16 h-16）
+        avatarIcon: 24,     // 悬停时头像上的 User 图标（原 size 24）
+        nameSize: 24,       // 名字字号（原 text-2xl）
+        levelSize: 10,      // 等级标签字号（原 text-[10px]）
+        uidSize: 12,        // UID 字号（原 text-xs）
+        gap: 16,            // 头像 ↔ 文字（原 gap-4）
+        lineGap: 8,         // 名字 ↔ 等级行（原 gap-2）
+    },
+
+    // ══ ⑥ 左侧控制区 ═══════════════════════════════════════════════════
+    ctrlArea: { left: 40, gap: 16 },
+
+    // ══ ⑦ 右侧行动区 ═══════════════════════════════════════════════════
+    actionArea: { right: 48, gap: 16, colGap: 16 },
+
+    // ══ ⑧ 右下工具区 ═══════════════════════════════════════════════════
+    toolArea: { bottom: 48, right: 32, gap: 16 },
+
+    // ══ ⑨ GM 开发者入口（左下）═════════════════════════════════════════
+    gmArea: { bottom: 48, left: 40 },
+} as const;
+
+/** 尺寸换算：基础值 × 主旋钮（取整，避免半像素模糊） */
+const B = (v: number) => Math.round(v * LOBBY_UI.btnScale);
+/** 字号换算：基础值 × 字旋钮 */
+const F = (v: number) => Math.round(v * LOBBY_UI.fontScale);
+/** 尺寸速写：直接产出 CSS 宽高对象 */
+const sizeStyle = (w: number, h: number): React.CSSProperties => ({
+    width: B(w),
+    height: h > 0 ? B(h) : 'auto',
+});
+
 // [新增] 通用磨砂透视按钮组件
 const GlassButton = ({
-    onClick, children, className = "", active = false, label, subLabel
+    onClick, children, className = "", active = false, label, subLabel, style
 }: {
-    onClick?: () => void, children?: React.ReactNode, className?: string, active?: boolean, label?: string, subLabel?: string
+    onClick?: () => void, children?: React.ReactNode, className?: string, active?: boolean, label?: string, subLabel?: string, style?: React.CSSProperties
 }) => (
     <motion.button
-        whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.15)" }}
-        whileTap={{ scale: 0.95 }}
+        style={style}
+        whileHover={{ scale: LOBBY_UI.hoverScale, backgroundColor: "rgba(255,255,255,0.15)" }}
+        whileTap={{ scale: LOBBY_UI.tapScale }}
         onClick={() => {
             eventBus.emit(GameEvents.UI_CLICK);
             if (onClick) onClick();
@@ -69,8 +169,16 @@ const GlassButton = ({
         `}
     >
         {children}
-        {label && <span className="mt-1 text-sm font-black tracking-widest">{label}</span>}
-        {subLabel && <span className="text-[10px] font-mono opacity-60">{subLabel}</span>}
+        {label && (
+            <span className="font-black tracking-widest" style={{ marginTop: LOBBY_UI.labelGap, fontSize: F(LOBBY_UI.labelSize) }}>
+                {label}
+            </span>
+        )}
+        {subLabel && (
+            <span className="font-mono opacity-60" style={{ fontSize: F(LOBBY_UI.subLabelSize) }}>
+                {subLabel}
+            </span>
+        )}
     </motion.button>
 );
 
@@ -418,76 +526,109 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
             {/* 顶部兜底条 (提升 z-index 到 10，使其覆盖在自定义背景之上) */}
             <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-gray-200/10 to-transparent blur-2xl z-[10] pointer-events-none" />
 
-            {/* --- 1. 顶部资源栏 (修正：分离动画与透视) --- */}
+            {/* --- 1. 顶部资源栏（尺寸来自顶部 🎛️ LOBBY_UI.res / btn.topIcon）--- */}
             <div
                 // 外层：负责定位和进出场位移 (Tailwind transition)
-                className={`absolute top-0 right-0 p-6 z-50 transition-all duration-500 ${showUI ? 'translate-y-0 opacity-100' : '-translate-y-20 opacity-0'}`}
+                className={`absolute top-0 right-0 z-50 transition-all duration-500 ${showUI ? 'translate-y-0 opacity-100' : '-translate-y-20 opacity-0'}`}
+                style={{ padding: LOBBY_UI.res.margin }}
             >
                 {/* 内层：负责透视变形 (Skew) */}
                 <div
-                    className="flex items-start gap-4"
-                    style={{ transform: 'skewY(2.5deg)' }}
+                    className="flex items-start"
+                    style={{ transform: `skewY(${LOBBY_UI.skewDeg}deg)`, gap: LOBBY_UI.res.outerGap }}
                 >
                     {/* 资源列表 */}
-                    <div className="flex flex-col gap-2 items-end">
-                        <div className="flex gap-3">
+                    <div className="flex flex-col items-end" style={{ gap: LOBBY_UI.res.colGap }}>
+                        <div className="flex" style={{ gap: LOBBY_UI.res.rowGap }}>
                             {/* 1. 通用银 (SILVER) */}
-                            <div className="flex items-center gap-3 px-4 py-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-sm min-w-[140px] justify-between hover:bg-black/60 transition-colors">
-                                <div className="flex items-center gap-2">
-                                    <img src={CURRENCY_ICONS.silverCoin} className="w-5 h-5 opacity-90" alt="银币" />
-                                    <span className="text-sm font-mono font-bold text-gray-200">{localRes.silverCoin}</span>
+                            <div
+                                className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-sm justify-between hover:bg-black/60 transition-colors"
+                                style={{
+                                    gap: LOBBY_UI.res.rowGap,
+                                    padding: `${B(LOBBY_UI.res.padY)}px ${B(LOBBY_UI.res.padX)}px`,
+                                    minWidth: B(LOBBY_UI.res.minW),
+                                }}
+                            >
+                                <div className="flex items-center" style={{ gap: LOBBY_UI.res.colGap }}>
+                                    <img src={CURRENCY_ICONS.silverCoin} className="opacity-90" style={sizeStyle(LOBBY_UI.res.coinIcon, LOBBY_UI.res.coinIcon)} alt="银币" />
+                                    <span className="font-mono font-bold text-gray-200" style={{ fontSize: F(LOBBY_UI.res.fontSize) }}>{localRes.silverCoin}</span>
                                 </div>
                                 <div
                                     onClick={() => openExchange('DATA_TO_SILVER')}
-                                    className="w-4 h-4 bg-gray-700/50 hover:bg-blue-600 rounded-sm flex items-center justify-center cursor-pointer transition-colors"
+                                    className="bg-gray-700/50 hover:bg-blue-600 rounded-sm flex items-center justify-center cursor-pointer transition-colors"
+                                    style={sizeStyle(LOBBY_UI.res.plusBox, LOBBY_UI.res.plusBox)}
                                 >
-                                    <Plus size={12} className="text-white" />
+                                    <Plus size={B(LOBBY_UI.res.plusIcon)} className="text-white" />
                                 </div>
                             </div>
 
                             {/* 2. 数据金 (DATA) */}
-                            <div className="flex items-center gap-3 px-4 py-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-sm min-w-[140px] justify-between hover:bg-black/60 transition-colors">
-                                <div className="flex items-center gap-2">
-                                    <img src={CURRENCY_ICONS.dataGold} className="w-5 h-5 opacity-90" alt="数据金" />
-                                    <span className="text-sm font-mono font-bold text-gray-200">{localRes.dataGold}</span>
+                            <div
+                                className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-sm justify-between hover:bg-black/60 transition-colors"
+                                style={{
+                                    gap: LOBBY_UI.res.rowGap,
+                                    padding: `${B(LOBBY_UI.res.padY)}px ${B(LOBBY_UI.res.padX)}px`,
+                                    minWidth: B(LOBBY_UI.res.minW),
+                                }}
+                            >
+                                <div className="flex items-center" style={{ gap: LOBBY_UI.res.colGap }}>
+                                    <img src={CURRENCY_ICONS.dataGold} className="opacity-90" style={sizeStyle(LOBBY_UI.res.coinIcon, LOBBY_UI.res.coinIcon)} alt="数据金" />
+                                    <span className="font-mono font-bold text-gray-200" style={{ fontSize: F(LOBBY_UI.res.fontSize) }}>{localRes.dataGold}</span>
                                 </div>
                                 <div
                                     onClick={() => openExchange('BIT_TO_DATA')}
-                                    className="w-4 h-4 bg-gray-700/50 hover:bg-blue-600 rounded-sm flex items-center justify-center cursor-pointer transition-colors"
+                                    className="bg-gray-700/50 hover:bg-blue-600 rounded-sm flex items-center justify-center cursor-pointer transition-colors"
+                                    style={sizeStyle(LOBBY_UI.res.plusBox, LOBBY_UI.res.plusBox)}
                                 >
-                                    <Plus size={12} className="text-white" />
+                                    <Plus size={B(LOBBY_UI.res.plusIcon)} className="text-white" />
                                 </div>
                             </div>
 
                             {/* 3. 比特金 (BIT) - 移除加号 */}
-                            <div className="flex items-center gap-3 px-4 py-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-sm min-w-[120px] justify-between hover:bg-black/60 transition-colors">
-                                <div className="flex items-center gap-2">
-                                    <img src={CURRENCY_ICONS.bitGold} className="w-5 h-5 opacity-90" alt="比特金" />
-                                    <span className="text-sm font-mono font-bold text-yellow-100">{localRes.bitGold}</span>
+                            <div
+                                className="flex items-center bg-black/40 backdrop-blur-md border border-white/10 rounded-sm justify-between hover:bg-black/60 transition-colors"
+                                style={{
+                                    gap: LOBBY_UI.res.rowGap,
+                                    padding: `${B(LOBBY_UI.res.padY)}px ${B(LOBBY_UI.res.padX)}px`,
+                                    minWidth: B(LOBBY_UI.res.minWBit),
+                                }}
+                            >
+                                <div className="flex items-center" style={{ gap: LOBBY_UI.res.colGap }}>
+                                    <img src={CURRENCY_ICONS.bitGold} className="opacity-90" style={sizeStyle(LOBBY_UI.res.coinIcon, LOBBY_UI.res.coinIcon)} alt="比特金" />
+                                    <span className="font-mono font-bold text-yellow-100" style={{ fontSize: F(LOBBY_UI.res.fontSize) }}>{localRes.bitGold}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
 
                     {/* [2026-08-09] 公告按钮：置于设置（齿轮）按钮左侧，仅图标 */}
-                    <GlassButton onClick={onOpenAnnouncement} className="w-12 h-10 rounded-sm">
-                        <Megaphone size={20} className="text-gray-300 group-hover:text-white transition-colors duration-300" />
+                    <GlassButton
+                        onClick={onOpenAnnouncement}
+                        className="rounded-sm"
+                        style={sizeStyle(LOBBY_UI.btn.topIcon.w, LOBBY_UI.btn.topIcon.h)}
+                    >
+                        <Megaphone size={B(LOBBY_UI.icon.topBar)} className="text-gray-300 group-hover:text-white transition-colors duration-300" />
                     </GlassButton>
 
                     {/* 设置按钮 */}
-                    <GlassButton onClick={onOpenSettings} className="w-12 h-10 rounded-sm">
-                        <Settings size={20} className="group-hover:rotate-90 transition-transform duration-500" />
+                    <GlassButton
+                        onClick={onOpenSettings}
+                        className="rounded-sm"
+                        style={sizeStyle(LOBBY_UI.btn.topIcon.w, LOBBY_UI.btn.topIcon.h)}
+                    >
+                        <Settings size={B(LOBBY_UI.icon.topBar)} className="group-hover:rotate-90 transition-transform duration-500" />
                     </GlassButton>
                 </div>
             </div>
 
-            {/* --- 2. 玩家信息 (重构为交互式入口) --- */}
+            {/* --- 2. 玩家信息（尺寸来自顶部 🎛️ LOBBY_UI.player）--- */}
             <div
-                className={`absolute top-8 left-8 z-50 transition-all duration-500 ${showUI ? 'translate-x-0 opacity-100' : '-translate-x-20 opacity-0'}`}
+                className={`absolute z-50 transition-all duration-500 ${showUI ? 'translate-x-0 opacity-100' : '-translate-x-20 opacity-0'}`}
+                style={{ top: LOBBY_UI.player.top, left: LOBBY_UI.player.left }}
             >
                 <div
-                    className="flex items-center gap-4 cursor-pointer group"
-                    style={{ transform: 'skewY(-2.5deg)' }}
+                    className="flex items-center cursor-pointer group"
+                    style={{ gap: LOBBY_UI.player.gap, transform: `skewY(${-LOBBY_UI.skewDeg}deg)` }}
                     onClick={() => {
                         eventBus.emit(GameEvents.UI_CLICK);
                         setEditName(profile?.displayName || 'ADJUTANT');
@@ -496,53 +637,80 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     }}
                 >
                     {/* [修改] 头像容器接入伪裁剪渲染器与悬停遮罩 */}
-                    <div className="w-16 h-16 rounded-sm border-2 border-white/20 overflow-hidden shadow-lg relative bg-black/50 group-hover:border-blue-400 transition-colors">
+                    <div
+                        className="rounded-sm border-2 border-white/20 overflow-hidden shadow-lg relative bg-black/50 group-hover:border-blue-400 transition-colors"
+                        style={sizeStyle(LOBBY_UI.player.avatar, LOBBY_UI.player.avatar)}
+                    >
                         {renderAvatar(profile?.avatarConfig, profile?.avatarId)}
                         <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <User size={24} className="text-white drop-shadow-md" />
+                            <User size={B(LOBBY_UI.player.avatarIcon)} className="text-white drop-shadow-md" />
                         </div>
                     </div>
                     <div className="flex flex-col">
-                        <span className="text-2xl font-black text-white tracking-widest drop-shadow-md">{profile?.displayName || 'ADJUTANT'}</span>
-                        <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-300 text-[10px] font-bold rounded-sm border border-yellow-500/30">账号 Lv.{profile?.level || 1}</span>
-                            <span className="text-xs text-white font-mono">UID: {userSystem.userId.slice(0, 8)}</span>
+                        <span className="font-black text-white tracking-widest drop-shadow-md" style={{ fontSize: F(LOBBY_UI.player.nameSize) }}>{profile?.displayName || 'ADJUTANT'}</span>
+                        <div className="flex items-center" style={{ gap: LOBBY_UI.player.lineGap }}>
+                            <span
+                                className="bg-yellow-500/20 text-yellow-300 font-bold rounded-sm border border-yellow-500/30"
+                                style={{ padding: `${B(2)}px ${B(8)}px`, fontSize: F(LOBBY_UI.player.levelSize) }}
+                            >
+                                账号 Lv.{profile?.level || 1}
+                            </span>
+                            <span className="text-white font-mono" style={{ fontSize: F(LOBBY_UI.player.uidSize) }}>UID: {userSystem.userId.slice(0, 8)}</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {/* --- 3. 左侧视觉控制区 --- */}
+            {/* --- 3. 左侧视觉控制区（尺寸来自顶部 🎛️ LOBBY_UI.ctrlArea / btn.ctrlSmall）--- */}
             <div
                 // [修改] 增加针对 isBgSelecting 的左侧退场位移
-                className={`absolute left-10 top-1/2 -translate-y-1/2 flex flex-col gap-4 z-40 transition-all duration-500 ${isBgSelecting ? '-translate-x-32 opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}
+                className={`absolute top-1/2 -translate-y-1/2 flex flex-col z-40 transition-all duration-500 ${isBgSelecting ? '-translate-x-32 opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}
+                style={{ left: LOBBY_UI.ctrlArea.left, gap: LOBBY_UI.ctrlArea.gap }}
             >
-                <div style={{ transform: 'skewY(-2.5deg)' }} className="flex flex-row items-center gap-4">
+                <div
+                    className="flex flex-row items-center"
+                    style={{ transform: `skewY(${-LOBBY_UI.skewDeg}deg)`, gap: LOBBY_UI.ctrlArea.gap }}
+                >
                     <GlassButton
                         onClick={() => setShowUI(!showUI)}
-                        className={`w-16 h-12 rounded-sm transition-opacity duration-500 ${showUI ? 'opacity-100' : 'opacity-30 hover:opacity-100'}`}
+                        className={`rounded-sm transition-opacity duration-500 ${showUI ? 'opacity-100' : 'opacity-30 hover:opacity-100'}`}
+                        style={sizeStyle(LOBBY_UI.btn.ctrlSmall.w, LOBBY_UI.btn.ctrlSmall.h)}
                         label={showUI ? "隐藏" : "显示"}
                     >
-                        {showUI ? <Eye size={20} /> : <EyeOff size={20} />}
+                        {showUI ? <Eye size={B(LOBBY_UI.icon.ctrl)} /> : <EyeOff size={B(LOBBY_UI.icon.ctrl)} />}
                     </GlassButton>
 
-                    <div className={`flex flex-row gap-4 transition-all duration-500 ${showUI ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-10 pointer-events-none'}`}>
+                    <div
+                        className={`flex flex-row transition-all duration-500 ${showUI ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-10 pointer-events-none'}`}
+                        style={{ gap: LOBBY_UI.ctrlArea.gap }}
+                    >
                         {/* [修改] 将原先单纯的 onSwitchVideo 替换为智能切换 handleNextBg */}
-                        <GlassButton onClick={handleNextBg} className="w-16 h-12 rounded-sm" label="下一张">
-                            <RefreshCw size={20} />
+                        <GlassButton
+                            onClick={handleNextBg}
+                            className="rounded-sm"
+                            style={sizeStyle(LOBBY_UI.btn.ctrlSmall.w, LOBBY_UI.btn.ctrlSmall.h)}
+                            label="下一张"
+                        >
+                            <RefreshCw size={B(LOBBY_UI.icon.ctrl)} />
                         </GlassButton>
-                        <GlassButton onClick={handleOpenBgSelect} className="w-16 h-12 rounded-sm" label="背景">
-                            <ImageIcon size={20} />
+                        <GlassButton
+                            onClick={handleOpenBgSelect}
+                            className="rounded-sm"
+                            style={sizeStyle(LOBBY_UI.btn.ctrlSmall.w, LOBBY_UI.btn.ctrlSmall.h)}
+                            label="背景"
+                        >
+                            <ImageIcon size={B(LOBBY_UI.icon.ctrl)} />
                         </GlassButton>
                         {/* [新增] 场景切换按钮：仅在当前背景为大厅角色视频时可用 */}
                         <GlassButton
                             onClick={handleSwitchScene}
-                            className={`w-16 h-12 rounded-sm transition-all duration-300 ${customBg?.characterKey ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}
+                            className={`rounded-sm transition-all duration-300 ${customBg?.characterKey ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}
+                            style={sizeStyle(LOBBY_UI.btn.ctrlSmall.w, LOBBY_UI.btn.ctrlSmall.h)}
                             label="场景"
                         >
                             <span className="relative inline-flex items-center justify-center">
-                                <Camera size={20} />
-                                <RefreshCw size={10} className="absolute -bottom-1 -right-1 text-orange-400 drop-shadow-md" />
+                                <Camera size={B(LOBBY_UI.icon.ctrl)} />
+                                <RefreshCw size={B(LOBBY_UI.icon.sceneBadge)} className="absolute -bottom-1 -right-1 text-orange-400 drop-shadow-md" />
                             </span>
                         </GlassButton>
                         {/* [撤销] 移除左侧违和的任务按钮，让辅助功能区保持纯粹 */}
@@ -550,55 +718,59 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                 </div>
             </div>
 
-            {/* --- 4. 右侧核心行动区 (修正：解决 Framer Motion 覆盖问题) --- */}
+            {/* --- 4. 右侧核心行动区（尺寸来自顶部 🎛️ LOBBY_UI.actionArea / btn.mission|battle|gacha）--- */}
             <AnimatePresence>
                 {showUI && (
                     <div
                         // 外层：绝对定位容器 (不负责动画，避免 conflict)
                         // [关键修复] 将 skew 移到这里！
                         // 因为这里是静态的 div，不会被 framer motion 的 animate 属性覆盖 transform
-                        className="absolute right-12 bottom-1/2 -translate-y-1/2 z-40"
-                        style={{ transform: 'skewY(2.5deg)' }}
+                        className="absolute bottom-1/2 -translate-y-1/2 z-40"
+                        style={{ right: LOBBY_UI.actionArea.right, transform: `skewY(${LOBBY_UI.skewDeg}deg)` }}
                     >
                         <motion.div
                             // 内层：负责进出场动画 (x, opacity)
                             initial={{ x: 100, opacity: 0 }}
                             animate={{ x: 0, opacity: 1 }}
                             exit={{ x: 100, opacity: 0 }}
-                            className="flex items-center gap-4"
+                            className="flex items-center"
+                            style={{ gap: LOBBY_UI.actionArea.gap }}
                         >
                             {/* [核心恢复] 让 TASK 带着极其抢眼的脉冲黄点回归行动铁三角！ */}
                             <GlassButton
                                 onClick={onOpenMission}
-                                className="w-20 h-20 rounded-sm bg-blue-900 border-blue-500/30 hover:bg-blue-800 text-blue-200"
+                                className="rounded-sm bg-blue-900 border-blue-500/30 hover:bg-blue-800 text-blue-200"
+                                style={sizeStyle(LOBBY_UI.btn.mission.w, LOBBY_UI.btn.mission.h)}
                                 label="任务"
                             >
                                 <div className="relative">
-                                    <ClipboardList size={24} className="text-blue-300" />
+                                    <ClipboardList size={B(LOBBY_UI.icon.mission)} className="text-blue-300" />
                                     {hasClaimableReward && (
                                         <span className="absolute -top-2 -right-4 w-4 h-4 bg-yellow-400 rounded-full border-2 border-yellow-200 shadow-[0_0_15px_yellow] animate-pulse" />
                                     )}
                                 </div>
                             </GlassButton>
 
-                            <div className="flex flex-col gap-4">
+                            <div className="flex flex-col" style={{ gap: LOBBY_UI.actionArea.colGap }}>
                                 <GlassButton
                                     onClick={() => {eventBus.emit(GameEvents.LOBBY_START_BATTLE);onStartBattle();}}
-                                    className="w-48 h-30 rounded-sm bg-orange-700 border-orange-500/50 hover:bg-orange-600 text-orange-100"
+                                    className="rounded-sm bg-orange-700 border-orange-500/50 hover:bg-orange-600 text-orange-100"
+                                    style={sizeStyle(LOBBY_UI.btn.battle.w, LOBBY_UI.btn.battle.h)}
                                     label="战斗"
                                     subLabel="行动开始"
                                 >
-                                    <Sword size={40} className="text-orange-200 mb-2" />
+                                    <Sword size={B(LOBBY_UI.icon.battle)} className="text-orange-200 mb-2" />
                                 </GlassButton>
 
                                 <GlassButton
                                     onClick={onGachaClick}
-                                    className="w-64 h-20 rounded-sm bg-purple-900 border-purple-500/50 hover:bg-purple-800 text-purple-100"
+                                    className="rounded-sm bg-purple-900 border-purple-500/50 hover:bg-purple-800 text-purple-100"
+                                    style={sizeStyle(LOBBY_UI.btn.gacha.w, LOBBY_UI.btn.gacha.h)}
                                     label="共鸣"
                                 >
-                                    <div className="flex items-center gap-3">
-                                        <Hexagon size={24} className="text-purple-300" />
-                                        <span className="text-xs text-purple-100/60 font-mono">新人入队</span>
+                                    <div className="flex items-center" style={{ gap: B(12) }}>
+                                        <Hexagon size={B(LOBBY_UI.icon.gacha)} className="text-purple-300" />
+                                        <span className="text-purple-100/60 font-mono" style={{ fontSize: F(12) }}>新人入队</span>
                                     </div>
                                 </GlassButton>
                             </div>
@@ -607,15 +779,16 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                 )}
             </AnimatePresence>
 
-            {/* --- 5. 右下角工具区 (修正：分离动画与透视) --- */}
+            {/* --- 5. 右下角工具区（尺寸来自顶部 🎛️ LOBBY_UI.toolArea / btn.bottomTool）--- */}
             <div
                 // 外层：负责位移
-                className={`absolute bottom-12 right-8 z-40 transition-all duration-500 ${showUI ? 'translate-y-0 opacity-100' : 'translate-y-20 opacity-0'}`}
+                className={`absolute z-40 transition-all duration-500 ${showUI ? 'translate-y-0 opacity-100' : 'translate-y-20 opacity-0'}`}
+                style={{ bottom: LOBBY_UI.toolArea.bottom, right: LOBBY_UI.toolArea.right }}
             >
                 {/* 内层：负责透视 */}
                 <div
-                    className="flex gap-4"
-                    style={{ transform: 'skewY(2.5deg)' }}
+                    className="flex"
+                    style={{ transform: `skewY(${LOBBY_UI.skewDeg}deg)`, gap: LOBBY_UI.toolArea.gap }}
                 >
                     {/* [修正] 呼叫正确的状态机，并同步执行 setShowUI(false) 瞬间隐藏大厅所有的倾斜按钮面板 */}
                     <GlassButton
@@ -623,31 +796,46 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             setIsCodexBookOpen(true);
                             setShowUI(false);
                         }}
-                        className="w-32 h-12 rounded-sm flex-row gap-2"
+                        className="rounded-sm flex-row"
+                        style={{ ...sizeStyle(LOBBY_UI.btn.bottomTool.w, LOBBY_UI.btn.bottomTool.h), gap: B(8) }}
                         label="图鉴"
                     >
-                        <ClipboardList size={18} />
+                        <ClipboardList size={B(LOBBY_UI.icon.bottomTool)} />
                     </GlassButton>
 
-                    <GlassButton onClick={onOpenShop} className="w-32 h-12 rounded-sm flex-row gap-2" label="商店">
-                        <ShoppingBag size={18} />
+                    <GlassButton
+                        onClick={onOpenShop}
+                        className="rounded-sm flex-row"
+                        style={{ ...sizeStyle(LOBBY_UI.btn.bottomTool.w, LOBBY_UI.btn.bottomTool.h), gap: B(8) }}
+                        label="商店"
+                    >
+                        <ShoppingBag size={B(LOBBY_UI.icon.bottomTool)} />
                     </GlassButton>
 
-                    <GlassButton onClick={onOpenDeck} className="w-32 h-12 rounded-sm flex-row gap-2" label="编队">
-                        <Users size={18} />
+                    <GlassButton
+                        onClick={onOpenDeck}
+                        className="rounded-sm flex-row"
+                        style={{ ...sizeStyle(LOBBY_UI.btn.bottomTool.w, LOBBY_UI.btn.bottomTool.h), gap: B(8) }}
+                        label="编队"
+                    >
+                        <Users size={B(LOBBY_UI.icon.bottomTool)} />
                     </GlassButton>
                 </div>
             </div>
 
-            {/* --- 6. GM 开发者工具入口 (仅管理员可见) --- */}
+            {/* --- 6. GM 开发者工具入口 (仅管理员可见)（尺寸来自顶部 🎛️ LOBBY_UI.gmArea / btn.gm）--- */}
             {userSystem.userId === 'dev_full_admin' && (
-                <div className={`absolute bottom-12 left-10 z-50 transition-all duration-500 ${showUI ? 'translate-y-0 opacity-100' : 'translate-y-20 opacity-0'}`}>
+                <div
+                    className={`absolute z-50 transition-all duration-500 ${showUI ? 'translate-y-0 opacity-100' : 'translate-y-20 opacity-0'}`}
+                    style={{ bottom: LOBBY_UI.gmArea.bottom, left: LOBBY_UI.gmArea.left }}
+                >
                     <button
                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsStudioOpen(true); setShowUI(false); }}
-                        className="w-16 h-16 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shadow-[0_0_30px_rgba(37,99,235,0.6)] border-2 border-blue-300 transition-all hover:scale-110 hover:rotate-12 group"
+                        className="rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shadow-[0_0_30px_rgba(37,99,235,0.6)] border-2 border-blue-300 transition-all hover:scale-110 hover:rotate-12 group"
+                        style={sizeStyle(LOBBY_UI.btn.gm.w, LOBBY_UI.btn.gm.h)}
                         title="开发者工作室"
                     >
-                        <Wrench size={28} className="text-white drop-shadow-md group-hover:text-yellow-300 transition-colors" />
+                        <Wrench size={B(LOBBY_UI.icon.gm)} className="text-white drop-shadow-md group-hover:text-yellow-300 transition-colors" />
                     </button>
                 </div>
             )}
@@ -690,7 +878,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             <div className="flex items-center gap-4 border border-white/10 bg-black/50 p-2 rounded-sm">
                                 {/* 减号按钮 */}
                                 <button
-                                    onMouseDown={() => startPress('sub', exchangeConfig.maxUnits)}
+                                    onMouseDown={() => { eventBus.emit(GameEvents.UI_CLICK); startPress('sub', exchangeConfig.maxUnits); }}
                                     onMouseUp={stopPress} onMouseLeave={stopPress}
                                     onTouchStart={() => startPress('sub', exchangeConfig.maxUnits)}
                                     onTouchEnd={stopPress}
@@ -715,7 +903,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
                                 {/* 加号按钮 */}
                                 <button
-                                    onMouseDown={() => startPress('add', exchangeConfig.maxUnits)}
+                                    onMouseDown={() => { eventBus.emit(GameEvents.UI_CLICK); startPress('add', exchangeConfig.maxUnits); }}
                                     onMouseUp={stopPress} onMouseLeave={stopPress}
                                     onTouchStart={() => startPress('add', exchangeConfig.maxUnits)}
                                     onTouchEnd={stopPress}
@@ -943,7 +1131,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                                     {profile?.displayName || 'ADJUTANT'}
                                                 </span>
                                                 <button
-                                                    onClick={() => { setEditName(profile?.displayName || 'ADJUTANT'); setIsEditingName(true); }}
+                                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setEditName(profile?.displayName || 'ADJUTANT'); setIsEditingName(true); }}
                                                     className="p-2 bg-white/5 hover:bg-white/20 rounded-sm text-gray-400 hover:text-white transition-colors"
                                                 >
                                                     <Edit3 size={18} />

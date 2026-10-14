@@ -28,6 +28,7 @@ import { NodeEntryModal } from './NodeEntryModal'; // [2026-08-27] 节点进入�
 import type { EventApplyResult } from '../../data/roguelike/eventAppliers';
 import { getDialogueBg } from '../../data/roguelike/dialogueBg'; // [2026-08-27] 进入面板背景图（指定 or 随机）
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes'; // [2026-08-27] 战斗节点流派名/简介
+import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 地图 HUD / 空白关闭 音效
 import { ShopModal, type ShopTab } from './modals/ShopModal'; // [2026-08-12 商店经济] 商店弹窗 [2026-08-28] 页签类型
 import { generateShopStock, type ShopStock } from '../../data/roguelike/shop'; // [2026-08-12 商店经济]
 import { TreasureModal } from './modals/TreasureModal'; // [2026-08-12 宝箱节点] 宝箱弹窗
@@ -726,7 +727,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                     className="absolute left-0 top-0 will-change-transform"
                     onClick={(e) => {
                         // [2026-08-11 节点预览] 空白左键关闭（地图底图 img/svg 均 pointer-events-none，空白点击 target === canvasRef.current；拖拽松手不误关）
-                        if (!dragRef.current.moved && e.target === canvasRef.current) {
+                        if (!dragRef.current.moved && e.target === canvasRef.current) { eventBus.emit(GameEvents.UI_BACK);
                             if (previewNode) setPreviewNode(null);
                             // [2026-08-27] 点地图空白主动关闭进入面板
                             if (entryNode) { setEntryNode(null); entryNodeRef.current = null; }
@@ -867,7 +868,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             <div className="absolute bottom-6 left-6 z-40 flex items-center gap-4 pointer-events-none">
                 <div className="relative pointer-events-auto shrink-0">
                     <button
-                        onClick={() => setDrawerOpen(true)}
+                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setDrawerOpen(true); }}
                         title="查看牌组与迷宫强化"
                         style={{ width: MAP_BTN.avatarSize, height: MAP_BTN.avatarSize }}
                         className="rounded-full overflow-hidden border-2 border-white/70 ring-2 ring-purple-500/60 shadow-[0_0_24px_rgba(168,85,247,0.5)] shrink-0 cursor-pointer hover:scale-105 hover:ring-purple-400 transition-all"
@@ -876,7 +877,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                     </button>
                     {/* [2026-08-10] information 提示徽标：头像右下角，提示可点击查看，点击同样打开抽屉 */}
                     <span
-                        onClick={() => setDrawerOpen(true)}
+                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setDrawerOpen(true); }}
                         title="查看牌组与迷宫强化"
                         style={{ width: MAP_BTN.badgeSize, height: MAP_BTN.badgeSize }}
                         className="absolute -bottom-1.5 -right-1.5 rounded-full bg-gray-600 border-2 border-white/80 flex items-center justify-center text-white italic font-black text-sm shadow-lg cursor-pointer hover:bg-gray-500 transition-colors select-none"
@@ -933,7 +934,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
 
             {/* 返回（[2026-08-26] 实心按钮；[2026-08-28] 触发 App 的「结算/暂离」二次确认） */}
             <button
-                onClick={onBackRequest}
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onBackRequest(); }}
                 style={{ padding: MAP_BTN.btnPadding }}
                 className="absolute top-3 left-3 z-40 rounded-full bg-slate-800 hover:bg-slate-700 border border-white/15 hover:border-white/40 transition-all"
             >
@@ -942,13 +943,13 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
 
             {/* [2026-08-26 莉莉子] 右侧：缩放（加/减，功能同鼠标滚轮）+ 定位当前节点（纸飞机）；实心按钮 */}
             <div className="absolute right-6 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-2">
-                <button onClick={handleZoomIn} title="放大" style={{ padding: MAP_BTN.btnPadding }} className="rounded-full bg-slate-800 hover:bg-slate-700 border border-white/15 hover:border-white/40 transition-all">
+                <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleZoomIn(); }} title="放大" style={{ padding: MAP_BTN.btnPadding }} className="rounded-full bg-slate-800 hover:bg-slate-700 border border-white/15 hover:border-white/40 transition-all">
                     <Plus size={MAP_BTN.btnIcon} className="text-white" />
                 </button>
-                <button onClick={handleZoomOut} title="缩小" style={{ padding: MAP_BTN.btnPadding }} className="rounded-full bg-slate-800 hover:bg-slate-700 border border-white/15 hover:border-white/40 transition-all">
+                <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleZoomOut(); }} title="缩小" style={{ padding: MAP_BTN.btnPadding }} className="rounded-full bg-slate-800 hover:bg-slate-700 border border-white/15 hover:border-white/40 transition-all">
                     <Minus size={MAP_BTN.btnIcon} className="text-white" />
                 </button>
-                <button onClick={handleLocateCurrent} title="定位到当前位置" style={{ padding: MAP_BTN.btnPadding }} className="mt-2 rounded-full bg-purple-600 hover:bg-purple-500 border border-purple-400 transition-all">
+                <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleLocateCurrent(); }} title="定位到当前位置" style={{ padding: MAP_BTN.btnPadding }} className="mt-2 rounded-full bg-purple-600 hover:bg-purple-500 border border-purple-400 transition-all">
                     <Send size={MAP_BTN.btnIcon} className="text-white" />
                 </button>
             </div>
@@ -959,7 +960,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             {onOpenEvaluation && (
                 <div className="absolute top-3 right-3 z-40">
                     <button
-                        onClick={onOpenEvaluation}
+                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onOpenEvaluation(); }}
                         title="评估嘉勉 · 开启待打开卡包 / 奖励匣"
                         className={`relative flex items-center gap-2 rounded-full border pl-3.5 pr-4 py-2 backdrop-blur-sm transition-all ${
                             ((pendingPacks ?? 0) + (pendingChests?.length ?? 0)) > 0

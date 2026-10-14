@@ -8,6 +8,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Gift, Sparkles } from 'lucide-react';
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 奖励弹窗 交互音效
 import { CARD_DB } from '../data/cards';
 import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS, HERO_IMAGES } from '../data/imageData';
 import { getMissionItems } from '../data/skinData';
@@ -93,7 +94,7 @@ export const RewardClaimPopup: React.FC<{ data: RewardPopupData; onClose: () => 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={onClose}
+            onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
         >
             {/* 金光光晕 */}
             <div className="absolute w-[500px] h-[500px] rounded-full bg-gradient-radial from-yellow-500/25 via-yellow-500/10 to-transparent pointer-events-none" />
@@ -200,7 +201,7 @@ export const RewardClaimPopup: React.FC<{ data: RewardPopupData; onClose: () => 
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.4 }}
-                    onClick={onClose}
+                    onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                     className="mt-8 px-10 py-3 bg-yellow-500 hover:bg-yellow-400 text-black font-black rounded-full tracking-widest shadow-[0_0_20px_rgba(234,179,8,0.4)] transition-all active:scale-95"
                 >
                     确 认

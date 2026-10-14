@@ -19,6 +19,7 @@ import { isSkinOwned as checkSkinOwned } from '../data/skinData'; // [皮肤门�
 import { getEquipmentById } from '../data/equipment';
 import { bindArmamentGaze } from './roguelike/ArmamentPreview'; // 悬停浮出大卡（宿主在 App 全局，浮层 z-10001 > 本层 10000）
 import { useArmamentConfig } from '../hooks/useArmamentConfig';   // 天启者的武装槽（装备之外的第二条数据源）
+import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 详情/结算 交互音效
 import { useHeroProgression } from '../hooks/useHeroProgression'; // 武装槽按英雄等级解锁，取等级用
 
 // [2026-10-04] 六边形 clip-path + 装备品质色 —— **独立定义同款**（与 Card.tsx:329/331 一致）。
@@ -350,7 +351,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
     // capture 阶段 + stopImmediatePropagation：拦截全局 ESC（App.tsx 会呼出设置面板），确保 ESC 只关详情
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
+            if (e.key !== 'Escape') return; eventBus.emit(GameEvents.UI_BACK);
             e.preventDefault();
             e.stopImmediatePropagation();
             if (confirmState) {
@@ -1190,7 +1191,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                     {/* 底部按钮栏 */}
                     <div className="absolute bottom-12 w-full flex justify-center gap-6">
                         <button
-                            onClick={onExit}
+                            onClick={() => { eventBus.emit(GameEvents.UI_BACK); onExit(); }}
                             className="px-12 py-4 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-full border-2 border-blue-500/50 flex items-center gap-4 transition-all hover:scale-105 shadow-lg shadow-blue-900/50"
                         >
                             <RefreshCw size={20} />

@@ -183,7 +183,7 @@ const GachaItem: React.FC<GachaItemProps> = ({ result, index, isFlipped, onFlip,
                     scale: { duration: 1.5, repeat: Infinity, ease: "easeInOut" },
                     scaleX: { duration: 0.4, times: [0, 0.5, 1], ease: "linear" } // 0.4秒翻完，0.2秒时为0
                 }}
-                onClick={() => !isFlipped && onFlip()}
+                onClick={() => { if (!isFlipped) { eventBus.emit(GameEvents.UI_CLICK); onFlip(); } }}
             >
                 {/* 内容切换 */}
                 {showFront ? (

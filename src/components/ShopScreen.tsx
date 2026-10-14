@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Image as ImageIcon, CreditCard, Search, Play, Zap, Clock, ShoppingCart, CheckCircle } from 'lucide-react';
+import { X, Layers, Image as ImageIcon, CreditCard, Search, Play, Zap, Clock, ShoppingCart, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { CARD_DB } from '../data/cards';
 import { KEYWORD_DB } from '../data/keywords';
 import { PERSONALIZATION_ASSETS, CURRENCY_ICONS, getSkinImage } from '../data/imageData';
@@ -10,6 +10,47 @@ import { Card } from './Card';
 import { FullArtOverlay } from './Overlays';
 import type { CardData } from '../types';
 import { eventBus, GameEvents } from '../utils/eventBus';
+
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 商店 · 翻页与视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 【为什么要翻页】原来这里一次性渲染全部商品（卡牌 117 / 皮肤 114 / 饰品 33），
+// 每张都是重型 <Card>，且全项目几乎没有图片懒加载 ⇒ 手机端直接卡死、电脑端很卡。
+// 现在一页只挂 cols×rows 张，滚轮（PC）/ 左右滑动（手机）翻页。
+// ══════════════════════════════════════════════════════════════════════
+export const SHOP_UI = {
+    /** 每页网格：列数 × 行数（三个选项卡共用）。3 × 2 = 一页 6 张 */
+    cols: 3,
+    rows: 2,
+
+    /** 卡片整体缩放（1 = Card 在 collection 模式的原生尺寸 130×202）
+     *  ⚠️ 上限约 1.75 —— 再大 2 行就装不下主展柜的高度了 */
+    cardScale: 1.65,
+
+    /** 网格间距 px */
+    gapX: 24,
+    gapY: 28,
+
+    /** 翻页动画时长（秒） */
+    pageAnim: 0.25,
+
+    /** 滚轮翻页：节流 ms + 触发所需的最小 |deltaY| */
+    wheelThrottle: 350,
+    wheelThreshold: 20,
+
+    /** 触摸左右滑动翻页的阈值（屏幕 px） */
+    swipeThreshold: 50,
+
+    /** 是否显示底部「页码 + 左右箭头」 */
+    showPager: true,
+} as const;
+
+/** 一页几张 */
+const PAGE_SIZE = SHOP_UI.cols * SHOP_UI.rows;
+
+/** Card 在 collection 模式下的原生容器尺寸（来自 Card.tsx 的 else 分支，勿随意改） */
+const CARD_W = 130;
+const CARD_H = 202;
 
 interface ShopScreenProps {
     userSystem: any;
@@ -44,6 +85,9 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
 
     const [isCostOpen, setIsCostOpen] = useState(false);
     const [isTypeOpen, setIsTypeOpen] = useState(false);
+
+    // === 翻页状态（三个选项卡共用一个页码；切 Tab / 改筛选时归零）===
+    const [page, setPage] = useState(0);
 
     const resources = userSystem?.collection?.resources || { silverCoin: 0, dataGold: 0, bitGold: 0 };
     const ownedCards = userSystem?.collection?.ownedCards || {};
@@ -185,9 +229,56 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
         return items;
     }, [unlockedCardBacks, unlockedDesks]);
 
+    // ==========================================
+    // 4. 翻页控制（滚轮 / 触摸左右滑动 / 页码箭头）
+    // ==========================================
+    const listLength = activeTab === 'cards'
+        ? filteredCards.length
+        : activeTab === 'skins'
+            ? shopSkins.length
+            : shopCosmetics.length;
+    const totalPages = Math.max(1, Math.ceil(listLength / PAGE_SIZE));
+    /** 夹紧后的当前页（筛选后列表变短时不会停在空白页） */
+    const safePage = Math.min(page, totalPages - 1);
+
+    // 翻页方向：1 = 向后、-1 = 向前（给入场动画用）
+    const dirRef = useRef(1);
+    const wheelLockRef = useRef(0);
+    const touchXRef = useRef(0);
+
+    const goPage = (delta: number) => {
+        dirRef.current = delta > 0 ? 1 : -1;
+        setPage(prev => Math.min(Math.max(prev + delta, 0), totalPages - 1));
+    };
+
+    /** 滚轮翻页（PC）：带节流，避免一次滚动连翻好几页 */
+    const handleWheel = (e: React.WheelEvent) => {
+        if (Math.abs(e.deltaY) < SHOP_UI.wheelThreshold) return;
+        const now = Date.now();
+        if (now - wheelLockRef.current < SHOP_UI.wheelThrottle) return;
+        wheelLockRef.current = now;
+        goPage(e.deltaY > 0 ? 1 : -1);
+    };
+
+    /** 触摸左右滑动翻页（手机） */
+    const handleTouchStart = (e: React.TouchEvent) => {
+        touchXRef.current = e.touches[0].clientX;
+    };
+    const handleTouchEnd = (e: React.TouchEvent) => {
+        const dx = e.changedTouches[0].clientX - touchXRef.current;
+        if (Math.abs(dx) < SHOP_UI.swipeThreshold) return;
+        goPage(dx < 0 ? 1 : -1);
+    };
+
+    /** 切换选项卡：换列表 ⇒ 页码归零 */
+    const changeTab = (t: TabType) => {
+        setActiveTab(t);
+        setPage(0);
+    };
+
     const toggleFilter = (setter: React.Dispatch<React.SetStateAction<any[]>>, val: any) => {
         setter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
-        // [清理] 瀑布流无需重置页码
+        setPage(0);   // [翻页] 筛选条件变了 ⇒ 回第一页
     };
     // [核心修复] 独立的一键重置筛选钩子
     const isFilterActive = selectedCosts.length > 0 || selectedTypes.length > 0 || selectedSpellSpeeds.length > 0 || selectedKeywords.length > 0 || searchTerm !== '';
@@ -198,7 +289,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
         setSelectedTypes([]);
         setSelectedSpellSpeeds([]);
         setSelectedKeywords([]);
-        // [清理] 瀑布流无需重置页码
+        setPage(0);   // [翻页] 重置筛选 ⇒ 回第一页
     };
 
 
@@ -231,17 +322,8 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
 
     // === 核心动画物理参数 (深蓝风+上下拉展) ===
     const splitSpring = { type: "spring" as const, stiffness: 120, damping: 15, delay: 0.2 };
-    const gridItemVariants = {
-        hidden: { opacity: 0, scale: 0.8 },
-        visible: { opacity: 1, scale: 1, transition: { type: "spring" as const, stiffness: 100, damping: 12 } }
-    };
-    const pageVariants = {
-        hidden: { opacity: 0 },
-        visible: {
-            opacity: 1,
-            transition: { staggerChildren: 0.04, delayChildren: 0.15 }
-        }
-    };
+    // [翻页改造] 原 gridItemVariants / pageVariants 已废弃 ——
+    //   一页只剩 6 张，逐张 stagger 入场不再必要；商品的入场动画改为各 item 上的 spring 内联。
 
     return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-hidden font-sans select-none">
@@ -250,7 +332,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
             <motion.div
                 className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                onClick={onClose}
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
             />
 
             {/* 右上角资源区 */}
@@ -274,7 +356,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
 
             {/* 关闭按钮 */}
             <motion.button
-                onClick={onClose}
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                 className="absolute top-6 right-6 w-12 h-12 rounded-full border border-blue-500/50 bg-black/50 text-blue-400 flex items-center justify-center hover:bg-blue-900/50 hover:text-white hover:scale-110 hover:shadow-[0_0_20px_rgba(59,130,246,0.5)] transition-all duration-200 z-[210]"
                 initial={{ opacity: 0, scale: 0.5, rotate: -90 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={{ delay: 0.6, type: "spring" }}
             >
@@ -305,10 +387,10 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                         <div className="text-blue-400 text-[10px] font-black tracking-[0.3em] mb-8 pl-2 animate-pulse">BLACK MARKET //</div>
 
                         <div className="flex flex-col gap-2 relative z-20">
-                            {/* [清理] 移除 onClick 中的 setCurrentPage(0) */}
-                            <TabButton id="cards" active={activeTab} icon={<Layers size={18} />} label="数据卡带" labelCn="数据卡带" onClick={() => setActiveTab('cards')} />
-                            <TabButton id="skins" active={activeTab} icon={<ImageIcon size={18} />} label="高定工坊" labelCn="高定工坊" onClick={() => setActiveTab('skins')} />
-                            <TabButton id="cosmetics" active={activeTab} icon={<CreditCard size={18} />} label="个性涂装" labelCn="个性涂装" onClick={() => setActiveTab('cosmetics')} />
+                            {/* [翻页] 切换选项卡同时把页码归零 */}
+                            <TabButton id="cards" active={activeTab} icon={<Layers size={18} />} label="数据卡带" labelCn="数据卡带" onClick={() => changeTab('cards')} />
+                            <TabButton id="skins" active={activeTab} icon={<ImageIcon size={18} />} label="高定工坊" labelCn="高定工坊" onClick={() => changeTab('skins')} />
+                            <TabButton id="cosmetics" active={activeTab} icon={<CreditCard size={18} />} label="个性涂装" labelCn="个性涂装" onClick={() => changeTab('cosmetics')} />
                         </div>
 
                         {/* 卡牌专属筛选面板 */}
@@ -338,7 +420,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                                             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden pl-3 border-l-2 border-blue-500/20 ml-3 mb-2">
                                                 <div className="flex flex-wrap gap-1 py-2">
                                                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(c => (
-                                                        <button key={c} onClick={() => toggleFilter(setSelectedCosts, c)} className={`w-8 h-8 rounded text-sm font-black transition-colors ${selectedCosts.includes(c) ? 'bg-blue-600 text-white shadow-[0_0_10px_blue]' : 'bg-slate-800/80 text-blue-400 hover:bg-blue-900/50'}`}>
+                                                        <button key={c} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedCosts, c); }} className={`w-8 h-8 rounded text-sm font-black transition-colors ${selectedCosts.includes(c) ? 'bg-blue-600 text-white shadow-[0_0_10px_blue]' : 'bg-slate-800/80 text-blue-400 hover:bg-blue-900/50'}`}>
                                                             {c}{c === 10 ? '+' : ''}
                                                         </button>
                                                     ))}
@@ -354,7 +436,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                                             <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden pl-3 border-l-2 border-blue-500/20 ml-3 mb-2">
                                                 <div className="flex flex-col gap-1.5 py-2">
                                                     {['HERO', 'UNIT', 'SPELL'].map(t => (
-                                                        <button key={t} onClick={() => toggleFilter(setSelectedTypes, t)} className={`text-left px-3 py-2 rounded text-xs font-bold transition-all ${selectedTypes.includes(t) ? 'bg-blue-600 text-white border border-blue-400' : 'bg-slate-800 text-blue-400 border border-transparent hover:bg-blue-900/50'}`}>
+                                                        <button key={t} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, t); }} className={`text-left px-3 py-2 rounded text-xs font-bold transition-all ${selectedTypes.includes(t) ? 'bg-blue-600 text-white border border-blue-400' : 'bg-slate-800 text-blue-400 border border-transparent hover:bg-blue-900/50'}`}>
                                                             {t === 'HERO' ? '天启者 (HERO)' : t === 'UNIT' ? '随从 (UNIT)' : '法术 (SPELL)'}
                                                         </button>
                                                     ))}
@@ -366,7 +448,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                                                         <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden mt-1 mb-2">
                                                             <div className="flex gap-2">
                                                                 {['Burst', 'Fast', 'Slow'].map(s => (
-                                                                    <button key={s} onClick={() => toggleFilter(setSelectedSpellSpeeds, s)} className={`flex-1 py-1.5 rounded flex justify-center items-center transition-colors border ${selectedSpellSpeeds.includes(s) ? 'bg-purple-600/40 border-purple-400' : 'bg-slate-800 hover:bg-slate-700 border-transparent'}`}>
+                                                                    <button key={s} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedSpellSpeeds, s); }} className={`flex-1 py-1.5 rounded flex justify-center items-center transition-colors border ${selectedSpellSpeeds.includes(s) ? 'bg-purple-600/40 border-purple-400' : 'bg-slate-800 hover:bg-slate-700 border-transparent'}`}>
                                                                         {s === 'Burst' ? <Zap size={14} className="text-yellow-400"/> : s === 'Fast' ? <Zap size={14} className="text-white"/> : <Clock size={14} className="text-purple-300"/>}
                                                                     </button>
                                                                 ))}
@@ -381,7 +463,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                                                         <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden mt-2 pt-2 border-t border-blue-500/20">
                                                             <div className="flex flex-wrap gap-1.5">
                                                                 {Object.entries(KEYWORD_DB).map(([kw, config]) => (
-                                                                    <button key={kw} onClick={() => toggleFilter(setSelectedKeywords, kw)} title={config.label} className={`w-7 h-7 rounded flex justify-center items-center transition-all border ${selectedKeywords.includes(kw) ? 'bg-green-600/30 border-green-400' : 'bg-slate-800 border-transparent opacity-60 hover:opacity-100 hover:bg-slate-700'}`}>
+                                                                    <button key={kw} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedKeywords, kw); }} title={config.label} className={`w-7 h-7 rounded flex justify-center items-center transition-all border ${selectedKeywords.includes(kw) ? 'bg-green-600/30 border-green-400' : 'bg-slate-800 border-transparent opacity-60 hover:opacity-100 hover:bg-slate-700'}`}>
                                                                         {config.icon ? <img src={config.icon} className="w-4 h-4 object-contain" /> : <span className={`text-[8px] font-bold text-${config.color}-400`}>{config.label.substring(0, 1)}</span>}
                                                                     </button>
                                                                 ))}
@@ -398,112 +480,173 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
                         </AnimatePresence>
                     </motion.div>
 
-                    {/* 右侧主展柜 - [核心修复] 解锁 Y 轴滚动，引入无痕滚动条 */}
-                    <motion.div className="relative flex-1 p-8 z-10 flex flex-col overflow-hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6, duration: 0.4 }}>
-                        {/* [真·终极修复] 注入混合态动态 Key！将所有筛选状态拼接成唯一的哈希指纹。
-                            一旦筛选条件发生任何改变，React 就会强制销毁旧网格并重建，从而逼迫 Framer Motion 重新播放出场动画，透明幽灵将无处遁形！ */}
+                    {/* 右侧主展柜 —— 翻页容器：滚轮（PC）/ 左右滑动（手机）切页 */}
+                    <motion.div
+                        className="relative flex-1 p-8 z-10 flex flex-col overflow-hidden"
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6, duration: 0.4 }}
+                        onWheel={handleWheel}
+                        onTouchStart={handleTouchStart}
+                        onTouchEnd={handleTouchEnd}
+                    >
+                        {/* 一页 cols×rows 张。key 里带页码 ⇒ 翻页 / 换 Tab / 改筛选都会重建这一页并重播入场动画 */}
                         <motion.div
-                            key={`${activeTab}_${searchTerm}_${selectedCosts.join('-')}_${selectedRegions.join('-')}_${selectedTypes.join('-')}_${selectedSpellSpeeds.join('-')}_${selectedKeywords.join('-')}`}
-                            variants={pageVariants}
-                            initial="hidden"
-                            animate="visible"
-                            className="flex-1 overflow-y-auto custom-scrollbar pr-4 pb-20 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                            key={`${activeTab}_${safePage}_${searchTerm}_${selectedCosts.join('-')}_${selectedRegions.join('-')}_${selectedTypes.join('-')}_${selectedSpellSpeeds.join('-')}_${selectedKeywords.join('-')}`}
+                            initial={{ opacity: 0, x: dirRef.current * 60 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: SHOP_UI.pageAnim, ease: 'easeOut' }}
+                            className="flex-1 grid place-items-center content-center min-h-0"
+                            style={{
+                                gridTemplateColumns: `repeat(${SHOP_UI.cols}, minmax(0, 1fr))`,
+                                gridTemplateRows: `repeat(${SHOP_UI.rows}, minmax(0, 1fr))`,
+                                columnGap: SHOP_UI.gapX,
+                                rowGap: SHOP_UI.gapY,
+                            }}
                         >
 
-                            {/* --- 卡牌陈列 --- */}
-                            {activeTab === 'cards' && (
-                                <div className="grid grid-cols-6 gap-y-12 gap-x-6 w-full max-w-[95%] mx-auto place-items-center">
-                                    {/* [核心修复] 不再使用切片，直接渲染完整的 filteredCards */}
-                                    {filteredCards.map(c => {
-                                        const count = ownedCards[c.key] || 0;
-                                        const isMaxed = count >= 3;
-                                        const price = c.isChampion ? 5 : getCardPrice(c.cost);
-                                        const currency = c.isChampion ? 'bitGold' : 'silverCoin';
+                            {/* --- 卡牌陈列（一页 6 张，靠 slice 分页；布局由外层 3×2 网格管）--- */}
+                            {activeTab === 'cards' && filteredCards
+                                .slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+                                .map(c => {
+                                    const count = ownedCards[c.key] || 0;
+                                    const isMaxed = count >= 3;
+                                    const price = c.isChampion ? 5 : getCardPrice(c.cost);
+                                    const currency = c.isChampion ? 'bitGold' : 'silverCoin';
 
-                                        return (
-                                            <motion.div key={c.id} variants={gridItemVariants} className={`flex flex-col items-center gap-3 relative ${isMaxed ? 'opacity-50 grayscale' : 'hover:scale-105 hover:z-20 transition-all'}`}>
-                                                <div className="cursor-pointer" onClick={() => !isMaxed && setPurchaseModal({ type: c.isChampion ? 'hero' : 'card', key: c.key, data: c, cost: price, currency })}>
+                                    return (
+                                        <motion.div
+                                            key={c.id}
+                                            initial={{ opacity: 0, scale: 0.85 }}
+                                            animate={{ opacity: 1, scale: 1 }}
+                                            transition={{ type: 'spring', stiffness: 110, damping: 14 }}
+                                            className={`flex flex-col items-center gap-2 relative ${isMaxed ? 'opacity-50 grayscale' : 'hover:scale-105 hover:z-20 transition-all'}`}
+                                        >
+                                            {/* 卡片：Card 的原生容器是 130×202，这里整体放大 SHOP_UI.cardScale 倍 */}
+                                            <div
+                                                className="cursor-pointer relative flex items-center justify-center"
+                                                style={{ width: CARD_W * SHOP_UI.cardScale, height: CARD_H * SHOP_UI.cardScale }}
+                                                onClick={() => { if (isMaxed) return; eventBus.emit(GameEvents.UI_CLICK); setPurchaseModal({ type: c.isChampion ? 'hero' : 'card', key: c.key, data: c, cost: price, currency }); }}
+                                            >
+                                                <div style={{ transform: `scale(${SHOP_UI.cardScale})`, transformOrigin: 'center center' }}>
                                                     <Card data={c} location="collection" isFaceUp={true} />
-                                                    {isMaxed && (
-                                                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-xl z-20">
-                                                            <span className="bg-black/80 text-gray-400 font-black px-4 py-1 border border-gray-600 rounded tracking-widest text-sm">已满编</span>
-                                                        </div>
-                                                    )}
                                                 </div>
-                                                {/* 底部价签 */}
-                                                <div className="flex items-center gap-1.5 bg-slate-900/90 px-3 py-1.5 rounded-full border border-blue-500/20 shadow-lg">
-                                                    <img src={currency === 'bitGold' ? CURRENCY_ICONS.bitGold : CURRENCY_ICONS.silverCoin} className="w-3 h-3" />
-                                                    <span className={`text-xs font-mono font-bold ${isMaxed ? 'text-gray-500' : 'text-white'}`}>{price.toLocaleString()}</span>
-                                                </div>
-                                            </motion.div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {/* --- 皮肤陈列 --- */}
-                            {activeTab === 'skins' && (
-                                <div className="grid grid-cols-3 gap-y-12 gap-x-8 w-full max-w-[80%] mx-auto place-items-center pt-4">
-                                    {shopSkins.map(s => (
-                                        <motion.div key={s.cardKey} variants={gridItemVariants} className={`relative flex flex-col items-center gap-4 w-full ${s.isOwned ? 'opacity-50 grayscale' : 'hover:scale-105 hover:z-20 transition-all'}`}>
-                                            <div
-                                                className="w-full aspect-[2/3] rounded-xl overflow-hidden border-2 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.2)] bg-slate-900 relative cursor-pointer group"
-                                                // [核心修复] 从写死的 1 比特金改为动态读取注册单的 s.price
-                                                onClick={() => !s.isOwned && setPurchaseModal({ type: 'skin', key: s.cardKey, skinId: s.skinId, data: s.cardData, cost: s.price, currency: 'bitGold', image: getSkinImage(s.cardKey, s.skinId, s.cardData.imageUrl) })}
-                                            >
-                                                <img src={getSkinImage(s.cardKey, s.skinId, s.cardData.imageUrl)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                                                <div className="absolute bottom-0 w-full h-1/3 bg-gradient-to-t from-purple-950 via-purple-900/80 to-transparent flex flex-col justify-end p-4 border-t border-purple-500/30">
-                                                    <span className="text-purple-300 text-[10px] font-black tracking-widest mb-1">修习一刻</span>
-                                                    <span className="text-white text-sm font-bold truncate">{s.cardData.name}</span>
-                                                </div>
-                                                {s.isOwned && (
-                                                    <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20">
-                                                        <span className="flex items-center gap-2 text-purple-300 bg-purple-900/80 px-4 py-2 rounded-full border border-purple-500/50 text-sm font-black tracking-widest"><CheckCircle size={16}/> 已入库</span>
+                                                {isMaxed && (
+                                                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-xl z-20">
+                                                        <span className="bg-black/80 text-gray-400 font-black px-4 py-1 border border-gray-600 rounded tracking-widest text-sm">已满编</span>
                                                     </div>
                                                 )}
                                             </div>
-                                            <div className="flex items-center gap-1.5 bg-slate-900/90 px-4 py-1.5 rounded-full border border-purple-500/30 shadow-lg">
-                                                <img src={CURRENCY_ICONS.bitGold} className="w-4 h-4" />
-                                                {/* [核心修复] 同样改为读取 s.price 展示价格 */}
-                                                <span className={`text-sm font-mono font-bold ${s.isOwned ? 'text-gray-500' : 'text-yellow-400'}`}>{s.price}</span>
+                                            {/* 底部价签 */}
+                                            <div className="flex items-center gap-1.5 bg-slate-900/90 px-3 py-1.5 rounded-full border border-blue-500/20 shadow-lg">
+                                                <img src={currency === 'bitGold' ? CURRENCY_ICONS.bitGold : CURRENCY_ICONS.silverCoin} className="w-3 h-3" />
+                                                <span className={`text-xs font-mono font-bold ${isMaxed ? 'text-gray-500' : 'text-white'}`}>{price.toLocaleString()}</span>
                                             </div>
                                         </motion.div>
-                                    ))}
-                                </div>
-                            )}
+                                    );
+                                })}
 
-                            {/* --- 饰品陈列 --- */}
-                            {activeTab === 'cosmetics' && (
-                                <div className="grid grid-cols-4 gap-y-12 gap-x-8 w-full max-w-[90%] mx-auto place-items-center pt-4">
-                                    {/* [核心修复] 将 cosmeticsPage.current 替换为完整的 shopCosmetics */}
-                                    {shopCosmetics.map(c => (
-                                        <motion.div key={`${c.type}-${c.index}`} variants={gridItemVariants} className={`relative flex flex-col items-center gap-4 w-full ${c.isOwned ? 'opacity-50 grayscale' : 'hover:scale-105 hover:z-20 transition-all'}`}>
-                                            <div
-                                                className={`rounded-xl overflow-hidden border-2 border-blue-400/50 shadow-lg bg-slate-900 relative cursor-pointer group ${c.type === 'cardBack' ? 'w-48 aspect-[2/3]' : 'w-64 aspect-video'}`}
-                                                // [核心修复] 将硬编码的 5 替换为注册单中的动态定价 c.price
-                                                onClick={() => !c.isOwned && setPurchaseModal({ type: c.type, key: c.index, cost: c.price, currency: 'bitGold', image: c.url, name: c.name })}
-                                            >
-                                                <img src={c.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                                                <div className="absolute bottom-0 w-full h-10 bg-black/80 flex items-center justify-center border-t border-blue-500/30">
-                                                    <span className="text-white text-xs font-bold tracking-widest">{c.name}</span>
+                            {/* --- 皮肤陈列（一页 6 张）--- */}
+                            {activeTab === 'skins' && shopSkins
+                                .slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+                                .map(s => (
+                                    <motion.div
+                                        key={s.cardKey}
+                                        initial={{ opacity: 0, scale: 0.85 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        transition={{ type: 'spring', stiffness: 110, damping: 14 }}
+                                        className={`relative flex flex-col items-center gap-2 ${s.isOwned ? 'opacity-50 grayscale' : 'hover:scale-105 hover:z-20 transition-all'}`}
+                                    >
+                                        <div
+                                            className="rounded-xl overflow-hidden border-2 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.2)] bg-slate-900 relative cursor-pointer group"
+                                            style={{ width: CARD_W * SHOP_UI.cardScale, height: CARD_H * SHOP_UI.cardScale }}
+                                            // [核心修复] 从写死的 1 比特金改为动态读取注册单的 s.price
+                                            onClick={() => { if (s.isOwned) return; eventBus.emit(GameEvents.UI_CLICK); setPurchaseModal({ type: 'skin', key: s.cardKey, skinId: s.skinId, data: s.cardData, cost: s.price, currency: 'bitGold', image: getSkinImage(s.cardKey, s.skinId, s.cardData.imageUrl) }); }}
+                                        >
+                                            <img src={getSkinImage(s.cardKey, s.skinId, s.cardData.imageUrl)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                                            <div className="absolute bottom-0 w-full h-1/3 bg-gradient-to-t from-purple-950 via-purple-900/80 to-transparent flex flex-col justify-end p-4 border-t border-purple-500/30">
+                                                <span className="text-purple-300 text-[10px] font-black tracking-widest mb-1">修习一刻</span>
+                                                <span className="text-white text-sm font-bold truncate">{s.cardData.name}</span>
+                                            </div>
+                                            {s.isOwned && (
+                                                <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20">
+                                                    <span className="flex items-center gap-2 text-purple-300 bg-purple-900/80 px-4 py-2 rounded-full border border-purple-500/50 text-sm font-black tracking-widest"><CheckCircle size={16}/> 已入库</span>
                                                 </div>
-                                                {c.isOwned && (
-                                                    <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20">
-                                                        <span className="text-gray-400 bg-black/80 px-4 py-1 border border-gray-600 rounded text-xs font-black tracking-widest">已持有</span>
-                                                    </div>
-                                                )}
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1.5 bg-slate-900/90 px-4 py-1.5 rounded-full border border-purple-500/30 shadow-lg">
+                                            <img src={CURRENCY_ICONS.bitGold} className="w-4 h-4" />
+                                            {/* [核心修复] 同样改为读取 s.price 展示价格 */}
+                                            <span className={`text-sm font-mono font-bold ${s.isOwned ? 'text-gray-500' : 'text-yellow-400'}`}>{s.price}</span>
+                                        </div>
+                                    </motion.div>
+                                ))}
+
+                            {/* --- 饰品陈列（一页 6 个）--- */}
+                            {activeTab === 'cosmetics' && shopCosmetics
+                                .slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+                                .map(c => (
+                                    <motion.div
+                                        key={`${c.type}-${c.index}`}
+                                        initial={{ opacity: 0, scale: 0.85 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        transition={{ type: 'spring', stiffness: 110, damping: 14 }}
+                                        className={`relative flex flex-col items-center gap-2 ${c.isOwned ? 'opacity-50 grayscale' : 'hover:scale-105 hover:z-20 transition-all'}`}
+                                    >
+                                        {/* 卡背是 2:3 竖版 → 与卡牌同尺寸；牌桌是 16:9 横版 → 宽取卡背的 1.6 倍 */}
+                                        <div
+                                            className="rounded-xl overflow-hidden border-2 border-blue-400/50 shadow-lg bg-slate-900 relative cursor-pointer group"
+                                            style={c.type === 'cardBack'
+                                                ? { width: CARD_W * SHOP_UI.cardScale, height: CARD_H * SHOP_UI.cardScale }
+                                                : (() => {
+                                                    const w = CARD_W * SHOP_UI.cardScale * 1.6;
+                                                    return { width: w, height: w * 9 / 16 };
+                                                })()}
+                                            // [核心修复] 将硬编码的 5 替换为注册单中的动态定价 c.price
+                                            onClick={() => { if (c.isOwned) return; eventBus.emit(GameEvents.UI_CLICK); setPurchaseModal({ type: c.type, key: c.index, cost: c.price, currency: 'bitGold', image: c.url, name: c.name }); }}
+                                        >
+                                            <img src={c.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                                            <div className="absolute bottom-0 w-full h-10 bg-black/80 flex items-center justify-center border-t border-blue-500/30">
+                                                <span className="text-white text-xs font-bold tracking-widest">{c.name}</span>
                                             </div>
-                                            <div className="flex items-center gap-1.5 bg-slate-900/90 px-4 py-1.5 rounded-full border border-blue-500/30 shadow-lg">
-                                                <img src={CURRENCY_ICONS.bitGold} className="w-4 h-4" />
-                                                {/* [核心修复] 同样更新界面显示的价签 */}
-                                                <span className={`text-sm font-mono font-bold ${c.isOwned ? 'text-gray-500' : 'text-yellow-400'}`}>{c.price}</span>
-                                            </div>
-                                        </motion.div>
-                                    ))}
-                                </div>
-                            )}
+                                            {c.isOwned && (
+                                                <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20">
+                                                    <span className="text-gray-400 bg-black/80 px-4 py-1 border border-gray-600 rounded text-xs font-black tracking-widest">已持有</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1.5 bg-slate-900/90 px-4 py-1.5 rounded-full border border-blue-500/30 shadow-lg">
+                                            <img src={CURRENCY_ICONS.bitGold} className="w-4 h-4" />
+                                            {/* [核心修复] 同样更新界面显示的价签 */}
+                                            <span className={`text-sm font-mono font-bold ${c.isOwned ? 'text-gray-500' : 'text-yellow-400'}`}>{c.price}</span>
+                                        </div>
+                                    </motion.div>
+                                ))}
 
                         </motion.div>
+
+                        {/* --- 页码指示器：滚轮/滑动之外，也能直接点箭头翻页 --- */}
+                        {SHOP_UI.showPager && totalPages > 1 && (
+                            <div className="shrink-0 flex items-center justify-center gap-6 pt-4">
+                                <button
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); goPage(-1); }}
+                                    disabled={safePage === 0}
+                                    className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all ${safePage === 0 ? 'border-white/10 text-gray-700 cursor-not-allowed' : 'border-blue-500/50 text-blue-300 hover:bg-blue-900/40 hover:text-white'}`}
+                                    title="上一页"
+                                >
+                                    <ChevronLeft size={20} />
+                                </button>
+                                <span className="font-mono text-sm text-blue-300 tracking-widest">
+                                    {safePage + 1} <span className="text-gray-600">/</span> {totalPages}
+                                </span>
+                                <button
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); goPage(1); }}
+                                    disabled={safePage >= totalPages - 1}
+                                    className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all ${safePage >= totalPages - 1 ? 'border-white/10 text-gray-700 cursor-not-allowed' : 'border-blue-500/50 text-blue-300 hover:bg-blue-900/40 hover:text-white'}`}
+                                    title="下一页"
+                                >
+                                    <ChevronRight size={20} />
+                                </button>
+                            </div>
+                        )}
                     </motion.div>
 
                 </motion.div>
@@ -529,7 +672,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
             {/* 购买确认弹窗 */}
             <AnimatePresence>
                 {purchaseModal && (
-                    <div className="absolute inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => { setPurchaseModal(null); setPurchaseError(null); }}>
+                    <div className="absolute inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => { eventBus.emit(GameEvents.UI_BACK); setPurchaseModal(null); setPurchaseError(null); }}>
                         {/* [核心修复] 改为精致的横向布局紧凑型窗口 */}
                         <motion.div
                             initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }}
@@ -574,8 +717,8 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
 
                             {/* 紧凑型按钮组 */}
                             <div className="flex gap-3 w-full">
-                                <button onClick={() => { setPurchaseModal(null); setPurchaseError(null); }} className="px-6 py-2.5 rounded border border-white/20 text-gray-400 font-bold hover:bg-white/10 transition-colors">取消</button>
-                                <button onClick={() => handlePurchase(purchaseModal)} className="flex-1 py-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-black shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all flex items-center justify-center gap-2">
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setPurchaseModal(null); setPurchaseError(null); }} className="px-6 py-2.5 rounded border border-white/20 text-gray-400 font-bold hover:bg-white/10 transition-colors">取消</button>
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handlePurchase(purchaseModal); }} className="flex-1 py-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-black shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all flex items-center justify-center gap-2">
                                     <ShoppingCart size={16}/> 确认购买
                                 </button>
                             </div>
@@ -600,7 +743,7 @@ export const ShopScreen: React.FC<ShopScreenProps> = ({ userSystem, onClose }) =
 const TabButton = ({ id, active, icon, label, labelCn, onClick }: any) => {
     const isActive = active === id;
     return (
-        <button onClick={onClick} className={`relative w-full py-4 px-4 flex items-center justify-between transition-all duration-300 group rounded-r-lg ${isActive ? 'bg-blue-900/60 border-l-4 border-blue-400 text-blue-50' : 'border-l-4 border-transparent text-blue-500/70 hover:bg-blue-900/30 hover:text-blue-300'}`}>
+        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClick?.(); }} className={`relative w-full py-4 px-4 flex items-center justify-between transition-all duration-300 group rounded-r-lg ${isActive ? 'bg-blue-900/60 border-l-4 border-blue-400 text-blue-50' : 'border-l-4 border-transparent text-blue-500/70 hover:bg-blue-900/30 hover:text-blue-300'}`}>
             <div className="relative z-10 flex items-center gap-3">
                 <div className={`${isActive ? 'text-blue-400' : ''}`}>{icon}</div>
                 <div className="flex flex-col items-start leading-tight">
@@ -616,7 +759,7 @@ const TabButton = ({ id, active, icon, label, labelCn, onClick }: any) => {
 const CategoryButton = ({ id, active, label, onClick }: any) => {
     const isActive = active === id;
     return (
-        <button onClick={onClick} className={`relative w-full py-2.5 px-3 flex items-center justify-between transition-all duration-300 rounded-md ${isActive ? 'bg-blue-800/40 text-white' : 'text-blue-500/70 hover:bg-blue-800/20 hover:text-blue-300'}`}>
+        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClick?.(); }} className={`relative w-full py-2.5 px-3 flex items-center justify-between transition-all duration-300 rounded-md ${isActive ? 'bg-blue-800/40 text-white' : 'text-blue-500/70 hover:bg-blue-800/20 hover:text-blue-300'}`}>
             <span className="text-xs font-bold tracking-widest">{label}</span>
             <Play size={12} className={`transition-transform duration-300 ${isActive ? 'rotate-90 drop-shadow-[0_0_5px_white]' : 'rotate-0'}`} fill={isActive ? "#ffffff" : "transparent"} stroke={isActive ? "#ffffff" : "currentColor"} strokeWidth={2} />
         </button>

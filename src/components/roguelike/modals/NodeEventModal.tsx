@@ -26,6 +26,7 @@ import type { MazeBuff, EnhancementRarity } from '../../../data/roguelike/buffs'
 import { getBattleEffects } from '../../../data/roguelike/buffs'; // [2026-09-29 莉莉子] 修：DevEnhBlock 用了它但漏了导入
 import { RARITY_META } from '../RarityIcon';
 import { TRIGGER_LABELS, EFFECT_LABELS } from '../RogueCodex';
+import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 事件/强化/休息 交互音效
 import { Card } from '../../Card'; // [2026-09-06 莉莉子] 篝火/事件删卡：纯文字 chip → 完整卡面
 import type { CardData } from '../../../types';
 import { attachEquipment } from '../../../data/equipment';
@@ -497,7 +498,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                         敌方强化 <span className="text-xs font-mono">{devSelEnemy.size ? `✓${devSelEnemy.size}` : enemyPool.length}</span>
                                     </button>
                                 </div>
-                                <button onClick={onClose} className="p-1.5 rounded-md hover:bg-white/10 text-gray-400 hover:text-white transition-colors" title="返回地图 (ESC)">
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="p-1.5 rounded-md hover:bg-white/10 text-gray-400 hover:text-white transition-colors" title="返回地图 (ESC)">
                                     <X size={18} />
                                 </button>
                             </div>
@@ -550,7 +551,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
 
                             {/* 底部：返回地图 + 确定 */}
                             <div className="shrink-0 px-6 py-4 border-t border-white/10 flex items-center justify-center gap-4">
-                                <button onClick={onClose} className="px-8 py-2.5 rounded-xl bg-white/10 font-bold text-gray-300 hover:bg-white/15 transition-colors">返回地图</button>
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="px-8 py-2.5 rounded-xl bg-white/10 font-bold text-gray-300 hover:bg-white/15 transition-colors">返回地图</button>
                                 <button onClick={handleDevConfirm}
                                     disabled={devCount === 0}
                                     className={`px-12 py-2.5 rounded-xl font-black text-lg tracking-widest transition-all ${devCount > 0 ? 'bg-gradient-to-r from-violet-600 to-purple-400 hover:scale-105 hover:shadow-[0_0_30px_rgba(168,85,247,0.6)]' : 'bg-white/10 text-gray-500 cursor-not-allowed'}`}>
@@ -618,7 +619,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                                 initial="enter"
                                                 animate={animPhase}
                                                 exit="exit"
-                                                onClick={() => { if (animPhase === 'select') setSelectedEnhanceId(opt.id); }}
+                                                onClick={() => { if (animPhase === 'select') { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setSelectedEnhanceId(opt.id); } }}
                                             >
                                                 {/* 选中光晕（不用 layoutId：切换时旧的直接卸载、新的原地出现，不再"飞过去"） */}
                                                 {isSelected && animPhase === 'select' && (
@@ -632,7 +633,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                     })}
                                 </AnimatePresence>
                             ) : (
-                                <button onClick={onClose}
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                                     className="px-8 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-bold transition-colors">
                                     返回地图
                                 </button>
@@ -646,7 +647,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                             {onRefresh && (
                                 <motion.button
                                     initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                                    onClick={(e) => { e.stopPropagation(); if (refreshCount > 0) handleRefreshEnhance(); }}
+                                    onClick={(e) => { e.stopPropagation(); if (refreshCount > 0) { eventBus.emit(GameEvents.UI_CLICK); handleRefreshEnhance(); } }}
                                     disabled={refreshCount <= 0}
                                     className={`px-8 py-3 rounded-xl bg-white/10 font-black text-lg tracking-widest transition-all hover:scale-105 ${refreshCount > 0 ? 'text-cyan-300 hover:bg-cyan-500/20' : 'text-gray-600 cursor-not-allowed'}`}
                                 >
@@ -655,7 +656,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                             )}
                             <motion.button
                                 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                                onClick={(e) => { e.stopPropagation(); handleConfirmEnhance(); }}
+                                onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleConfirmEnhance(); }}
                                 disabled={!selectedEnhanceId}
                                 className={`px-12 py-3 rounded-xl font-black text-lg tracking-widest transition-all
                                     ${selectedEnhanceId
@@ -761,7 +762,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                     className="w-full"
                                 >
                                     <button
-                                        onClick={() => onClose?.()}
+                                        onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose?.(); }}
                                         style={{ transform: 'skewX(-13deg)' }}
                                         className={`w-full px-6 py-4 border font-black tracking-[0.2em] transition-all ${
                                             willFight
@@ -806,14 +807,14 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                         {hasNext ? (
                                             <>
                                                 <button
-                                                    onClick={() => settle(Math.max(1, deepLayer))}
+                                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); settle(Math.max(1, deepLayer)); }}
                                                     className="px-5 py-3.5 border border-white/25 bg-white/10 hover:bg-white/20 text-gray-100 font-black tracking-widest transition-all"
                                                 >
                                                     在此收手{deepLayer > 0 ? `（带走 ×${deepLayer}）` : ''}
                                                 </button>
                                                 <button
                                                     onClick={() => {
-                                                        if (Math.random() < prob) {
+                                                        eventBus.emit(GameEvents.UI_CLICK); if (Math.random() < prob) {
                                                             setDeepLayer(deepLayer + 1);
                                                             setDeepMsg('');
                                                         } else {
@@ -834,7 +835,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                             </>
                                         ) : (
                                             <button
-                                                onClick={() => settle(deepLayer)}
+                                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); settle(deepLayer); }}
                                                 className="px-5 py-3.5 font-black tracking-widest text-white transition-all hover:scale-[1.02]"
                                                 style={{ background: 'linear-gradient(to right, #7c3aed, #a855f7)' }}
                                             >
@@ -868,7 +869,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                                 whileHover={{ scale: isSel ? 1.045 : 1.02 }}
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    if (isSel) handleEventChoice(i); // 再点一次 ＝ 确认
+                                                    eventBus.emit(GameEvents.UI_CLICK); if (isSel) handleEventChoice(i); // 再点一次 ＝ 确认
                                                     else setSelectedChoice(i);        // 首点 ＝ 选中
                                                 }}
                                                 className="block w-full text-left px-6 py-4"
@@ -893,7 +894,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 })}
                                 {event.allowLeave !== false && (
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); onClose(); }}
+                                        onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                                         style={{ transform: 'skewX(-13deg)' }}
                                         className="px-5 py-3 border border-white/15 bg-white/5 hover:bg-white/15 text-gray-300 font-bold tracking-widest transition-all"
                                     >
@@ -924,19 +925,19 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                                 isSelected={isPick}
                                                 accent="red"
                                                 badge={`×${run?.deck.filter(k => k === key).length ?? 1}`}
-                                                onClick={() => setRemovePicks(prev =>
+                                                onClick={() => { eventBus.emit(GameEvents.SFX_SELECT_UNIT); setRemovePicks(prev =>
                                                     isPick ? prev.filter(k => k !== key)
-                                                        : prev.length < removeNeeded ? [...prev, key] : prev)}
+                                                        : prev.length < removeNeeded ? [...prev, key] : prev); }}
                                             />
                                         );
                                     })}
                                 </div>
                             )}
                             <div className="flex gap-3 justify-end mt-8">
-                                <button onClick={() => { setSelectedChoice(null); setEventStep('choices'); }} className="px-5 py-2.5 rounded-lg bg-white/5 hover:bg-white/15 font-bold text-gray-300 transition-all">返回</button>
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setSelectedChoice(null); setEventStep('choices'); }} className="px-5 py-2.5 rounded-lg bg-white/5 hover:bg-white/15 font-bold text-gray-300 transition-all">返回</button>
                                 <button
                                     disabled={removePicks.length < removeNeeded}
-                                    onClick={() => { // [2026-10-05 · 方案 P3] 删卡确认后同样进「结果」阶段
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); // [2026-10-05 · 方案 P3] 删卡确认后同样进「结果」阶段
                                         const res = onEvent?.(event.id, pendingChoice, removePicks) ?? [];
                                         enterAftermath(res, event.choices[pendingChoice]?.story);
                                     }}
@@ -1006,7 +1007,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 <h3 className="text-2xl font-black tracking-widest">篝火 · 休整</h3>
                             </div>
                             {restStep === 'select' && (
-                                <button onClick={() => setRestStep('menu')} className="text-xs text-gray-400 hover:text-white px-3 py-1 rounded-lg bg-white/5 transition-colors">返回菜单</button>
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setRestStep('menu'); }} className="text-xs text-gray-400 hover:text-white px-3 py-1 rounded-lg bg-white/5 transition-colors">返回菜单</button>
                             )}
                         </div>
 
@@ -1022,7 +1023,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                             <button key={c.key}
                                                 disabled={blocked}
                                                 onClick={() => {
-                                                    if (blocked) return;
+                                                    eventBus.emit(GameEvents.UI_CLICK); if (blocked) return;
                                                     if (c.key === 'rest') { onRest(); onClose(); }
                                                     else { setRestMode(c.key); setRestStep('select'); }
                                                 }}
@@ -1051,7 +1052,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                                 key={key}
                                                 cardKey={key}
                                                 run={run}
-                                                onClick={() => handleRestPick(key)}
+                                                onClick={() => { eventBus.emit(GameEvents.SFX_SELECT_UNIT); handleRestPick(key); }}
                                             />
                                         ))}
                                     </div>
@@ -1096,7 +1097,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                     <h3 className="text-2xl font-black">{meta.title}</h3>
                     <p className="text-sm text-gray-300 text-center">{meta.desc}</p>
 
-                    <button onClick={onClose}
+                    <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
                         className="px-8 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-bold transition-colors">
                         返回地图
                     </button>

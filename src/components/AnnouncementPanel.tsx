@@ -27,7 +27,7 @@ export const AnnouncementPanel: React.FC<AnnouncementPanelProps> = ({ isOpen, on
     useEffect(() => {
         if (!isOpen) return;
         const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape') { eventBus.emit(GameEvents.UI_BACK);
                 e.stopImmediatePropagation();
                 onClose();
             }
@@ -44,7 +44,7 @@ export const AnnouncementPanel: React.FC<AnnouncementPanelProps> = ({ isOpen, on
             <motion.div
                 className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                onClick={onClose}
+                onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
             />
 
             {/* 面板主体 */}

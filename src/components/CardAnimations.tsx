@@ -137,7 +137,7 @@ const AnimatedHandCard = ({
                         burnoutValue={(() => {
                             if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
                             // [2026-10-08 第二波] 显示费用**收口到统一查询**：凯特琳光环 / 莲台无垠 / **装备条件减费**一次算清
-                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana, 'player'); // [2026-10-13 F2] 手牌显示 = 玩家侧（playerBench）
                             return _effCost !== (c.cost || 0) ? _effCost : undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
@@ -152,7 +152,7 @@ const AnimatedHandCard = ({
                         burnoutValue={(() => {
                             if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
                             // [2026-10-08 第二波] 显示费用**收口到统一查询**：凯特琳光环 / 莲台无垠 / **装备条件减费**一次算清
-                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana, 'player'); // [2026-10-13 F2] 手牌显示 = 玩家侧（playerBench）
                             return _effCost !== (c.cost || 0) ? _effCost : undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
@@ -167,7 +167,7 @@ const AnimatedHandCard = ({
                         burnoutValue={(() => {
                             if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
                             // [2026-10-08 第二波] 显示费用**收口到统一查询**：凯特琳光环 / 莲台无垠 / **装备条件减费**一次算清
-                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                            const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana, 'player'); // [2026-10-13 F2] 手牌显示 = 玩家侧（playerBench）
                             return _effCost !== (c.cost || 0) ? _effCost : undefined;
                         })()}
                         isCostReduced={(c.customProgress || 0) & 2 ? true : false}
@@ -181,7 +181,7 @@ const AnimatedHandCard = ({
                     burnoutValue={(() => {
                         if (c.key === 'forced_communication' || c.key === 'temp_spell_12') return (game.playerMana || 0) + (game.playerSpellMana || 0); // [2026-08-15] 燃尽法术：费用实时显示被烧法力（泰坦降临对齐强行通讯）
                         // [2026-10-08 第二波] 手牌显示费用**收口到统一查询**（同上）
-                        const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana);
+                        const _effCost = getEffectiveSpellCost(c, playerBench, game.playerMaxMana, 'player'); // [2026-10-13 F2] 手牌显示 = 玩家侧（playerBench）
                         return _effCost !== (c.cost || 0) ? _effCost : undefined;
                     })()}
                     displayParams={(() => {
@@ -219,7 +219,8 @@ const AnimatedHandCard = ({
                         if (c.key === 'forced_communication' || c.key === 'temp_spell_12') { // [2026-08-15] 燃尽法术：法力为0时不可打（泰坦降临对齐强行通讯）
                             const burnoutCost = (game.playerMana || 0) + (game.playerSpellMana || 0);
                             if (burnoutCost <= 0) return false;
-                        } else if (!canAffordCard(c, game.playerMana, game.playerSpellMana, playerBench)) return false;
+                        // [2026-10-13 F2] 玩家手牌可用性
+                        } else if (!canAffordCard(c, game.playerMana, game.playerSpellMana, playerBench, 'player')) return false;
                         if (game.spellStack.length > 0) return c.type === 'spell-burst' || c.type === 'spell-fast';
                         const isMainPhase = game.phase === 'main';
                         const isCombatPhase = game.phase === 'attack_declare' || game.phase === 'block_declare' || game.phase === 'react_to_block';
@@ -1938,7 +1939,7 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
                                     initial="enter"
                                     animate={animPhase}
                                     exit="exit"
-                                    onClick={() => toggleSelect(card.id)}
+                                    onClick={() => { eventBus.emit(GameEvents.SFX_SELECT_UNIT); toggleSelect(card.id); }}
                                 >
                                     {/* 选中光晕 */}
                                     {isSelected && animPhase === 'select' && (
@@ -1956,7 +1957,7 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
                                         <motion.button
                                             initial={{ opacity: 0, y: -5 }}
                                             animate={{ opacity: 1, y: 10 }}
-                                            onClick={(e) => { e.stopPropagation(); toggleSelect(card.id); }}
+                                            onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.SFX_SELECT_UNIT); toggleSelect(card.id); }}
                                             className={`absolute bottom-[-55px]  z-20 flex items-center gap-2 px-5 py-2 rounded-full font-bold text-sm shadow-xl whitespace-nowrap transition-colors
                                                 ${isSelected
                                                     ? 'bg-gray-700 text-gray-300 border border-yellow-500 hover:bg-gray-600'
@@ -1980,7 +1981,7 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
                 <motion.button
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    onClick={(e) => { e.stopPropagation(); handleConfirm(); }}
+                    onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleConfirm(); }}
                     className="absolute bottom-[10%]  -translate-x-1/2 z-30 px-10 py-3 rounded-full font-bold text-lg shadow-xl
                         bg-blue-600 hover:bg-blue-500 border border-blue-400 text-white
                         shadow-[0_0_30px_rgba(37,99,235,0.5)] transition-colors pointer-events-auto"
