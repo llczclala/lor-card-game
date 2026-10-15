@@ -368,7 +368,7 @@ export const StyleSelector: React.FC<StyleSelectorProps> = ({
                         {/* 切换动画需要 Key 变化（[2026-08-13] 牌桌类型用动态视频 DeskMedia；[2026-08-23] 卡背类型用动态视频 CardBackVideo） */}
                         {type === 'cardBack' ? (
                             cardBackDynamic && getCardBackVideo(previewIndex) ? (
-                                <CardBackVideo key={previewIndex} src={getCardBackVideo(previewIndex)!} className="w-full h-full object-cover animate-fade-in" />
+                                <CardBackVideo key={previewIndex} src={getCardBackVideo(previewIndex)!} poster={assets[previewIndex]} className="w-full h-full object-cover animate-fade-in" />
                             ) : (
                                 <img
                                     key={previewIndex}

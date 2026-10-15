@@ -156,8 +156,13 @@ export const useSpellDynamic = () => React.useContext(SpellCardMediaContext);
 // [2026-08-23 莉莉子] 动态卡背视频
 // [2026-10-09 莉莉子 · P1] 收口到 `LoopVideo`（全局并发预算 + 可见性门控 + 卸载释放）
 //   优先级 **5**：卡背数量多（对手手牌/牌库各一张），但属装饰性背景 ⇒ 让位给卡面与影片
-export const CardBackVideo: React.FC<{ src: string; className?: string; style?: React.CSSProperties }> = ({ src, className, style }) => (
-    <LoopVideo src={src} className={className} style={style} priority={5} />
+// [2026-10-20 莉莉子 · 安卓] 补 `poster` 静态图兜底：
+//   安卓 WebView 在 <video> **没有可绘制帧**时会由媒体层自己画占位（纯灰底 + 黑色播放图标），
+//   PC 桌面 Chromium 无此行为 ⇒ 必须把项目**已有的静态美术**（本项目的"原件"）交给标准 `poster` 属性。
+//   与 `CardFaceVideo` 同一约定（见本文件卡面 poster / DeskMedia / GameLobby 影片）。
+//   `poster` 可省略：`undefined` ⇒ React 不写该属性 ⇒ 与改动前逐字节等价（零行为回归）。
+export const CardBackVideo: React.FC<{ src: string; poster?: string; className?: string; style?: React.CSSProperties }> = ({ src, poster, className, style }) => (
+    <LoopVideo src={src} poster={poster} className={className} style={style} priority={5} />
 );
 
 interface CardProps {
@@ -1801,7 +1806,7 @@ const CardInner: React.FC<CardProps> = ({
     const renderBackFace = () => (
         <div className="w-full h-full absolute inset-0 rounded-xl overflow-hidden border-2 border-[#1a1a1a] bg-slate-800 z-10">
             {cardBackVideoUrl ? (
-                <CardBackVideo src={cardBackVideoUrl} className="w-full h-full object-cover relative z-10" />
+                <CardBackVideo src={cardBackVideoUrl} poster={cardBackUrl} className="w-full h-full object-cover relative z-10" />
             ) : (
                 <img
                     src={cardBackUrl || "https://placehold.co/300x450/1e293b/ffffff?text=BACK"}

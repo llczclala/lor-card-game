@@ -73,7 +73,7 @@ const PreviewDiorama = ({ covers, cardBackImg, cardBackVideoUrl, boardImg, isEne
                             )}
 
                             {isBack && cardBackVideoUrl ? (
-                                <CardBackVideo src={cardBackVideoUrl} className="w-full h-full object-cover relative z-10 opacity-90 mix-blend-luminosity" />
+                                <CardBackVideo src={cardBackVideoUrl} poster={cardBackImg} className="w-full h-full object-cover relative z-10 opacity-90 mix-blend-luminosity" />
                             ) : (
                                 <img src={renderUrl} className={`w-full h-full object-cover relative z-10 ${isBack ? 'opacity-90 mix-blend-luminosity' : ''}`} alt="" />
                             )}

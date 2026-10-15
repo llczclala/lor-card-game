@@ -228,7 +228,7 @@ export const Deck = ({
                     {/* 2. 顶部卡背 (封面) */}
                     <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-[#1a1a1a]">
                         {cardBackVideoUrl ? (
-                            <CardBackVideo src={cardBackVideoUrl} className="w-full h-full object-cover" />
+                            <CardBackVideo src={cardBackVideoUrl} poster={cardBackImg} className="w-full h-full object-cover" />
                         ) : (
                             <img src={cardBackImg} alt="牌库" className="w-full h-full object-cover" />
                         )}
