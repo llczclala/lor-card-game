@@ -74,7 +74,7 @@ export const RunEnhancementsModal: React.FC<RunEnhancementsModalProps> = ({ enha
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 transition={{ type: 'spring', stiffness: 240, damping: 24 }}
                 onClick={e => e.stopPropagation()}
-                className="relative flex max-h-[86vh] w-[880px] max-w-[94vw] flex-col rounded-2xl border border-violet-400/30 bg-gradient-to-b from-slate-900/97 to-slate-950/97 p-7"
+                className="relative flex max-h-[903px] w-[880px] max-w-[1579px] flex-col rounded-2xl border border-violet-400/30 bg-gradient-to-b from-slate-900/97 to-slate-950/97 p-7"
                 style={{ boxShadow: '0 0 60px rgba(168,85,247,0.22)' }}
             >
                 {/* ══ 标题 ══ */}

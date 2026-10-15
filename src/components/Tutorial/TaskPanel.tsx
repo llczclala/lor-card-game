@@ -153,7 +153,7 @@ export const TaskPanel: React.FC<TaskPanelProps> = ({
       </div>
 
       {/* 子任务列表 */}
-      <div className="px-3 py-3 space-y-1.5 max-h-[60vh] overflow-y-auto">
+      <div className="px-3 py-3 space-y-1.5 max-h-[630px] overflow-y-auto">
         {taskGroup.subTasks.map((st, i) => (
           <SubTaskItem
             key={st.id}

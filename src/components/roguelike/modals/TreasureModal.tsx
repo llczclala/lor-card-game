@@ -160,7 +160,7 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
             <motion.div
                 initial={{ scale: 0.9, opacity: 0, y: 24 }} animate={{ scale: 1, opacity: 1, y: 0 }}
                 transition={{ type: 'spring', stiffness: 300, damping: 24 }}
-                className="relative w-[900px] max-w-[94vw] max-h-[92vh] overflow-y-auto rounded-2xl bg-slate-900/95 border border-yellow-500/25 p-6 text-white"
+                className="relative w-[900px] max-w-[1579px] max-h-[966px] overflow-y-auto rounded-2xl bg-slate-900/95 border border-yellow-500/25 p-6 text-white"
                 style={{ boxShadow: '0 0 60px rgba(234,179,8,0.2)' }}
             >
                 {/* 顶部 */}

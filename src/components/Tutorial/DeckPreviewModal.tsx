@@ -192,7 +192,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
 
             {/* ===== 左侧翼：我方牌组 (蓝色系) ===== */}
             <motion.div initial={{ x: -60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.1 }}
-                className="w-80 h-[85vh] bg-slate-900/90 border border-blue-500/30 rounded-3xl flex flex-col shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden"
+                className="w-80 h-[893px] bg-slate-900/90 border border-blue-500/30 rounded-3xl flex flex-col shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden"
             >
                 <div className="p-5 bg-blue-950/40 font-black text-blue-400 tracking-[0.3em] text-center border-b border-blue-500/20 shrink-0 flex items-center justify-center gap-2">
                     <Shield size={18} /> MY SQUAD
@@ -273,7 +273,7 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
 
             {/* ===== 右侧翼：敌方牌组 (红色系) ===== */}
             <motion.div initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.1 }}
-                className="w-80 h-[85vh] bg-slate-900/90 border border-red-500/30 rounded-3xl flex flex-col shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden"
+                className="w-80 h-[893px] bg-slate-900/90 border border-red-500/30 rounded-3xl flex flex-col shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden"
             >
                 <div className="p-5 bg-red-950/40 font-black text-red-400 tracking-[0.3em] text-center border-b border-red-500/20 shrink-0 flex items-center justify-center gap-2">
                     <Sword size={18} /> HOSTILE

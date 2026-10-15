@@ -109,7 +109,7 @@ export const GachaTargetSelector: React.FC<GachaTargetSelectorProps> = ({
         <div className="fixed inset-0 z-[700] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in p-8">
 
             {/* 主面板 */}
-            <div className="relative w-full max-w-5xl h-[80vh] bg-slate-900 border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="relative w-full max-w-5xl h-[840px] bg-slate-900 border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
 
                 {/* 1. 顶部标题栏 */}
                 <div className="flex items-center justify-between px-8 py-6 border-b border-white/10 bg-white/5">

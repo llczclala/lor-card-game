@@ -843,7 +843,7 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
             {animPhase === 'select' && (
                 <motion.div
                     initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
-                    className="absolute top-[15%] left-0 right-[20vw] w-full text-center pointer-events-auto"
+                    className="absolute top-[15%] left-0 right-[336px] w-full text-center pointer-events-auto"
                 >
                     <h2 className="text-5xl font-black text-white drop-shadow-[0_5px_15px_rgba(0,0,0,0.8)] tracking-widest">选择手牌</h2>
                     <p className="text-blue-200 mt-2 font-mono text-lg tracking-[0.2em] opacity-80">SELECT CARDS TO REPLACE</p>
@@ -851,7 +851,7 @@ export const OpeningMulligan: React.FC<OpeningMulliganProps> = ({
             )}
 
             {/* 卡牌区域 */}
-            <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '5vh' }}>
+            <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '53px' }}>
                 <div className="flex gap-5">
                     {displayHand.map((c, index) => {
                         if (!c) return null;
@@ -1345,8 +1345,8 @@ const DrawAnimItem = ({ anim, cardBackUrl, enemyCardBackUrl, cardBackVideoUrl, e
     // [2026-08-17 莉莉子] 按敌我选择卡背（我方/敌方抽牌动画分开显示）
     const backUrl = isPlayer ? cardBackUrl : enemyCardBackUrl;
     const backVideoUrl = isPlayer ? cardBackVideoUrl : enemyCardBackVideoUrl;
-    const deckX = '-35vw';
-    const deckY = isPlayer ? '35vh' : '-35vh';
+    const deckX = '-588px';
+    const deckY = isPlayer ? '368px' : '-368px';
 
     // === 三态机 ===
     const startPhase = anim.skipDeckAnim ? 'idle' : 'fly';
@@ -1465,7 +1465,7 @@ const DrawAnimItem = ({ anim, cardBackUrl, enemyCardBackUrl, cardBackVideoUrl, e
             case 'fly_to_hand':
                 return {
                     x: [0, 0],
-                    y: [0, isPlayer ? '65vh' : '-65vh'],
+                    y: [0, isPlayer ? '683px' : '-683px'],
                     scale: [1.5, 0.35],
                     opacity: [1, 0],
                 };
@@ -1695,8 +1695,8 @@ const DeckInsertAnimItem = ({ anim, cardBackUrl, enemyCardBackUrl, cardBackVideo
     const backVideoUrl = isPlayer ? cardBackVideoUrl : enemyCardBackVideoUrl;
 
     // 与 DrawAnimItem 同一套牌库坐标：我方牌库在下方(+35vh)，敌方在上方(-35vh)
-    const deckX = '-35vw';
-    const deckY = isPlayer ? '35vh' : '-35vh';
+    const deckX = '-588px';
+    const deckY = isPlayer ? '368px' : '-368px';
 
     const [phase, setPhase] = useState<DeckInsertPhase>('show');
     // 敌方永远卡背；我方先亮卡面，翻面瞬间切回卡背
@@ -1848,7 +1848,7 @@ export const HandAnimOverlay: React.FC = () => {
     if (!anim) return null;
 
     return (
-        <div className="fixed inset-0 z-[999] pointer-events-none flex items-end justify-center pb-[18vh]">
+        <div className="fixed inset-0 z-[999] pointer-events-none flex items-end justify-center pb-[189px]">
             {anim.type === 'dissolve' && (
                 <EphemeralDissolve key="dissolve" card={anim.card} isPlaying onComplete={handleComplete}>
                     <Card data={anim.card} location="preview" />
@@ -1977,7 +1977,7 @@ export const CalibratePanel: React.FC<CalibratePanelProps> = ({
             )}
 
             {/* 卡牌区域 */}
-            <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '8vh' }}>
+            <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '84px' }}>
                 <div className="flex gap-6">
                     <AnimatePresence>
                         {cards.map(({ card }, index) => {

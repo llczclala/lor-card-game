@@ -42,7 +42,7 @@ export const ReviveModal: React.FC<ReviveModalProps> = ({ remaining, onAccept, o
                 initial={{ opacity: 0, scale: 0.92, y: 18 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 transition={{ type: 'spring', stiffness: 220, damping: 22 }}
-                className="relative w-[560px] max-w-[92vw] rounded-2xl border border-emerald-400/35 bg-gradient-to-b from-slate-900/95 to-slate-950/95 px-9 py-8"
+                className="relative w-[560px] max-w-[1546px] rounded-2xl border border-emerald-400/35 bg-gradient-to-b from-slate-900/95 to-slate-950/95 px-9 py-8"
                 style={{ boxShadow: '0 0 70px rgba(16,185,129,0.26), inset 0 1px 0 rgba(255,255,255,0.06)' }}
             >
                 {/* ═══ 图标 + 呼吸光环 ═══ */}

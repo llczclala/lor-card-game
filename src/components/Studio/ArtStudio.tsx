@@ -637,7 +637,7 @@ export const ArtStudio: React.FC<ArtStudioProps> = ({ onClose }) => {
                                 <X size={20} />
                             </button>
                         </div>
-                        <div className="p-4 bg-black/40 overflow-y-auto max-h-[52vh] font-mono text-xs leading-relaxed text-blue-200 whitespace-pre">
+                        <div className="p-4 bg-black/40 overflow-y-auto max-h-[546px] font-mono text-xs leading-relaxed text-blue-200 whitespace-pre">
                             {exportCode}
                         </div>
                         <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-4">

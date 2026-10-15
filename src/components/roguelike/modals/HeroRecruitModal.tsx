@@ -136,7 +136,7 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
                 )}
 
                 {/* 三候选英雄：大卡 + 卡牌列表 + 装备徽章（整体尺寸见顶部 🎛️ 调参区） */}
-                <div className="relative flex items-end justify-center pointer-events-auto" style={{ marginTop: '9vh', gap: COLUMN_GAP }}>
+                <div className="relative flex items-end justify-center pointer-events-auto" style={{ marginTop: '95px', gap: COLUMN_GAP }}>
                     {options.map((o, index) => {
                         const heroDef = CARD_DB[o.heroKey] as CardData | undefined;
                         if (!heroDef) return null;

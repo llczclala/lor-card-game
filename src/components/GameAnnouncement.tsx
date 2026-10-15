@@ -56,7 +56,7 @@ export const GameAnnouncement: React.FC<GameAnnouncementProps> = ({ data }) => {
                             className={`
                                 font-black tracking-widest drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)]
                                 /* [核心修复] 响应式排版：遇到长文本自动缩小字号，并开启换行支持 */
-                                ${data.type === 'phase_hint' ? (data.mainText.length > 8 ? 'text-4xl md:text-5xl max-w-[85vw] whitespace-normal leading-tight break-keep' : 'text-6xl') : 'text-9xl'}
+                                ${data.type === 'phase_hint' ? (data.mainText.length > 8 ? 'text-4xl md:text-5xl max-w-[1428px] whitespace-normal leading-tight break-keep' : 'text-6xl') : 'text-9xl'}
                                 text-transparent bg-clip-text bg-gradient-to-b from-yellow-100 via-yellow-400 to-yellow-700
                             `}
                             style={{

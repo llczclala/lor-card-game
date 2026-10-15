@@ -66,7 +66,7 @@ html, body {
 /* --- 抽卡动画 --- */
 @keyframes draw-card-player {
   0% {
-    transform: translate(-50vw, 100%) rotate(-90deg) scale(0.5);
+    transform: translate(-840px, 100%) rotate(-90deg) scale(0.5);
     opacity: 0;
   }
   100% {
@@ -79,7 +79,7 @@ html, body {
 
 @keyframes draw-card-enemy {
   0% {
-    transform: translate(-50vw, -100%) rotate(-90deg) scale(0.5);
+    transform: translate(-840px, -100%) rotate(-90deg) scale(0.5);
     opacity: 0;
   }
   100% {

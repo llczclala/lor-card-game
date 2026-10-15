@@ -138,7 +138,7 @@ export const DevEventPickerModal: React.FC<DevEventPickerModalProps> = ({ events
                 animate={{ scale: 1, opacity: 1, y: 0 }}
                 transition={{ duration: 0.22, ease: 'easeOut' }}
                 onClick={e => e.stopPropagation()}
-                className="w-[min(1180px,96vw)] max-h-[92vh] flex flex-col rounded-2xl bg-slate-900/95 border border-violet-400/25 text-white overflow-hidden shadow-[0_0_60px_rgba(139,92,246,0.25)]"
+                className="w-[1180px] max-h-[966px] flex flex-col rounded-2xl bg-slate-900/95 border border-violet-400/25 text-white overflow-hidden shadow-[0_0_60px_rgba(139,92,246,0.25)]"
             >
                 {/* ── 头部 ── */}
                 <div className="shrink-0 px-6 pt-5 pb-4 border-b border-white/10">

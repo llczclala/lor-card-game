@@ -476,7 +476,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
 
                         <motion.div
                             initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
-                            className="relative z-10 w-[min(1100px,94vw)] max-h-[88vh] bg-slate-900/95 border border-violet-500/30 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+                            className="relative z-10 w-[1100px] max-h-[924px] bg-slate-900/95 border border-violet-500/30 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
                         >
                             {/* 头部：标题 + Tab 切换 + 关闭 */}
                             <div className="shrink-0 px-6 py-4 border-b border-white/10 flex items-center gap-4 flex-wrap">
@@ -585,7 +585,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                     )}
 
                     {/* 卡牌区域：并排 + 每张带角度 + 从下方升入 */}
-                    <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '6vh' }}>
+                    <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '63px' }}>
                         {/* [2026-10-03 莉莉子] 倾斜行的横向间距统一取 uiSpacing 口径：
                             强化卡 250×395 倾斜 ±9° 后包围盒宽 +59px，原来写死的 gap-6(24) ⇒ 相邻卡角重叠 */}
                         <div className="flex" style={{ gap: GAP_ENH_TILTED }}>
@@ -914,7 +914,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                             ) : (
                                 /* [2026-10-03 莉莉子 BUG修复] 手牌卡右侧外挂的装备/武装图标是绝对定位（外扩 ~31px），
                                    原来是 gap-3(12px) ⇒ 图标被邻卡压住。间距改取 uiSpacing 口径 */
-                                <div className="flex flex-wrap justify-center overflow-y-auto max-h-[62vh] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y }}>
+                                <div className="flex flex-wrap justify-center overflow-y-auto max-h-[651px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y }}>
                                     {removableDeck.map(key => {
                                         const isPick = removePicks.includes(key);
                                         return (
@@ -999,7 +999,7 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                 <div className="fixed inset-0 z-[700] flex items-center justify-center bg-black/80 backdrop-blur-sm">
                     <motion.div
                         initial={{ scale: 0.92, opacity: 0, y: 16 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 16 }}
-                        className="w-[min(920px,94vw)] max-h-[88vh] rounded-2xl border border-amber-500/30 bg-gradient-to-b from-slate-900 via-amber-950/40 to-slate-900 p-6 text-white shadow-[0_0_50px_rgba(245,158,11,0.15)] overflow-y-auto"
+                        className="w-[920px] max-h-[924px] rounded-2xl border border-amber-500/30 bg-gradient-to-b from-slate-900 via-amber-950/40 to-slate-900 p-6 text-white shadow-[0_0_50px_rgba(245,158,11,0.15)] overflow-y-auto"
                     >
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">

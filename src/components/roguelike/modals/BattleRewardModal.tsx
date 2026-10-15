@@ -96,7 +96,7 @@ export const BattleRewardModal: React.FC<BattleRewardModalProps> = ({ gold, opti
                 )}
 
                 {/* 卡牌区域：手牌样式并排 + 每张带角度 + 从下方升入 */}
-                <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '6vh' }}>
+                <div className="relative flex items-center justify-center pointer-events-auto" style={{ marginTop: '63px' }}>
                     {/* [2026-10-03 莉莉子 BUG修复] 原来写死 gap-6(24px)：本行卡既**倾斜 ±9°**（包围盒宽 +47px）
                         又带**右侧外挂的装备图标**（1.55 倍放大后外扩 ~48px）⇒ 相邻卡互相压角/压图标。
                         间距改取 uiSpacing 口径（取两者较大者 + 呼吸位） */}

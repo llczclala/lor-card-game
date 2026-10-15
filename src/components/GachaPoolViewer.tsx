@@ -69,7 +69,7 @@ export const GachaPoolViewer: React.FC<GachaPoolViewerProps> = ({ poolId, onClos
             }}
         >
             <div
-                className="w-[92vw] max-w-6xl h-[86vh] bg-slate-900 border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+                className="w-[1546px] max-w-6xl h-[903px] bg-slate-900 border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden"
                 onClick={e => e.stopPropagation()}
             >
                 {/* 标题栏 */}

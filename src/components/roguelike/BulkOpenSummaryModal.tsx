@@ -49,7 +49,7 @@ export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open
                     exit={{ opacity: 0, scale: 0.96 }}
                     transition={{ type: 'spring', stiffness: 240, damping: 24 }}
                     onClick={e => e.stopPropagation()}
-                    className="relative flex max-h-[82vh] w-[720px] max-w-[94vw] flex-col rounded-2xl border border-cyan-400/35 bg-gradient-to-b from-slate-900/97 to-slate-950/97 p-7"
+                    className="relative flex max-h-[861px] w-[720px] max-w-[1579px] flex-col rounded-2xl border border-cyan-400/35 bg-gradient-to-b from-slate-900/97 to-slate-950/97 p-7"
                     style={{ boxShadow: '0 0 60px rgba(34,211,238,0.22)' }}
                 >
                     {/* 标题 */}

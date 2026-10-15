@@ -315,7 +315,7 @@ export const GuideLayer: React.FC<GuideLayerProps> = ({ step, onDismiss }) => {
   if (step.fixedPrompt) {
     return (
       <div
-        className="fixed inset-0 pointer-events-none flex items-start justify-center pt-[12vh]"
+        className="fixed inset-0 pointer-events-none flex items-start justify-center pt-[126px]"
         style={{ zIndex: layerZ }}
       >
         <div

@@ -87,7 +87,7 @@ export const RogueEnhancementPanel: React.FC<RogueEnhancementPanelProps> = ({ pl
                 <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in"
                     onClick={() => setOpen(false)}>
                     <div
-                        className="w-[min(1000px,92vw)] max-h-[88vh] bg-slate-900/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-pop-in"
+                        className="w-[1000px] max-h-[924px] bg-slate-900/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-pop-in"
                         onClick={e => e.stopPropagation()}
                     >
                         {/* 头部 */}

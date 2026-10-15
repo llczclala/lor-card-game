@@ -179,7 +179,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                     animate={{ scale: 1, opacity: 1, y: 0 }}
                     exit={{ scale: 0.94, opacity: 0, y: 20 }}
                     transition={{ type: 'spring', stiffness: 280, damping: 26 }}
-                    className="relative w-[880px] max-h-[86vh] bg-slate-900/95 border border-purple-500/30 rounded-2xl shadow-[0_0_80px_rgba(88,28,135,0.4)] flex flex-col overflow-hidden"
+                    className="relative w-[880px] max-h-[903px] bg-slate-900/95 border border-purple-500/30 rounded-2xl shadow-[0_0_80px_rgba(88,28,135,0.4)] flex flex-col overflow-hidden"
                 >
                     {/* 头部：分析员等级 + 经验条 + 待打开卡包 */}
                     <div className="flex items-center gap-4 p-5 border-b border-white/10 bg-slate-800/40 shrink-0">

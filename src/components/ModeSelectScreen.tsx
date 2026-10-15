@@ -38,7 +38,7 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
             </h2>
 
             {/* [核心布局] 3x3 网格布局实现环绕效果 */}
-            <div className="grid grid-cols-3 grid-rows-3 gap-6 w-full max-w-6xl h-[65vh] p-8 items-center justify-items-center z-20">
+            <div className="grid grid-cols-3 grid-rows-3 gap-6 w-full max-w-6xl h-[683px] p-8 items-center justify-items-center z-20">
 
                 {/* 1. 左上角: PvE (可用) */}
                 <div className="col-start-1 row-start-1 w-full h-full flex justify-end items-end">

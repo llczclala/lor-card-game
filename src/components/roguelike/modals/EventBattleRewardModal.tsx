@@ -31,12 +31,12 @@ export const EventBattleRewardModal: React.FC<EventBattleRewardModalProps> = ({ 
                 initial={{ opacity: 0, scale: 0.92, y: 18 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                className="relative w-[520px] max-w-[92vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl px-7 py-6"
+                className="relative w-[520px] max-w-[1546px] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl px-7 py-6"
             >
                 <h2 className="text-xl font-bold text-white tracking-wider mb-1">⚔️ 迎战胜利</h2>
                 <p className="text-white/40 text-sm mb-5">本次战斗获得的强化奖励</p>
 
-                <div className="space-y-2 mb-6 max-h-[46vh] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
+                <div className="space-y-2 mb-6 max-h-[483px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
                     {gains.length === 0 ? (
                         <div className="text-white/30 text-sm py-4 text-center">（本次没有强化奖励）</div>
                     ) : gains.map((r, i) => (

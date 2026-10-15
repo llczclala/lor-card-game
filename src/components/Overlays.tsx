@@ -1140,7 +1140,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                         </div>
 
                         {/* 右侧：详细评分表 */}
-                        <div className="flex-1 bg-gray-900/80 p-8 rounded-2xl border border-white/10 h-[60vh] overflow-y-auto custom-scrollbar flex flex-col gap-2 shadow-2xl">
+                        <div className="flex-1 bg-gray-900/80 p-8 rounded-2xl border border-white/10 h-[630px] overflow-y-auto custom-scrollbar flex flex-col gap-2 shadow-2xl">
                             <h3 className="text-xl font-black text-gray-500 mb-4 border-b border-gray-700 pb-2 flex justify-between">
                                 <span>作战评分</span>
                                 <span>分数</span>

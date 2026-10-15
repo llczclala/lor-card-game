@@ -536,7 +536,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
                                     <motion.div
                                         initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
                                         transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-                                        className="w-[640px] max-h-[80vh] rounded-2xl border p-6 flex flex-col items-center gap-3 shadow-[0_0_60px_rgba(0,0,0,0.9)]"
+                                        className="w-[640px] max-h-[840px] rounded-2xl border p-6 flex flex-col items-center gap-3 shadow-[0_0_60px_rgba(0,0,0,0.9)]"
                                         style={{ background: dm.cardBg, borderColor: `${dm.color}66`, boxShadow: `0 0 40px ${dm.color}44` }}
                                         onClick={(e) => e.stopPropagation()}
                                     >
@@ -558,7 +558,7 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
                                                             <span className="text-gray-400">标「已满」的本次<b className="text-amber-200">不会</b>被抽到（它们满到上限才折算数据金）。</span></>
                                                     )}
                                                 </p>
-                                                <div className="w-full max-h-[46vh] overflow-y-auto pr-1">
+                                                <div className="w-full max-h-[483px] overflow-y-auto pr-1">
                                                     <div className="grid grid-cols-3 gap-3">
                                                         {pool.map(a => {
                                                             const full = !hasArmamentRoom(stockNow, a.id);
