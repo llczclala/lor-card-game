@@ -2454,13 +2454,19 @@ export default function App() {
                       // [2026-10-15 莉莉子 · 安卓] 补 poster 兜底 —— **上一轮漏网的那一条**。
                       //   `customBg` 是大厅自定义背景的**独立渲染通路**，与共享 <VideoPlayer>（`playHallMovie` 那条）
                       //   互不相干：上一轮 4 笔 poster 提交只覆盖了共享放映机，这一条**一行都没碰**。
-                      //   点「下一张」/「场景」或「背景」应用后，`handleUpdateCustomBg`（App.tsx:214）先 `stopMovie()`
-                      //   关掉那台有 poster 的放映机，再换掉这里的 `src` ⇒ 安卓 WebView 在"解不出帧"的窗口里
-                      //   画媒体层占位（纯灰底 + 黑色播放图标），且此时没有别的图层盖住它。
-                      //   `key={customBg.url}` 是**必要条件**：同一元素改 `src` 时部分实现会保留上一帧，
-                      //   换元素才能保证 poster 必定重画。
+                      //   点「下一张」/「场景」或「背景」应用后，`handleUpdateCustomBg`（App.tsx:214）会
+                      //   `stopMovie()`（只置 `isVisible=false`，把那台**有 poster 的**放映机**隐藏**；
+                      //   它并不真的停解码 —— `VideoPlayer` 的释放有 15s 延迟窗口）并换掉这里的 `src`
+                      //   ⇒ 安卓 WebView 在"解不出帧"的窗口里画媒体层占位（纯灰底 + 黑色播放图标）。
+                      //   ⚠️ 「此刻没有别的可见图层盖住它」是**桌面视角的层级推理**，安卓媒体层与 CSS 层级的
+                      //      先后顺序**未实测**。
+                      //   `key={customBg.url}`：⚠️**推测**（`file:line` 无法证伪，未实测）——
+                      //      同一元素改 `src` 时部分实现会保留上一帧，换元素可回避该风险；
+                      //      代价≈0：新 `src` 本来也要重新解码，换元素只是提早丢弃旧元素。
                       //   `playsInline` 与 VideoPlayer / LoopVideo 对齐。
-                      //   查不到 poster（旧存档里的非大厅影片 URL）⇒ 返回 undefined ⇒ React 不写该属性，与改动前等价。
+                      //   ❓**残留未知**：`getHallMoviePoster` 对**非大厅影片 URL** 返回 undefined ⇒ 不写该属性
+                      //      （与改动前等价，即**该分支下灰块仍在**）。当前三个写入方（下一张 / 场景 / 应用）
+                      //      给的都是大厅 URL，故现有代码里不可达；将来若新增写入方塞任意 URL，这里会退回灰块。
                       //   PC 零回归：有帧后浏览器自动让位给视频画面。
                       <video
                           key={customBg.url}
