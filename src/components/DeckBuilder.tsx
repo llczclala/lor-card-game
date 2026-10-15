@@ -21,6 +21,49 @@ import { FloatingCardPreview } from './FloatingCardPreview';
 
 
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 牌组选择（备战枢纽网格屏）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 从大厅点「编队」进来、顶部写着「牌组选择」四个大字的那一屏
+//          （即 `viewMode === 'SELECTION'`；点进某个牌组之后就是另一屏了）。
+// 管：顶部横栏高度/内边距 ·「牌组选择」标题 · 左侧视图切换器 · 右上返回按钮 · 内容区留白。
+// 改完存盘即生效（HMR —— 雷电里 1~3 秒就能看到，不用出包、不用重装）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对 px**、直接进 style；注释标注**原来的 Tailwind 类**。
+// ⚠️ 唯一有联动的一对：`contentPadTop` 应 ≥ `headerHeight`，否则卡片会被顶部横栏压住。
+// ══════════════════════════════════════════════════════════════════════
+export const DECK_UI = {
+    // ══ ① 顶部横栏（「牌组选择」所在的那条黑底栏）═════════════════════
+    /** 【主旋钮】横栏高度 px（原 h-28 = 112）—— 改它标题与内容区一起动 */
+    headerHeight: 112,
+    /** 标题距横栏底边的距离 px（原 pb-4 = 16）—— 想让标题整体上移就加大它 */
+    headerPadBottom: 16,
+
+    // ══ ② 「牌组选择」四个大字 ════════════════════════════════════════
+    /** 字号 px（原 text-4xl = 36） */
+    titleFontSize: 36,
+
+    // ══ ③ 左侧视图切换器（网格 / 轮播）════════════════════════════════
+    switchLeft: 128,      // 距左边 px（原 left-32 = 128）
+    switchBottom: 16,     // 距底边 px（原 bottom-4 = 16）
+    switchPad: 4,         // 容器内边距 px（原 p-1 = 4）
+    switchBtnPad: 8,      // 每个按钮内边距 px（原 p-2 = 8）
+    switchIconSize: 18,   // 按钮图标 px（原 size={18}）
+
+    // ══ ④ 右上角返回按钮（返回大厅 / 返回）════════════════════════════
+    backTop: 32,          // 距顶部 px（原 top-8 = 32）
+    backRight: 32,        // 距右侧 px（原 right-8 = 32）
+    backGap: 12,          // 两个按钮间距 px（原 gap-3 = 12）
+    backBtnPad: 12,       // 按钮内边距 px（原 p-3 = 12）
+    backIconSize: 24,     // 按钮图标 px（原 size={24}）
+
+    // ══ ⑤ 内容区（牌组卡片那片区域）的留白 ════════════════════════════
+    /** 顶部留白 px（原 pt-40 = 160）—— **应 ≥ headerHeight** */
+    contentPadTop: 160,
+    contentPadBottom: 80, // 原 pb-20 = 80
+    contentPadX: 64,      // 左右留白 px（原 px-16 = 64，仅网格模式生效）
+} as const;
+
+
 interface DeckBuilderProps {
     onStartGame: (deck: string[]) => void;
     userSystem: ReturnType<typeof useUserSystem>;
@@ -818,25 +861,47 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none z-0"></div>
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.5)_0%,rgba(15,23,42,1)_60%)] z-0 pointer-events-none"></div>
 
-                {/* 2. 顶部大厅 Header 控制栏 */}
-                <div className="absolute top-0 left-0 w-full h-28 bg-black/60 backdrop-blur-md z-40 flex items-end pb-4 justify-center border-b border-white/10 shadow-2xl">
-                    <h1 className="text-4xl font-black italic tracking-tighter drop-shadow-[0_0_20px_rgba(59,130,246,0.6)]">牌组选择</h1>
-                    <div className="absolute left-32 bottom-4 flex bg-black/80 p-1 rounded-lg border border-white/10 shadow-inner">
-                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('GRID'); }} className={`p-2 rounded transition-colors ${viewStyle === 'GRID' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><LayoutGrid size={18} /></button> {/* [新增] 音效 */}
-                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('CAROUSEL'); }} className={`p-2 rounded transition-colors ${viewStyle === 'CAROUSEL' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}><GalleryHorizontalEnd size={18} /></button> {/* [新增] 音效 */}
+                {/* 2. 顶部大厅 Header 控制栏（尺寸来自顶部 🎛️ DECK_UI.header* / title* / switch*）*/}
+                <div
+                    className="absolute top-0 left-0 w-full bg-black/60 backdrop-blur-md z-40 flex items-end justify-center border-b border-white/10 shadow-2xl"
+                    style={{ height: DECK_UI.headerHeight, paddingBottom: DECK_UI.headerPadBottom }}
+                >
+                    <h1
+                        className="font-black italic tracking-tighter drop-shadow-[0_0_20px_rgba(59,130,246,0.6)]"
+                        style={{ fontSize: DECK_UI.titleFontSize }}
+                    >牌组选择</h1>
+                    <div
+                        className="absolute flex bg-black/80 rounded-lg border border-white/10 shadow-inner"
+                        style={{ left: DECK_UI.switchLeft, bottom: DECK_UI.switchBottom, padding: DECK_UI.switchPad }}
+                    >
+                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('GRID'); }} className={`rounded transition-colors ${viewStyle === 'GRID' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`} style={{ padding: DECK_UI.switchBtnPad }}><LayoutGrid size={DECK_UI.switchIconSize} /></button> {/* [新增] 音效 */}
+                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setViewStyle('CAROUSEL'); }} className={`rounded transition-colors ${viewStyle === 'CAROUSEL' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`} style={{ padding: DECK_UI.switchBtnPad }}><GalleryHorizontalEnd size={DECK_UI.switchIconSize} /></button> {/* [新增] 音效 */}
                     </div>
                 </div>
 
-                <div className="absolute top-8 right-8 z-50 flex items-center gap-3">
+                {/* 右上角返回按钮（尺寸来自 🎛️ DECK_UI.back*）*/}
+                <div
+                    className="absolute z-50 flex items-center"
+                    style={{ top: DECK_UI.backTop, right: DECK_UI.backRight, gap: DECK_UI.backGap }}
+                >
                     {onBackToLobby && (
-                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onBackToLobby(); }} className="p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" title="返回大厅"><Home size={24} className="text-gray-400 group-hover:text-white" /></button>
+                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onBackToLobby(); }} className="rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" style={{ padding: DECK_UI.backBtnPad }} title="返回大厅"><Home size={DECK_UI.backIconSize} className="text-gray-400 group-hover:text-white" /></button>
                     )}
-                    <button onClick={handleGlobalBack} className="p-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" title="返回"><ArrowLeft size={24} className="text-gray-400 group-hover:text-white" /></button>
+                    <button onClick={handleGlobalBack} className="rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" style={{ padding: DECK_UI.backBtnPad }} title="返回"><ArrowLeft size={DECK_UI.backIconSize} className="text-gray-400 group-hover:text-white" /></button>
                 </div>
 
                 {/* 3. 核心浏览区（劫持鼠标滚轮的循环无尽舞台） */}
                 {/* 痛点 1 & 3：使用 css 批量隐藏轮播图下方原生滚条 [&::-webkit-scrollbar]:hidden */}
-                <div onWheel={handleWheelScroll} className={`flex-1 w-full pt-40 pb-20 relative z-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${viewStyle === 'GRID' ? 'overflow-y-auto px-16' : 'overflow-hidden flex items-center justify-center'}`}>
+                <div
+                    onWheel={handleWheelScroll}
+                    className={`flex-1 w-full relative z-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${viewStyle === 'GRID' ? 'overflow-y-auto' : 'overflow-hidden flex items-center justify-center'}`}
+                    style={{
+                        paddingTop: DECK_UI.contentPadTop,
+                        paddingBottom: DECK_UI.contentPadBottom,
+                        // 左右留白只在网格模式生效（轮播模式是居中舞台，加了会偏）
+                        ...(viewStyle === 'GRID' ? { paddingLeft: DECK_UI.contentPadX, paddingRight: DECK_UI.contentPadX } : {}),
+                    }}
+                >
 
                     {viewStyle === 'GRID' ? (
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-12 gap-y-28 content-start w-full max-w-[95%] mx-auto">
