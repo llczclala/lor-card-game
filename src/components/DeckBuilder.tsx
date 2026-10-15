@@ -45,7 +45,7 @@ export const DECK_UI = {
     titleFontSize: 48,
 
     // ══ ③ 左侧视图切换器（网格 / 轮播）════════════════════════════════
-    switchLeft: 64,      // 距左边 px（原 left-32 = 128）
+    switchLeft: 128,     // 距左边 px（原 left-32 = 128）⚠️ 别和 contentPadX 的 64 搞混（曾误填 64）
     switchBottom: 16,     // 距底边 px（原 bottom-4 = 16）
     switchPad: 4,         // 容器内边距 px（原 p-1 = 4）
     switchBtnPad: 8,      // 每个按钮内边距 px（原 p-2 = 8）
