@@ -53,7 +53,17 @@ const BattlefieldInner: React.FC<BattlefieldProps> = ({
 }) => {
     return (
         // [微调点 1：全局居中对齐] 将 items-end 改为 items-center，将 pb-[80px] 改为 pb-0，让整个战场区域在画面中绝对垂直居中。
-        <div className="flex-1 w-full max-w-[1080px] mx-auto h-full flex justify-center items-center gap-2 relative bg-transparent pb-0">
+        // [2026-10-15 莉莉子 · 触屏] ⚠️ 补 `touch-action: none`。
+        //   ── 病根（✅ 已证实）：全项目（含 `index.css`）**只有一处** `touch-action`，
+        //      在 `GameSession.tsx:3239` 的**我方备战席**容器上；**战场一处都没有**。
+        //      于是"从战场起手"的拖拽（撤回进攻 / 撤回格挡）在安卓上会被浏览器当成
+        //      滚动/平移 ⇒ `pointercancel` ⇒ 拖拽中途断掉（程实测的「无法拖拽」）。
+        //   ── 而"从备战席起手"的拖拽之所以没事，正是因为那条容器已经有 `touch-action: none`。
+        //   ── 纯触屏属性：鼠标端**零影响**；本区域没有任何需要滚动的容器。
+        <div
+            className="flex-1 w-full max-w-[1080px] mx-auto h-full flex justify-center items-center gap-2 relative bg-transparent pb-0"
+            style={{ touchAction: 'none' }}
+        >
 
             {(() => {
                 // [新增] 将预示进攻的额外槽位算入总宽度

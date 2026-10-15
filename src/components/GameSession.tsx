@@ -1267,8 +1267,20 @@ export const GameSession: React.FC<GameSessionProps> = ({
         hiddenCardElsRef.current.clear(); // [多卡] 清空隐藏映射
         dragStartRef.current = { x: e.clientX, y: e.clientY, ox: offsetX, oy: offsetY };
 
-        // 立即显示 GhostCard（多卡队列）
-        setGhostState({ cards: [card], x: rect.left, y: rect.top, w: rect.width, h: rect.height, location: 'bench' });
+        // [2026-10-15 莉莉子 · 触屏] ⚠️ 这里**故意不在按下时生成 GhostCard**（原来就在这里立即生成）。
+        //   ── 病根：`useCardGaze` 的总开关是 `isDragging: ghostState !== null`（本文件 :1099），
+        //      而它的 `onMouseEnter` **第一行**就是 `if (isDragging || isCasting || suppress) return;`
+        //      （useCardGaze.ts:190）。触屏的「长按看大图」正是靠**合成 mouseover** 去触发
+        //      `onMouseEnter`（touchGaze.ts:147）⇒ 一按下 ghost 就存在 ⇒ 长按 400ms 到点时
+        //      大图**永远浮不出来**。而这三个阶段（主阶段持进攻标识 / 进攻宣告 / 格挡宣告）
+        //      恰好就是程真机实测里"有时长按没反应"的那些场景。
+        //   ── 改法（程 2026-10-15 拍板 · 方案 A）：ghost 推迟到**位移越过 8px 阈值**时才生成
+        //      （见下方 onMove 的 `dragActivatedRef` 激活块）⇒「按住不动 = 看大图 / 一动 = 拖拽」
+        //      各归其位，与 PC 心智一致（PC 悬停时并没有按下，ghost 本来就是 null）。
+        //   ── 安全性：`onUp` 的落点逻辑本来就以 `wasDragging = dragActivatedRef.current` 为门闸
+        //      （本函数 :1414），所以"按下不生成 ghost"**不会让任何落点分支踩空**。
+        //   ── 已知副作用（可接受）：PC 上**单击**备战席卡牌时不再"闪一下 ghost"（原来会闪）。
+        //      拖拽手感不受影响：移动 8px 即生成，与改动前的差异不可感。
 
         // ── 全局 pointer 监听 ──
         const onMove = (ev: PointerEvent) => {
@@ -1288,6 +1300,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     el.style.pointerEvents = 'none';
                     el.style.opacity = '0';
                 }
+                // [2026-10-15 莉莉子 · 触屏] ghost **在这里**才生成（原因见 onBenchPointerDown 的注释）。
+                //   位置改用**指针当前位置**反推，与下面"持续更新 Ghost 位置"用同一公式 ——
+                //   按下时那个 `rect.left/top` 已经不适用了（手指已经移动了 8px 以上）。
+                setGhostState({
+                    cards: [card],
+                    x: ev.clientX - dragStartRef.current.ox,
+                    y: ev.clientY - dragStartRef.current.oy,
+                    w: rect.width,
+                    h: rect.height,
+                    location: 'bench',
+                });
             }
 
             // ═══════════════════════════════════════════════
@@ -1594,8 +1617,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
         hiddenCardElsRef.current.clear();
         dragStartRef.current = { x: e.clientX, y: e.clientY, ox: offsetX, oy: offsetY };
 
-        // 显示 GhostCard（多卡队列）
-        setGhostState({ cards: [card], x: rect.left, y: rect.top, w: rect.width, h: rect.height, scale: COMBAT_GHOST_SCALE, location: 'combat' });
+        // [2026-10-15 莉莉子 · 触屏] ⚠️ 同上：**不在按下时生成 GhostCard**，改到 onMove 的 8px 激活块。
+        //   战场这一条尤其关键 —— 程实测的「撤回进攻 / 撤回格挡」正是**从战场起手**的拖拽，
+        //   而长按在这些阶段同样要能浮出大图（否则玩家想看个数值就会被"按下即拖拽"吃掉）。
 
         const onMove = (ev: PointerEvent) => {
             if (!dragCardIdRef.current) return;
@@ -1613,6 +1637,16 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     el.style.pointerEvents = 'none';
                     el.style.opacity = '0';
                 }
+                // [2026-10-15 莉莉子 · 触屏] 同备战席：ghost 推迟到这一刻才生成。
+                setGhostState({
+                    cards: [card],
+                    x: ev.clientX - dragStartRef.current.ox,
+                    y: ev.clientY - dragStartRef.current.oy,
+                    w: rect.width,
+                    h: rect.height,
+                    scale: COMBAT_GHOST_SCALE,
+                    location: 'combat',
+                });
             }
 
             // [多卡] 战场拖拽扫过检测
