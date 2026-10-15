@@ -35,6 +35,14 @@ $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 Set-Location $repoRoot
 
+# ── 编码（PS 5.1 的第四个坑，2026-10-15 程实测遇到）──────────────────
+#   `adb` / `gradle` 的输出是 **UTF-8**，而 PS 5.1 默认按**系统代码页（中文机器 = GBK）**解码
+#   子进程输出 ⇒ 中文错误全变乱码。实测：adb 那句
+#   「由于目标计算机积极拒绝，无法连接。(10061)」显示成了「鐢变簬鐩爣璁＄畻鏈虹Н鏋佹嫆缁濓紝鏃犳硶杩炴帴銆?」
+#   ⇒ 把控制台输出编码显式设成 UTF-8。设不上也不影响功能，所以 try 兜住。
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+try { $OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+
 function Step($n, $msg) { Write-Host "`n[$n] $msg" -ForegroundColor Cyan }
 function Good($msg)     { Write-Host "    OK  $msg" -ForegroundColor Green }
 function Warn($msg)     { Write-Host "    !!  $msg" -ForegroundColor Yellow }
@@ -65,26 +73,80 @@ Good "ANDROID_HOME = $sdk"
 Good "adb          = $adb"
 
 # ── ② 连接模拟器 ──────────────────────────────────────────────────────
-Step '2/5' "连接模拟器（$Serial）"
-Write-Host "    （雷电若没开 ADB：设置 → 其他设置 → ADB 调试 → 打开）"
+Step '2/5' '连接模拟器'
+Write-Host '    （雷电没有 ADB 时：设置 → 其他设置 → ADB 调试 → 打开，然后**重启模拟器**）'
 
-& $adb start-server | Out-Null
-& $adb connect $Serial 2>&1 | ForEach-Object { Write-Host "    $_" }
+function Test-TcpPort([string]$h, [int]$p) {
+    try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect($h, $p); $c.Close(); return $true }
+    catch { return $false }
+}
 
-# 挑一个真正连上的设备：优先用户给的串号，其次任意 emulator-*
-$deviceList = (& $adb devices) -split "`r?`n" | Where-Object { $_ -match '\tdevice$' }
-if (-not $deviceList) { Fail "没有连上的设备。请先启动雷电，并确认它的 ADB 调试已打开。" }
+$ldProcs = @('dnplayer', 'dnplayer2', 'LdVBoxHeadless', 'Ld9BoxHeadless', 'LdBoxHeadless')
+if (@(Get-Process -Name $ldProcs -ErrorAction SilentlyContinue).Count -gt 0) {
+    Good '检测到雷电进程正在运行'
+} else {
+    Warn '没检测到雷电进程 —— 请先把雷电模拟器启动起来'
+}
 
+# [2026-10-15 程实测] 原来只赌 `127.0.0.1:5555`，而那个端口当时是关着的
+#   ⇒ adb 直接回"由于目标计算机积极拒绝…(10061)"（而且还被 PS 5.1 显示成乱码）。
+#   雷电各版本 / 各实例的 ADB 端口并不统一 ⇒ 改成**先探端口、通了才 connect**
+#   （端口没开就别去 connect，否则只会吐一堆红字）。
+$candidates = @($Serial) + @(
+    '127.0.0.1:5555', '127.0.0.1:5554', '127.0.0.1:5556', '127.0.0.1:5557',
+    '127.0.0.1:5559', '127.0.0.1:5561', '127.0.0.1:62001', '127.0.0.1:62025', '127.0.0.1:62026'
+) | Select-Object -Unique
+
+& $adb start-server 2>&1 | Out-Null
+
+function Connect-FirstOpenPort {
+    param([string[]]$Ports)
+    foreach ($cand in $Ports) {
+        $parts = $cand.Split(':')
+        if ($parts.Count -ne 2) { continue }
+        if (-not (Test-TcpPort $parts[0] ([int]$parts[1]))) { continue }
+        $null = & $adb connect $cand 2>&1
+        return $cand
+    }
+    return $null
+}
+
+$connected = Connect-FirstOpenPort -Ports $candidates
+if ($connected) { Good "端口通则连上：$connected" }
+
+if (-not $connected) {
+    # 常见于「雷电自带的 adb server 与 Android SDK 的 adb 版本打架」——重启 adb server 再试一轮
+    Warn '常见端口都不通，重启 adb server 后重试...'
+    & $adb kill-server 2>&1 | Out-Null
+    & $adb start-server 2>&1 | Out-Null
+    $connected = Connect-FirstOpenPort -Ports $candidates
+    if ($connected) { Good "重启 adb 后连上：$connected" }
+}
+
+# 以 `adb devices` 为准（雷电有时自己就注册成 emulator-5554，那种情况连 connect 都不用）
+$serialList = @(
+    (& $adb devices) -split "`r?`n" |
+        Where-Object { $_ -match '\tdevice$' } |
+        ForEach-Object { ($_ -split '\t')[0].Trim() }
+)
+if ($serialList.Count -eq 0) {
+    Fail @"
+没有连上的设备。请按顺序检查：
+     1) 雷电**正在运行**（不是只开着多开器）
+     2) 雷电里：设置 → 其他设置 → **ADB 调试 → 开启**，然后**重启模拟器**（不少版本要重启才生效）
+     3) 若仍不行，用雷电自带的 adb 看它到底开在哪个端口：
+          到雷电安装目录下执行   adb devices
+        看到类似 127.0.0.1:62001 的结果时，回来这样指定：
+          powershell -File tools\dev-android.ps1 -Serial 127.0.0.1:62001
+"@
+}
+
+# 挑设备：优先用户指定串号 → 刚 connect 上的 → 任意 emulator-* → 第一个
 $dev = $null
-foreach ($line in $deviceList) {
-    $sn = ($line -split '\t')[0].Trim()
-    if ($sn -eq $Serial) { $dev = $sn; break }
-}
-if (-not $dev) {
-    $dev = ($deviceList | Where-Object { $_ -match '^emulator-' } | Select-Object -First 1)
-    if ($dev) { $dev = ($dev -split '\t')[0].Trim() }
-}
-if (-not $dev) { $dev = ($deviceList[0] -split '\t')[0].Trim() }
+if ($serialList -contains $Serial) { $dev = $Serial }
+if (-not $dev -and $connected -and ($serialList -contains $connected)) { $dev = $connected }
+if (-not $dev) { $dev = $serialList | Where-Object { $_ -like 'emulator-*' } | Select-Object -First 1 }
+if (-not $dev) { $dev = $serialList[0] }
 Good "使用设备：$dev"
 
 # ── ③ 端口转发 + 起 dev server ────────────────────────────────────────
