@@ -4,6 +4,7 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
 // [2026-10-15 莉莉子 · 粉丝实测] 切后台停音效（平台差异走 platform 层）
 import { subscribeAppVisibility } from '../platform/appLifecycle';
+import { isAppHidden } from '../utils/appAudioGate'; // [2026-10-16 审查返工] 电平门
 
 // 直接引入音效文件
 import clickSound from '../music/music/click.ogg';
@@ -101,11 +102,16 @@ export const useSfx = () => {
 
         // [2026-10-15 莉莉子 · 粉丝实测] 登记"正在播的一次性音效"，切后台统一掐掉。
         //   —— 最长的一条是大招「最终指令」（3.5s）：切到别的应用还响着会很难受。
-        //   —— 顺带修掉一个隐性泄漏：这些 `new Audio()` 此前**从不释放**。
+        //   ⚠️ 更正（2026-10-16 独立审查）：原先这里写"顺带修掉 new Audio() 从不释放的隐性泄漏"
+        //      —— **无依据且方向反了**：原先播完即无引用、可被 GC；加了本集合后，
+        //      **播放期间**反而多了一条强引用。这里的真实作用是"能枚举到在播的音效"。
         const liveSfx = new Set<HTMLAudioElement>();
 
         // 创建 Audio 对象 (预加载)
         const playSound = (src: string, baseVolume: number = 1.0) => {
+            // [2026-10-16 · 独立审查返工] **电平门**：不只是"翻转那一刻在播的"，
+            //   切后台**之后**新触发的声音也要拦住（第一版只做了边沿触发 ⇒ 后台新音效全漏）。
+            if (isAppHidden()) return;
             const audio = new Audio(src);
             // [修改] 应用全局音量倍率
             audio.volume = baseVolume * globalVolumeRef.current;
@@ -124,6 +130,7 @@ export const useSfx = () => {
         //    若觉得糊，调低这里的 0.85 即可（或改回"只播首击"）。
         // ── marianUltAudioRef 仍保留：仅为卸载时能掐掉正在播的那条。
         const playMarianUlt = () => {
+            if (isAppHidden()) return; // [2026-10-16 审查返工] 同 playSound：电平门
             const audio = new Audio(marianUltSound);
             audio.volume = 0.85 * globalVolumeRef.current;
             marianUltAudioRef.current = audio;

@@ -4,13 +4,19 @@ import { AUDIO_ASSETS, type BgmKey } from '../data/audio';
 import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
 // [2026-10-15 莉莉子 · 粉丝实测] 切后台停音频（平台差异走 platform 层）
 import { subscribeAppVisibility } from '../platform/appLifecycle';
-import { pauseAudibleDomMedia, resumeAudibleDomMedia } from '../utils/appAudioGate';
+import { pauseAudibleDomMedia, resumeAudibleDomMedia, isAppHidden } from '../utils/appAudioGate';
 
 export const useAudio = () => {
     const bgmRef = useRef<HTMLAudioElement | null>(null);
     const currentTrackRef = useRef<string | null>(null);
     // [2026-10-05 莉莉子] 初值改为**读取全局快照**（不再是写死的 0.5）—— 与 useVoice/useSfx 同口径
     const volumeRef = useRef(getVolume('bgm'));
+    // [2026-10-16 莉莉子 · 独立审查返工] "回前台该不该恢复 BGM" 的唯一记账位。
+    //   ── 原先用 effect 内的局部 `let`，够不到 `playBgm` ⇒ 后台切场景时音乐起不来，
+    //      回前台也不会补 ⇒ 玩家莫名其妙没 BGM。
+    //   ── 现在：切后台时"本来在播"置 true、"本来没播/已被 ESC 暂停"置 false；
+    //      而后台调 `playBgm` 也会置 true ⇒ 两条路径都能在回前台正确恢复。
+    const bgmShouldPlayRef = useRef(false);
 
     // 初始化
     useEffect(() => {
@@ -46,26 +52,25 @@ export const useAudio = () => {
     //    影片等"有声的 `<video>`"归它管（见 `utils/appAudioGate.ts`，这样就不必改 VideoPlayer）。
     // ==========================================================
     useEffect(() => {
-        let pausedBgmByLifecycle = false;
         return subscribeAppVisibility((isActive) => {
             const audio = bgmRef.current;
 
             if (!isActive) {
                 if (audio && !audio.paused) {
                     audio.pause();
-                    pausedBgmByLifecycle = true;
+                    bgmShouldPlayRef.current = true;
                 } else {
-                    pausedBgmByLifecycle = false; // 本来没在播 / 已被 ESC 暂停 ⇒ 回前台别拉起
+                    bgmShouldPlayRef.current = false; // 本来没在播 / 已被 ESC 暂停 ⇒ 回前台别拉起
                 }
                 pauseAudibleDomMedia();
                 return;
             }
 
-            if (pausedBgmByLifecycle && audio && currentTrackRef.current) {
+            if (bgmShouldPlayRef.current && audio && currentTrackRef.current) {
                 const p = audio.play();
                 if (p !== undefined) p.catch(() => { /* 自动播放策略拦截：等用户交互 */ });
             }
-            pausedBgmByLifecycle = false;
+            bgmShouldPlayRef.current = false;
             resumeAudibleDomMedia();
         });
     }, []);
@@ -115,6 +120,16 @@ export const useAudio = () => {
             bgmRef.current.src = src;
             // [关键] 切歌时重新应用当前音量
             bgmRef.current.volume = volumeRef.current;
+
+            // [2026-10-16 · 独立审查返工] **电平门**：后台不新起音乐。
+            //   （第一版只在"翻转那一瞬间"管，后台切场景调 playBgm 会直接把音乐放起来。）
+            //   但必须**记下"该放这一首"**（ref 里已置 true）—— 否则回前台就变成"没 BGM"，
+            //   而玩家什么都没做错。
+            currentTrackRef.current = src;
+            if (isAppHidden()) {
+                bgmShouldPlayRef.current = true;
+                return;
+            }
 
             const playPromise = bgmRef.current.play();
             if (playPromise !== undefined) {
