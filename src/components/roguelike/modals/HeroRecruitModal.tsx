@@ -27,6 +27,7 @@ import { useCardGaze } from '../../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../../FloatingCardPreview';
 import { Card } from '../../Card';
 import { ConfirmDialog } from '../ConfirmDialog'; // [2026-10-08 交互回响层 批次2] 通用二次确认（跳过招募）
+import { FullArtOverlay } from '../../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 首战招募弹窗 · 视觉调参区（**程微调就改这里**）
@@ -94,6 +95,8 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
     const [confirmSkip, setConfirmSkip] = useState(false);
     // [2026-10-03 莉莉子] 悬停检视：与地图抽屉（RogueDrawer「当前牌组」）同款 —— 列表行看不清就悬停出大图
     const { gazeTarget, bindGazeEvents, dismissGaze } = useCardGaze({ delay: 250 });
+    // [2026-10-15 莉莉子 · 触屏] 触屏长按 → 浮层「📖 详情」的落点（触屏没有右键）
+    const [viewCard, setViewCard] = useState<CardData | null>(null);
 
     useEffect(() => {
         const t = setTimeout(() => setAnimPhase('select'), 600);
@@ -259,7 +262,10 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
 
                 {/* [2026-10-03 莉莉子] 悬停检视大图（与地图抽屉同款）
                     z-[300] 落在本弹窗（z-[700]）自己的层叠上下文里 ⇒ 盖在候选内容之上 */}
-                <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} />
+                <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => setViewCard(c)} />
+
+                {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
+                {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}
 
                 {/* [2026-10-08 莉莉子 · 交互回响层 批次2] 跳过招募二次确认 */}
                 {confirmSkip && (

@@ -18,6 +18,7 @@ import { useArmamentConfig } from '../../hooks/useArmamentConfig'; // [2026-08-1
 import { useHeroProgression } from '../../hooks/useHeroProgression'; // [2026-08-28 莉莉子] 武装按解锁槽位生效
 import { attachEquipment } from '../../data/equipment';
 import type { CardData } from '../../types';
+import { FullArtOverlay } from '../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
 
 type DrawerTab = 'cards' | 'enhancements';
 
@@ -36,6 +37,8 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
     const [tab, setTab] = useState<DrawerTab>('cards');
     // [2026-08-10] 悬停大图检视（复用全局方案：useCardGaze + FloatingCardPreview）
     const { gazeTarget, bindGazeEvents, dismissGaze } = useCardGaze({ delay: 300 });
+    // [2026-10-15 莉莉子 · 触屏] 触屏长按 → 浮层「📖 详情」的落点（触屏没有右键）
+    const [viewCard, setViewCard] = useState<CardData | null>(null);
     const { getArmament } = useArmamentConfig(); // [2026-08-15] 武装配置（检视英雄卡挂武装）
     const heroProgression = useHeroProgression(); // [2026-08-28 莉莉子] 武装按解锁槽位生效
 
@@ -197,7 +200,10 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
             </AnimatePresence>
 
             {/* [悬停检视] 跟随鼠标的卡牌大图预览（复用全局组件） */}
-            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} />
+            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => setViewCard(c)} />
+
+            {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
+            {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}
         </>
     );
 };

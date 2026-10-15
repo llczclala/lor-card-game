@@ -103,9 +103,12 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ records, isOpen, onClo
             </div>
 
             {/* 悬停大图检视 — Portal 越狱跟随鼠标 */}
+            {/* [2026-10-15 莉莉子 · 触屏] 传 onViewArt：触屏长按浮出的滞留操作条靠它渲染「📖 详情」。
+                handleViewCard 收的是 cardKey（与点击缩略图同一条通路），这里把大图卡牌换算成 key 即可。 */}
             <FloatingCardPreview
                 mode="follow"
                 gazeTarget={gazeTarget}
+                onViewArt={(c) => handleViewCard(c.key)}
                 onMouseEnter={keepAlive}
                 onMouseLeave={scheduleDismiss}
             />

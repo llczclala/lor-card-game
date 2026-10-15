@@ -30,6 +30,7 @@ import { MAX_DIVINITY_LEVEL, getDivinityNodes, getDivinityIconKey } from '../../
 import { useHeroDivinity } from '../../hooks/useHeroDivinity'; // [2026-09-28 神格神经] 解锁/碎片钱包
 import { HERO_IMAGES, SPELL_IMAGES } from '../../data/imageData'; // [2026-09-29] 神格神经：中央卡面原画 + 节点技能图标
 import { ShardIcon } from './ShardIcon'; // [2026-09-29 程拍板] 神格碎片图标（专属=头像菱形 / 万能=橙菱形）
+import { FullArtOverlay } from '../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
 
 // [2026-08-13] 流派图标映射（lucide + 阵营主题色，对齐 heroTheme 单一来源）
 const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
@@ -296,6 +297,8 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
     // [2026-08-13] 接个性化配置：rogue_starter_{heroKey} 牌组（开发者编辑）优先，否则 buildStarterDeck 默认
     const deck = useMemo(() => getConfiguredStarterDeck(userSystem?.decks, heroKey), [heroKey, userSystem?.decks]);
     const { gazeTarget, bindGazeEvents } = useCardGaze({ delay: 250 }); // [2026-08-13] 悬停大图检视
+    // [2026-10-15 莉莉子 · 触屏] 触屏长按 → 浮层「📖 详情」的落点（触屏没有右键）
+    const [viewCard, setViewCard] = useState<CardData | null>(null);
     const { getArmament } = useArmamentConfig(); // [2026-08-15] 英雄卡武装减费显示
     const heroProgression = useHeroProgression(); // [2026-08-28 莉莉子] 武装按解锁槽位生效
 
@@ -370,7 +373,10 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
             </div>
 
             {/* 悬停大图检视 */}
-            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} />
+            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => setViewCard(c)} />
+
+            {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
+            {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}
         </div>
     );
 };

@@ -15,6 +15,8 @@ import { DeskMedia } from '../DeskMedia'; // [2026-08-13] 动态牌桌媒体组�
 import { useCardGaze } from '../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../FloatingCardPreview';
 import { eventBus, GameEvents } from '../../utils/eventBus';
+import type { CardData } from '../../types'; // [2026-10-15 莉莉子 · 触屏] 详情入口的 state 类型
+import { FullArtOverlay } from '../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
 
 // ── 牌组图标尺寸常量（照搬 DeckBuilder）──
 const DIORAMA_SIZE = {
@@ -159,6 +161,8 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
 
     // 悬停大图检视
     const { gazeTarget, bindGazeEvents } = useCardGaze({ delay: 250 });
+    // [2026-10-15 莉莉子 · 触屏] 触屏长按 → 浮层「📖 详情」的落点（触屏没有右键）
+    const [viewCard, setViewCard] = useState<CardData | null>(null);
 
     // 右侧个性化选择器
     const [selectorType, setSelectorType] = useState<'cardBack' | 'desk' | null>(null);
@@ -281,7 +285,11 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
             <FloatingCardPreview gazeTarget={gazeTarget} mode="follow" scale={1.25} interactive
                 onMouseEnter={() => {}}
                 onMouseLeave={() => {}}
+                onViewArt={(c) => setViewCard(c)}
             />
+
+            {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
+            {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}
 
             {/* 卡背/牌桌选择器 */}
             {selectorType && (

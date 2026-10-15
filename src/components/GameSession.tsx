@@ -3475,7 +3475,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
             </div>
 
             {/* [新增] 战场/备战席悬停预览 — Portal 越狱跟随鼠标 */}
-            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} skinId={skinOverrides[gazeTarget?.card.key || ''] || 0} playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus} /> {/* [新增] 给悬停大图穿皮肤 */}
+            {/* [2026-10-15 莉莉子 · 触屏] 传 onViewArt：触屏长按浮出的滞留操作条靠它渲染「📖 详情」。
+                触屏上右键已被吃掉（见 TouchFeedbackLayer），详情入口就落在这里。
+                审查发现：此前这一行是全项目唯一漏传 onViewArt 的 follow 浮层 ⇒ 主对局没有详情按钮。 */}
+            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={handleViewCard} skinId={skinOverrides[gazeTarget?.card.key || ''] || 0} playerNexusHealth={game.playerNexus} enemyNexusHealth={game.enemyNexus} /> {/* [新增] 给悬停大图穿皮肤 */}
 
             {/* [教程] 强制悬停卡牌预览 — 引导层 forceHoverSelectors 触发 */}
             {tutorialForcedPreview && (() => {
