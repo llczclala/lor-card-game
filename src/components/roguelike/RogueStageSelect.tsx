@@ -97,6 +97,7 @@ export const RogueStageSelect: React.FC<RogueStageSelectProps> = ({ onBack, onSt
                 <video
                     ref={mapVideoRef}
                     src={mapZeroVideo}
+                    poster={mapZero}
                     onError={() => setMapVideoFailed(true)}
                     style={{ filter: rightFilter }}
                     className={`absolute inset-0 w-full h-full object-cover ${isSecret ? 'animate-[rogue-shake_5s_ease-in-out_infinite]' : ''} ${isTopSecret ? 'animate-[rogue-shake-mid_3s_ease-in-out_infinite]' : ''}`}

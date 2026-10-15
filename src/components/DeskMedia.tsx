@@ -44,7 +44,19 @@ const DeskMediaInner: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false, 
 
     if (video) {
         // 优先级 **0**：牌桌是全屏常驻背景（1920×1088@30，单路解码量最大）⇒ 排最后，需要时由它让位
-        return <LoopVideo src={video} className={className} style={style} priority={0} />;
+        // [2026-10-15 莉莉子 · 安卓] 补 poster 兜底：
+        //   安卓 WebView 在 <video> 没有可绘制帧时会画媒体层自己的占位（纯灰底 + 黑色播放图标）；
+        //   动态牌桌是**全屏背景**，未就绪/让位时整屏发灰。这里用本文件兜底分支同一张静态牌桌图。
+        //   PC 侧行为不变：poster 是标准属性，有帧后浏览器自动让位给视频画面。
+        return (
+            <LoopVideo
+                src={video}
+                poster={PERSONALIZATION_ASSETS.desks[deskIndex] ?? PERSONALIZATION_ASSETS.desks[0]}
+                className={className}
+                style={style}
+                priority={0}
+            />
+        );
     }
     // [2026-09-18] 兜底 desks[0]：存档里可能残留已失效的牌桌编号（如 09-18 重编号前的旧值）
     return <img src={PERSONALIZATION_ASSETS.desks[deskIndex] ?? PERSONALIZATION_ASSETS.desks[0]} className={className} style={style} alt="牌桌" />;
