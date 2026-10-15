@@ -14,7 +14,7 @@ import { getAccountExpToNext } from '../data/accountProgression'; // [2026-09-04
 import { CARD_DB } from '../data/cards'; // [2026-09-04 档案面板] 收藏计数 / 代表英雄名
 import { getArmamentDefs } from '../data/equipment'; // [2026-09-04 档案面板] 武装收藏计数
 import { readArmStock } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
-import { getHallCharacterEntries, getCharacterScenes, type HallCharacterKey } from '../data/movieData';
+import { getHallCharacterEntries, getCharacterScenes, getHallMoviePoster, type HallCharacterKey } from '../data/movieData';
 import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench, Camera, Megaphone } from 'lucide-react'; // [修改] 新增 Camera / [2026-08-09] 新增 Megaphone
 
 // [新增] 引入 GM 工作室主控台
@@ -517,7 +517,9 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                         {previewBg.type === 'pic' ? (
                             <img src={previewBg.url} className="w-full h-full object-cover" alt="预览背景" />
                         ) : (
-                            <LoopVideo src={previewBg.url} className="w-full h-full object-cover" priority={-20} />
+                            // [2026-10-15 莉莉子 · 安卓] 补 poster 兜底：影片就绪前先显示首帧静图，
+                            //   否则安卓 WebView 会画媒体层占位（纯灰底 + 黑色播放图标）。PC 行为不变。
+                            <LoopVideo src={previewBg.url} poster={getHallMoviePoster(previewBg.url)} className="w-full h-full object-cover" priority={-20} />
                         )}
                     </motion.div>
                 )}
@@ -989,11 +991,14 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                     className={`relative w-full aspect-video rounded-sm overflow-hidden cursor-pointer transition-all duration-300 shadow-lg ${previewBg?.url === bg.url ? 'border-4 border-blue-500 scale-105 shadow-[0_0_20px_rgba(37,99,235,0.5)]' : 'border-2 border-white/20 hover:border-white/50 hover:scale-105'}`}
                                 >
                                     {bg.type === 'movie' ? (
-                                        <video src={bg.url} preload="metadata" className="w-full h-full object-cover" />
+                                        // [2026-10-15 莉莉子 · 安卓] 缩略图由 `<video preload="metadata">` 改为首帧静图：
+                                        //   `preload="metadata"` **永远解不出第一帧** ⇒ 安卓 WebView 由媒体层画占位
+                                        //   （纯灰底 + 黑色播放图标），且**永久**不会变。静图与影片同名换扩展名，一一对应。
+                                        <img src={getHallMoviePoster(bg.url)} className="w-full h-full object-cover" alt="背景选项" />
                                     ) : (
                                         <img src={bg.url} className="w-full h-full object-cover" alt="背景选项" />
                                     )}
-                                    {/* 视频中间的播放图标 */}
+                                    {/* 视频中间的播放图标（设计上的"这是影片"标记，保留） */}
                                     {bg.type === 'movie' && (
                                         <div className="absolute inset-0 flex items-center justify-center bg-black/20">
                                             <Play size={32} className="text-white/70" fill="currentColor" />
@@ -1033,7 +1038,9 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                     className={`relative w-full h-28 rounded-sm overflow-hidden cursor-pointer transition-all duration-300 flex-shrink-0 ${previewBg?.url === bg.url ? 'border-2 border-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'border border-white/20 hover:border-white/50'}`}
                                 >
                                     {bg.type === 'movie' ? (
-                                        <video src={bg.url} preload="metadata" className="w-full h-full object-cover opacity-80" />
+                                        // [2026-10-15 莉莉子 · 安卓] 同上方缩略图：`preload="metadata"` 解不出帧 ⇒
+                                        //   安卓 WebView 永久灰块。侧栏这里是**同一处病根的第二个渲染点**。
+                                        <img src={getHallMoviePoster(bg.url)} className="w-full h-full object-cover opacity-80" alt="背景选项" />
                                     ) : (
                                         <img src={bg.url} className="w-full h-full object-cover opacity-80" alt="背景选项" />
                                     )}

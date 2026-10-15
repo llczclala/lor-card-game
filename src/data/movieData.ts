@@ -71,6 +71,80 @@ import yao_01 from '../movie/hall/yao_01.webm';
 import yao_02 from '../movie/hall/yao_02.webm';
 import yao_03 from '../movie/hall/yao_03.webm';
 import yao_04 from '../movie/hall/yao_04.webm';
+
+// [2026-10-15 莉莉子 · 安卓] 大厅影片首帧静图 —— 52 张（`src/image/hall/*.jpg`，与影片同名换扩展名）
+//   病根：安卓 WebView 在 `<video>` **没有可绘制帧**时，会由媒体层自己画占位（纯灰底 + 黑色播放图标）；
+//         PC 桌面 Chromium 无此行为。缩略图用的 `preload="metadata"` **永远解不出第一帧**
+//         ⇒ 安卓上缩略图**永久**是灰底 + 播放图标。
+//   药方：缩略图改用静图、全屏背景预览补 `poster`。
+//   ⚠️ 必须走 Vite ES import（与影片一致）：Electron 下页面是 `file://`，写 `/xxx.jpg` 绝对路径会失效。
+//   ⚠️ 与同目录原有 `.webp` 美术资源**同名并存**，两套互不影响。
+// 阿卡夏
+import poster_acacia_01 from '../image/hall/acacia_01.jpg';
+import poster_acacia_02 from '../image/hall/acacia_02.jpg';
+import poster_acacia_03 from '../image/hall/acacia_03.jpg';
+import poster_acacia_04 from '../image/hall/acacia_04.jpg';
+// 辰星
+import poster_chengxing_01 from '../image/hall/chengxing_01.jpg';
+import poster_chengxing_02 from '../image/hall/chengxing_02.jpg';
+import poster_chengxing_03 from '../image/hall/chengxing_03.jpg';
+import poster_chengxing_04 from '../image/hall/chengxing_04.jpg';
+// 芬妮
+import poster_fenny_01 from '../image/hall/fenny_01.jpg';
+import poster_fenny_02 from '../image/hall/fenny_02.jpg';
+import poster_fenny_03 from '../image/hall/fenny_03.jpg';
+import poster_fenny_04 from '../image/hall/fenny_04.jpg';
+// 芬妮·泳装
+import poster_fenny_swimsuit_01 from '../image/hall/fenny_swimsuit_01.jpg';
+import poster_fenny_swimsuit_02 from '../image/hall/fenny_swimsuit_02.jpg';
+import poster_fenny_swimsuit_03 from '../image/hall/fenny_swimsuit_03.jpg';
+import poster_fenny_swimsuit_04 from '../image/hall/fenny_swimsuit_04.jpg';
+// 卡提亚
+import poster_katya_01 from '../image/hall/katya_01.jpg';
+import poster_katya_02 from '../image/hall/katya_02.jpg';
+import poster_katya_03 from '../image/hall/katya_03.jpg';
+import poster_katya_04 from '../image/hall/katya_04.jpg';
+// 卡提亚·婚纱
+import poster_katya_wedding_01 from '../image/hall/katya_wedding_01.jpg';
+import poster_katya_wedding_02 from '../image/hall/katya_wedding_02.jpg';
+import poster_katya_wedding_03 from '../image/hall/katya_wedding_03.jpg';
+import poster_katya_wedding_04 from '../image/hall/katya_wedding_04.jpg';
+// 里芙
+import poster_lyfe_01 from '../image/hall/lyfe_01.jpg';
+import poster_lyfe_02 from '../image/hall/lyfe_02.jpg';
+import poster_lyfe_03 from '../image/hall/lyfe_03.jpg';
+import poster_lyfe_04 from '../image/hall/lyfe_04.jpg';
+// 茉莉安
+import poster_marian_01 from '../image/hall/marian_01.jpg';
+import poster_marian_02 from '../image/hall/marian_02.jpg';
+import poster_marian_03 from '../image/hall/marian_03.jpg';
+import poster_marian_04 from '../image/hall/marian_04.jpg';
+// 茉莉安·婚纱
+import poster_marian_wedding_01 from '../image/hall/marian_wedding_01.jpg';
+import poster_marian_wedding_02 from '../image/hall/marian_wedding_02.jpg';
+import poster_marian_wedding_03 from '../image/hall/marian_wedding_03.jpg';
+import poster_marian_wedding_04 from '../image/hall/marian_wedding_04.jpg';
+// 妮塔
+import poster_nita_01 from '../image/hall/nita_01.jpg';
+import poster_nita_02 from '../image/hall/nita_02.jpg';
+import poster_nita_03 from '../image/hall/nita_03.jpg';
+import poster_nita_04 from '../image/hall/nita_04.jpg';
+// 瑟瑞斯
+import poster_siris_01 from '../image/hall/siris_01.jpg';
+import poster_siris_02 from '../image/hall/siris_02.jpg';
+import poster_siris_03 from '../image/hall/siris_03.jpg';
+import poster_siris_04 from '../image/hall/siris_04.jpg';
+// 苔丝
+import poster_tess_01 from '../image/hall/tess_01.jpg';
+import poster_tess_02 from '../image/hall/tess_02.jpg';
+import poster_tess_03 from '../image/hall/tess_03.jpg';
+import poster_tess_04 from '../image/hall/tess_04.jpg';
+// 肴
+import poster_yao_01 from '../image/hall/yao_01.jpg';
+import poster_yao_02 from '../image/hall/yao_02.jpg';
+import poster_yao_03 from '../image/hall/yao_03.jpg';
+import poster_yao_04 from '../image/hall/yao_04.jpg';
+
 // [核心重构] 导入英雄多分辨率 WebM
 // 里芙
 import lyfe_levelup_1k from '../movie/level up/里芙_level up/1k.webm';
@@ -141,6 +215,8 @@ export interface HallCharacterEntry {
   characterKey: HallCharacterKey;
   characterName: string;
   scenes: [string, string, string, string];
+  /** [2026-10-15 莉莉子 · 安卓] 四个场景各自的**首帧静图**，与 `scenes` 一一对应（缩略图 / poster 兜底用） */
+  posters: [string, string, string, string];
 }
 
 /** 角色 BGM 映射（按程指定的规则） */
@@ -164,19 +240,19 @@ const HALL_BGM_BY_CHARACTER: Record<HallCharacterKey, BgmKey> = {
 // [核心重构] 组织 52 个视频为分组结构
 // ==========================================
 const HALL_ENTRIES: HallCharacterEntry[] = [
-  { characterKey: 'lyfe',           characterName: '里芙',         scenes: [lyfe_01, lyfe_02, lyfe_03, lyfe_04] },
-  { characterKey: 'fenny',          characterName: '芬妮',         scenes: [fenny_01, fenny_02, fenny_03, fenny_04] },
-  { characterKey: 'marian',         characterName: '茉莉安',       scenes: [marian_01, marian_02, marian_03, marian_04] },
-  { characterKey: 'katya',          characterName: '卡提亚',       scenes: [katya_01, katya_02, katya_03, katya_04] },
-  { characterKey: 'yao',            characterName: '肴',           scenes: [yao_01, yao_02, yao_03, yao_04] },
-  { characterKey: 'chengxing',      characterName: '辰星',         scenes: [chengxing_01, chengxing_02, chengxing_03, chengxing_04] },
-  { characterKey: 'nita',           characterName: '妮塔',         scenes: [nita_01, nita_02, nita_03, nita_04] },
-  { characterKey: 'katya_wedding',  characterName: '卡提亚·婚纱',   scenes: [katya_wedding_01, katya_wedding_02, katya_wedding_03, katya_wedding_04] },
-  { characterKey: 'tess',           characterName: '苔丝',         scenes: [tess_01, tess_02, tess_03, tess_04] },
-  { characterKey: 'fenny_swimsuit', characterName: '芬妮·泳装',    scenes: [fenny_swimsuit_01, fenny_swimsuit_02, fenny_swimsuit_03, fenny_swimsuit_04] },
-  { characterKey: 'siris',          characterName: '瑟瑞斯',       scenes: [siris_01, siris_02, siris_03, siris_04] },
-  { characterKey: 'acacia',         characterName: '阿卡夏',       scenes: [acacia_01, acacia_02, acacia_03, acacia_04] },
-  { characterKey: 'marian_wedding', characterName: '茉莉安·婚纱',   scenes: [marian_wedding_01, marian_wedding_02, marian_wedding_03, marian_wedding_04] },
+  { characterKey: 'lyfe',           characterName: '里芙',         scenes: [lyfe_01, lyfe_02, lyfe_03, lyfe_04],                                     posters: [poster_lyfe_01, poster_lyfe_02, poster_lyfe_03, poster_lyfe_04] },
+  { characterKey: 'fenny',          characterName: '芬妮',         scenes: [fenny_01, fenny_02, fenny_03, fenny_04],                                 posters: [poster_fenny_01, poster_fenny_02, poster_fenny_03, poster_fenny_04] },
+  { characterKey: 'marian',         characterName: '茉莉安',       scenes: [marian_01, marian_02, marian_03, marian_04],                             posters: [poster_marian_01, poster_marian_02, poster_marian_03, poster_marian_04] },
+  { characterKey: 'katya',          characterName: '卡提亚',       scenes: [katya_01, katya_02, katya_03, katya_04],                                 posters: [poster_katya_01, poster_katya_02, poster_katya_03, poster_katya_04] },
+  { characterKey: 'yao',            characterName: '肴',           scenes: [yao_01, yao_02, yao_03, yao_04],                                         posters: [poster_yao_01, poster_yao_02, poster_yao_03, poster_yao_04] },
+  { characterKey: 'chengxing',      characterName: '辰星',         scenes: [chengxing_01, chengxing_02, chengxing_03, chengxing_04],                 posters: [poster_chengxing_01, poster_chengxing_02, poster_chengxing_03, poster_chengxing_04] },
+  { characterKey: 'nita',           characterName: '妮塔',         scenes: [nita_01, nita_02, nita_03, nita_04],                                     posters: [poster_nita_01, poster_nita_02, poster_nita_03, poster_nita_04] },
+  { characterKey: 'katya_wedding',  characterName: '卡提亚·婚纱',   scenes: [katya_wedding_01, katya_wedding_02, katya_wedding_03, katya_wedding_04], posters: [poster_katya_wedding_01, poster_katya_wedding_02, poster_katya_wedding_03, poster_katya_wedding_04] },
+  { characterKey: 'tess',           characterName: '苔丝',         scenes: [tess_01, tess_02, tess_03, tess_04],                                     posters: [poster_tess_01, poster_tess_02, poster_tess_03, poster_tess_04] },
+  { characterKey: 'fenny_swimsuit', characterName: '芬妮·泳装',    scenes: [fenny_swimsuit_01, fenny_swimsuit_02, fenny_swimsuit_03, fenny_swimsuit_04], posters: [poster_fenny_swimsuit_01, poster_fenny_swimsuit_02, poster_fenny_swimsuit_03, poster_fenny_swimsuit_04] },
+  { characterKey: 'siris',          characterName: '瑟瑞斯',       scenes: [siris_01, siris_02, siris_03, siris_04],                                 posters: [poster_siris_01, poster_siris_02, poster_siris_03, poster_siris_04] },
+  { characterKey: 'acacia',         characterName: '阿卡夏',       scenes: [acacia_01, acacia_02, acacia_03, acacia_04],                             posters: [poster_acacia_01, poster_acacia_02, poster_acacia_03, poster_acacia_04] },
+  { characterKey: 'marian_wedding', characterName: '茉莉安·婚纱',   scenes: [marian_wedding_01, marian_wedding_02, marian_wedding_03, marian_wedding_04], posters: [poster_marian_wedding_01, poster_marian_wedding_02, poster_marian_wedding_03, poster_marian_wedding_04] },
 ];
 
 /** 平坦列表 URL → 所属角色的查找表 */
@@ -281,6 +357,32 @@ export const findCharacterByVideoUrl = (url: string): HallCharacterEntry | null 
  */
 export const findSceneIndexByVideoUrl = (url: string): number => {
     return URL_TO_CHARACTER.get(url)?.sceneIndex ?? 0;
+};
+
+// ==========================================
+// [2026-10-15 莉莉子 · 安卓] 大厅影片 → 首帧静图 查找表
+// ==========================================
+
+/** 大厅影片 URL → 该场景的**首帧静图** URL（52 条，全部有图） */
+const URL_TO_POSTER: Map<string, string> = (() => {
+    const map = new Map<string, string>();
+    for (const entry of HALL_ENTRIES) {
+        entry.scenes.forEach((url, i) => map.set(url, entry.posters[i]));
+    }
+    return map;
+})();
+
+/**
+ * [2026-10-15 莉莉子 · 安卓] 由**大厅影片 URL** 取对应的首帧静图 URL。
+ *
+ * 用途（两条都是"视频无可绘制帧"的兜底）：
+ *   ① 背景选择面板的缩略图 —— 直接用 `<img src={...}>`（`preload="metadata"` 永远解不出帧）
+ *   ② 全屏背景预览 `<LoopVideo poster={...}>` —— 视频就绪前先显示静图，而不是安卓的灰块
+ *
+ * 找不到（非大厅影片 / 传入的已是图片）时返回 `undefined`，由调用方自行兜底。
+ */
+export const getHallMoviePoster = (url: string): string | undefined => {
+    return URL_TO_POSTER.get(url);
 };
 
 /**
