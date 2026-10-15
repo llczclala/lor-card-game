@@ -110,6 +110,12 @@ export const DECK_UI = {
     // ══ ⑧ 轮播模式（CAROUSEL）════════════════════════════════════════
     /** 相邻牌组的横向间距 px（原代码里**写死**的 `diff * 380`） */
     carouselSpacing: 380,
+    /**
+     * 📱 **手机左右滑动**的触发距离 px（手指横向位移超过它才算"翻一张"）。
+     * 对齐 `SHOP_UI.swipeThreshold`（商店翻页用的同一个值）。
+     * ⚠️ 灵敏度就靠它调：**调小** = 轻轻一划就翻（也更容易误触）；**调大** = 要划得更远。
+     */
+    swipeThreshold: 50,
 } as const;
 
 
@@ -374,6 +380,31 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         } else if (e.deltaY < 0) {
             setCarouselIndex(prev => (prev - 1 + total) % total);
         }
+    };
+
+    // [2026-10-15 莉莉子 · 程提需求] 📱 **手机左右滑动**翻牌组
+    // ── 程实测：**PC 有滚轮**、手机**一条滑动通路都没有** —— 只能去点"旁边那张"才能翻，
+    //    手指横划完全没反应（PC 上鼠标拖拽同样没反应，但程说只补手机的就行）。
+    //    写法**对齐 `ShopScreen` 的翻页**（`onTouchStart` 记起点 + `onTouchEnd` 比位移）。
+    // ── ⚠️ 只挂 touch 事件：**鼠标拖拽根本不会触发它们** ⇒ 天然只影响触屏，
+    //    不会碰到程说"能用"的滚轮通路。
+    const carouselTouchXRef = React.useRef(0);
+    const handleCarouselTouchStart = (e: React.TouchEvent) => {
+        if (viewStyle !== 'CAROUSEL' || hubDeckId) return; // 与 handleWheelScroll 同一套守卫
+        carouselTouchXRef.current = e.touches[0].clientX;
+    };
+    const handleCarouselTouchEnd = (e: React.TouchEvent) => {
+        if (viewStyle !== 'CAROUSEL' || hubDeckId) return;
+        const total = allCarouselDecks.length;
+        if (total === 0) return;
+        const dx = e.changedTouches[0].clientX - carouselTouchXRef.current;
+        if (Math.abs(dx) < DECK_UI.swipeThreshold) return; // 没划够 ⇒ 让给普通点击处理
+        // ⚠️ 必须 preventDefault：否则 WebView 还会**补发一个 click**，而它落在
+        //    **中央那张**上就会顺手把牌组打开（想划走结果进去了）。取消 `touchend`
+        //    会一并取消这次触摸合成出的 click（Touch Events 规范）。
+        if (e.cancelable) e.preventDefault();
+        // 手指往左滑 (dx < 0) = 看**下一张**，与滚轮 `deltaY > 0` 同方向、也能循环
+        setCarouselIndex(prev => (dx < 0 ? (prev + 1) % total : (prev - 1 + total) % total));
     };
 
     // [新增] 进入特定卡组的编辑模式
@@ -974,10 +1005,18 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 {/* 痛点 1 & 3：使用 css 批量隐藏轮播图下方原生滚条 [&::-webkit-scrollbar]:hidden */}
                 <div
                     onWheel={handleWheelScroll}
+                    onTouchStart={handleCarouselTouchStart}
+                    onTouchEnd={handleCarouselTouchEnd}
                     className={`flex-1 w-full relative z-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${viewStyle === 'GRID' ? 'overflow-y-auto' : 'overflow-hidden flex items-center justify-center'}`}
                     style={{
                         paddingTop: DECK_UI.contentPadTop,
                         paddingBottom: DECK_UI.contentPadBottom,
+                        // 手机左右滑动翻牌组（处理函数见 `handleCarouselTouch*`）。
+                        // `touch-action: pan-y` = 「竖着交给浏览器、**横着归我**」⇒ 横划不会被
+                        // 浏览器当成滚动手势吞掉（否则可能派发 `touchcancel` 而不是 `touchend`）。
+                        // ⚠️ **只在轮播模式加**：网格模式在 `deckScale > 1` 时需要**横向拖动**
+                        //    才看得到右边被放大的列，加在这里会把那个能力掐死。
+                        ...(viewStyle === 'CAROUSEL' ? { touchAction: 'pan-y' as const } : {}),
                         // 左右留白只在网格模式生效（轮播模式是居中舞台，加了会偏）
                         ...(viewStyle === 'GRID' ? { paddingLeft: DECK_UI.contentPadX, paddingRight: DECK_UI.contentPadX } : {}),
                         // 【主旋钮】**轮播模式**的整体缩放：直接缩放**这块舞台** ⇒ 牌组与它们之间的
