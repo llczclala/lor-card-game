@@ -10,6 +10,9 @@ html, body {
   background-color: #000000;
   overflow: hidden;
   user-select: none;
+  /* [2026-10-14 莉莉子 · 触屏适配] 关掉安卓点击时的**系统灰色高亮块**（"廉价感"来源之一）；
+     点击反馈改由 <TouchFeedbackLayer /> 的涟漪 + 震动承担。 */
+  -webkit-tap-highlight-color: transparent;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 

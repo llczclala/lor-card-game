@@ -9,6 +9,7 @@ import { useSfx } from './hooks/useSfx';
 import { useMovie } from './hooks/useMovie';
 import { VideoPlayer } from './components/VideoPlayer';
 // [2026-10-14 程拍板] FullScreenToggle 已收进设置窗口（SettingsModal「显示」区），不再全局悬浮
+import { TouchFeedbackLayer } from './components/TouchFeedbackLayer'; // [2026-10-14] 触屏点击反馈（涟漪 + 长按进度环 + 震动；仅触屏启用）
 import { LoadingScreen } from './components/LoadingScreen';
 import { CARD_DB } from './data/cards';
 import { useUserSystem } from './hooks/useUserSystem';
@@ -1980,6 +1981,7 @@ export default function App() {
   return (
   <ScaleWrapper>
   {/* [2026-10-14 程拍板] 全屏按钮已迁入设置窗口 → SettingsModal「Video Quality / Display」 */}
+  <TouchFeedbackLayer />
     <div className="relative w-full h-full bg-slate-950 overflow-hidden">
 
 
