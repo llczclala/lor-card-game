@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Search } from 'lucide-react'; // [2026-10-15 莉莉子 · 触屏] 「详情」圆形按钮的放大镜图标
 import { Card } from './Card';
 import type { CardData } from '../types';
 // [2026-10-15 莉莉子 · 触屏] 抬手后的"滞留态"由触屏手势层广播，浮层这边订阅
-import { touchLingerStore, closeTouchGaze } from '../utils/touchGaze';
+import { touchLingerStore, closeTouchGaze, TOUCH_TUNE } from '../utils/touchGaze';
 
 // ─── GazeTarget 类型 ────────────────────────────────────────────
 // 与 useCardGaze 返回的 gazeTarget 结构一致，避免循环依赖
@@ -143,6 +144,21 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
             ? left + scaledWidth / 2
             : left + BASE_WIDTH - scaledWidth / 2;
 
+        // [2026-10-15 莉莉子 · 触屏] 滞留操作条摆在哪一侧（程真机实测反馈）。
+        //   ── 病根：原来**固定放在浮层下方**（`top + scaledHeight/2 + 12`）。
+        //      而**我方备战席**在屏幕底部 ⇒ 上面那段视口钳制会把浮层的下边缘压到
+        //      `innerHeight - 20` ⇒ 操作条被挤到**屏幕外**，手指根本点不到。
+        //   ── 定则（程拍板）：**下方放得下就放下方，放不下就翻到上方**。
+        //      它与程的表述（我方→浮层上方 / 敌方→浮层下方）等价，但更稳、也不依赖"识别敌我"：
+        //        敌方备战席在屏幕顶部 ⇒ 下方必然放得下 ⇒ 落下方 ✅
+        //        我方备战席在屏幕底部 ⇒ 下方必然放不下 ⇒ 翻上方 ✅
+        //   ⚠️ 前提：浮层的**视觉**纵向中心恒等于 `top`、半高恒等于 `scaledHeight/2`
+        //      （`y:'-50%'` 把未缩放的向上移半个身高，而 `scale` 的原点是中心 ⇒ 中心不动）。
+        const previewBottomY = top + scaledHeight / 2;
+        const previewTopY = top - scaledHeight / 2;
+        const fitsBelow =
+            previewBottomY + TOUCH_TUNE.lingerBarGap + TOUCH_TUNE.lingerBarHeight <= window.innerHeight - 8;
+
         return (
             <>
             {createPortal(
@@ -190,7 +206,12 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
 
             {/* [2026-10-15 莉莉子 · 触屏] 滞留操作条 —— 抬手后浮层还在的这 ~1.8s 内可以点它。
                 触屏没有右键，「详情」入口就落在这里（程 2026-10-14 拍板方案 A）。
-                故意**不跟随游戏缩放**：这是手指要点的东西，必须保持真实屏幕尺寸。 */}
+                故意**不跟随游戏缩放**：这是手指要点的东西，必须保持真实屏幕尺寸。
+
+                [2026-10-15 程真机实测反馈 #1] 两处改：
+                  · 「详情」改成**圆形放大镜按钮 + 详情两字**（原来是大药丸，简洁明了）
+                  · 整条**换边**：下方放得下才放下方（= 敌方），否则翻到浮层**正上方**（= 我方）
+                    —— 原来固定放下方，我方备战席在屏幕底部 ⇒ 被挤到屏幕外，点不到 */}
             {lingering && createPortal(
                 <div
                     // [2026-10-15 莉莉子 · 触屏] 手势层靠这个标记放行"按在操作条上"的按下 ——
@@ -199,10 +220,14 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                     style={{
                         position: 'fixed',
                         left: visualCenterX,
-                        top: top + scaledHeight / 2 + 12,
-                        transform: 'translateX(-50%)',
+                        // 翻到上方时用 translateY(-100%) 把整条的**下边缘**贴在浮层上边缘之上
+                        top: fitsBelow
+                            ? previewBottomY + TOUCH_TUNE.lingerBarGap
+                            : previewTopY - TOUCH_TUNE.lingerBarGap,
+                        transform: fitsBelow ? 'translateX(-50%)' : 'translate(-50%, -100%)',
                         zIndex: 10002,
                         display: 'flex',
+                        alignItems: 'center',
                         gap: 10,
                         whiteSpace: 'nowrap',
                     }}
@@ -210,10 +235,13 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                     {onViewArt && (
                         <button
                             type="button"
+                            aria-label="详情"
                             onClick={() => { onViewArt(followCard); closeTouchGaze(); }}
-                            className="px-5 py-2.5 rounded-full bg-sky-500/95 text-white text-base font-semibold shadow-[0_6px_20px_rgba(14,165,233,0.5)] active:scale-95 transition-transform"
+                            className="flex flex-col items-center justify-center rounded-full bg-sky-500/95 text-white shadow-[0_6px_20px_rgba(14,165,233,0.5)] active:scale-95 transition-transform"
+                            style={{ width: TOUCH_TUNE.detailBtnSize, height: TOUCH_TUNE.detailBtnSize }}
                         >
-                            📖 详情
+                            <Search size={Math.round(TOUCH_TUNE.detailBtnSize * 0.36)} strokeWidth={2.5} />
+                            <span style={{ fontSize: 10, fontWeight: 800, lineHeight: 1, marginTop: 1 }}>详情</span>
                         </button>
                     )}
                     <button
