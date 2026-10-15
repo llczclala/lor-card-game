@@ -40,8 +40,11 @@ const SOURCE_COLORS: Record<string, string> = { SHOP: '#fbbf24', GACHA: '#a855f7
 // 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
 // 命名与用法**对齐 `TITLE_UI` / `DECK_UI`**：值是**绝对 px**、直接进 style；
 //   注释标注**原 Tailwind 类**（那是"改动前长什么样"的唯一凭据）。
-// ⚠️ 只有两个值**故意不是 px**：`previewHeight`（`70vh`）与 `previewWidth`（`80%`）
-//    —— 它们要按视口 / 父容器自适应，硬换成 px 反而不能适配不同屏幕。
+// ⚠️ 除 `previewWidth`（`'80%'`，相对**父容器**、在画布内 ⇒ 两端一致）外，**全是画布 px**。
+//    🔴 本屏**绝对不要用 `vh` / `vw` / `vmin`** —— 那是**视口单位**，会绕过画布缩放，
+//    让同一个元素在电脑和手机上**比例不同**（本屏就踩过：卡背预览原来的 `70vh`，详见
+//    `previewHeight` 的注释；`GalleryCodex.tsx:259` 也记着同一个坑的修法）。
+//    想要"跟着屏幕变"请用**画布 px** 或**父容器的 `%`**，别用视口单位。
 // ⚠️ 这一屏尺寸项特别多。想"**整体**放大/缩小"别逐个改 —— 跟莉莉子说一声，
 //    照 `DECK_UI.deckScale` 的做法加一个整体旋钮（一次 `transform: scale`）更省事。
 // ══════════════════════════════════════════════════════════════════════
@@ -50,7 +53,7 @@ export const STYLE_UI = {
     closeTop: 32,           // 距顶 px（原 top-8 = 32）
     closeRight: 32,         // 距右 px（原 right-8 = 32）
     closePad: 12,           // 内边距 px（原 p-3 = 12）
-    closeIconSize: 32,      // ✕ 图标 px（原 size={32}）
+    closeIconSize: 48,      // ✕ 图标 px（原 size={32}）
 
     // ══ ② 整体外框（左右两栏的总容器）════════════════════════════════
     frameMaxWidth: 1600,    // 最大宽度 px（原 max-w-[1600px]）
@@ -58,30 +61,30 @@ export const STYLE_UI = {
     frameGap: 48,           // 左右两栏间距 px（原 gap-12 = 48）
 
     // ══ ③ 左侧列表栏 ═════════════════════════════════════════════════
-    leftWidth: 256,         // 栏宽 px（原 w-64 = 256）
+    leftWidth: 384,         // 栏宽 px（原 w-64 = 256）
     leftPadY: 16,           // 上下内边距 px（原 py-4 = 16）
     leftPadRight: 16,       // 右内边距 px（原 pr-4 = 16）
 
     // ══ ④ 工具条（搜索 / 筛选 / 排序 / 倒序 / 清空）══════════════════
-    barGap: 6,              // 按钮之间 px（原 gap-1.5 = 6）
-    barMarginBottom: 8,     // 与下方间距 px（原 mb-2 = 8）
-    searchIconLeft: 10,     // 放大镜距左 px（原 left-2.5 = 10）
-    searchIconSize: 14,     // 放大镜图标 px（原 size={14}）
-    searchPadY: 6,          // 输入框上下内边距 px（原 py-1.5 = 6）
-    searchPadLeft: 32,      // 输入框左内边距 px（原 pl-8 = 32，给放大镜让位）
-    searchPadRight: 8,      // 输入框右内边距 px（原 pr-2 = 8）
-    searchFontSize: 12,     // 输入框字号 px（原 text-xs = 12）
-    toolBtnPad: 6,          // 工具条小方按钮内边距 px（原 p-1.5 = 6）
-    toolIconSize: 14,       // 工具条图标 px（原 size={14}）
+    barGap: 9,              // 按钮之间 px（原 gap-1.5 = 6）
+    barMarginBottom: 12,     // 与下方间距 px（原 mb-2 = 8）
+    searchIconLeft: 15,     // 放大镜距左 px（原 left-2.5 = 10）
+    searchIconSize: 21,     // 放大镜图标 px（原 size={14}）
+    searchPadY: 9,          // 输入框上下内边距 px（原 py-1.5 = 6）
+    searchPadLeft: 48,      // 输入框左内边距 px（原 pl-8 = 32，给放大镜让位）
+    searchPadRight: 12,      // 输入框右内边距 px（原 pr-2 = 8）
+    searchFontSize: 18,     // 输入框字号 px（原 text-xs = 12）
+    toolBtnPad: 9,          // 工具条小方按钮内边距 px（原 p-1.5 = 6）
+    toolIconSize: 21,       // 工具条图标 px（原 size={14}）
     sortMenuWidth: 112,     // 排序下拉宽度 px（原 w-28 = 112）
-    sortMenuMarginTop: 4,   // 下拉与按钮的间距 px（原 mt-1 = 4）
-    sortItemPadX: 10,       // 下拉项左右内边距 px（原 px-2.5 = 10）
-    sortItemPadY: 6,        // 下拉项上下内边距 px（原 py-1.5 = 6）
-    sortItemFontSize: 11,   // 下拉项字号 px（原 text-[11px]）
-    sortDirFontSize: 12,    // ↑ / ↓ 字号 px（原 text-[12px]）
+    sortMenuMarginTop: 6,   // 下拉与按钮的间距 px（原 mt-1 = 4）
+    sortItemPadX: 15,       // 下拉项左右内边距 px（原 px-2.5 = 10）
+    sortItemPadY: 9,        // 下拉项上下内边距 px（原 py-1.5 = 6）
+    sortItemFontSize: 16,   // 下拉项字号 px（原 text-[11px]）
+    sortDirFontSize: 18,    // ↑ / ↓ 字号 px（原 text-[12px]）
 
     // ══ ⑤ 计数 + 筛选面板 ════════════════════════════════════════════
-    countFontSize: 10,      // 「共 N / M 款」字号 px（原 text-[10px]）
+    countFontSize: 20,      // 「共 N / M 款」字号 px（原 text-[10px]）
     countMarginBottom: 6,   // 与下方间距 px（原 mb-1.5 = 6）
     panelGap: 10,           // 面板内各组之间 px（原 space-y-2.5 = 10）
     panelPad: 10,           // 面板内边距 px（原 p-2.5 = 10）
@@ -100,11 +103,11 @@ export const STYLE_UI = {
     listNamePadX: 8,        // 名称条左右内边距 px（原 px-2 = 8）
     listNamePadTop: 16,     // 名称条上内边距 px（原 pt-4 = 16，给渐变留过渡）
     listNamePadBottom: 4,   // 名称条下内边距 px（原 pb-1 = 4）
-    listNameFontSize: 11,   // 名称字号 px（原 text-[11px]）
+    listNameFontSize: 36,   // 名称字号 px（原 text-[11px]）
     badgeOffset: 8,         // 角标距顶/右 px（原 top-2 right-2 = 8）
     badgePad: 4,            // 角标内边距 px（原 p-1 = 4）
-    badgeIconSize: 12,      // 角标 ✓ 图标 px（原 size={12}）
-    listLockIconSize: 24,   // 列表里未解锁的锁图标 px（原 size={24}）
+    badgeIconSize: 24,      // 角标 ✓ 图标 px（原 size={12}）
+    listLockIconSize: 36,   // 列表里未解锁的锁图标 px（原 size={24}）
 
     // ══ ⑦ 侧边抽屉把手（左栏右缘那根竖条）════════════════════════════
     handleOffsetRight: -12, // 往右移出栏外的量 px（原 -right-3 = -12）
@@ -113,13 +116,32 @@ export const STYLE_UI = {
     handleIconSize: 20,     // 箭头图标 px（原 size={20}）
 
     // ══ ⑧ 右侧大图预览 ═══════════════════════════════════════════════
-    titleFontSize: 36,      // 标题「卡背选择」字号 px（原 text-4xl = 36）
+    titleFontSize: 64,      // 标题「卡背选择」字号 px（原 text-4xl = 36）
     titleMarginBottom: 32,  // 标题与预览之间 px（原 mb-8 = 32）
-    previewHeight: '70vh',  // 卡背预览高度（原 h-[70vh]）**故意用 vh**
+    /**
+     * 卡背预览高度（**画布 px**）。
+     * 🔴 原值是 `'70vh'`（原类 `h-[70vh]`）—— **这是个 BUG，2026-10-15 程发现、当天修掉**。
+     *    病根：本 app 每个界面都跑在 `ScaleWrapper` 的**固定 1680×1050 画布**里，
+     *    再整体 `transform: scale()` 塞进窗口（`ScaleWrapper.tsx:21-26`）。
+     *    而 `vh` 是**视口单位**：它先按"**真实窗口**高度"算出一个长度、再被画布缩放
+     *    ⇒ **等于被缩放了两次**，屏幕上的相对高度 = `70% × scale`，而 `scale` 本身随设备变。
+     *      · PC（窗口高约 1080）：约 **72%** 屏高 —— 所以程看电脑觉得"已经很大了"
+     *      · 手机（CSS 视口高约 360，被 DPR 压小）：只剩 **24%** 屏高 —— 所以程看手机"很小"
+     *    ⇒ 本屏**唯一**一个"电脑和手机不一样大"的元素就是它（别处都是画布 px，比例恒定）。
+     *    📌 这个坑项目里**早有记录**：`GalleryCodex.tsx:259` 写着「彻底废除 `h-[80vh]` 与
+     *       `w-full`，改用完全契合大厅缩放引擎的**绝对像素尺寸**，彻底解决比例畸变与二次缩小问题」。
+     *    ⇒ 现改为**画布 px**（660 ≈ 画布高的 63%）：两端一定一样大，**一个数同时管两端**。
+     * ⚠️ 联动（上限怎么来的）：右栏高 = 1050 − 2×`framePad`(48) = **954**；
+     *    减去底部操作栏（≈ 48 + 按钮 ≈ 112）后剩 842，居中则预览上沿 = `(842 − H) / 2`；
+     *    标题在 `absolute top-0`，当前 `titleFontSize` 64 ⇒ 约占顶部 **77**
+     *    ⇒ 不压住标题要求 `H ≤ 688`。**所以实用上限约 690**，再大标题会叠在预览上沿。
+     *    （把 `titleFontSize` 调小 ⇒ 上限跟着变高。）
+     */
+    previewHeight: 660,
     previewWidth: '80%',    // 牌桌预览宽度（原 w-[80%]）**故意用 %**
-    lockedIconSize: 64,     // 未解锁的大锁图标 px（原 size={64}）
-    lockedIconMarginBottom: 16, // 大锁与 LOCKED 之间 px（原 mb-4 = 16）
-    lockedFontSize: 24,     // 「LOCKED」字号 px（原 text-2xl = 24）
+    lockedIconSize: 128,     // 未解锁的大锁图标 px（原 size={64}）
+    lockedIconMarginBottom: 24, // 大锁与 LOCKED 之间 px（原 mb-4 = 16）
+    lockedFontSize: 48,     // 「LOCKED」字号 px（原 text-2xl = 24）
     lockedPadX: 24,         // LOCKED 框左右内边距 px（原 px-6 = 24）
     lockedPadY: 8,          // LOCKED 框上下内边距 px（原 py-2 = 8）
     hintFontSize: 12,       // 「SCROLL TO SWITCH」字号 px（原 text-xs = 12）
@@ -130,12 +152,12 @@ export const STYLE_UI = {
     // ══ ⑨ 底部操作栏（风格计数 + 确认按钮）═══════════════════════════
     footerMarginTop: 48,    // 与预览之间 px（原 mt-12 = 48）
     footerGap: 32,          // 计数与按钮之间 px（原 gap-8 = 32）
-    counterFontSize: 20,    // 「风格 01 / 09」字号 px（原 text-xl = 20）
+    counterFontSize: 30,    // 「风格 01 / 09」字号 px（原 text-xl = 20）
     mainBtnPadX: 48,        // 主按钮左右内边距 px（原 px-12 = 48）
     mainBtnPadY: 16,        // 主按钮上下内边距 px（原 py-4 = 16）
-    mainBtnFontSize: 18,    // 主按钮字号 px（原 text-lg = 18）
+    mainBtnFontSize: 27,    // 主按钮字号 px（原 text-lg = 18）
     mainBtnGap: 12,         // 主按钮图标与文字之间 px（原 gap-3 = 12）
-    mainBtnIconSize: 20,    // 主按钮里的锁图标 px（原 size={20}）
+    mainBtnIconSize: 30,    // 主按钮里的锁图标 px（原 size={20}）
 
     // ══ ⑩ 全览网格（点把手展开的抽屉）═══════════════════════════════
     gridPanelPad: 48,       // 面板四周内边距 px（原 p-12 = 48）
