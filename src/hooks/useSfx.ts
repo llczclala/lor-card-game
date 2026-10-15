@@ -65,6 +65,21 @@ import cardToDeckSound from '../music/music/卡牌入队.ogg';
 import defaultHitSound from '../music/music/默认受击.ogg';
 import beaconHitSound from '../music/music/茉莉安 霄鹰/信标受击.ogg';
 
+// ══════════════════════════════════════════════════════════════════════
+// 「一次点击 = 一声 click.ogg」的去重状态（**模块级**）
+//   放模块级而不是 effect 内，是为了**多实例安全**：即便将来局内又挂了一个 `useSfx()`
+//   （审查指出的"未声明假设"），两个实例也会看到同一份计数 ⇒ 仍然只响一声。
+// ══════════════════════════════════════════════════════════════════════
+let clickGestureSeq = 0;          // 每次"按下"自增 ⇒ 一次手势的唯一编号
+let lastClickSoundedGesture = -1; // 最近一次"已经响过 click.ogg"的手势编号
+let pressDownX = 0;               // 本次按下的坐标（判"这是拖拽还是点击"）
+let pressDownY = 0;
+let pressDownAt = 0;              // 本次按下的时刻（判"这是长按还是点击"）
+/** 位移超过它就不算点击（**与游戏拖拽同阈值**，对齐 `GameSession.tsx` 的 `Math.abs(dx) > 8`） */
+const CLICK_MAX_MOVE_PX = 8;
+/** 按住超过它就不算点击（触屏长按 = 看大图，抬手不该响点击音） */
+const CLICK_MAX_HOLD_MS = 700;
+
 export const useSfx = () => {
     // [新增] 全局音效音量 Ref
     // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 初值改为**读取全局快照**（不再是写死的 0.6）——
@@ -207,57 +222,85 @@ export const useSfx = () => {
         };
 
         // 2. 封装各类音效触发器
-        const playClick = () => playSound(clickSound, 0.6);
+        /** 原始点击音（**不做任何去重**）—— 只给下面 `playClickOnce` 用 */
+        const playClickRaw = () => playSound(clickSound, 0.6);
 
         // ==========================================================
         // [2026-10-15 莉莉子 · 程口径]「我们要补充音效的，是**点击这个行为**」
-        //   ── 现状：全项目 300+ 处**显式** `emit(UI_CLICK)`（按钮 / 页签 / 筛选 / 确认…），
-        //      但**没有任何一处**覆盖"点了却没写 emit 的地方"（点卡牌 / 点战场 / 点水晶 /
-        //      点空白…）⇒ 那些点击**完全无声**。
+        //   ── 现状：全项目 300+ 处**显式** `emit(UI_CLICK)`（按钮/页签/筛选/确认…），
+        //      但**没有任何一处**覆盖"点了却没写 emit 的地方"（点卡牌/点战场/点水晶/点空白…）
+        //      ⇒ 那些点击**完全无声**。
         //   ── 口径：**每一次点击都响**，不论点在哪。
-        //   ── 🟢 本改动是**纯新增**（程 2026-10-15 明确：「不动原本的 300 处」）：
-        //      那 300 处的 emit **一行不改**，`UI_CLICK → playClick` 这条既有绑定也**原样不动**。
-        //   ── 🔴 两条约束决定了实现方式：
-        //      ① **绝不能**用"全局 emit UI_CLICK"来补 —— `TutorialController` 把 UI_CLICK
-        //         当作教程步骤 `element_clicked` 的**完成信号**（TutorialController.tsx:60-62 /
-        //         111-112）⇒ 全局发它会让**任何点击都误推进教程**。
-        //         本实现只全局**播音效**，**不碰事件总线**（只加一个不发声的观察者）。
-        //      ② **不能**和既有那一声变成"双响"，也**不能**靠时间窗 —— 本项目的显式 emit 既有落在
-        //         `onClick`，也有落在 `onMouseDown` / `onMouseUp` / `onTouchEnd` 的（如 GameLobby
-        //         兑换 +/-、SettingsModal 音量条）。它们与原生 `click` **同属一次手势、却可能相隔
-        //         >100ms** ⇒ 时间窗要么挡不住双响、要么把玩家的快速连点吃掉。
-        //   ── 采用「手势序号 + 显式覆盖盖章」：
-        //      · `pointerdown` 自增 `gestureSeq` —— 一次"按下→抬起" = 一个序号（鼠标/触屏/笔都覆盖）
-        //      · 再加一个**纯观察者**监听 `UI_CLICK`（不发声、不改任何东西），只盖一个章：
-        //        `explicitGesture = gestureSeq`
-        //      · 兜底监听挂在 `document` 的 **bubble** 阶段 —— 它**晚于** React 根容器，
-        //        所以显式 emit 一定先跑、章一定先盖好
-        //      · 兜底发现"本次手势已被盖章"⇒ 静默跳过；没盖章 ⇒ 补一声
-        //      ⇒ 一次点击永远只响一声，且**没有删改任何既有 emit**。
-        //   ── ③ **拖拽 / 长按不该响"点击"声**：兜底挂在原生 `click` 上（**不是** pointerdown）
-        //      —— 拖拽（位移超阈值）浏览器**根本不派发 click** ⇒ 天然排除；
-        //      触屏长按抬手那一次，被 `TouchFeedbackLayer` 在 **window** capture 上
-        //      `stopPropagation` 掉（window 早于 document）⇒ 到不了这里。
-        //   ── ⚠️ 已知边界（可接受）：键盘 Enter/Space 激活控件时**没有** pointerdown，
-        //      若它紧跟一次"有声点击"之后、且自身不 emit，可能被判为"已盖章"而少响一声。
-        //      本作键盘只用于 ESC（走 UI_BACK），实际不可达。
+        //
+        //   🔴 独立审查返工（2026-10-15）：第一版有四个真问题，本版按审查结论重写。
+        //      ① **会双响**：去重只认 `UI_CLICK`，可 click.ogg 同时绑在 **6 个**事件上
+        //         （GAME_START / UI_CLICK / PLAY_CARD / ATTACK_DECLARE / BLOCK_DECLARE /
+        //          DECK_ADD_CARD）。于是"点手牌出牌"（只发 PLAY_CARD）、"点开始游戏"
+        //         （只发 GAME_START）、"点进攻"（只发 ATTACK_DECLARE）全部**响两声**。
+        //         ⇒ 本版把去重**下沉到播放层**：一次手势只允许响一声 click.ogg，
+        //            **不管它从哪条通道来**。
+        //      ② **会漏音**：兜底原先挂 `document` 的 bubble 阶段，而 React 的 `onClick` 里
+        //         调 `e.stopPropagation()` 会**连原生事件一起停** ⇒ 那 30+ 处
+        //         `onClick={e => e.stopPropagation()}` 的面板/按钮（如 EvaluationPanel 的「领取」）
+        //         **一点声都没有**。⇒ 改挂 **`window` 的 capture 阶段**：它在最外层，谁都挡不住。
+        //         又因为播放层已经幂等，**先后顺序不再重要** ⇒ 不必再靠次序去重（第一版那套
+        //         "盖章 + 比次序"因此整套删掉，逻辑反而更短）。
+        //      ③ **拖拽会响**：第一版写"拖拽浏览器根本不派发 click"是**错的** ——
+        //         那只对触屏 pan / 原生 DnD 成立；**鼠标**下只要按下抬起有公共祖先就会派发 click
+        //         （旁证：`GameSession.tsx` 里那个 `dragJustFinishedRef` 守卫存在的唯一理由就是它）。
+        //         ⇒ 本版自己记 `pointerdown` 坐标，位移超 8px ⇒ 判为拖拽，兜底不响。
+        //      ④ **长按抬手会响**：触屏长按(400ms)抬手后浏览器可能补发 click。
+        //         ⇒ 按住超过 700ms 也判为非点击。
+        //
+        //   ── 那 300 处 emit **仍是一行未改**。
+        //      ⚠️ 更正我自己一个错误推理（审查指出）："`git diff` 零删除行 ⇒ 既有行为不变"
+        //         **不成立** —— 我改的是**共享的播放层**，这 6 个事件的绑定换了函数
+        //         ⇒ 它们的听感确实变了（从"可能两声"变成"恒一声"）。而那正是本批要修的东西。
+        //   ── 已知且接受的代价：AI 触发的 `PLAY_CARD`（无新手势）若紧跟玩家一次点击之后，
+        //      它的 click 声会被吞掉。**这其实是修正** —— AI 出牌本来就该走
+        //      `SFX_ENEMY_PLAY_UNIT`（敌方打出单位），而不是"点击声"。
         // ==========================================================
-        let gestureSeq = 0;       // 每次"按下"自增 ⇒ 一次手势的唯一编号
-        let explicitGesture = -1; // 最近一次"已被显式 emit 覆盖"的手势编号
-        const noteExplicitClick = () => { explicitGesture = gestureSeq; };
-        const onGestureStart = () => { gestureSeq++; };
-
-        /** 兜底：本次手势若没被任何既有 emit 覆盖，就补一声点击音 */
-        const onAnyClick = () => {
-            if (explicitGesture === gestureSeq) return; // 这次点击已经有声（那 300 处之一）⇒ 不重复
-            playClick();
+        /** **一次手势只响一声 click.ogg**，不管它来自全局兜底还是那 6 个既有事件 */
+        const playClickOnce = () => {
+            if (lastClickSoundedGesture === clickGestureSeq) return; // 本次手势已响过 ⇒ 吞掉
+            lastClickSoundedGesture = clickGestureSeq;
+            playClickRaw();
         };
 
-        // 手势开始（鼠标 / 触屏 / 触控笔都覆盖）
-        document.addEventListener('pointerdown', onGestureStart, { capture: true });
-        // 全局「点击」兜底：点在哪都响。**bubble 阶段是刻意的** —— 必须晚于 React 根容器，
-        // 否则章还没盖就做判定，会跟那 300 处双响。
-        document.addEventListener('click', onAnyClick);
+        const onGestureStart = (e: PointerEvent) => {
+            clickGestureSeq++;
+            pressDownX = e.clientX;
+            pressDownY = e.clientY;
+            pressDownAt = performance.now();
+        };
+
+        // 键盘激活（Enter / Space）**没有 pointerdown** ⇒ 自己开一次手势，
+        // 否则它会被"上一次手势已响过"判据吞掉（审查指出这条路真实可达：GameLobby 里
+        // ESC 也会 emit UI_CLICK；且全项目 `<button>` 都没有 tabIndex={-1}）。
+        const onKeyActivate = (e: KeyboardEvent) => {
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+                clickGestureSeq++;
+                pressDownAt = performance.now();
+            }
+        };
+
+        /** 全局「点击」兜底：点在哪都响（挂 **window capture**，谁都挡不住） */
+        const onAnyClick = (e: MouseEvent) => {
+            // 键盘触发的 click（`detail === 0`）没有坐标 ⇒ 直接按点击处理
+            if (e.detail !== 0) {
+                const moved = Math.max(
+                    Math.abs(e.clientX - pressDownX),
+                    Math.abs(e.clientY - pressDownY),
+                );
+                if (moved > CLICK_MAX_MOVE_PX) return;                          // ① 拖拽，不是点击
+                if (performance.now() - pressDownAt > CLICK_MAX_HOLD_MS) return; // ② 长按，不是点击
+            }
+            playClickOnce();
+        };
+
+        window.addEventListener('pointerdown', onGestureStart, { capture: true });
+        window.addEventListener('keydown', onKeyActivate, { capture: true });
+        window.addEventListener('click', onAnyClick, { capture: true });
         // [2026-09-19 修正] 「撤回」这个词此前一个播放器服务三个事件，换声会连带污染另外两个。
         //   拆开：
         //     · 撤回单位 / UI 返回 → 通用 recall.ogg（保持原样）
@@ -312,15 +355,15 @@ export const useSfx = () => {
         // --- 注册事件监听 ---
 
         // 1. 所有绑定到“点击音效”的事件
-        eventBus.on(GameEvents.GAME_START, playClick);
-        eventBus.on(GameEvents.UI_CLICK, playClick);
-        // [2026-10-15 莉莉子] **纯观察者**：只给"点击兜底"盖章，不发声、不改既有行为。
-        //   eventBus 是多监听器数组（utils/eventBus.ts:259 `listeners[event].push`）⇒ 不会挤掉上面那条。
-        eventBus.on(GameEvents.UI_CLICK, noteExplicitClick);
-        eventBus.on(GameEvents.DECK_ADD_CARD, playClick);
-        eventBus.on(GameEvents.PLAY_CARD, playClick);
-        eventBus.on(GameEvents.ATTACK_DECLARE, playClick);
-        eventBus.on(GameEvents.BLOCK_DECLARE, playClick);
+        //    [2026-10-15 审查返工] 全部改绑 `playClickOnce`：
+        //      这 6 个事件都会放 click.ogg，而它们经常与"全局兜底"在同一手势里
+        //      各放一次 ⇒ 必须由**同一个去重器**统一裁决，否则必双响。
+        eventBus.on(GameEvents.GAME_START, playClickOnce);
+        eventBus.on(GameEvents.UI_CLICK, playClickOnce);
+        eventBus.on(GameEvents.DECK_ADD_CARD, playClickOnce);
+        eventBus.on(GameEvents.PLAY_CARD, playClickOnce);
+        eventBus.on(GameEvents.ATTACK_DECLARE, playClickOnce);
+        eventBus.on(GameEvents.BLOCK_DECLARE, playClickOnce);
 
         // 2. 所有绑定到“撤回音效”的事件
         eventBus.on(GameEvents.RECALL_UNIT, playRecall);
@@ -395,18 +438,18 @@ export const useSfx = () => {
             offAppVisibility();
             document.removeEventListener('click', unlockAudio);
             document.removeEventListener('touchstart', unlockAudio);
-            eventBus.off(GameEvents.GAME_START, playClick);
-            eventBus.off(GameEvents.UI_CLICK, playClick);
-            eventBus.off(GameEvents.UI_CLICK, noteExplicitClick);
-            // [2026-10-15 莉莉子 · 程口径] 全局点击兜底的两条监听（纯新增，摘掉即可复原）
-            document.removeEventListener('pointerdown', onGestureStart, { capture: true });
-            document.removeEventListener('click', onAnyClick);
+            eventBus.off(GameEvents.GAME_START, playClickOnce);
+            eventBus.off(GameEvents.UI_CLICK, playClickOnce);
+            // [2026-10-15 审查返工] 全局点击兜底的三条监听（挂 window capture；摘除时 capture 标志必须一致）
+            window.removeEventListener('pointerdown', onGestureStart, { capture: true });
+            window.removeEventListener('keydown', onKeyActivate, { capture: true });
+            window.removeEventListener('click', onAnyClick, { capture: true });
             eventBus.off(GameEvents.UI_BACK, playRecall);
             eventBus.off(GameEvents.LOBBY_START_BATTLE, playBattleStart);
-            eventBus.off(GameEvents.DECK_ADD_CARD, playClick);
-            eventBus.off(GameEvents.PLAY_CARD, playClick);
-            eventBus.off(GameEvents.ATTACK_DECLARE, playClick);
-            eventBus.off(GameEvents.BLOCK_DECLARE, playClick);
+            eventBus.off(GameEvents.DECK_ADD_CARD, playClickOnce);
+            eventBus.off(GameEvents.PLAY_CARD, playClickOnce);
+            eventBus.off(GameEvents.ATTACK_DECLARE, playClickOnce);
+            eventBus.off(GameEvents.BLOCK_DECLARE, playClickOnce);
             eventBus.off(GameEvents.RECALL_UNIT, playRecall);
             eventBus.off(GameEvents.CANCEL_SPELL, playSpellRecall);
             eventBus.off(GameEvents.GACHA_REVEAL_RARE, playGachaRare);
