@@ -158,32 +158,51 @@ Step '3/5' "端口转发与开发服务器（localhost:$Port）"
 & $adb -s $dev reverse "tcp:$Port" "tcp:$Port" 2>&1 | ForEach-Object { Write-Host "    $_" }
 Good "adb reverse tcp:$Port -> 电脑 $Port"
 
-function Test-Port([int]$p) {
-    try {
-        $c = New-Object System.Net.Sockets.TcpClient
-        $c.Connect('127.0.0.1', $p)
-        $c.Close()
-        return $true
-    } catch { return $false }
+# [2026-10-15 程实测] **必须显式探 IPv4** —— 这是个真坑：
+#   Vite 默认绑 `localhost`，而本机（Node 17+ 用 verbatim DNS）`localhost` 解析成 `::1` 优先
+#   ⇒ Vite **只监听 [::1]**（netstat 实测：`TCP [::1]:5173 LISTENING`）。
+#   而 `adb reverse` 走的是 **IPv4** ⇒ 两条路都会崩：
+#     ① 旧版脚本探 127.0.0.1 ⇒ 永远联不通 ⇒ 白等 60 秒（程实测就是这个）
+#     ② 就算跳过等待，雷电里的 WebView 也连不上 ⇒ **白屏**
+#   ⇒ 定规：**一律用 `--host 127.0.0.1` 显式绑 IPv4**；只绑了 IPv6 的旧服务器**拒绝复用**。
+function Test-IPv4Port([int]$p) {
+    try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $p); $c.Close(); return $true }
+    catch { return $false }
+}
+function Test-IPv6Port([int]$p) {
+    try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('::1', $p); $c.Close(); return $true }
+    catch { return $false }
 }
 
-if (Test-Port $Port) {
-    Good "端口 $Port 已在监听 —— 复用现有的开发服务器"
+if (Test-IPv4Port $Port) {
+    Good "IPv4 端口 $Port 已在监听 —— 复用现有的开发服务器"
 } else {
-    Warn "端口 $Port 没在监听，另开一个窗口启动 npm run dev"
-    # 单独开一个 cmd 窗口（/k 让它别关），这样你能看到热更新日志，也能随手 Ctrl+C 停掉
+    if (Test-IPv6Port $Port) {
+        Fail @"
+端口 $Port 上有一个**只绑 IPv6(::1)** 的 dev server 占着 —— 而 adb reverse 走 IPv4，连不上它。
+请**关掉那个 vite / npm run dev 窗口**，然后重跑本脚本
+（本脚本会用 --host 127.0.0.1 起一个绑 IPv4 的）。
+"@
+    }
+    Warn "IPv4 端口 $Port 没在监听，另开一个窗口启动 npm run dev（--host 127.0.0.1）"
+    # 单独开一个 cmd 窗口（/k 让它别关），这样你能看到热更新日志，也能随手 Ctrl+C 停掉。
+    # ⚠️ `--host 127.0.0.1` 是**必须**的：不加它会绑到 IPv6 ::1，adb reverse（IPv4）连不上 ⇒ 白屏。
+    # ⚠️ `--strictPort`：万一 5173 被别的程序占了，宁可**当场报错**，也不要悄悄换到 5174
+    #    （那样 adb reverse 还指着 5173 ⇒ 白屏，而且很难看出原因）。
     Start-Process -FilePath 'cmd.exe' `
-        -ArgumentList '/k', "cd /d `"$repoRoot`" && npm run dev -- --port $Port"
-    Write-Host "    等待开发服务器就绪..." -NoNewline
+        -ArgumentList '/k', "cd /d `"$repoRoot`" && npm run dev -- --port $Port --host 127.0.0.1 --strictPort"
+    Write-Host "    等待开发服务器就绪（IPv4 $Port）..." -NoNewline
     $ok = $false
     for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Seconds 1
-        if (Test-Port $Port) { $ok = $true; break }
+        if (Test-IPv4Port $Port) { $ok = $true; break }
         Write-Host '.' -NoNewline
     }
     Write-Host ''
-    if (-not $ok) { Fail "等了 60 秒开发服务器还没起来。请到那个新开的窗口看看报什么错。" }
-    Good "开发服务器已就绪"
+    if (-not $ok) {
+        Fail "等了 60 秒还没等到 IPv4 $Port。请到那个新开的窗口看报什么错（若它 Listen 在 [::1] 就是 --host 没生效）。"
+    }
+    Good "开发服务器已就绪（IPv4）"
 }
 
 # ── ④ 出「开发壳」并安装（只有第一次需要）────────────────────────────
