@@ -7,6 +7,7 @@ import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, check
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
 import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
+import { isTouchInput } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 手牌「防误打」：上浮改由显式状态驱动
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
     hand: CardData[];
@@ -245,6 +246,14 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
     const [isAreaHover, setIsAreaHover] = useState(false);
     const [draggingId, setDraggingId] = useState<string | null>(null);
+    // ── [2026-10-15 莉莉子 · 触屏] 手机手牌「防误打」 ──────────────────────
+    //   PC：鼠标悬停手牌区 ⇒ 上浮（isAreaHover）；触屏没有 hover ⇒ 改用**显式状态**驱动。
+    //   程 2026-10-15 拍板方案 A：手牌**沉底**时，点 / 拖**都只把牌叫起来，绝不直接打出**；
+    //   上浮之后再点或拖才正常打出；打出（手牌变短）后自动沉底。
+    const [touchMode] = useState(() => isTouchInput()); // 能力检测，只判定一次
+    const [touchRaised, setTouchRaised] = useState(false);
+    /** 本次手势是不是"从沉底状态起手"的 —— 是的话这一整次手势都不许打出 */
+    const gestureFromSunkRef = useRef(false);
     // [2026-07-22 莉莉子] 手牌离场动画状态: cardId → animType
     const [animMap, setAnimMap] = useState<Record<string, 'dissolve' | 'shatter' | 'volatile_burn'>>({});
 
@@ -321,6 +330,7 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
         setIsAreaHover(false);
         setHoverIndex(null);
         setDraggingId(null);
+        setTouchRaised(false); // [2026-10-15 莉莉子 · 触屏] 打出/离手后手牌自动沉底（程的需求）
     }, [hand.length]);
 
     // [2026-07-22 莉莉子] 清理已不存在的卡牌 animMap 条目（防内存泄漏）
@@ -341,6 +351,9 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
     // 动态获取屏幕宽高，将原本的 vw/vh 转换为底层物理引擎最喜欢的纯数字 (Pixels)
     const vw = typeof window !== 'undefined' ? window.innerWidth / 100 : 19.2;
     const vh = typeof window !== 'undefined' ? window.innerHeight / 100 : 10.8;
+
+    // [2026-10-15 莉莉子 · 触屏] 手牌「上浮」的判定源：PC 用鼠标悬停，触屏用显式状态
+    const areaRaised = touchMode ? touchRaised : isAreaHover;
 
     return (
         <div
@@ -363,7 +376,8 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                     // [核心修复] 如果法术正在向手牌索敌，默认基准高度直接设为 20（全体手牌浮出待命），不再死板下沉 170！
                     let translateY = isCastingForHand ? 20 : 170;
                     // [新增] 阵列待命：只要有牌被拖拽，手牌区强制保持上浮弹出状态
-                    if (isAreaHover || draggingId !== null) translateY = 20;
+                    // [2026-10-15 莉莉子 · 触屏] 触屏用 areaRaised（touchRaised），不再依赖 hover
+                    if (areaRaised || draggingId !== null) translateY = 20;
                     if (isHovered || isDragging) translateY = 0;
 
                     let translateX = 0;
@@ -414,11 +428,20 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                             onPointerDown={(e: any) => {
                                 if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
                                 pointerPos.current = { x: e.clientX, y: e.clientY };
+                                // [2026-10-15 莉莉子 · 触屏] 记下"这次手势是不是从沉底起手"，
+                                //   并顺手把牌叫起来（立刻有反馈）。整次手势都不许打出 —— 程拍板方案 A：
+                                //   沉底时无论点还是拖，都只是"把牌叫起来"，绝不直接打出。
+                                gestureFromSunkRef.current = touchMode && !touchRaised;
+                                if (gestureFromSunkRef.current) setTouchRaised(true);
                             }}
                             onPointerUp={(e: any) => {
                                 if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
                                 const dist = Math.hypot(e.clientX - pointerPos.current.x, e.clientY - pointerPos.current.y);
-                                if (dist < 5) onCardClick(c);
+                                if (dist < 5) {
+                                    // [2026-10-15 莉莉子 · 触屏] 沉底起手的那一下 ⇒ 只上浮、不打出（防误触）
+                                    if (gestureFromSunkRef.current) return;
+                                    onCardClick(c);
+                                }
                             }}
                             onMouseEnter={() => { if (!draggingId) { setHoverIndex(index); onHover(c); } }}
                             onMouseLeave={() => { if (!draggingId) onHover(null); }}
@@ -431,6 +454,9 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                 setDraggingId(null);
                                 setHoverIndex(null);
                                 onHover(null);
+                                // [2026-10-15 莉莉子 · 触屏] 沉底起手的拖拽 ⇒ 同样不打出
+                                //   （手指在触屏上常带十几像素漂移，一次手势就打出正是要防的误触）
+                                if (gestureFromSunkRef.current) return;
                                 if (info.point.y < window.innerHeight * 0.7) {
                                     onCardClick(c);
                                 }
