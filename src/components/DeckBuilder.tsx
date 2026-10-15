@@ -67,7 +67,16 @@ export const DECK_UI = {
     // ══ ⑥ 中间的牌组网格（GRID 模式）══════════════════════════════════
     //   ⚠️ 牌组方框**自身的大小**不在这里 —— 那是**三个屏共享**的
     //      `src/components/dioramaSpacing.ts` 的 `DIORAMA_SIZE`（改它 = 三屏同时生效）。
-    //      本节只管"这一屏**怎么排**"。
+    //   ⚠️ 而且**只把那里面几个数值一起放大，方框内部会集体错位**（程实测过）——
+    //      因为方框内部的偏移/位移/旋转是写死的 `top-4` / `left-6` / `translate(20px,12px)`…
+    //   ⇒ 想"把中间那一片牌组**整体放大 / 缩小**"，用下面这个主旋钮 `gridScale`。
+    /**
+     * 【主旋钮】中间**整片牌组整体缩放**（1 = 原样）。
+     *
+     * 牌组方框 · 方框之间的间距 · 方框**内部**的一切**一起等比缩放** ⇒ **不会错位**。
+     * 实现上做了两处补偿，所以放大后：**不会横向溢出**、**也不会被滚动区裁掉**。
+     */
+    gridScale: 1,
     /** 网格整体最大宽度（原 max-w-[95%]） */
     gridMaxWidth: '95%',
     /**
@@ -872,6 +881,32 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         onStartGame(finalDeck);
     };
 
+    // ==========================================================
+    // [2026-10-15 莉莉子 · 程提需求] 中间整片牌组的**整体缩放**（主旋钮 `DECK_UI.gridScale`）
+    // ── 为什么不能只放大 `DIORAMA_SIZE` 里的数值：牌组方框**内部**的偏移 / 位移 / 旋转是
+    //    写死的（`top-4` / `left-6` / `translate(20px,12px)` …）⇒ 只放大外框、内部不动
+    //    ⇒ **集体错位**（程实测过）。
+    // ── 正解：对整个网格做 CSS `transform: scale`（内部一切一起缩放），再补两件事：
+    //      ① **布局宽度反向补偿** `calc(95% / scale)` ⇒ 放大后**不横向溢出**
+    //      ② **底部高度补偿** `(scale-1) × 网格真实高度` ⇒ `transform` **不改布局高度**，
+    //         不补的话滚动区滚不到最后一排（会被裁掉）
+    // ── `scale === 1` 时**一律不加任何内联样式** ⇒ 与改动前逐字节等价。
+    // ==========================================================
+    const gridRef = React.useRef<HTMLDivElement>(null);
+    const [gridRealHeight, setGridRealHeight] = useState(0);
+    useEffect(() => {
+        if (DECK_UI.gridScale === 1 || viewStyle !== 'GRID') { setGridRealHeight(0); return; }
+        const el = gridRef.current;
+        if (!el) return;
+        const measure = () => setGridRealHeight(el.offsetHeight);
+        measure();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+        // ⚠️ ResizeObserver 已经在盯着元素本身，所以"搜索过滤后牌组变少"这类变化也能自动重测
+    }, [viewStyle, DECK_UI.gridScale]);
+
     // 如果处于“选择模式”，渲染全新的“备战枢纽 2.0”
     if (viewMode === 'SELECTION') {
         const hubDeck = userSystem.decks.find((d: any) => d.id === hubDeckId);
@@ -928,6 +963,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                     {viewStyle === 'GRID' ? (
                         <div
+                            ref={gridRef}
                             className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 content-start w-full mx-auto"
                             style={{
                                 gap: `${DECK_UI.gridGapY}px ${DECK_UI.gridGapX}px`,
@@ -936,6 +972,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 // 只有填了 >0 的数字才固定列数
                                 ...(DECK_UI.gridColumns > 0
                                     ? { gridTemplateColumns: `repeat(${DECK_UI.gridColumns}, minmax(0, 1fr))` }
+                                    : {}),
+                                // 【主旋钮】整体缩放 —— `scale === 1` 时下面三项**一个都不加**（零变化）
+                                ...(DECK_UI.gridScale !== 1
+                                    ? {
+                                          // ① 布局宽度反向补偿：视觉宽度仍 ≈ maxWidth ⇒ 不横向溢出
+                                          width: `calc(${DECK_UI.gridMaxWidth} / ${DECK_UI.gridScale})`,
+                                          transform: `scale(${DECK_UI.gridScale})`,
+                                          transformOrigin: 'top center',
+                                          // ② 底部高度补偿：补出 (scale-1)×真实高度 ⇒ 滚动区能滚到最后一排
+                                          marginBottom: Math.round((DECK_UI.gridScale - 1) * gridRealHeight),
+                                      }
                                     : {}),
                             }}
                         >
