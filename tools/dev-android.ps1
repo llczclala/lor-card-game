@@ -187,8 +187,26 @@ if (Test-Port $Port) {
 }
 
 # ── ④ 出「开发壳」并安装（只有第一次需要）────────────────────────────
+# [2026-10-15 程实测] **加安装校验**。原来的缺陷：只信 adb 的返回，
+#   而第 ⑤ 步启动失败也照样打绿字"就绪" ⇒ 报过一次**假成功**
+#   （程那次实际用了 -SkipShell，但壳从来没装过 ⇒ 白跑一趟、还找不到地方测）。
+$pkgId = 'com.snowbreak.rivals.official'
+function Test-AppInstalled {
+    param([string]$Device)
+    $list = (& $adb -s $Device shell pm list packages 2>&1) -join "`n"
+    return ($list -match [regex]::Escape($pkgId))
+}
+
 if ($SkipShell) {
     Step '4/5' '跳过出壳（-SkipShell）'
+    if (-not (Test-AppInstalled $dev)) {
+        Fail @"
+这台设备上**从来没装过开发壳** ⇒ -SkipShell 没东西可跳。
+请先跑一次**不带** -SkipShell 的完整命令（它会出壳并装进雷电，约 20~80 秒）：
+      powershell -File tools\dev-android.ps1
+"@
+    }
+    Good '开发壳已在设备上'
 } else {
     Step '4/5' '出「开发壳」并安装（只需这一次，之后改代码就不用再来了）'
 
@@ -225,12 +243,14 @@ if ($SkipShell) {
     Write-Host "    [d] 安装到 $dev"
     $installOut = & $adb -s $dev install -r $builtApk 2>&1
     $installOut | ForEach-Object { Write-Host "    $_" }
-    if ($installOut -match 'Success') {
-        Good '安装成功'
+    if (($installOut -match 'Success') -and (Test-AppInstalled $dev)) {
+        Good '安装成功（并用 pm list packages 复核过）'
+    } elseif ($installOut -match 'Success') {
+        Fail 'adb 说装成功了，但设备上**查不到这个包** —— 请把上面的输出发给莉莉子'
     } else {
         Warn '安装失败。若报 INSTALL_FAILED_UPDATE_INCOMPATIBLE / 签名不一致 ——'
         Warn '   说明这个包名之前装过**正式签名**的版本，两者签名不同，安卓不允许覆盖。'
-        Warn '   解决：先卸载（⚠️ **会清掉手机/模拟器上的存档**），再重跑本脚本：'
+        Warn '   解决：先卸载（⚠️ **会清掉模拟器上的存档**），再重跑本脚本：'
         Warn "       & `"$adb`" -s $dev uninstall com.snowbreak.rivals.official"
         Fail '请按上面提示处理后重跑'
     }
@@ -241,20 +261,48 @@ if ($SkipShell) {
 
 # ── ⑤ 启动游戏 ────────────────────────────────────────────────────────
 Step '5/5' '启动游戏'
-& $adb -s $dev shell am start -n 'com.snowbreak.rivals.official/.MainActivity' 2>&1 |
+& $adb -s $dev shell am start -n "$pkgId/.MainActivity" 2>&1 |
     ForEach-Object { Write-Host "    $_" }
+
+# [2026-10-15] **必须复核它真的到前台了** —— 否则又是一次"假成功"
+Start-Sleep -Seconds 5
+$focusLine = (& $adb -s $dev shell dumpsys window 2>&1 | Select-String 'mCurrentFocus' | Select-Object -First 1)
+$focusText = if ($focusLine) { $focusLine.ToString().Trim() } else { '(查不到)' }
+$focusOk = ($focusText -match [regex]::Escape($pkgId))
+if ($focusOk) {
+    Good '游戏已在前台'
+} else {
+    Warn "游戏好像没到前台。当前前台是：$focusText"
+    Warn '  · 也可以在雷电的桌面里手动点开「尘白同人·雪境争锋」图标'
+}
+
+# 最后确认开发服务器还活着（"刚起完就被关掉"是白屏最常见的原因）
+$devServerAlive = $false
+try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $Port); $c.Close(); $devServerAlive = $true } catch { }
+$appInstalled = Test-AppInstalled $dev
+$allGood = ($devServerAlive -and $appInstalled -and $focusOk)
 
 $total.Stop()
 Write-Host ''
-Write-Host "═══ 就绪（耗时 $([math]::Round($total.Elapsed.TotalSeconds, 0)) 秒）═══" -ForegroundColor Green
-Write-Host '  现在改 src/ 下任何代码，模拟器里 **1~3 秒** 就会变，而且页面不刷新。' -ForegroundColor Green
+if ($allGood) {
+    Write-Host "═══ 就绪（耗时 $([math]::Round($total.Elapsed.TotalSeconds, 0)) 秒）═══" -ForegroundColor Green
+} else {
+    Write-Host "═══ 还没就绪（耗时 $([math]::Round($total.Elapsed.TotalSeconds, 0)) 秒）═══" -ForegroundColor Red
+    if (-not $appInstalled)    { Write-Host '  !! 开发壳不在设备上 —— 跑一次不带 -SkipShell 的完整命令' -ForegroundColor Red }
+    if (-not $devServerAlive)  { Write-Host "  !! 开发服务器（localhost:$Port）没在监听 —— 雷电里会白屏" -ForegroundColor Red }
+    if (-not $focusOk)         { Write-Host '  !! 游戏没到前台 —— 去雷电桌面手动点开它' -ForegroundColor Red }
+}
+Write-Host ''
+Write-Host '  ▶ 测试就在【雷电那个窗口】里 —— 它就是一台安卓手机，用鼠标当手指玩。' -ForegroundColor Cyan
+Write-Host ''
+Write-Host '  现在改 src/ 下任何代码，雷电里 1~3 秒就会变，而且页面不刷新。' -ForegroundColor Green
 Write-Host ''
 Write-Host '  常用操作：' -ForegroundColor Cyan
-Write-Host '    · 只想重开游戏（不改壳） ： pwsh -File tools\dev-android.ps1 -SkipShell'
-Write-Host '    · 模拟器掉线/重启后       ： 重跑本脚本（会重做端口转发）'
-Write-Host '    · 要出正式离线包          ： pwsh -File tools\build-android.ps1 -Debug'
+Write-Host '    · 只想重开游戏（壳已装好） ： powershell -File tools\dev-android.ps1 -SkipShell'
+Write-Host '    · 模拟器掉线/重启后        ： 重跑本脚本（会重做端口转发）'
+Write-Host '    · 要出正式离线包           ： powershell -File tools\build-android.ps1 -Debug'
 Write-Host '      （不带 CAP_DEV_SERVER ⇒ 会把 dev 地址覆盖掉，回到"内容打进包"的正常模式）'
-Write-Host '    · 停止开发服务器          ： 关掉那个标题为 npm run dev 的命令行窗口'
+Write-Host '    · 停止开发服务器           ： 关掉那个标题为 npm run dev 的命令行窗口'
 Write-Host ''
 Write-Host '  ⚠️ 提醒：雷电的 WebView 与真机不是同一个 ⇒ 这里跑通不等于手机没问题。' -ForegroundColor Yellow
 Write-Host '     快速调手感用这里，**最终仍需真机验收一次**。' -ForegroundColor Yellow
