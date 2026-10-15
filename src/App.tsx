@@ -79,7 +79,7 @@ import { useHeroDivinity } from './hooks/useHeroDivinity'; // [2026-09-28 神格
 import { computeRunShards, type ChestInstance } from './data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣 · [2026-10-03] 结算碎片改走 divinity.grantUniversalShard · [2026-10-04] +computeRunShards（结算现算，不再回读 state）
 import { LevelUpToast } from './components/roguelike/LevelUpToast'; // [2026-08-12 天启者养成] 升级弹窗
 import { SACRIFICE_MAX_HP, type RandomTreasureResult } from './data/roguelike/treasure'; // [2026-08-12 宝箱节点]
-import { getHallBgmByIndex, getHallBgmByVideoUrl } from './data/movieData'; // [核心重构] 新增视频 URL 直查 BGM
+import { getHallBgmByIndex, getHallBgmByVideoUrl, getHallMoviePoster } from './data/movieData'; // [核心重构] 新增视频 URL 直查 BGM · [2026-10-15 莉莉子 · 安卓] +getHallMoviePoster（自定义背景 poster 兜底）
 import { getCompletedStages, isGuidanceDismissed, dismissGuidance } from './utils/tutorialProgress'; // [新增] 引导层状态
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -2451,7 +2451,27 @@ export default function App() {
                   {customBg.type === 'pic' ? (
                       <img src={customBg.url} className="w-full h-full object-cover" alt="自定义背景" />
                   ) : (
-                      <video src={customBg.url} autoPlay loop muted className="w-full h-full object-cover" />
+                      // [2026-10-15 莉莉子 · 安卓] 补 poster 兜底 —— **上一轮漏网的那一条**。
+                      //   `customBg` 是大厅自定义背景的**独立渲染通路**，与共享 <VideoPlayer>（`playHallMovie` 那条）
+                      //   互不相干：上一轮 4 笔 poster 提交只覆盖了共享放映机，这一条**一行都没碰**。
+                      //   点「下一张」/「场景」或「背景」应用后，`handleUpdateCustomBg`（App.tsx:214）先 `stopMovie()`
+                      //   关掉那台有 poster 的放映机，再换掉这里的 `src` ⇒ 安卓 WebView 在"解不出帧"的窗口里
+                      //   画媒体层占位（纯灰底 + 黑色播放图标），且此时没有别的图层盖住它。
+                      //   `key={customBg.url}` 是**必要条件**：同一元素改 `src` 时部分实现会保留上一帧，
+                      //   换元素才能保证 poster 必定重画。
+                      //   `playsInline` 与 VideoPlayer / LoopVideo 对齐。
+                      //   查不到 poster（旧存档里的非大厅影片 URL）⇒ 返回 undefined ⇒ React 不写该属性，与改动前等价。
+                      //   PC 零回归：有帧后浏览器自动让位给视频画面。
+                      <video
+                          key={customBg.url}
+                          src={customBg.url}
+                          poster={getHallMoviePoster(customBg.url)}
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          className="w-full h-full object-cover"
+                      />
                   )}
               </motion.div>
           )}
