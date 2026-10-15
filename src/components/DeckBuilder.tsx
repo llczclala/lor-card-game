@@ -10,6 +10,7 @@ import { Card } from './Card';
 import type { CardData } from '../types';
 import type { PoolId } from '../logic/gachaLogic'; // [2026-08-02] 卡池跳转
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { TOUCH_TUNE } from '../utils/touchGaze'; // [2026-10-15] 复用全项目统一的"拖拽判定线"（moveCancelPx）
 import { FullArtOverlay } from './Overlays';
 // [移除] 彻底废弃 PersonalizationDrawer 的引入
 import { StyleSelector } from './StyleSelector'; // [核心新增] 直接复用原生的全屏选择器
@@ -385,26 +386,70 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     // [2026-10-15 莉莉子 · 程提需求] 📱 **手机左右滑动**翻牌组
     // ── 程实测：**PC 有滚轮**、手机**一条滑动通路都没有** —— 只能去点"旁边那张"才能翻，
     //    手指横划完全没反应（PC 上鼠标拖拽同样没反应，但程说只补手机的就行）。
-    //    写法**对齐 `ShopScreen` 的翻页**（`onTouchStart` 记起点 + `onTouchEnd` 比位移）。
+    //    形态**对齐 `ShopScreen` 的翻页**（`onTouchStart` 记起点 + `onTouchEnd` 比位移）。
     // ── ⚠️ 只挂 touch 事件：**鼠标拖拽根本不会触发它们** ⇒ 天然只影响触屏，
     //    不会碰到程说"能用"的滚轮通路。
-    const carouselTouchXRef = React.useRef(0);
+    // ── 🔴 2026-10-15 第 6 轮独立审查打回一条**真缺陷**，本版已修：
+    //    原来写成"没划够 50px 就直接 return（不吞 click）" ⇒ **8~50px 的短划**
+    //    会被 WebView 补发的 click 命中**中央那张**牌组 ⇒ 弹出备战枢纽
+    //    （想翻页、结果进了卡组，比原来的 BUG 更糟）。
+    //    病根是**一个阈值同时管两件事**。现在拆开：
+    //      ① `|位移| > TOUCH_TUNE.moveCancelPx`(8px) ⇒ 这手势算**拖动**，一律吞掉 click
+    //         —— 8px 是**全项目**既定的"拖拽 vs 点击"分界（`touchGaze.ts:33`，
+    //         `TouchFeedbackLayer` 判拖拽也用切比雪夫 8px），不是我另立标准
+    //      ② `横向为主` **且** `|dx| ≥ DECK_UI.swipeThreshold`(50px) ⇒ 才真的翻一张
+    const carouselTouchRef = React.useRef<{ id: number; x: number; y: number } | null>(null);
+    /** 吞 click 的时间窗：仅用于"拖动后浏览器补发 click"这一种情况（同 TouchFeedbackLayer 的做法） */
+    const carouselSuppressClickAtRef = React.useRef(0);
     const handleCarouselTouchStart = (e: React.TouchEvent) => {
         if (viewStyle !== 'CAROUSEL' || hubDeckId) return; // 与 handleWheelScroll 同一套守卫
-        carouselTouchXRef.current = e.touches[0].clientX;
+        if (carouselTouchRef.current) return;              // 已有一根手指在跟 ⇒ 忽略后续手指（多指会多翻一格）
+        const t = e.changedTouches[0];
+        carouselTouchRef.current = { id: t.identifier, x: t.clientX, y: t.clientY };
     };
+    /** 手势被打断（系统抢走去滚动 / 来电…）⇒ 清掉跟踪，否则后续滑动会永远失效 */
+    const handleCarouselTouchCancel = () => { carouselTouchRef.current = null; };
     const handleCarouselTouchEnd = (e: React.TouchEvent) => {
-        if (viewStyle !== 'CAROUSEL' || hubDeckId) return;
+        const start = carouselTouchRef.current;
+        if (!start) return;
+        const t = e.changedTouches[0];
+        if (t.identifier !== start.id) return; // 抬起的不是我在跟的那根手指 ⇒ 不理它
+        carouselTouchRef.current = null;
+        if (viewStyle !== 'CAROUSEL' || hubDeckId) return; // 手势途中开了枢纽之类 ⇒ 不处理
         const total = allCarouselDecks.length;
         if (total === 0) return;
-        const dx = e.changedTouches[0].clientX - carouselTouchXRef.current;
-        if (Math.abs(dx) < DECK_UI.swipeThreshold) return; // 没划够 ⇒ 让给普通点击处理
-        // ⚠️ 必须 preventDefault：否则 WebView 还会**补发一个 click**，而它落在
-        //    **中央那张**上就会顺手把牌组打开（想划走结果进去了）。取消 `touchend`
-        //    会一并取消这次触摸合成出的 click（Touch Events 规范）。
-        if (e.cancelable) e.preventDefault();
+
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        // 切比雪夫（与 TouchFeedbackLayer 判拖拽同口径）：任一方向超过判定线就算拖动
+        const moved = Math.max(Math.abs(dx), Math.abs(dy));
+
+        // ① 够得上"拖动" ⇒ 必须吃掉浏览器补发的 click。
+        //    两道保险，因为放跑的后果是"弹出备战枢纽"而不是仅仅没反应：
+        //    a) 取消 touchend 会一并取消这次触摸合成出的 click（Touch Events 规范；
+        //       已核实 React 的 passive 列表只有 touchstart/touchmove/wheel ⇒ touchend 可取消）
+        //    b) 万一某实现给的是 cancelable=false，还有下面 `handleCarouselClickCapture` 兜底
+        if (moved > TOUCH_TUNE.moveCancelPx) {
+            carouselSuppressClickAtRef.current = performance.now();
+            if (e.cancelable) e.preventDefault();
+        }
+
+        // ② 真的翻页：必须**横向为主**（挡掉斜划/竖划顺手翻掉）并且够远
+        if (Math.abs(dx) < DECK_UI.swipeThreshold || Math.abs(dx) <= Math.abs(dy)) return;
         // 手指往左滑 (dx < 0) = 看**下一张**，与滚轮 `deltaY > 0` 同方向、也能循环
         setCarouselIndex(prev => (dx < 0 ? (prev + 1) % total : (prev - 1 + total) % total));
+    };
+    /**
+     * 拖动之后浏览器补发的那次 click —— 在**捕获阶段**拦掉，别让它走到牌组的 onClick
+     * （点中央那张 = 打开备战枢纽）。用「时间窗 + 取一次就清空」避免把**下一次正常点击**也吞了。
+     */
+    const handleCarouselClickCapture = (e: React.MouseEvent) => {
+        const at = carouselSuppressClickAtRef.current;
+        if (!at) return;
+        carouselSuppressClickAtRef.current = 0;
+        if (performance.now() - at > 700) return; // 隔太久 ⇒ 不是这次拖动留下的
+        e.preventDefault();
+        e.stopPropagation();
     };
 
     // [新增] 进入特定卡组的编辑模式
@@ -1007,15 +1052,21 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     onWheel={handleWheelScroll}
                     onTouchStart={handleCarouselTouchStart}
                     onTouchEnd={handleCarouselTouchEnd}
+                    onTouchCancel={handleCarouselTouchCancel}
+                    onClickCapture={handleCarouselClickCapture}
                     className={`flex-1 w-full relative z-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${viewStyle === 'GRID' ? 'overflow-y-auto' : 'overflow-hidden flex items-center justify-center'}`}
                     style={{
                         paddingTop: DECK_UI.contentPadTop,
                         paddingBottom: DECK_UI.contentPadBottom,
-                        // 手机左右滑动翻牌组（处理函数见 `handleCarouselTouch*`）。
-                        // `touch-action: pan-y` = 「竖着交给浏览器、**横着归我**」⇒ 横划不会被
-                        // 浏览器当成滚动手势吞掉（否则可能派发 `touchcancel` 而不是 `touchend`）。
-                        // ⚠️ **只在轮播模式加**：网格模式在 `deckScale > 1` 时需要**横向拖动**
-                        //    才看得到右边被放大的列，加在这里会把那个能力掐死。
+                        // 手机左右滑动翻牌组（见 `handleCarouselTouch*` + `handleCarouselClickCapture`）。
+                        // `touch-action: pan-y` = 「竖着交给浏览器、**横着归我**」，主要作用是**声明意图**。
+                        // ⚠️ 老实说它**不是必需品**（第 6 轮审查指出）：本屏 html/body、ScaleWrapper、
+                        //    根容器全是 `overflow-hidden`，本来就没有可横滚的祖先；`ShopScreen` 那套
+                        //    既有滑动画法两样都没加也照用。留下它只是让"横划归我"显式可读，
+                        //    唯一代价是禁掉双指缩放 —— 而 `index.html` 早已 `user-scalable=no`。
+                        // ⚠️ **只在轮播模式加**：网格模式在 `deckScale > 1` 时是**真·横向可滚**
+                        //    （`overflow-y-auto` ⇒ 另一轴按 CSS Overflow 规范计算为 auto），
+                        //    加这里会把"横向拖动看放大后右侧列"的能力掐死。
                         ...(viewStyle === 'CAROUSEL' ? { touchAction: 'pan-y' as const } : {}),
                         // 左右留白只在网格模式生效（轮播模式是居中舞台，加了会偏）
                         ...(viewStyle === 'GRID' ? { paddingLeft: DECK_UI.contentPadX, paddingRight: DECK_UI.contentPadX } : {}),
