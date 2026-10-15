@@ -56,13 +56,40 @@ export const DECK_UI = {
     backRight: 32,        // 距右侧 px（原 right-8 = 32）
     backGap: 12,          // 两个按钮间距 px（原 gap-3 = 12）
     backBtnPad: 12,       // 按钮内边距 px（原 p-3 = 12）
-    backIconSize: 24,     // 按钮图标 px（原 size={24}）
+    backIconSize: 48,     // 按钮图标 px（原 size={24}）
 
     // ══ ⑤ 内容区（牌组卡片那片区域）的留白 ════════════════════════════
     /** 顶部留白 px（原 pt-40 = 160）—— **应 ≥ headerHeight** */
     contentPadTop: 160,
     contentPadBottom: 80, // 原 pb-20 = 80
     contentPadX: 64,      // 左右留白 px（原 px-16 = 64，仅网格模式生效）
+
+    // ══ ⑥ 中间的牌组网格（GRID 模式）══════════════════════════════════
+    //   ⚠️ 牌组方框**自身的大小**不在这里 —— 那是**三个屏共享**的
+    //      `src/components/dioramaSpacing.ts` 的 `DIORAMA_SIZE`（改它 = 三屏同时生效）。
+    //      本节只管"这一屏**怎么排**"。
+    /** 网格整体最大宽度（原 max-w-[95%]） */
+    gridMaxWidth: '95%',
+    /**
+     * 网格列数：**0 = 自动**（沿用 Tailwind 响应式 2 / 3 / 4 / 5 列，**默认、零变化**）；
+     * 填 >0 的数字则**固定**为该列数 —— ⚠️ 会失去响应式，小窗口会挤。
+     */
+    gridColumns: 0,
+    /** 列间距 px（原 gap-x-12 = 48） */
+    gridGapX: 48,
+    /** 行间距 px（原 gap-y-28 = 112） */
+    gridGapY: 112,
+    /** 每个格子顶部的额外间距 px（原 mt-12 = 48）—— 给"立体盒子"的投影留空间 */
+    tileTopGap: 48,
+
+    // ══ ⑦ 牌组卡片右上角的删除按钮（鼠标悬停该牌组时才出现）════════════
+    delBtnOffset: 24,    // 距右上角的外移量 px（原 -top-6 / -right-6 = 24）
+    delBtnPad: 8,        // 按钮内边距 px（原 p-2 = 8）
+    delBtnIconSize: 16,  // 垃圾桶图标 px（原 size={16}）
+
+    // ══ ⑧ 轮播模式（CAROUSEL）════════════════════════════════════════
+    /** 相邻牌组的横向间距 px（原代码里**写死**的 `diff * 380`） */
+    carouselSpacing: 380,
 } as const;
 
 
@@ -900,12 +927,23 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 >
 
                     {viewStyle === 'GRID' ? (
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-12 gap-y-28 content-start w-full max-w-[95%] mx-auto">
-                            <div className="w-full flex justify-center mt-12" onClick={handleCreateAndEdit}><DeckDiorama deck={{ isNew: true }} isGridView={true} /></div>
+                        <div
+                            className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 content-start w-full mx-auto"
+                            style={{
+                                gap: `${DECK_UI.gridGapY}px ${DECK_UI.gridGapX}px`,
+                                maxWidth: DECK_UI.gridMaxWidth,
+                                // 列数：默认 0 ⇒ **不加内联样式**，保留上面的 Tailwind 响应式（零变化）；
+                                // 只有填了 >0 的数字才固定列数
+                                ...(DECK_UI.gridColumns > 0
+                                    ? { gridTemplateColumns: `repeat(${DECK_UI.gridColumns}, minmax(0, 1fr))` }
+                                    : {}),
+                            }}
+                        >
+                            <div className="w-full flex justify-center" style={{ marginTop: DECK_UI.tileTopGap }} onClick={handleCreateAndEdit}><DeckDiorama deck={{ isNew: true }} isGridView={true} /></div>
                             {visibleDecks.map((deck: any) => (
-                                <div key={deck.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setHubDeckId(deck.id); }} className="w-full flex justify-center mt-12 relative group/del"> {/* [新增] 音效 */}
+                                <div key={deck.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setHubDeckId(deck.id); }} className="w-full flex justify-center relative group/del" style={{ marginTop: DECK_UI.tileTopGap }}> {/* [新增] 音效 */}
                                     <DeckDiorama deck={deck} covers={getDeckCovers(deck.cards, deck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[deck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isGridView={true} />
-                                    <button onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleDeleteDeck(deck.id); }} className="absolute -top-6 -right-6 p-2 bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20"><Trash2 size={16} className="text-white" /></button>
+                                    <button onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); handleDeleteDeck(deck.id); }} className="absolute bg-black/80 hover:bg-red-600 rounded-full opacity-0 group-hover/del:opacity-100 transition-all z-50 border border-white/20" style={{ top: -DECK_UI.delBtnOffset, right: -DECK_UI.delBtnOffset, padding: DECK_UI.delBtnPad }}><Trash2 size={DECK_UI.delBtnIconSize} className="text-white" /></button>
                                 </div>
                             ))}
                         </div>
@@ -919,7 +957,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                             if (Math.abs(diff) > 3) return null; // 剔除远处不可见项的渲染
                             const isCenter = diff === 0;
-                            const translateX = diff * 380; // 痛点 2: 进一步扩大间距，彻底推开图标
+                            const translateX = diff * DECK_UI.carouselSpacing; // [2026-10-15] 间距改成调参项（原写死 380）；痛点 2: 进一步扩大间距，彻底推开图标
 
                             return (
                                 <motion.div
