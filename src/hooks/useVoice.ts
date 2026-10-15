@@ -5,6 +5,8 @@ import type { VoiceEventType } from '../data/voiceData';
 import type { CardData } from '../types';
 // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 音量改为"可读取的当前值"（模块级快照）
 import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
+// [2026-10-15 莉莉子 · 粉丝实测] 切后台停语音（平台差异走 platform 层）
+import { subscribeAppVisibility } from '../platform/appLifecycle';
 
 interface VoiceTask {
     card: CardData;
@@ -56,6 +58,24 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
         return () => {
             eventBus.off(GameEvents.SET_VOICE_VOLUME, handleVolumeUpdate);
         };
+    }, []);
+
+    // ==========================================================
+    // [2026-10-15 莉莉子 · 粉丝实测] 切后台把语音**停干净**
+    // ── 为什么不续播：半句话从中间接上很怪 ⇒ 回前台**不恢复**。
+    // ── 但**必须彻底清场**：`isPlayingRef` 是队列的闸门，只 `pause()` 而不放开它
+    //    ⇒ 这一场此后**所有语音都不再播**（队列永久卡死）。所以照 `onerror` 那套一并清掉。
+    // ==========================================================
+    useEffect(() => {
+        return subscribeAppVisibility((isActive) => {
+            if (isActive) return; // 回前台不续播
+            try { audioRef.current?.pause(); } catch { /* noop */ }
+            audioRef.current = null;
+            queue.current = [];
+            isPlayingRef.current = false;
+            currentVoiceCardIdRef.current = null;
+            setSpeakingCardId(null);
+        });
     }, []);
 
 

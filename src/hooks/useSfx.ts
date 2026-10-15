@@ -2,6 +2,8 @@ import { useEffect,useRef,useCallback } from 'react';
 import { eventBus, GameEvents } from '../utils/eventBus';
 // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 音量改为"可读取的当前值"（模块级快照）
 import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
+// [2026-10-15 莉莉子 · 粉丝实测] 切后台停音效（平台差异走 platform 层）
+import { subscribeAppVisibility } from '../platform/appLifecycle';
 
 // 直接引入音效文件
 import clickSound from '../music/music/click.ogg';
@@ -97,12 +99,21 @@ export const useSfx = () => {
         document.addEventListener('click', unlockAudio, { once: true });
         document.addEventListener('touchstart', unlockAudio, { once: true });
 
+        // [2026-10-15 莉莉子 · 粉丝实测] 登记"正在播的一次性音效"，切后台统一掐掉。
+        //   —— 最长的一条是大招「最终指令」（3.5s）：切到别的应用还响着会很难受。
+        //   —— 顺带修掉一个隐性泄漏：这些 `new Audio()` 此前**从不释放**。
+        const liveSfx = new Set<HTMLAudioElement>();
+
         // 创建 Audio 对象 (预加载)
         const playSound = (src: string, baseVolume: number = 1.0) => {
             const audio = new Audio(src);
             // [修改] 应用全局音量倍率
             audio.volume = baseVolume * globalVolumeRef.current;
-            audio.play().catch(e => console.warn("SFX play failed", e));
+            liveSfx.add(audio);
+            const drop = () => { liveSfx.delete(audio); };
+            audio.addEventListener('ended', drop, { once: true });
+            audio.addEventListener('error', drop, { once: true });
+            audio.play().catch(e => { drop(); console.warn("SFX play failed", e); });
         };
 
         // [2026-09-19 1.0.16 茉莉安] 大招「最终指令」逐击音效 —— **每击完整放一整段**
@@ -116,7 +127,11 @@ export const useSfx = () => {
             const audio = new Audio(marianUltSound);
             audio.volume = 0.85 * globalVolumeRef.current;
             marianUltAudioRef.current = audio;
-            audio.play().catch(e => console.warn("SFX play failed", e));
+            liveSfx.add(audio); // [2026-10-15] 同 playSound：纳入后台闸门
+            const drop = () => { liveSfx.delete(audio); };
+            audio.addEventListener('ended', drop, { once: true });
+            audio.addEventListener('error', drop, { once: true });
+            audio.play().catch(e => { drop(); console.warn("SFX play failed", e); });
         };
 
         // [2026-09-19] 法术交互五件套 + BUFF 金光
@@ -360,8 +375,17 @@ export const useSfx = () => {
         eventBus.on(GameEvents.SFX_PUPU_SKILL1_UPGRADED, playPupuSkillUp);
         // =========================================================
 
+        // [2026-10-15 莉莉子 · 粉丝实测] 切后台：把正在播的一次性音效一起掐掉。
+        //   **不恢复** —— 它们是"事件回执"，回到前台再补响一声会很莫名其妙。
+        const offAppVisibility = subscribeAppVisibility((isActive) => {
+            if (isActive) return;
+            liveSfx.forEach(a => { try { a.pause(); } catch { /* noop */ } });
+            liveSfx.clear();
+        });
+
         // --- 清理函数 ---
         return () => {
+            offAppVisibility();
             document.removeEventListener('click', unlockAudio);
             document.removeEventListener('touchstart', unlockAudio);
             eventBus.off(GameEvents.GAME_START, playClick);

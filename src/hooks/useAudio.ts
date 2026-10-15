@@ -2,6 +2,9 @@ import { useRef, useEffect, useCallback } from 'react';
 import { AUDIO_ASSETS, type BgmKey } from '../data/audio';
 // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 音量改为"可读取的当前值"（模块级快照）
 import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
+// [2026-10-15 莉莉子 · 粉丝实测] 切后台停音频（平台差异走 platform 层）
+import { subscribeAppVisibility } from '../platform/appLifecycle';
+import { pauseAudibleDomMedia, resumeAudibleDomMedia } from '../utils/appAudioGate';
 
 export const useAudio = () => {
     const bgmRef = useRef<HTMLAudioElement | null>(null);
@@ -30,6 +33,41 @@ export const useAudio = () => {
             document.removeEventListener('click', unlockAudio);
             bgmRef.current = null;
         };
+    }, []);
+
+    // ==========================================================
+    // [2026-10-15 莉莉子 · 粉丝实测] 切后台必须停音乐
+    // ── 病根：全项目**没有任何**前后台处理（`visibilitychange` 只在 `TouchFeedbackLayer` 里
+    //    出现过，用途是清手势残留，与音频无关）⇒ BGM 一路响到后台。
+    // ── 恢复语义（**关键**）：只恢复**我们自己暂停的那一次**。
+    //    玩家用 ESC 暂停（`GAME_PAUSE` → `pauseBgm`）时，本 effect 看到的是"已经 paused"
+    //    ⇒ `pausedBgmByLifecycle = false` ⇒ 回前台**不会**把音乐偷偷拉起来。
+    // ── 本 hook 在 App 根常驻（`App.tsx:233`）⇒ 顺带担任 **DOM 媒体闸门**的宿主：
+    //    影片等"有声的 `<video>`"归它管（见 `utils/appAudioGate.ts`，这样就不必改 VideoPlayer）。
+    // ==========================================================
+    useEffect(() => {
+        let pausedBgmByLifecycle = false;
+        return subscribeAppVisibility((isActive) => {
+            const audio = bgmRef.current;
+
+            if (!isActive) {
+                if (audio && !audio.paused) {
+                    audio.pause();
+                    pausedBgmByLifecycle = true;
+                } else {
+                    pausedBgmByLifecycle = false; // 本来没在播 / 已被 ESC 暂停 ⇒ 回前台别拉起
+                }
+                pauseAudibleDomMedia();
+                return;
+            }
+
+            if (pausedBgmByLifecycle && audio && currentTrackRef.current) {
+                const p = audio.play();
+                if (p !== undefined) p.catch(() => { /* 自动播放策略拦截：等用户交互 */ });
+            }
+            pausedBgmByLifecycle = false;
+            resumeAudibleDomMedia();
+        });
     }, []);
 
     // [新增] 设置 BGM 音量
