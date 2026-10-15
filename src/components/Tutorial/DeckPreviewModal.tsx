@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Shield, Sword, Play } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
@@ -14,6 +14,7 @@ import { CardBackVideo } from '../Card'; // [2026-08-23] 卡背动态视频组�
 // [新增] 悬停预览统一方案
 import { useCardGaze } from '../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../FloatingCardPreview';
+import { FullArtOverlay } from '../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
 
 interface DeckPreviewModalProps {
     stageId: string;
@@ -141,7 +142,9 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
     const deskImage = PERSONALIZATION_ASSETS.desks[deskIndex] || PERSONALIZATION_ASSETS.desks[0];
 
     // [新增] 统一悬停预览
-    const { gazeTarget, bindGazeEvents } = useCardGaze({ delay: 300 });
+    const { gazeTarget, bindGazeEvents, dismissGaze } = useCardGaze({ delay: 300 });
+    // [2026-10-15 莉莉子 · 触屏] 触屏长按 → 浮层「📖 详情」的落点（触屏没有右键）
+    const [viewCard, setViewCard] = useState<CardData | null>(null);
 
     // 玩家卡组
     const playerDeckList = useMemo(() => {
@@ -311,8 +314,14 @@ export const DeckPreviewModal: React.FC<DeckPreviewModalProps> = ({
                 gazeTarget={gazeTarget}
                 mode="follow"
                 scale={1.5}
-                onViewArt={() => {}}
+                // [2026-10-15 莉莉子 · 触屏] ⚠️ 这里原本是空函数 `() => {}` ——
+                //   触屏上会渲染出一个**点了完全没反应的「📖 详情」按钮**（独立审查发现）。
+                //   改成真打开详情，并先 dismissGaze()（否则悬停大图会压在新弹的详情上约 150ms）。
+                onViewArt={(c) => { dismissGaze(); setViewCard(c); }}
             />
+
+            {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
+            {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}
         </motion.div>
     );
 };

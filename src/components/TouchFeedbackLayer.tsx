@@ -145,6 +145,11 @@ export const TouchFeedbackLayer: React.FC = () => {
 
         // ── 按下 ────────────────────────────────────────────────
         const onDown = (e: PointerEvent) => {
+            // [2026-10-15 莉莉子 · 审查发现] 只认真正的触摸。
+            //   否则"触屏设备 + 外接鼠标"的场景下（`pointer: coarse` 为真但用的是鼠标），
+            //   鼠标按住 400ms 也会进悬停模式并滞留 ⇒ "PC 行为不变"就打折扣了。
+            if (e.pointerType === 'mouse') return;
+
             // ⚠️ 手指落在浮层的操作条上 ⇒ 直接放行，绝不能在这里把浮层收掉！
             //    （审查发现）pointerdown 与 click 是两次独立任务：这里一收，React 立刻
             //    卸载按钮，随后的 click 根本派发不到按钮上 —— 按钮等于点不到。
@@ -198,6 +203,7 @@ export const TouchFeedbackLayer: React.FC = () => {
 
         // ── 移动 ────────────────────────────────────────────────
         const onMove = (e: PointerEvent) => {
+            if (e.pointerType === 'mouse') return; // 同 onDown：鼠标不参与触屏手势
             const mode = modeRef.current;
 
             if (mode === 'press') {

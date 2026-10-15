@@ -160,7 +160,7 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
     const boardImg = PERSONALIZATION_ASSETS.desks[deck.boardIndex ?? userSystem.settings?.customization?.currentDeskIndex ?? 0];
 
     // 悬停大图检视
-    const { gazeTarget, bindGazeEvents } = useCardGaze({ delay: 250 });
+    const { gazeTarget, bindGazeEvents, dismissGaze } = useCardGaze({ delay: 250 });
     // [2026-10-15 莉莉子 · 触屏] 触屏长按 → 浮层「📖 详情」的落点（触屏没有右键）
     const [viewCard, setViewCard] = useState<CardData | null>(null);
 
@@ -285,7 +285,12 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
             <FloatingCardPreview gazeTarget={gazeTarget} mode="follow" scale={1.25} interactive
                 onMouseEnter={() => {}}
                 onMouseLeave={() => {}}
-                onViewArt={(c) => setViewCard(c)}
+                // [2026-10-15 莉莉子 · 触屏] 详情入口。
+                //   ⚠️ 独立审查指出：本处是全项目唯一 `interactive` 的 follow 浮层，
+                //   所以补 onViewArt 会**同时改变 PC 右键语义** —— PC 上右键这张悬停大图
+                //   从「无反应」变成「打开详情」。这是**刻意接受**的：与既有
+                //   DeckBuilder:1071 / EnemyDeckEditor:806 的行为一致（那两处也是 interactive + onViewArt）。
+                onViewArt={(c) => { dismissGaze(); setViewCard(c); }}
             />
 
             {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}

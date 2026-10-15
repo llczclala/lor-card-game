@@ -262,7 +262,7 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
 
                 {/* [2026-10-03 莉莉子] 悬停检视大图（与地图抽屉同款）
                     z-[300] 落在本弹窗（z-[700]）自己的层叠上下文里 ⇒ 盖在候选内容之上 */}
-                <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => setViewCard(c)} />
+                <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => { dismissGaze(); setViewCard(c); }} />
 
                 {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
                 {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}

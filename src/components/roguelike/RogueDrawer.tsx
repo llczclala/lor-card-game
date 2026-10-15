@@ -44,7 +44,12 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
 
     // 抽屉关闭时清理可能残留的悬停大图
     useEffect(() => {
-        if (!open) dismissGaze();
+        if (!open) {
+            dismissGaze();
+            // [2026-10-15 莉莉子 · 触屏 · 审查发现] 详情层也要一并收掉，
+            //   否则抽屉关了、详情还留在屏幕上（与本 effect 的既有约定不一致）
+            setViewCard(null);
+        }
     }, [open, dismissGaze]);
 
     // 卡牌去重计数（保持牌组出现顺序）
@@ -200,7 +205,7 @@ export const RogueDrawer: React.FC<RogueDrawerProps> = ({ open, onClose, deck, e
             </AnimatePresence>
 
             {/* [悬停检视] 跟随鼠标的卡牌大图预览（复用全局组件） */}
-            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => setViewCard(c)} />
+            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => { dismissGaze(); setViewCard(c); }} />
 
             {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
             {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}

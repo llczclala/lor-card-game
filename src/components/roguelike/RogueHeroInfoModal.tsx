@@ -296,7 +296,7 @@ export const OverviewContent: React.FC<{
 export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ heroKey, userSystem }) => {
     // [2026-08-13] 接个性化配置：rogue_starter_{heroKey} 牌组（开发者编辑）优先，否则 buildStarterDeck 默认
     const deck = useMemo(() => getConfiguredStarterDeck(userSystem?.decks, heroKey), [heroKey, userSystem?.decks]);
-    const { gazeTarget, bindGazeEvents } = useCardGaze({ delay: 250 }); // [2026-08-13] 悬停大图检视
+    const { gazeTarget, bindGazeEvents, dismissGaze } = useCardGaze({ delay: 250 }); // [2026-08-13] 悬停大图检视
     // [2026-10-15 莉莉子 · 触屏] 触屏长按 → 浮层「📖 详情」的落点（触屏没有右键）
     const [viewCard, setViewCard] = useState<CardData | null>(null);
     const { getArmament } = useArmamentConfig(); // [2026-08-15] 英雄卡武装减费显示
@@ -373,7 +373,7 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
             </div>
 
             {/* 悬停大图检视 */}
-            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => setViewCard(c)} />
+            <FloatingCardPreview mode="follow" gazeTarget={gazeTarget} onViewArt={(c) => { dismissGaze(); setViewCard(c); }} />
 
             {/* [2026-10-15 莉莉子 · 触屏] 触屏详情入口（触屏没有右键） */}
             {viewCard && <FullArtOverlay card={viewCard} onClose={() => setViewCard(null)} />}
