@@ -69,14 +69,19 @@ export const DECK_UI = {
     //      `src/components/dioramaSpacing.ts` 的 `DIORAMA_SIZE`（改它 = 三屏同时生效）。
     //   ⚠️ 而且**只把那里面几个数值一起放大，方框内部会集体错位**（程实测过）——
     //      因为方框内部的偏移/位移/旋转是写死的 `top-4` / `left-6` / `translate(20px,12px)`…
-    //   ⇒ 想"把中间那一片牌组**整体放大 / 缩小**"，用下面这个主旋钮 `gridScale`。
+    //   ⇒ 想"把中间那一片牌组**整体放大 / 缩小**"，用下面这个主旋钮 `deckScale`。
     /**
-     * 【主旋钮】中间**整片牌组整体缩放**（1 = 原样）。
+     * 【主旋钮】中间**整片牌组整体缩放**（1 = 原样）· **网格与轮播两种视图都生效**。
      *
      * 牌组方框 · 方框之间的间距 · 方框**内部**的一切**一起等比缩放** ⇒ **不会错位**。
-     * 实现上做了两处补偿，所以放大后：**不会横向溢出**、**也不会被滚动区裁掉**。
+     * · 网格模式：另做两处补偿（宽度反向 + 底部高度）⇒ 放大后**不横向溢出、不被滚动区裁掉**
+     * · 轮播模式：整块舞台一起缩放（连间距一起）⇒ **不会互相重叠**
+     *
+     * ⚠️ 2026-10-15 由 `gridScale` **改名** —— 因为它现在两种视图都管，
+     *    叫 grid 会误导（程实测「改了没用」：当时它只在网格模式生效，
+     *    而这个屏**默认进的就是轮播模式**）。
      */
-    gridScale: 1,
+    deckScale: 1,
     /** 网格整体最大宽度（原 max-w-[95%]） */
     gridMaxWidth: '95%',
     /**
@@ -882,7 +887,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     };
 
     // ==========================================================
-    // [2026-10-15 莉莉子 · 程提需求] 中间整片牌组的**整体缩放**（主旋钮 `DECK_UI.gridScale`）
+    // [2026-10-15 莉莉子 · 程提需求] 中间整片牌组的**整体缩放**（主旋钮 `DECK_UI.deckScale`）
     // ── 为什么不能只放大 `DIORAMA_SIZE` 里的数值：牌组方框**内部**的偏移 / 位移 / 旋转是
     //    写死的（`top-4` / `left-6` / `translate(20px,12px)` …）⇒ 只放大外框、内部不动
     //    ⇒ **集体错位**（程实测过）。
@@ -890,12 +895,13 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     //      ① **布局宽度反向补偿** `calc(95% / scale)` ⇒ 放大后**不横向溢出**
     //      ② **底部高度补偿** `(scale-1) × 网格真实高度` ⇒ `transform` **不改布局高度**，
     //         不补的话滚动区滚不到最后一排（会被裁掉）
+    // ── ⚠️ 本节只服务**网格模式**；**轮播模式**的缩放挂在下面那块舞台容器上（不需要这两处补偿）。
     // ── `scale === 1` 时**一律不加任何内联样式** ⇒ 与改动前逐字节等价。
     // ==========================================================
     const gridRef = React.useRef<HTMLDivElement>(null);
     const [gridRealHeight, setGridRealHeight] = useState(0);
     useEffect(() => {
-        if (DECK_UI.gridScale === 1 || viewStyle !== 'GRID') { setGridRealHeight(0); return; }
+        if (DECK_UI.deckScale === 1 || viewStyle !== 'GRID') { setGridRealHeight(0); return; }
         const el = gridRef.current;
         if (!el) return;
         const measure = () => setGridRealHeight(el.offsetHeight);
@@ -905,7 +911,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         ro.observe(el);
         return () => ro.disconnect();
         // ⚠️ ResizeObserver 已经在盯着元素本身，所以"搜索过滤后牌组变少"这类变化也能自动重测
-    }, [viewStyle, DECK_UI.gridScale]);
+    }, [viewStyle, DECK_UI.deckScale]);
 
     // 如果处于“选择模式”，渲染全新的“备战枢纽 2.0”
     if (viewMode === 'SELECTION') {
@@ -958,6 +964,13 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         paddingBottom: DECK_UI.contentPadBottom,
                         // 左右留白只在网格模式生效（轮播模式是居中舞台，加了会偏）
                         ...(viewStyle === 'GRID' ? { paddingLeft: DECK_UI.contentPadX, paddingRight: DECK_UI.contentPadX } : {}),
+                        // 【主旋钮】**轮播模式**的整体缩放：直接缩放**这块舞台** ⇒ 牌组与它们之间的
+                        //   间距一起缩放 ⇒ 不会互相重叠；`transform-origin: center center` 让它原地长大。
+                        //   ⚠️ 网格模式**不走这里**（它缩放内层网格并做宽度/高度补偿）。
+                        //   `deckScale === 1` 时**不加**（零变化）。
+                        ...(viewStyle === 'CAROUSEL' && DECK_UI.deckScale !== 1
+                            ? { transform: `scale(${DECK_UI.deckScale})`, transformOrigin: 'center center' }
+                            : {}),
                     }}
                 >
 
@@ -974,14 +987,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     ? { gridTemplateColumns: `repeat(${DECK_UI.gridColumns}, minmax(0, 1fr))` }
                                     : {}),
                                 // 【主旋钮】整体缩放 —— `scale === 1` 时下面三项**一个都不加**（零变化）
-                                ...(DECK_UI.gridScale !== 1
+                                ...(DECK_UI.deckScale !== 1
                                     ? {
                                           // ① 布局宽度反向补偿：视觉宽度仍 ≈ maxWidth ⇒ 不横向溢出
-                                          width: `calc(${DECK_UI.gridMaxWidth} / ${DECK_UI.gridScale})`,
-                                          transform: `scale(${DECK_UI.gridScale})`,
+                                          width: `calc(${DECK_UI.gridMaxWidth} / ${DECK_UI.deckScale})`,
+                                          transform: `scale(${DECK_UI.deckScale})`,
                                           transformOrigin: 'top center',
                                           // ② 底部高度补偿：补出 (scale-1)×真实高度 ⇒ 滚动区能滚到最后一排
-                                          marginBottom: Math.round((DECK_UI.gridScale - 1) * gridRealHeight),
+                                          marginBottom: Math.round((DECK_UI.deckScale - 1) * gridRealHeight),
                                       }
                                     : {}),
                             }}
