@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card } from './Card';
 import type { CardData } from '../types';
+// [2026-10-15 莉莉子 · 触屏] 抬手后的"滞留态"由触屏手势层广播，浮层这边订阅
+import { touchLingerStore, closeTouchGaze } from '../utils/touchGaze';
 
 // ─── GazeTarget 类型 ────────────────────────────────────────────
 // 与 useCardGaze 返回的 gazeTarget 结构一致，避免循环依赖
@@ -87,6 +89,9 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
+    // [2026-10-15 莉莉子 · 触屏] 是否处于"抬手后滞留"中（只有触屏会为 true）
+    const lingering = useSyncExternalStore(touchLingerStore.subscribe, touchLingerStore.getSnapshot);
+
     // ── follow 模式 ─────────────────────────────────────────
     if (mode === 'follow') {
         // [修改] 兼容无目标的假 rect 兜底
@@ -131,7 +136,16 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
             top = window.innerHeight - halfVisualHeight - 20;
         }
 
-        return createPortal(
+        // [2026-10-15 莉莉子 · 触屏] 大图在屏幕上的**视觉**水平中心。
+        //   元素被 transformOrigin 锚在右缘（放左侧时）或左缘（翻转到右侧）后，
+        //   未缩放的 left 不再是视觉左边缘 —— 操作条要对齐视觉中心，必须按缩放后算。
+        const visualCenterX = isFlippedToRight
+            ? left + scaledWidth / 2
+            : left + BASE_WIDTH - scaledWidth / 2;
+
+        return (
+            <>
+            {createPortal(
             <motion.div
                 key={followCard.key}
                 data-card-gaze-preview="" // [2026-09-10 莉莉子] 大图保持区标记（useCardGaze holdSelector 用）
@@ -140,7 +154,7 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                     left,
                     top,
                     zIndex: 10001,
-                    pointerEvents: interactive ? 'auto' : 'none',
+                    pointerEvents: (interactive || lingering) ? 'auto' : 'none',
                     // [核心法门] 动态更改缩放原点！彻底消灭“缩放空气墙”！
                     // 在左侧就以右边缘为基准向左膨胀，在右侧就以左边缘为基准向右膨胀
                     transformOrigin: isFlippedToRight ? 'left center' : 'right center'
@@ -172,6 +186,47 @@ export const FloatingCardPreview: React.FC<FloatingCardPreviewProps> = ({
                 </div>
             </motion.div>,
             document.body
+            )}
+
+            {/* [2026-10-15 莉莉子 · 触屏] 滞留操作条 —— 抬手后浮层还在的这 ~1.8s 内可以点它。
+                触屏没有右键，「详情」入口就落在这里（程 2026-10-14 拍板方案 A）。
+                故意**不跟随游戏缩放**：这是手指要点的东西，必须保持真实屏幕尺寸。 */}
+            {lingering && createPortal(
+                <div
+                    // [2026-10-15 莉莉子 · 触屏] 手势层靠这个标记放行"按在操作条上"的按下 ——
+                    //   否则手指一按，手势层就把浮层收掉、按钮被卸载，click 根本派发不到
+                    data-touch-linger=""
+                    style={{
+                        position: 'fixed',
+                        left: visualCenterX,
+                        top: top + scaledHeight / 2 + 12,
+                        transform: 'translateX(-50%)',
+                        zIndex: 10002,
+                        display: 'flex',
+                        gap: 10,
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    {onViewArt && (
+                        <button
+                            type="button"
+                            onClick={() => { onViewArt(followCard); closeTouchGaze(); }}
+                            className="px-5 py-2.5 rounded-full bg-sky-500/95 text-white text-base font-semibold shadow-[0_6px_20px_rgba(14,165,233,0.5)] active:scale-95 transition-transform"
+                        >
+                            📖 详情
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => closeTouchGaze()}
+                        className="px-5 py-2.5 rounded-full bg-slate-700/95 text-white/90 text-base font-medium shadow-[0_6px_20px_rgba(0,0,0,0.5)] active:scale-95 transition-transform"
+                    >
+                        ✕ 关闭
+                    </button>
+                </div>,
+                document.body
+            )}
+            </>
         );
     }
 

@@ -40,5 +40,11 @@
 
     <!-- Permissions -->
 
+    <!-- [2026-10-15 莉莉子 · 触屏] 震动反馈。
+         navigator.vibrate() 在安卓 WebView 里走 Chromium 的 VibrationManager，
+         它会先查 VIBRATE 权限，没有就**静默返回、什么都不震**。
+         所以触屏反馈层的「点击短震 12ms / 长按达成 30ms」必须靠这条权限才生效。 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <uses-permission android:name="android.permission.INTERNET" />
 </manifest>

@@ -15,6 +15,7 @@ import React, { useRef, useState } from 'react';
 import { MAZE_BUFFS, type MazeBuff } from '../../data/roguelike/buffs';
 import { RARITY_META } from './RarityIcon';
 import { EnhancementPreview, type EnhancementPreviewHover } from './EnhancementPreview';
+import { gazeEnterDelay } from '../../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 触屏下浮现延迟归零
 
 interface RunEnhancementStripProps {
     /** 强化 id 列表（= `run.enhancements`） */
@@ -37,12 +38,15 @@ export const RunEnhancementStrip: React.FC<RunEnhancementStripProps> = ({ enhanc
 
     /** 悬停绑定（400ms 浮现 + 150ms 离开缓冲；与 EvaluationPanel/NodePreviewPanel 手感一致） */
     const bind = (buff: MazeBuff) => ({
+        // [2026-10-15 莉莉子 · 触屏] 可预览元素标记（触屏长按进度环只在这类元素上出现）
+        'data-gaze': 'buff',
         onMouseEnter: (e: React.MouseEvent) => {
             if (leaveRef.current) { clearTimeout(leaveRef.current); leaveRef.current = null; }
             if (enterRef.current) clearTimeout(enterRef.current);
             // ⚠️ 必须**同步**取 rect：React 合成事件在异步回调里 currentTarget 会被置 null
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            enterRef.current = setTimeout(() => setHover({ buff, rect }), 400);
+            // [2026-10-15 莉莉子 · 触屏] 触屏上由长按触发，延迟归零（PC 仍 400ms）
+            enterRef.current = setTimeout(() => setHover({ buff, rect }), gazeEnterDelay(400));
         },
         onMouseLeave: () => {
             if (enterRef.current) { clearTimeout(enterRef.current); enterRef.current = null; }

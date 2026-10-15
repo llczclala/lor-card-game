@@ -12,6 +12,7 @@ import { getEquipmentById, type EquipmentDef } from '../../data/equipment';
 import { RARITY_META } from './RarityIcon';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { getGameScale } from '../../utils/gameScale'; // [2026-09-01] 分辨率适配：逃出 scale 容器后按 gameScale 补偿
+import { gazeEnterDelay } from '../../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 触屏下浮现延迟归零
 
 const HEXAGON = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
 
@@ -34,6 +35,8 @@ export function getEquipBadges(e: EquipmentDef): string[] {
 export const bindArmamentGaze = (equipIds: string | string[]) => {
     const ids = Array.isArray(equipIds) ? equipIds : [equipIds];
     return {
+        // [2026-10-15 莉莉子 · 触屏] 可预览元素标记（触屏长按进度环只在这类元素上出现）
+        'data-gaze': 'armament',
         onMouseEnter: (e: React.MouseEvent) => {
             const el = e.currentTarget as HTMLElement;
             eventBus.emit(GameEvents.ARMAMENT_GAZE_SHOW, { equipIds: ids, rect: el.getBoundingClientRect() });
@@ -63,7 +66,8 @@ export const ArmamentPreview: React.FC = () => {
         const show = (payload: GazePayload) => {
             if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; }
             if (enterTimer.current) clearTimeout(enterTimer.current);
-            enterTimer.current = window.setTimeout(() => setHover(payload), 300); // 悬停 300ms 浮现
+            // [2026-10-15 莉莉子 · 触屏] 触屏上由长按触发，延迟归零（PC 仍 300ms）
+            enterTimer.current = window.setTimeout(() => setHover(payload), gazeEnterDelay(300)); // 悬停 300ms 浮现
         };
         const hide = () => {
             if (enterTimer.current) { clearTimeout(enterTimer.current); enterTimer.current = null; }

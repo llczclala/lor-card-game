@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { CardData } from '../types';
+// [2026-10-15 莉莉子 · 触屏] 触屏下浮现延迟归零；并绕开"保持区复核"（它依赖鼠标坐标，触屏没有）
+import { gazeEnterDelay, isTouchInput } from '../utils/touchGaze';
 
 interface UseCardGazeConfig {
     /** 悬停触发延迟（毫秒），默认 500 */
@@ -24,6 +26,12 @@ interface UseCardGazeConfig {
 }
 
 interface GazeEvents {
+    /**
+     * [2026-10-15 莉莉子 · 触屏] 「可预览元素」标记。
+     * 触屏长按的进度环**只在这类元素上出现**（程：圆环要在它能出现的地方出现），
+     * 滑动命中检测也靠它（见 utils/touchGaze.ts 的 GAZE_SELECTOR）。
+     */
+    'data-gaze': string;
     onMouseEnter: (e: React.MouseEvent) => void;
     onMouseLeave: () => void;
 }
@@ -136,7 +144,11 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
     // [2026-09-10 莉莉子] 保持监控：鼠标离开触发源后不再"到点即关"，
     // 改为持续看鼠标在不在保持区内 —— 移到大图上检视武装时不关闭，离开才关。
     useEffect(() => {
-        if (!holdSelector) return;
+        // [2026-10-15 莉莉子 · 触屏] 触屏上完全不走这条保持区监控：
+        //   它靠 lastMouseRef（真实 mousemove 写的坐标）复核，而触屏层从不写它 ——
+        //   残留坐标几乎必然落在"卡牌∪大图"包围盒内 ⇒ 复核判定"还在保持区" ⇒
+        //   大图**永远不关**（审查发现的"浮层卡在屏幕上"）。
+        if (!holdSelector || isTouchInput()) return;
         const onMove = (e: MouseEvent) => {
             lastMouseRef.current = { x: e.clientX, y: e.clientY };
             if (!holdingRef.current) return;
@@ -169,6 +181,11 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
     }, [holdSelector, inHoldRegion]);
 
     const bindGazeEvents = useCallback((card: T): GazeEvents => ({
+        // [2026-10-15 莉莉子 · 触屏] 打上"可预览"标记。
+        //   战场/备战席把它展开在 <div className="contents"> 空气外壳上 ——
+        //   那个壳是 display:contents（零尺寸、elementFromPoint 命中不到），
+        //   但它在 DOM 树上仍是祖先，closest('[data-gaze]') 能穿过去找到它。
+        'data-gaze': 'card',
         onMouseEnter: (e: React.MouseEvent) => {
             if (isDragging || isCasting || suppress) return;
 
@@ -217,7 +234,7 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
                 setGazeTarget({ card, cardRect });
                 isGazingRef.current = true;
                 enterTimerRef.current = null;
-            }, delay);
+            }, gazeEnterDelay(delay));
         },
 
         onMouseLeave: () => {
@@ -236,7 +253,8 @@ export const useCardGaze = <T extends CardData>(config: UseCardGazeConfig = {}) 
 
             // [2026-09-10 莉莉子] 配了保持选择器 → 不再"到点即关"，转为持续检测：
             //   鼠标若停留在保持区（卡牌大图本体）内就继续保持，真正离开才关。
-            if (holdSelector) {
+            // [2026-10-15 莉莉子 · 触屏] 触屏走下面的普通 leaveBuffer 分支（触屏没有鼠标坐标）。
+            if (holdSelector && !isTouchInput()) {
                 holdingRef.current = true;
                 if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
                 // 兜底定时器：鼠标离开后若"停住不动"（不再派发 mousemove），到点用最后已知坐标复核一次

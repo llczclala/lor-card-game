@@ -13,6 +13,13 @@ html, body {
   /* [2026-10-14 莉莉子 · 触屏适配] 关掉安卓点击时的**系统灰色高亮块**（"廉价感"来源之一）；
      点击反馈改由 <TouchFeedbackLayer /> 的涟漪 + 震动承担。 */
   -webkit-tap-highlight-color: transparent;
+  /* [2026-10-15 莉莉子 · 触屏] 抑制长按原生菜单。
+     触屏的「右键」语义已改由「长按 → 悬停预览 → 浮层「📖 详情」按钮」承担。
+     ⚠️ 更正（审查发现）：`-webkit-touch-callout` 是 WebKit(Safari/iOS) 私有属性，
+        **Chromium/安卓 WebView 不实现也不解析** —— 安卓侧真正生效的只有
+        TouchFeedbackLayer 在 capture 阶段吃掉 contextmenu 那一道（且只吃 [data-gaze] 上的）。
+        文本选择本身已由上面的 user-select:none 覆盖。 */
+  -webkit-touch-callout: none;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 

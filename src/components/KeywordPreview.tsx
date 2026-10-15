@@ -21,6 +21,7 @@ import { KEYWORD_DB } from '../data/keywords';
 import type { Keyword } from '../types';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { getGameScale } from '../utils/gameScale'; // [2026-09-10] 逃出 scale 容器后按 gameScale 补偿
+import { gazeEnterDelay } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 触屏下浮现延迟归零
 
 // [2026-09-10] Tailwind 400 档色值 → hex（KEYWORD_DB.color 存的是 Tailwind 色名，浮层要用真色值做边框/发光）
 const COLOR_HEX: Record<string, string> = {
@@ -39,6 +40,8 @@ const CARD_H = 300; // 估算高度，仅供鼠标位置兜底判定用（与 Ar
  * 用法：<div {...bindKeywordGaze('Overwhelm')}>...</div>
  */
 export const bindKeywordGaze = (keyword: Keyword) => ({
+    // [2026-10-15 莉莉子 · 触屏] 可预览元素标记（触屏长按进度环只在这类元素上出现）
+    'data-gaze': 'keyword',
     onMouseEnter: (e: React.MouseEvent) => {
         const el = e.currentTarget as HTMLElement;
         eventBus.emit(GameEvents.KEYWORD_GAZE_SHOW, { keyword, rect: el.getBoundingClientRect() });
@@ -65,7 +68,8 @@ export const KeywordPreview: React.FC = () => {
         const show = (payload: GazePayload) => {
             if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; }
             if (enterTimer.current) clearTimeout(enterTimer.current);
-            enterTimer.current = window.setTimeout(() => setHover(payload), 300); // 悬停 300ms 浮现（同武装大卡手感）
+            // [2026-10-15 莉莉子 · 触屏] 触屏上由长按触发，延迟归零（PC 仍 300ms）
+            enterTimer.current = window.setTimeout(() => setHover(payload), gazeEnterDelay(300)); // 悬停 300ms 浮现（同武装大卡手感）
         };
         const hide = () => {
             if (enterTimer.current) { clearTimeout(enterTimer.current); enterTimer.current = null; }

@@ -181,6 +181,9 @@ const RecordCard: React.FC<{
             <div
                 className="relative rounded-lg overflow-hidden cursor-pointer transition-all hover:scale-105 hover:-translate-y-1"
                 style={{ boxShadow: `0 0 0 1.5px ${color.ring}, 0 4px 12px rgba(0,0,0,0.5)` }}
+                // [2026-10-15 莉莉子 · 触屏] 这一处是**显式**用 onMouseEnter（没展开 bindGazeEvents），
+                //   所以"可预览"标记要单独补上，否则触屏长按在这不出进度环。
+                data-gaze={gazeHandlers ? 'card' : undefined}
                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClickCard(entity.cardKey); }}
                 onMouseEnter={gazeHandlers?.onMouseEnter as React.MouseEventHandler<HTMLDivElement> | undefined}
                 onMouseLeave={gazeHandlers?.onMouseLeave as React.MouseEventHandler<HTMLDivElement> | undefined}
