@@ -21,11 +21,18 @@ interface VideoPlayerProps {
     //   此前本组件**根本没有 volume 这个入口**（`useMovie.movieVolume` 返回了却无人消费）
     //   ⇒ 设置里的「过场」滑块是**装饰品**，影片恒以 100% 播。缺省 1 = 元素默认音量（零行为回归）。
     volume?: number;
+    // [2026-10-19 莉莉子 · 安卓] 「无可绘制帧」兜底静图（升级 / 胜利 / 标题三组一次性影片）
+    // ── 病根：安卓 WebView 在 `<video>` **没有可绘制帧**时，由媒体层自己画占位（纯灰底 + 黑色播放图标）；
+    //    PC 桌面 Chromium 无此行为 ⇒ 影片加载期在安卓上是一块灰。
+    // ── 药方：把对应静图交给标准 `poster` 属性。有帧之后浏览器自动让位给视频画面，PC 观感零变化。
+    // ── ⚠️ 纯属性注入：**不改任何播放 / 暂停 / 预热 / 看门狗 / setMovieHold 时序**。
+    //    缺省 `undefined` ⇒ React **不写该属性**，与改动前逐字节等价（无回归）。
+    poster?: string;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     src, isVisible, isLoop = false, onEnded, zIndex = 500, muted = false,
-    noFade = false, volume = 1
+    noFade = false, volume = 1, poster
 }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     // 1. 基础播放控制 (纯物理控制，彻底剥离 React 渲染流)
@@ -225,6 +232,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <video
                 ref={videoRef}
                 src={src || undefined} // src为空时赋undefined，防止浏览器报错
+                poster={poster} // [2026-10-19 莉莉子 · 安卓] poster 静态图兜底；undefined ⇒ React 不写该属性（零行为回归）
                 className="w-full h-full object-cover transform-gpu"
                 playsInline
                 preload="auto"

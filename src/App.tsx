@@ -253,7 +253,8 @@ export default function App() {
       handleVideoEnded,playHallMovie,setMovieVolume,
       prepareLevelUpMovie, prepareVictoryMovie,
       movieVolume, // [2026-10-05] 「过场」音量：此前**没被解构出来**，所以永远传不到播放器（滑块是装饰品）
-      skipMovie, movieKind // [2026-10-03 莉莉子] 胜利影片跳过：跳过动作 + 影片用途标记
+      skipMovie, movieKind, // [2026-10-03 莉莉子] 胜利影片跳过：跳过动作 + 影片用途标记
+      currentMoviePoster, // [2026-10-19 莉莉子 · 安卓] 当前影片的 poster 静图（兜底"安卓视频灰块"）
   // [核心重构] 将玩家的画质设置作为神经信号注入调度大脑（默认兜底 1k）
   } = useMovie((userSystem.settings as any)?.videoResolution || '1k');
 
@@ -2487,6 +2488,7 @@ export default function App() {
 
       <VideoPlayer
                 src={currentMovie}
+                poster={currentMoviePoster} // [2026-10-19 莉莉子 · 安卓] 静态图兜底（undefined ⇒ 不写该属性，PC/旧行为零变化）
                 isVisible={isVisible}
                 isLoop={isLooping}
                 onEnded={handleVideoEnded}

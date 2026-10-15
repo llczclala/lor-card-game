@@ -189,6 +189,62 @@ import marian_win_1k from '../movie/win/茉莉安霄鹰_win/1k.webm';
 import marian_win_2k from '../movie/win/茉莉安霄鹰_win/2k.webm';
 import marian_win_4k from '../movie/win/茉莉安霄鹰_win/4k.webm';
 
+// [2026-10-19 莉莉子 · 安卓] 一次性影片（升级 / 胜利 / 标题）**首帧静图** —— 39 张
+//   （`src/image/level_up|win|title/…`，与影片一一对应）
+//   病根同大厅：安卓 WebView 在 `<video>` **没有可绘制帧**时，由媒体层自己画占位
+//   （纯灰底 + 黑色播放图标）；PC 桌面 Chromium 无此行为 ⇒ 全屏播放器需 `poster` 兜底。
+//   ⚠️ 必须走 Vite ES import（与影片一致）：Electron 下页面是 `file://`，写绝对路径会失效。
+//   ⚠️ 目录名与影片**不同**：影片在 `src/movie/level up/`（**含空格**），静图在 `src/image/level_up/`（**下划线**）。
+//   ⚠️ `win` 全部 18 张 + `level up/茉莉安霄鹰` 3 张的来源影片**开头是黑场**，
+//      其静图取自第 **0.3 秒**（不是第 0 帧）—— **故意的、已确认可用**，勿"修"。
+//   ⚠️ 猫汐尔莲驱的 4k 静图**文件名特殊**（`猫汐尔_level_up_4k.jpg`，与影片同名规则一致）。
+// 里芙
+import poster_lyfe_levelup_1k from '../image/level_up/里芙_level up/1k.jpg';
+import poster_lyfe_levelup_2k from '../image/level_up/里芙_level up/2k.jpg';
+import poster_lyfe_levelup_4k from '../image/level_up/里芙_level up/4k.jpg';
+import poster_lyfe_win_1k from '../image/win/里芙_win/1k.jpg';
+import poster_lyfe_win_2k from '../image/win/里芙_win/2k.jpg';
+import poster_lyfe_win_4k from '../image/win/里芙_win/4k.jpg';
+// 芬妮
+import poster_fenny_levelup_1k from '../image/level_up/芬妮_level up/1k.jpg';
+import poster_fenny_levelup_2k from '../image/level_up/芬妮_level up/2k.jpg';
+import poster_fenny_levelup_4k from '../image/level_up/芬妮_level up/4k.jpg';
+import poster_fenny_win_1k from '../image/win/芬妮_win/1k.jpg';
+import poster_fenny_win_2k from '../image/win/芬妮_win/2k.jpg';
+import poster_fenny_win_4k from '../image/win/芬妮_win/4k.jpg';
+// 卜卜灵鉴
+import poster_pupu_levelup_1k from '../image/level_up/卜卜灵鉴_level up/1k.jpg';
+import poster_pupu_levelup_2k from '../image/level_up/卜卜灵鉴_level up/2k.jpg';
+import poster_pupu_levelup_4k from '../image/level_up/卜卜灵鉴_level up/4k.jpg';
+import poster_pupu_win_1k from '../image/win/卜卜灵鉴_win/1k.jpg';
+import poster_pupu_win_2k from '../image/win/卜卜灵鉴_win/2k.jpg';
+import poster_pupu_win_4k from '../image/win/卜卜灵鉴_win/4k.jpg';
+// 猫汐尔莲驱（4k 文件名特殊）
+import poster_mauxir_levelup_1k from '../image/level_up/猫汐尔莲驱_level up/1k.jpg';
+import poster_mauxir_levelup_2k from '../image/level_up/猫汐尔莲驱_level up/2k.jpg';
+import poster_mauxir_levelup_4k from '../image/level_up/猫汐尔莲驱_level up/猫汐尔_level_up_4k.jpg';
+import poster_mauxir_win_1k from '../image/win/猫汐尔莲驱_win/1k.jpg';
+import poster_mauxir_win_2k from '../image/win/猫汐尔莲驱_win/2k.jpg';
+import poster_mauxir_win_4k from '../image/win/猫汐尔莲驱_win/4k.jpg';
+// 安卡希雅时之重奏
+import poster_acacia_levelup_1k from '../image/level_up/安卡希雅时之重奏_level up/1k.jpg';
+import poster_acacia_levelup_2k from '../image/level_up/安卡希雅时之重奏_level up/2k.jpg';
+import poster_acacia_levelup_4k from '../image/level_up/安卡希雅时之重奏_level up/4k.jpg';
+import poster_acacia_win_1k from '../image/win/安卡希雅时之重奏_win/1k.jpg';
+import poster_acacia_win_2k from '../image/win/安卡希雅时之重奏_win/2k.jpg';
+import poster_acacia_win_4k from '../image/win/安卡希雅时之重奏_win/4k.jpg';
+// 茉莉安霄鹰（来源影片开头黑场 ⇒ 静图取自 0.3s）
+import poster_marian_levelup_1k from '../image/level_up/茉莉安霄鹰_level up/1k.jpg';
+import poster_marian_levelup_2k from '../image/level_up/茉莉安霄鹰_level up/2k.jpg';
+import poster_marian_levelup_4k from '../image/level_up/茉莉安霄鹰_level up/4k.jpg';
+import poster_marian_win_1k from '../image/win/茉莉安霄鹰_win/1k.jpg';
+import poster_marian_win_2k from '../image/win/茉莉安霄鹰_win/2k.jpg';
+import poster_marian_win_4k from '../image/win/茉莉安霄鹰_win/4k.jpg';
+// 标题（烬中焰火）
+import poster_title_1k from '../image/title/烬中焰火/1k.jpg';
+import poster_title_2k from '../image/title/烬中焰火/2k.jpg';
+import poster_title_4k from '../image/title/烬中焰火/4k.jpg';
+
 // 定义视频类型
 export type MovieType = 'title' | 'levelup' | 'win';
 
@@ -327,6 +383,88 @@ export const getVictoryMovie = (heroKeys: string[], res: VideoResolution = '1k')
         }
     }
     return null;
+};
+
+// ==========================================
+// [2026-10-19 莉莉子 · 安卓] 一次性影片（升级 / 胜利 / 标题）→ **首帧静图** 查找表
+// ==========================================
+//   与大厅那套（`HALL_ENTRIES.posters` + `getHallMoviePoster`）**同源同风格**：
+//   · 静图与影片**同位**挂在同一份结构里（不做顺序耦合的平行数组）
+//   · 对外只暴露一个 **URL → 静图 URL** 的反查函数
+//   ⚠️ 必须按 **URL** 反查而不是按 heroKey：`useMovie` 会把影片先喂给 `videoPreloader`
+//      换成 `blob:` URL 再交给 `App.tsx`，调用处**只剩得下这个 URL**。
+//   ⚠️ 因此反查要在 `useMovie` 里、**换 blob 之前**用原始 import URL 做（见 `useMovie.ts`）。
+
+/** 标题影片静图（与 `MOVIE_DB.title` 同序同形状） */
+const TITLE_POSTERS: MovieSource[] = [
+    { '1k': poster_title_1k, '2k': poster_title_2k, '4k': poster_title_4k },
+];
+
+/** 升级影片静图（与 `MOVIE_DB.levelup` **同键同形状**） */
+const LEVELUP_POSTERS: Record<string, MovieSource> = {
+    lyfe: { '1k': poster_lyfe_levelup_1k, '2k': poster_lyfe_levelup_2k, '4k': poster_lyfe_levelup_4k },
+    fenny: { '1k': poster_fenny_levelup_1k, '2k': poster_fenny_levelup_2k, '4k': poster_fenny_levelup_4k },
+    pupu_specular_soul: { '1k': poster_pupu_levelup_1k, '2k': poster_pupu_levelup_2k, '4k': poster_pupu_levelup_4k },
+    mauxir_lotus_drive: { '1k': poster_mauxir_levelup_1k, '2k': poster_mauxir_levelup_2k, '4k': poster_mauxir_levelup_4k },
+    acacia_chrono_echo: { '1k': poster_acacia_levelup_1k, '2k': poster_acacia_levelup_2k, '4k': poster_acacia_levelup_4k },
+    marian: { '1k': poster_marian_levelup_1k, '2k': poster_marian_levelup_2k, '4k': poster_marian_levelup_4k },
+};
+
+/** 胜利影片静图（与 `MOVIE_DB.win` **同键同形状**，值同为数组） */
+const WIN_POSTERS: Record<string, MovieSource[]> = {
+    lyfe: [{ '1k': poster_lyfe_win_1k, '2k': poster_lyfe_win_2k, '4k': poster_lyfe_win_4k }],
+    fenny: [{ '1k': poster_fenny_win_1k, '2k': poster_fenny_win_2k, '4k': poster_fenny_win_4k }],
+    pupu_specular_soul: [{ '1k': poster_pupu_win_1k, '2k': poster_pupu_win_2k, '4k': poster_pupu_win_4k }],
+    mauxir_lotus_drive: [{ '1k': poster_mauxir_win_1k, '2k': poster_mauxir_win_2k, '4k': poster_mauxir_win_4k }],
+    acacia_chrono_echo: [{ '1k': poster_acacia_win_1k, '2k': poster_acacia_win_2k, '4k': poster_acacia_win_4k }],
+    marian: [{ '1k': poster_marian_win_1k, '2k': poster_marian_win_2k, '4k': poster_marian_win_4k }],
+};
+
+const ALL_RESOLUTIONS: VideoResolution[] = ['1k', '2k', '4k'];
+
+/**
+ * 影片 URL → 首帧静图 URL（39 条）。由上面三份"同位"记录**逐分辨率**展开，
+ * 结构与 `MOVIE_DB` 一一对应 ⇒ 后续加片只要两边同步加即可。
+ */
+const MOVIE_URL_TO_POSTER: Map<string, string> = (() => {
+    const map = new Map<string, string>();
+    const link = (src: string | undefined, poster: string | undefined) => {
+        if (src && poster) map.set(src, poster);
+    };
+    MOVIE_DB.title.forEach((movie, i) => {
+        const poster = TITLE_POSTERS[i];
+        if (!poster) return;
+        ALL_RESOLUTIONS.forEach(r => link(movie[r], poster[r]));
+    });
+    for (const [key, movie] of Object.entries(MOVIE_DB.levelup)) {
+        const poster = LEVELUP_POSTERS[key];
+        if (!poster) continue;
+        ALL_RESOLUTIONS.forEach(r => link(movie[r], poster[r]));
+    }
+    for (const [key, movies] of Object.entries(MOVIE_DB.win)) {
+        const posters = WIN_POSTERS[key];
+        if (!posters) continue;
+        movies.forEach((movie, i) => {
+            const poster = posters[i];
+            if (!poster) return;
+            ALL_RESOLUTIONS.forEach(r => link(movie[r], poster[r]));
+        });
+    }
+    return map;
+})();
+
+/**
+ * [2026-10-19 莉莉子 · 安卓] 由**一次性影片 URL** 取对应的首帧静图 URL。
+ *
+ * 用途：给全屏 `<VideoPlayer>` 的 `poster` 属性兜底 —— 安卓 WebView 在影片**没有可绘制帧**时
+ * 会由媒体层自己画占位（纯灰底 + 黑色播放图标），PC 桌面 Chromium 无此行为。
+ *
+ * ⚠️ 必须传**原始 import URL**（`getLevelUpMovie` / `getVictoryMovie` / `getRandomTitleMovie` 的返回值）；
+ *    经 `videoPreloader` 换成 `blob:` 之后就查不到了 —— 反查要在 `useMovie` 里换 blob **之前**做。
+ * 找不到时返回 `undefined`，由调用方兜底（`<video poster={undefined}>` = 不写该属性）。
+ */
+export const getMoviePoster = (url: string): string | undefined => {
+    return MOVIE_URL_TO_POSTER.get(url);
 };
 
 // ==========================================

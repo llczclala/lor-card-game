@@ -1,6 +1,6 @@
 import { getVideoUrl } from '../utils/videoPreloader';
 import { useState, useCallback, useRef } from 'react';
-import { getRandomTitleMovie, getLevelUpMovie, getVictoryMovie, getHallMovies } from '../data/movieData';
+import { getRandomTitleMovie, getLevelUpMovie, getVictoryMovie, getHallMovies, getMoviePoster, getHallMoviePoster } from '../data/movieData';
 import type { VideoResolution } from '../data/movieData'; // [新增] 引入画质类型
 // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 音量改为"可读取的当前值"（模块级快照）
 import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
@@ -8,6 +8,17 @@ import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
 // [核心重构] 接收画质参数，默认为 1k
 export const useMovie = (resolution: VideoResolution = '1k') => {
     const [currentMovie, setCurrentMovie] = useState<string | null>(null);
+    // ============================================================
+    // [2026-10-19 莉莉子 · 安卓] **当前影片的 poster 静图**（"视频无可绘制帧"的兜底）
+    //   病根：安卓 WebView 在 `<video>` 没有可绘制帧时，由媒体层自己画占位（纯灰底 + 黑色播放图标），
+    //        PC 桌面 Chromium 无此行为 ⇒ 全屏影片在安卓上是一块灰。
+    //   ⚠️ 为什么必须由本 hook 携带，而不是在 `App.tsx` 里按 `currentMovie` 反查：
+    //       下面 `resolveMovieUrl()` 会把影片经 `videoPreloader` 换成 **`blob:` URL**（升级/胜利影片
+    //       都是**先预加载再播放**，命中缓存 ⇒ 到 `App.tsx` 时 URL 已不是原始 import 串，**查不到**）。
+    //       ⇒ 必须在**换 blob 之前**、用原始 URL 反查，并与 `setCurrentMovie` **同位**写入。
+    //   ⚠️ 纯数据字段：**不改任何播放 / 暂停 / 预热 / 看门狗 / setMovieHold 时序**。
+    // ============================================================
+    const [currentMoviePoster, setCurrentMoviePoster] = useState<string | undefined>(undefined);
     const [isLooping, setIsLooping] = useState(false);
     const [isVisible, setIsVisible] = useState(false);
     const [isImmediate, setIsImmediate] = useState(false);
@@ -60,6 +71,7 @@ export const useMovie = (resolution: VideoResolution = '1k') => {
             // [2026-10-05 莉莉子] 循环影片开播前也先结清上一位（若它还在等回信）
             settlePendingComplete('标题影片开播');
             setCurrentMovie(movie);
+            setCurrentMoviePoster(getMoviePoster(movie)); // [2026-10-19] 同位写 poster（用**原始 URL**，未换 blob）
             setIsLooping(true);
             setIsVisible(true);
             setOnComplete(undefined);
@@ -81,6 +93,10 @@ export const useMovie = (resolution: VideoResolution = '1k') => {
         }
 
         setCurrentMovie(movies[nextIndex]);
+        // [2026-10-19 莉莉子 · 安卓] 大厅影片同样补 poster（大厅静图上一轮已落地，这里只是消费）。
+        //   ⚠️ 这一行**同时**负责"清掉上一部影片残留的 poster"：全 App 只有这一台放映机，
+        //      若此处不写，标题影片的静图会残留到大厅背景上（安卓会闪错图，比灰块更糟）。
+        setCurrentMoviePoster(getHallMoviePoster(movies[nextIndex]));
         settlePendingComplete('大厅影片开播'); // [2026-10-05 莉莉子] 同上：别让上一部的一次性影片干等
         setIsLooping(true); // 大厅视频需要循环
         setIsVisible(true);
@@ -95,6 +111,7 @@ export const useMovie = (resolution: VideoResolution = '1k') => {
         const movie = getLevelUpMovie(heroKey, resolution); // [注入画质]
         if (movie) {
             setCurrentMovie(resolveMovieUrl(movie));
+            setCurrentMoviePoster(getMoviePoster(movie)); // [2026-10-19] 同位写 poster（换 blob 之前）
             setIsLooping(false);
             setIsVisible(false);
         }
@@ -105,6 +122,7 @@ export const useMovie = (resolution: VideoResolution = '1k') => {
         const movie = getVictoryMovie(heroKeys, resolution); // [注入画质]
         if (movie) {
             setCurrentMovie(resolveMovieUrl(movie));
+            setCurrentMoviePoster(getMoviePoster(movie)); // [2026-10-19] 同位写 poster（换 blob 之前）
             setIsLooping(false);
             setIsVisible(false);
         }
@@ -116,6 +134,7 @@ export const useMovie = (resolution: VideoResolution = '1k') => {
             // [2026-10-05 莉莉子 BUG修复 · 20261005-11] 新片开播前先替上一部结清回调（防流程干等）
             settlePendingComplete('升级影片开播');
             setCurrentMovie(resolveMovieUrl(movie));
+            setCurrentMoviePoster(getMoviePoster(movie)); // [2026-10-19] 同位写 poster（换 blob 之前）
             setIsLooping(false);
             setIsVisible(true);
             setMovieKind('levelup'); // [2026-10-03] 一次性影片 → 打标记
@@ -133,6 +152,7 @@ export const useMovie = (resolution: VideoResolution = '1k') => {
             // [2026-10-05 莉莉子 BUG修复 · 20261005-11] 同上
             settlePendingComplete('胜利影片开播');
             setCurrentMovie(resolveMovieUrl(movie));
+            setCurrentMoviePoster(getMoviePoster(movie)); // [2026-10-19] 同位写 poster（换 blob 之前）
             setIsLooping(false);
             setIsVisible(true);
             setMovieKind('victory'); // [2026-10-03] 一次性影片 → 打标记（**跳过按钮就挂在这个标记上**）
@@ -189,6 +209,8 @@ export const useMovie = (resolution: VideoResolution = '1k') => {
 
     return {
         currentMovie,
+        // [2026-10-19 莉莉子 · 安卓] 当前影片的 poster 静图（与 `currentMovie` 同位；未映射时为 undefined）
+        currentMoviePoster,
         isLooping,
         isVisible,
         prepareLevelUpMovie, // [核心导出] 提前供弹 (升级)
