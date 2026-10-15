@@ -18,6 +18,8 @@ import { ArrowLeft, Home } from 'lucide-react'; // [新增]
 // [新增] 悬停预览统一方案
 import { useCardGaze } from '../hooks/useCardGaze';
 import { FloatingCardPreview } from './FloatingCardPreview';
+// [2026-10-15 莉莉子] 牌组「立体盒子」尺寸改为**共享常量**（原先三处各一份，改一处不生效另两处）
+import { DIORAMA_SIZE } from './dioramaSpacing';
 
 
 
@@ -40,14 +42,14 @@ export const DECK_UI = {
 
     // ══ ② 「牌组选择」四个大字 ════════════════════════════════════════
     /** 字号 px（原 text-4xl = 36） */
-    titleFontSize: 36,
+    titleFontSize: 48,
 
     // ══ ③ 左侧视图切换器（网格 / 轮播）════════════════════════════════
-    switchLeft: 128,      // 距左边 px（原 left-32 = 128）
+    switchLeft: 64,      // 距左边 px（原 left-32 = 128）
     switchBottom: 16,     // 距底边 px（原 bottom-4 = 16）
     switchPad: 4,         // 容器内边距 px（原 p-1 = 4）
     switchBtnPad: 8,      // 每个按钮内边距 px（原 p-2 = 8）
-    switchIconSize: 18,   // 按钮图标 px（原 size={18}）
+    switchIconSize: 36,   // 按钮图标 px（原 size={18}）
 
     // ══ ④ 右上角返回按钮（返回大厅 / 返回）════════════════════════════
     backTop: 32,          // 距顶部 px（原 top-8 = 32）
@@ -126,16 +128,10 @@ const getDeckCovers = (cards: Record<string, number>, skinOverrides?: Record<str
 };
 
 // =========================================================================
-// [高级配置项暴露] 痛点 2 & 4：你可以在这里随意微调卡组图标在大厅中的全局高宽及卡牌疏密尺寸
+// [高级配置项暴露] 牌组图标的高宽 / 卡牌疏密尺寸
+// ⚠️ [2026-10-15 莉莉子] 这份常量已**移出本文件** —— 见文件顶部的 `./dioramaSpacing`
+//    （原先它与 `RoguePersonalize` / `EnemyDeckEditor` 各存一份，**改一处不生效另两处**；现已三处合一）
 // =========================================================================
-const DIORAMA_SIZE = {
-    containerWidth: 'w-72',    // 整体容器宽度 (从 w-64 放大到 w-72)
-    containerHeight: 'h-96',   // 整体容器高度 (从 h-80 放大到 h-96)
-    cardWidth: 'w-36',         // 正面/卡背卡牌的基础宽度 (放大至 w-36)
-    cardHeight: 'h-52',        // 正面/卡背卡牌的基础高度 (放大至 w-52)
-    boardWidth: 'w-[270px]',   // 背景棋盘的平面横向铺开宽度
-    boardHeight: 'h-[160px]',  // 背景棋盘的平面横向铺开高度
-};
 
 // --- [重构] 商业级微缩景观牌组组件 (2.5D 平面写实拼贴) ---
 const DeckDiorama = ({ deck, covers, cardBackImg, boardImg, isCenter = false, isHub = false, isGridView = false }: any) => {

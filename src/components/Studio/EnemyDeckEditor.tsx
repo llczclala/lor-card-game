@@ -18,6 +18,10 @@ import { PERSONALIZATION_ASSETS } from '../../data/imageData'; // [植入精髓]
 import { useCardGaze } from '../../hooks/useCardGaze';
 import { FloatingCardPreview } from '../FloatingCardPreview';
 import { CroppedAvatar } from '../CroppedAvatar'; // [2026-08-10] 圆形头像读取 avatar 裁剪配置
+// [2026-10-15 莉莉子] 牌组「立体盒子」尺寸改为**共享常量**
+//   ⚠️ 这里用的是**紧凑变体**（本屏是"概览 Tab 内嵌预览"，2026-08-27 已刻意缩小）
+//   ⇒ 别名回 `DIORAMA_SIZE` 是为了让本文件的 JSX **一行都不用改**。
+import { DIORAMA_SIZE_COMPACT as DIORAMA_SIZE } from '../dioramaSpacing';
 
 // ============================================================
 // 常量 & 辅助工具
@@ -69,11 +73,7 @@ const getDeckCovers = (arch: EnemyArchetype): { url: string; skinId: number; isB
 };
 
 // [2026-08-27] Diorama 缩小（概览 Tab 内嵌预览，不再占 256px 大头）
-const DIORAMA_SIZE = {
-    containerWidth: 'w-40', containerHeight: 'h-44',
-    cardWidth: 'w-14', cardHeight: 'h-20',
-    boardWidth: 'w-[130px]', boardHeight: 'h-[72px]',
-};
+// [2026-10-15 莉莉子] 已移出本文件 ⇒ 见 `../dioramaSpacing` 的 `DIORAMA_SIZE_COMPACT`
 
 const EnemyDeckDiorama = ({ archetype }: { archetype: EnemyArchetype }) => {
     const covers = getDeckCovers(archetype);

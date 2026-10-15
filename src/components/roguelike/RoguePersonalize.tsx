@@ -17,17 +17,12 @@ import { FloatingCardPreview } from '../FloatingCardPreview';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import type { CardData } from '../../types'; // [2026-10-15 莉莉子 · 触屏] 详情入口的 state 类型
 import { FullArtOverlay } from '../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
+// [2026-10-15 莉莉子] 牌组「立体盒子」尺寸改为**共享常量**（原先照搬 DeckBuilder 各留一份）
+import { DIORAMA_SIZE } from '../dioramaSpacing';
 
-// ── 牌组图标尺寸常量（照搬 DeckBuilder）──
-const DIORAMA_SIZE = {
-    containerWidth: 'w-72',
-    containerHeight: 'h-96',
-    cardWidth: 'w-36',
-    cardHeight: 'h-52',
-    boardWidth: 'w-[270px]',
-    boardHeight: 'h-[160px]',
-};
-
+// ── 牌组图标尺寸：已改为共享常量 ──
+//   ⚠️ [2026-10-15 莉莉子] 原先这里「照搬 DeckBuilder」各留一份 ⇒ 改一处不生效另一处。
+//      现在统一走 `./dioramaSpacing`（与本文件完全一致的那一份）。
 // ── 封面提取（照搬 DeckBuilder）──
 const getDeckCovers = (cards: Record<string, number>, skinOverrides?: Record<string, number>): { url: string; skinId: number; isBack: boolean }[] => {
     const cardKeys = Object.keys(cards);
