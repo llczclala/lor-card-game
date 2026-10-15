@@ -1262,6 +1262,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
         const offsetX = e.clientX - rect.left;
         const offsetY = e.clientY - rect.top;
 
+        // [2026-10-15 莉莉子 · 独立审查修复] **新手势必须复位激活标记**。
+        //   ── 病根：`dragActivatedRef` 此前**只在 onUp 里复位**。若上一轮的 `pointerup`/`pointercancel`
+        //      有一个没到（本引擎没有 `setPointerCapture`、也没有超时兜底），它会**永久停在 true**：
+        //        ① 激活块被 `!dragActivatedRef.current` 挡住 ⇒ **本手势永不生成 ghost**
+        //        ② 但下面的"扫过成组"块照样跑 ⇒ 卡被 `opacity:0` 藏起来、进了 dragGroup
+        //        ⇒ 玩家看到的是「**卡凭空消失、指头下什么都没有**」，抬手却照常提交落点。
+        //      （这是我上一版把 ghost 生成挪进激活块**引入的新空态** —— 此前 ghost 在 pointerdown
+        //        无条件生成，所以 stale 状态下至少还有 ghost 跟着手。）
+        //   ── 修法：一次新的按下就是一次新手势，先把它归零。顺带修掉上面那条既有脆弱性。
+        dragActivatedRef.current = false;
+
         dragCardIdRef.current = cardId;
         dragGroupRef.current = cardId ? [cardId] : []; // [多卡] 初始化拖拽组（[2026-08-27] cardId 判空，防 string|null 入组）
         hiddenCardElsRef.current.clear(); // [多卡] 清空隐藏映射
@@ -1277,6 +1288,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
         //   ── 改法（程 2026-10-15 拍板 · 方案 A）：ghost 推迟到**位移越过 8px 阈值**时才生成
         //      （见下方 onMove 的 `dragActivatedRef` 激活块）⇒「按住不动 = 看大图 / 一动 = 拖拽」
         //      各归其位，与 PC 心智一致（PC 悬停时并没有按下，ghost 本来就是 null）。
+        //   ── ⚠️ [2026-10-15 独立审查] **本改动只清掉了三个抑制器中的一个**。`useCardGaze` 的第一行是
+        //      `if (isDragging || isCasting || suppress) return;`（useCardGaze.ts:190），另两个仍会挡：
+        //        · `isCasting: spellSystem.isCasting`（:1100）—— 施法选备战席目标期间
+        //        · `suppress: keywordGazing`（:1101）—— 悬停关键词图标期间
+        //      即"ghost 推迟"**是必要的、但不充分**；这两条要不要一起放行，属产品语义，待程定。
+        //   ── ⚠️ [2026-10-15 独立审查] 阈值范数必须与触屏层一致：本文件的拖拽激活用
+        //      `Math.abs(dx) > 8 || Math.abs(dy) > 8`（切比雪夫），而 TouchFeedbackLayer 原先用
+        //      `Math.hypot`（欧几里得）⇒ 斜向存在"两边都不动"的死区。已把触屏层改成切比雪夫对齐。
         //   ── 安全性：`onUp` 的落点逻辑本来就以 `wasDragging = dragActivatedRef.current` 为门闸
         //      （本函数 :1414），所以"按下不生成 ghost"**不会让任何落点分支踩空**。
         //   ── 已知副作用（可接受）：PC 上**单击**备战席卡牌时不再"闪一下 ghost"（原来会闪）。
@@ -1609,6 +1628,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
         const rect = target.getBoundingClientRect();
         const offsetX = e.clientX - rect.left;
         const offsetY = e.clientY - rect.top;
+
+        // [2026-10-15 莉莉子 · 独立审查修复] 同备战席：新手势复位激活标记（理由见 onBenchPointerDown）。
+        dragActivatedRef.current = false;
 
         combatDragSlotRef.current = index;
         combatDragRoleRef.current = role;

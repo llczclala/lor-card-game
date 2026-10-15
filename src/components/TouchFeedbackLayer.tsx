@@ -209,8 +209,15 @@ export const TouchFeedbackLayer: React.FC = () => {
             if (mode === 'press') {
                 const d = downPtRef.current;
                 if (!d) return;
-                // 手指移动 = 玩家要做的是拖拽 ⇒ 立刻撤掉涟漪与进度环，让位给出牌/移动
-                if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > TOUCH_TUNE.moveCancelPx) {
+                // 手指移动 = 玩家要做的是拖拽 ⇒ 立刻撤掉涟漪与进度环，让位给出牌/移动。
+                // ⚠️ [2026-10-15 莉莉子 · 独立审查发现] **必须与游戏侧用同一个范数**：
+                //   游戏判拖拽用的是 `Math.abs(dx) > 8 || Math.abs(dy) > 8`（切比雪夫，GameSession.tsx:1292/1629），
+                //   而这里原先用 `Math.hypot`（欧几里得）⇒ 两者在**斜向**不一致：
+                //     手指移到 (6,6)：hypot=8.49 > 8 ⇒ 我们 abort 掉长按（环没了、涟漪撤了），
+                //                    切比雪夫=6 ≤ 8 ⇒ 游戏**不**激活拖拽、ghost 也不生成
+                //     ⇒ 整次按压**零反馈、零动作**（真机上最常见的斜向抖动正好落在这个死区）。
+                //   ⇒ 改用切比雪夫，与游戏侧阈值**同刻对齐**：越过 8px 的那一瞬间，我们让位、它接管。
+                if (Math.max(Math.abs(e.clientX - d.x), Math.abs(e.clientY - d.y)) > TOUCH_TUNE.moveCancelPx) {
                     abort();
                     modeRef.current = 'drag';
                 }
