@@ -186,6 +186,56 @@ export const useSfx = () => {
 
         // 2. 封装各类音效触发器
         const playClick = () => playSound(clickSound, 0.6);
+
+        // ==========================================================
+        // [2026-10-15 莉莉子 · 程口径]「我们要补充音效的，是**点击这个行为**」
+        //   ── 现状：全项目 300+ 处**显式** `emit(UI_CLICK)`（按钮 / 页签 / 筛选 / 确认…），
+        //      但**没有任何一处**覆盖"点了却没写 emit 的地方"（点卡牌 / 点战场 / 点水晶 /
+        //      点空白…）⇒ 那些点击**完全无声**。
+        //   ── 口径：**每一次点击都响**，不论点在哪。
+        //   ── 🟢 本改动是**纯新增**（程 2026-10-15 明确：「不动原本的 300 处」）：
+        //      那 300 处的 emit **一行不改**，`UI_CLICK → playClick` 这条既有绑定也**原样不动**。
+        //   ── 🔴 两条约束决定了实现方式：
+        //      ① **绝不能**用"全局 emit UI_CLICK"来补 —— `TutorialController` 把 UI_CLICK
+        //         当作教程步骤 `element_clicked` 的**完成信号**（TutorialController.tsx:60-62 /
+        //         111-112）⇒ 全局发它会让**任何点击都误推进教程**。
+        //         本实现只全局**播音效**，**不碰事件总线**（只加一个不发声的观察者）。
+        //      ② **不能**和既有那一声变成"双响"，也**不能**靠时间窗 —— 本项目的显式 emit 既有落在
+        //         `onClick`，也有落在 `onMouseDown` / `onMouseUp` / `onTouchEnd` 的（如 GameLobby
+        //         兑换 +/-、SettingsModal 音量条）。它们与原生 `click` **同属一次手势、却可能相隔
+        //         >100ms** ⇒ 时间窗要么挡不住双响、要么把玩家的快速连点吃掉。
+        //   ── 采用「手势序号 + 显式覆盖盖章」：
+        //      · `pointerdown` 自增 `gestureSeq` —— 一次"按下→抬起" = 一个序号（鼠标/触屏/笔都覆盖）
+        //      · 再加一个**纯观察者**监听 `UI_CLICK`（不发声、不改任何东西），只盖一个章：
+        //        `explicitGesture = gestureSeq`
+        //      · 兜底监听挂在 `document` 的 **bubble** 阶段 —— 它**晚于** React 根容器，
+        //        所以显式 emit 一定先跑、章一定先盖好
+        //      · 兜底发现"本次手势已被盖章"⇒ 静默跳过；没盖章 ⇒ 补一声
+        //      ⇒ 一次点击永远只响一声，且**没有删改任何既有 emit**。
+        //   ── ③ **拖拽 / 长按不该响"点击"声**：兜底挂在原生 `click` 上（**不是** pointerdown）
+        //      —— 拖拽（位移超阈值）浏览器**根本不派发 click** ⇒ 天然排除；
+        //      触屏长按抬手那一次，被 `TouchFeedbackLayer` 在 **window** capture 上
+        //      `stopPropagation` 掉（window 早于 document）⇒ 到不了这里。
+        //   ── ⚠️ 已知边界（可接受）：键盘 Enter/Space 激活控件时**没有** pointerdown，
+        //      若它紧跟一次"有声点击"之后、且自身不 emit，可能被判为"已盖章"而少响一声。
+        //      本作键盘只用于 ESC（走 UI_BACK），实际不可达。
+        // ==========================================================
+        let gestureSeq = 0;       // 每次"按下"自增 ⇒ 一次手势的唯一编号
+        let explicitGesture = -1; // 最近一次"已被显式 emit 覆盖"的手势编号
+        const noteExplicitClick = () => { explicitGesture = gestureSeq; };
+        const onGestureStart = () => { gestureSeq++; };
+
+        /** 兜底：本次手势若没被任何既有 emit 覆盖，就补一声点击音 */
+        const onAnyClick = () => {
+            if (explicitGesture === gestureSeq) return; // 这次点击已经有声（那 300 处之一）⇒ 不重复
+            playClick();
+        };
+
+        // 手势开始（鼠标 / 触屏 / 触控笔都覆盖）
+        document.addEventListener('pointerdown', onGestureStart, { capture: true });
+        // 全局「点击」兜底：点在哪都响。**bubble 阶段是刻意的** —— 必须晚于 React 根容器，
+        // 否则章还没盖就做判定，会跟那 300 处双响。
+        document.addEventListener('click', onAnyClick);
         // [2026-09-19 修正] 「撤回」这个词此前一个播放器服务三个事件，换声会连带污染另外两个。
         //   拆开：
         //     · 撤回单位 / UI 返回 → 通用 recall.ogg（保持原样）
@@ -242,6 +292,9 @@ export const useSfx = () => {
         // 1. 所有绑定到“点击音效”的事件
         eventBus.on(GameEvents.GAME_START, playClick);
         eventBus.on(GameEvents.UI_CLICK, playClick);
+        // [2026-10-15 莉莉子] **纯观察者**：只给"点击兜底"盖章，不发声、不改既有行为。
+        //   eventBus 是多监听器数组（utils/eventBus.ts:259 `listeners[event].push`）⇒ 不会挤掉上面那条。
+        eventBus.on(GameEvents.UI_CLICK, noteExplicitClick);
         eventBus.on(GameEvents.DECK_ADD_CARD, playClick);
         eventBus.on(GameEvents.PLAY_CARD, playClick);
         eventBus.on(GameEvents.ATTACK_DECLARE, playClick);
@@ -313,6 +366,10 @@ export const useSfx = () => {
             document.removeEventListener('touchstart', unlockAudio);
             eventBus.off(GameEvents.GAME_START, playClick);
             eventBus.off(GameEvents.UI_CLICK, playClick);
+            eventBus.off(GameEvents.UI_CLICK, noteExplicitClick);
+            // [2026-10-15 莉莉子 · 程口径] 全局点击兜底的两条监听（纯新增，摘掉即可复原）
+            document.removeEventListener('pointerdown', onGestureStart, { capture: true });
+            document.removeEventListener('click', onAnyClick);
             eventBus.off(GameEvents.UI_BACK, playRecall);
             eventBus.off(GameEvents.LOBBY_START_BATTLE, playBattleStart);
             eventBus.off(GameEvents.DECK_ADD_CARD, playClick);
