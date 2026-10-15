@@ -11,7 +11,7 @@ export const useAudio = () => {
     const currentTrackRef = useRef<string | null>(null);
     // [2026-10-05 莉莉子] 初值改为**读取全局快照**（不再是写死的 0.5）—— 与 useVoice/useSfx 同口径
     const volumeRef = useRef(getVolume('bgm'));
-    // [2026-10-16 莉莉子 · 独立审查返工] "回前台该不该恢复 BGM" 的唯一记账位。
+    // [2026-10-15 莉莉子 · 独立审查返工] "回前台该不该恢复 BGM" 的唯一记账位。
     //   ── 原先用 effect 内的局部 `let`，够不到 `playBgm` ⇒ 后台切场景时音乐起不来，
     //      回前台也不会补 ⇒ 玩家莫名其妙没 BGM。
     //   ── 现在：切后台时"本来在播"置 true、"本来没播/已被 ESC 暂停"置 false；
@@ -121,7 +121,7 @@ export const useAudio = () => {
             // [关键] 切歌时重新应用当前音量
             bgmRef.current.volume = volumeRef.current;
 
-            // [2026-10-16 · 独立审查返工] **电平门**：后台不新起音乐。
+            // [2026-10-15 · 独立审查返工] **电平门**：后台不新起音乐。
             //   （第一版只在"翻转那一瞬间"管，后台切场景调 playBgm 会直接把音乐放起来。）
             //   但必须**记下"该放这一首"**（ref 里已置 true）—— 否则回前台就变成"没 BGM"，
             //   而玩家什么都没做错。

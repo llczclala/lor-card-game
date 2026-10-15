@@ -7,7 +7,7 @@ import type { CardData } from '../types';
 import { getVolume, setVolumeSnapshot } from '../utils/audioVolume';
 // [2026-10-15 莉莉子 · 粉丝实测] 切后台停语音（平台差异走 platform 层）
 import { subscribeAppVisibility } from '../platform/appLifecycle';
-import { isAppHidden } from '../utils/appAudioGate'; // [2026-10-16 审查返工] 电平门
+import { isAppHidden } from '../utils/appAudioGate'; // [2026-10-15 审查返工] 电平门
 
 interface VoiceTask {
     card: CardData;
@@ -95,7 +95,7 @@ export const useVoice = ({ playerBench }: { playerBench: CardData[] }) => {
 
     // [新增] 核心播放执行器
     const playAudioFile = (task: VoiceTask) => {
-        // [2026-10-16 · 独立审查返工] **电平门**：切后台之后新起的语音也不许响。
+        // [2026-10-15 · 独立审查返工] **电平门**：切后台之后新起的语音也不许响。
         //   必须同时**放开队列闸门**（isPlayingRef），否则这一场此后所有语音都不再播。
         if (isAppHidden()) { isPlayingRef.current = false; return; }
         const heroVoiceConfig = VOICE_DB[task.card.key];
