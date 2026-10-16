@@ -336,7 +336,7 @@ export const ARMAMENT_UI = {
 
     // ── ③ 右侧武装库抽屉 ──
     /** 抽屉展开宽度 px（原 w-[420px]；让位 marginRight / 开合按钮 right / 动效 width 同一值） */
-    drawerWidth: 600,
+    drawerWidth: 500,
     /** 抽屉左边缘描边粗细 px（原 border-l = 1） */
     drawerLeftBorderWidth: 1,
     /** 抽屉头部内边距 px（原 p-4 = 16） */
@@ -1108,9 +1108,9 @@ const LevelRewardsModal: React.FC<{ isOpen: boolean; currentLevel: number; onClo
 const DIV_CARD_W = 310;                    // 中央卡面宽（**显式写死**）
 //   ↑ 不能改用 aspect-ratio + flex-1 —— 在 auto 宽容器里宽度会算飞，直接撑爆面板（踩过）
 const DIV_CARD_H = 540;                    // 中央卡面高
-const DIV_ICON_PX = 96;                    // 节点技能图标徽章直径
-const DIV_ICON_INNER_PX = 80;              // 徽章内圈（技能图）直径
-const DIV_BLOCK_W = 250;                   // 节点面板块宽
+const DIV_ICON_PX = 120;                    // 节点技能图标徽章直径
+const DIV_ICON_INNER_PX = 100;              // 徽章内圈（技能图）直径
+const DIV_BLOCK_W = 380;                   // 节点面板块宽
 const DIV_CARD_GAP = 26;                   // 卡面 ↔ 节点 的横向间距（收紧，别拉远）
 /** 弧线：**只有中间那个节点**（③④）往外推多少 px —— 上下两个留在原位，形成外弧 */
 const DIV_ARC_OFFSET = 44;
@@ -1141,17 +1141,17 @@ const DIV_EMPTY_NOTE_FONT = 12;            // 说明块字号（原 text-xs = 12
 const DIV_TOP_GAP = 12;                    // 顶部条 ↔ 神经图 ↔ 详情 的纵向间距（原 gap-3 = 12）
 const DIV_TOP_PAD_X = 8;                   // 顶部条左右内边距（原 px-2 = 8）
 const DIV_TOP_ROW_GAP = 8;                 // 左组（标题/星数）与右组（按钮/钱包）内部间距（原 gap-2 = 8）
-const DIV_HEAD_FONT = 14;                  // 「神格神经图」小标题字号（原 text-sm = 14）
+const DIV_HEAD_FONT = 28;                  // 「神格神经图」小标题字号（原 text-sm = 14）
 const DIV_STAR_ROW_GAP = 2;                // 星数那一排 ★ 的间距（原 gap-0.5 = 2）
-const DIV_HEAD_STAR_FONT = 13;             // 顶部星数字号（原 text-[13px]）
-const DIV_COUNT_FONT = 12;                 // 「N/6」计数号字号（原 text-xs = 12）
+const DIV_HEAD_STAR_FONT = 26;             // 顶部星数字号（原 text-[13px]）
+const DIV_COUNT_FONT = 24;                 // 「N/6」计数号字号（原 text-xs = 12）
 const DIV_CHIP_PAD_X = 12;                 // 胶囊（重置按钮 / 碎片钱包）左右内边距（原 px-3 = 12）
 const DIV_CHIP_PAD_Y = 4;                  // 胶囊上下内边距（原 py-1 = 4）
 const DIV_CHIP_RADIUS = 8;                 // 胶囊圆角（原 rounded-lg = 8）
-const DIV_CHIP_FONT = 12;                  // 胶囊字号（原 text-xs = 12）
+const DIV_CHIP_FONT = 24;                  // 胶囊字号（原 text-xs = 12）
 const DIV_CHIP_BORDER = 1;                 // 胶囊描边粗细（原 border = 1）
 const DIV_CHIP_GAP = 6;                    // 胶囊内「图标 ↔ 文字」间距（原 gap-1.5 = 6）
-const DIV_WALLET_ICON_PX = 20;             // 碎片钱包里的碎片图标（原 `<ShardIcon size={20} />`）
+const DIV_WALLET_ICON_PX = 30;             // 碎片钱包里的碎片图标（原 `<ShardIcon size={20} />`）
 
 // ── ③ 节点按钮 ──
 const DIV_NODE_GAP = 16;                   // 徽章 ↔ 文案 横向间距（原 gap-4 = 16）
@@ -1159,17 +1159,17 @@ const DIV_NODE_PAD_X = 16;                 // 按钮左右内边距（原内联 
 const DIV_NODE_PAD_Y = 14;                 // 按钮上下内边距（原内联 `padding: '14px 16px'` 的 14）
 const DIV_NODE_RADIUS = 16;                // 按钮圆角（原 rounded-2xl = 16）
 const DIV_NODE_BORDER = 1;                 // 按钮描边粗细（原 border = 1）
-const DIV_NODE_SLOT_FONT = 20;             // 无图标时兜底显示的节点号字号（原 text-xl = 20）
+const DIV_NODE_SLOT_FONT = 30;             // 无图标时兜底显示的节点号字号（原 text-xl = 20）
 const DIV_NODE_TEXT_GAP = 6;               // 文案三行之间间距（原 gap-1.5 = 6）
-const DIV_NODE_NUM_FONT = 13;              // 「节点 N」字号（原 text-[13px]）
-const DIV_NODE_TITLE_FONT = 21;            // 节点名字号（原 text-[21px]）
+const DIV_NODE_NUM_FONT = 26;              // 「节点 N」字号（原 text-[13px]）
+const DIV_NODE_TITLE_FONT = 36;            // 节点名字号（原 text-[21px]）
 const DIV_NODE_STATUS_FONT = 15;           // 状态行（已激活 / 消耗 N 片）字号（原 text-[15px]）
 const DIV_NODE_STATUS_GAP = 6;             // 状态行内「图标 ↔ 文字」间距（原 gap-1.5 = 6）
-const DIV_NODE_SHARD_PX = 16;              // 状态行里的碎片图标（原 `<ShardIcon size={16} />`）
-const DIV_STAR_BADGE_PX = 24;              // 已激活右下角金星直径（原 w-6 h-6 = 24）
+const DIV_NODE_SHARD_PX = 32;              // 状态行里的碎片图标（原 `<ShardIcon size={16} />`）
+const DIV_STAR_BADGE_PX = 48;              // 已激活右下角金星直径（原 w-6 h-6 = 24）
 const DIV_STAR_BADGE_FONT = 13;            // 金星字号（原 text-[13px]）
 const DIV_STAR_BADGE_BORDER = 2;           // 金星描边粗细（原 border-2 = 2）
-const DIV_DOT_PX = 16;                     // 可激活提示点直径（原 w-4 h-4 = 16）
+const DIV_DOT_PX = 32;                     // 可激活提示点直径（原 w-4 h-4 = 16）
 const DIV_DOT_BORDER = 2;                  // 提示点描边粗细（原 border-2 = 2）
 
 // ── ④ 中央天启者卡面 ──
