@@ -242,10 +242,10 @@ export const HUB_UI = {
     // 📐 横向：「贴面板左边缘留 N px」= `-((图宽 + N) / 288 × 100)%`；**负值 = 挪到面板左边**
     // 📐 纵向：**内容容器高度**的百分比，`'50%'` = 垂直居中（配下面的 `-translate-y-1/2` 自居中 ⇒ 与图高无关，故两张图可共用默认值）
     //         卡背缩略图在面板**上半**、牌桌在**下半** ⇒ 想让大图跟着"悬停那一组"走：卡背往**小**调（如 30~35%）、牌桌往**大**调（如 70~75%）
-    hoverPreviewCardBackLeft: '-70%', // 卡背大图的横向偏移（见上方公式）
-    hoverPreviewDeskLeft: '-135%',     // 牌桌大图的横向偏移（同上；与卡背**分开**调）
-    hoverPreviewCardBackTop: '50%',   // 卡背大图的**纵向**位置（见上方公式）
-    hoverPreviewDeskTop: '50%',       // 牌桌大图的**纵向**位置（同上；与卡背**分开**调）
+    hoverPreviewCardBackLeft: '-80%', // 卡背大图的横向偏移（见上方公式）
+    hoverPreviewDeskLeft: '-160%',     // 牌桌大图的横向偏移（同上；与卡背**分开**调）
+    hoverPreviewCardBackTop: '20%',   // 卡背大图的**纵向**位置（见上方公式）
+    hoverPreviewDeskTop: '80%',       // 牌桌大图的**纵向**位置（同上；与卡背**分开**调）
     hoverPreviewCardBackW: 360, // 卡背大图宽 px（原 w-[240px]）
     hoverPreviewCardBackH: 540, // 卡背大图高 px（原 h-[360px]）
     hoverPreviewDeskW: 600,     // 牌桌大图宽 px（原 w-[400px]）
@@ -1512,10 +1512,21 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         </div>
                                     )}
 
+                                    {/* ⚠️【2026-10-16 · 程报"长按没光轮、进过选择器后长按不再出大图"】
+                                        这两个缩略图**必须带 `data-gaze`**（值随便，代码只判它存不存在）：
+                                        ① 触屏长按的**进度环只长在 `[data-gaze]` 上** ——
+                                           `TouchFeedbackLayer.onDown` 里 `hitGazeTarget()` 命中不到就**直接 return**，
+                                           而 `setRing()` 在它后面 ⇒ 没标记 = 永远没有环、也进不了悬停模式
+                                        ② 大图的显隐改由**手势层**用 `dispatchGazeSwitch()` 合成 mouseover/mouseout 驱动
+                                           ⇒ 不再依赖"浏览器给触摸补发的 mouseover"（那种事件只在指针跑到新元素时才发，
+                                             被全屏选择器盖过一轮之后就不再触发 ⇒ 就是"进过选择器就再也不出大图"）
+                                        ⚠️ 只加在**有 hover 行为的那个 div** 上：`hitTestGaze` 是用 `closest()` **向上**找它的，
+                                           所以加在里层图片上也可以、加在外层别处就会误判。 */}
                                     {/* 卡背更换大按钮 - 还原原生 group-hover 倾斜特效（尺寸来自 🎛️ HUB_UI.item* / cardBack*）*/}
                                     <div className="flex flex-col items-center w-full" style={{ gap: HUB_UI.itemGap }}>
                                         <span className="text-yellow-600 font-bold tracking-widest uppercase" style={{ fontSize: HUB_UI.itemLabelFontSize }}>卡背</span>
                                         <div
+                                            data-gaze="hub-thumb"
                                             className="relative group cursor-pointer"
                                             onMouseEnter={() => setHubHoverItem('cardBack')}
                                             onMouseLeave={() => setHubHoverItem(null)}
@@ -1531,6 +1542,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     <div className="flex flex-col items-center w-full" style={{ gap: HUB_UI.itemGap }}>
                                         <span className="text-yellow-600 font-bold tracking-widest uppercase" style={{ fontSize: HUB_UI.itemLabelFontSize }}>牌桌</span>
                                         <div
+                                            data-gaze="hub-thumb"
                                             className="relative group cursor-pointer"
                                             onMouseEnter={() => setHubHoverItem('desk')}
                                             onMouseLeave={() => setHubHoverItem(null)}
