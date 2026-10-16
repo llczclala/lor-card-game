@@ -182,6 +182,8 @@ export const HUB_UI = {
     delBtnPad: 16,           // 删除（垃圾桶）按钮内边距 px（原 p-4 = 16）
     delBtnIconSize: 30,      // 垃圾桶图标 px（原 size={20}）
     editBtnPad: 16,          // 「编辑卡组」按钮内边距 px（原 p-4 = 16）
+    /** 「编辑卡组」字号 px —— 原来**没有** `text-*` 类（继承基准 16），程 2026-10-16 要调它 ⇒ 补出来 */
+    editBtnFontSize: 16,
 
     // ══ ④ 正中一列（卡组 → AI 难度 → 发车）═══════════════════════════
     /**
@@ -1174,6 +1176,74 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     }, [viewMode, hubDeckId, hubDioramaScaled, HUB_UI.dioramaScale]);
 
     // 如果处于“选择模式”，渲染全新的“备战枢纽 2.0”
+    // [2026-10-16 莉莉子 · 修程报的"枢纽里点详情不弹、进编辑器才弹"]
+    //   原来这段 `FullArtOverlay` **只在 EDITOR 分支里**渲染（全文件仅此一处），
+    //   而备战枢纽属于 **SELECTION 分支** ⇒ 在枢纽里点「📖 详情」时 `viewCard` **确实被设上了**，
+    //   可那个分支**根本没渲染这个浮层** ⇒ 什么都看不到；
+    //   等点「编辑卡组」切进 EDITOR 分支，浮层才被渲染出来、而 `viewCard` 还留着
+    //   ⇒ 观感就是「进了卡组编辑界面它才弹出来」。
+    //   ⇒ 提到两个分支**共用**的位置，两边各渲染一次（**同一个数据源**，不是复制两份 JSX）。
+    const cardDetailOverlay = (() => {
+        // 根据 viewCardContext 构建当前导航列表
+        const navList = viewCardContext === 'grid'
+            ? visibleCards.map(c => toFullCardData(c))
+            : viewCardContext === 'list'
+                ? sortedDeckEntries.map(([k]) => {
+                    const c = CARD_DB[k];
+                    return c ? toFullCardData(c) : null;
+                }).filter(Boolean) as CardData[]
+                : [];
+        const navIndex = viewCardContext ? viewCardIndex : 0;
+
+        if (!viewCard) return null;
+
+        return (
+            <FullArtOverlay
+                card={viewCard}
+                onClose={() => setViewCard(null)}
+                onBuy={(count, cost) => userSystem.purchaseCard(viewCard.key, count, cost)}
+                onGachaNav={(poolId) => onGachaNav?.(poolId)}
+                ownedCount={getOwnedCount(viewCard.key)}
+                playerSilver={userSystem.collection?.resources.silverCoin || 0}
+                skinData={userSystem.activeDeck ? {
+                    ownedSkins: userSystem.collection?.ownedSkins || {},
+                    currentSkinId: userSystem.activeDeck.skinOverrides?.[viewCard.key] ?? 0,
+                    onSkinChange: (cardKey, newSkinId) => {
+                        const deck = userSystem.activeDeck;
+                        if (!deck) return;
+                        // [皮肤门禁] 防御性校验：按钮 disabled 之外再兜一道，避免绕过 UI 写入未拥有的皮肤
+                        if (!isSkinOwned(userSystem.collection?.ownedSkins, cardKey, newSkinId)) return;
+                        const updatedDeck = {
+                            ...deck,
+                            skinOverrides: {
+                                ...(deck.skinOverrides || {}),
+                                [cardKey]: newSkinId,
+                            },
+                        };
+                        userSystem.saveDeck(updatedDeck);
+                    },
+                } : undefined}
+                navigation={navList.length > 1 ? {
+                    cardList: navList,
+                    currentIndex: navIndex,
+                    onNavigate: (newIndex) => {
+                        // 导航时直接 reconstruct navList 避免闭包陷阱
+                        const freshList = viewCardContext === 'grid'
+                            ? visibleCards.map(c => toFullCardData(c))
+                            : viewCardContext === 'list'
+                                ? sortedDeckEntries.map(([k]) => {
+                                    const c = CARD_DB[k];
+                                    return c ? toFullCardData(c) : null;
+                                }).filter(Boolean) as CardData[]
+                                : [];
+                        setViewCardIndex(newIndex);
+                        if (freshList[newIndex]) setViewCard(freshList[newIndex]);
+                    },
+                } : undefined}
+            />
+        );
+    })();
+
     if (viewMode === 'SELECTION') {
         const hubDeck = userSystem.decks.find((d: any) => d.id === hubDeckId);
         const hubCardCount = hubDeck ? Object.values(hubDeck.cards).reduce((a: any, b: any) => a + b, 0) : 0;
@@ -1181,6 +1251,10 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
         return (
             <div className="w-full h-full bg-[#0f172a] text-white flex flex-col relative overflow-hidden font-sans">
+                {/* [卡牌导航] 卡牌详情浮层 —— 与 EDITOR 分支**共用同一个**（见 `cardDetailOverlay` 定义处）
+                    ⚠️ 2026-10-16 修正：它原来只在 EDITOR 分支里渲染 ⇒ 在备战枢纽点「📖 详情」
+                       什么都不弹，切进「编辑卡组」界面才"迟到地"冒出来。 */}
+                {cardDetailOverlay}
                 {/* 1. 大厅基础视效 */}
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none z-0"></div>
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.5)_0%,rgba(15,23,42,1)_60%)] z-0 pointer-events-none"></div>
@@ -1396,7 +1470,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                                 <div className="shrink-0 flex border-t border-white/10 bg-black/40 z-20" style={{ padding: HUB_UI.footerPad, gap: HUB_UI.footerGap }}>
                                     <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setConfirmModal({ title: "DELETE DECK", message: "确认删除该卡组？此操作不可逆。", type: 'danger', onConfirm: () => { userSystem.deleteDeck(hubDeckId); setConfirmModal(null); setHubDeckId(null); } }); }} className="bg-red-950/40 hover:bg-red-600 text-red-200 rounded-xl transition-colors border border-red-900/30" style={{ padding: HUB_UI.delBtnPad }}><Trash2 size={HUB_UI.delBtnIconSize} /></button> {/* [新增] 音效 */}
-                                    <button onClick={() => handleEnterDeck(hubDeckId)} className="flex-1 bg-blue-900 hover:bg-blue-600 text-white font-black tracking-widest rounded-xl transition-all" style={{ padding: HUB_UI.editBtnPad }}>编辑卡组</button>
+                                    <button onClick={() => handleEnterDeck(hubDeckId)} className="flex-1 bg-blue-900 hover:bg-blue-600 text-white font-black tracking-widest rounded-xl transition-all" style={{ padding: HUB_UI.editBtnPad, fontSize: HUB_UI.editBtnFontSize }}>编辑卡组</button>
                                 </div>
                             </motion.div>
 
@@ -2234,67 +2308,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     )}
                 </div>
             </div>
-            {/* [卡牌导航] 根据来源构建导航列表 */}
-            {(() => {
-                // 根据 viewCardContext 构建当前导航列表
-                const navList = viewCardContext === 'grid'
-                    ? visibleCards.map(c => toFullCardData(c))
-                    : viewCardContext === 'list'
-                        ? sortedDeckEntries.map(([k]) => {
-                            const c = CARD_DB[k];
-                            return c ? toFullCardData(c) : null;
-                        }).filter(Boolean) as CardData[]
-                        : [];
-                const navIndex = viewCardContext ? viewCardIndex : 0;
-
-                if (!viewCard) return null;
-
-                return (
-                    <FullArtOverlay
-                        card={viewCard}
-                        onClose={() => setViewCard(null)}
-                        onBuy={(count, cost) => userSystem.purchaseCard(viewCard.key, count, cost)}
-                        onGachaNav={(poolId) => onGachaNav?.(poolId)}
-                        ownedCount={getOwnedCount(viewCard.key)}
-                        playerSilver={userSystem.collection?.resources.silverCoin || 0}
-                        skinData={userSystem.activeDeck ? {
-                            ownedSkins: userSystem.collection?.ownedSkins || {},
-                            currentSkinId: userSystem.activeDeck.skinOverrides?.[viewCard.key] ?? 0,
-                            onSkinChange: (cardKey, newSkinId) => {
-                                const deck = userSystem.activeDeck;
-                                if (!deck) return;
-                                // [皮肤门禁] 防御性校验：按钮 disabled 之外再兜一道，避免绕过 UI 写入未拥有的皮肤
-                                if (!isSkinOwned(userSystem.collection?.ownedSkins, cardKey, newSkinId)) return;
-                                const updatedDeck = {
-                                    ...deck,
-                                    skinOverrides: {
-                                        ...(deck.skinOverrides || {}),
-                                        [cardKey]: newSkinId,
-                                    },
-                                };
-                                userSystem.saveDeck(updatedDeck);
-                            },
-                        } : undefined}
-                        navigation={navList.length > 1 ? {
-                            cardList: navList,
-                            currentIndex: navIndex,
-                            onNavigate: (newIndex) => {
-                                // 导航时直接 reconstruct navList 避免闭包陷阱
-                                const freshList = viewCardContext === 'grid'
-                                    ? visibleCards.map(c => toFullCardData(c))
-                                    : viewCardContext === 'list'
-                                        ? sortedDeckEntries.map(([k]) => {
-                                            const c = CARD_DB[k];
-                                            return c ? toFullCardData(c) : null;
-                                        }).filter(Boolean) as CardData[]
-                                        : [];
-                                setViewCardIndex(newIndex);
-                                if (freshList[newIndex]) setViewCard(freshList[newIndex]);
-                            },
-                        } : undefined}
-                    />
-                );
-            })()}
+            {/* [卡牌导航] 卡牌详情浮层 —— 与 SELECTION 分支共用同一个（见 `cardDetailOverlay` 的定义处）*/}
+            {cardDetailOverlay}
         </div>
     );
 };
