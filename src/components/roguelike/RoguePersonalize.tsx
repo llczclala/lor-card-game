@@ -5,7 +5,7 @@
 //   去除：开始游戏 / AI 难度 / 牌库删除
 //   编辑按钮仅开发者账号可见（编辑肉鸽初始牌组）
 // ==========================================
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import { Plus, X, Pencil } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { buildStarterDeck, isStaleRogueStarterDeck } from '../../data/roguelike/rogueStarterDecks';
@@ -37,15 +37,33 @@ import { DIORAMA_SIZE } from '../dioramaSpacing';
 //    继承 1.5 是随字号等比走的，怎么调都不会重叠。（2026-10-16 子智能体曾成对搬行高，已按此改正。）
 // ══════════════════════════════════════════════════════════════════════
 export const PERSONALIZE_UI = {
+    /**
+     * 【主旋钮】中翼那个「**牌组立体盒子**」（`DeckDiorama`）的**整体缩放**（1 = 原样）。
+     *
+     * ⚠️ 这个盒子**已经整体调过两次**（牌组选择 → `DECK_UI.deckScale`；备战枢纽 → `HUB_UI.dioramaScale`）——
+     *    本页是第三个用法，**口径一致地接到这里**：方框 · 扇面卡 · 右下堆叠 · 铭牌**一起等比缩放**。
+     * 🔴 **别**去改 `DIORAMA_SIZE`（三屏共享常量）：它只改外框，而内部锚点全是写死的 px ⇒ **内部集体错位**。
+     *
+     * ⚠️ 盒子在**横向三翼**里 ⇒ 代码按**实测宽度**补了左右 `margin`：
+     *    `transform` 不改布局宽度，不补就会**视觉压到左右两翼面板上**。
+     *    实测用 `offsetWidth`（布局宽、不含 transform）—— **绝不能用 `getBoundingClientRect()`**
+     *    （后者把缩放算进去 ⇒ 补偿变成 `(s−1)×W×s`，**越放大越偏**）。
+     *
+     * 📐 上限（**算出来的，不是估的**）：三翼当前总宽约 1120、内容区可用约 1288 ⇒ 余量约 168；
+     *    盒子宽 288 ⇒ `288 × (s−1) ≤ 168` ⇒ **`s ≲ 1.55`**。
+     *    ⚠️ 你一动左右面板宽度或根间距，这个上限就变 —— **几何预算按最坏值算**。
+     */
+    dioramaScale: 1,
+
     // ══ ① 整页：三翼布局 ══
     /** 左翼 ↔ 中翼 ↔ 右翼 的横向间距 px（原 gap-6 = 24） */
     rootGap: 24,
 
     // ══ ② 左翼：卡组预览列表面板 ══
     /** 面板宽度 px（原 w-80 = 320） */
-    leftPanelWidth: 320,
+    leftPanelWidth: 400,
     /** 面板高度 px（原 h-[560px] = 560） */
-    leftPanelHeight: 560,
+    leftPanelHeight: 840,
     /** 面板圆角 px（原 rounded-3xl = 24） */
     leftPanelRadius: 24,
     /** 面板边框宽度 px（原 border = 1） */
@@ -63,7 +81,7 @@ export const PERSONALIZE_UI = {
     /** 列表上下内边距 px（原 py-8 = 32） */
     listPadY: 32,
     /** 卡牌行高 px（原 h-12 = 48） */
-    cardRowHeight: 48,
+    cardRowHeight: 64,
     /** 卡牌行圆角 px（原 rounded-lg = 8） */
     cardRowRadius: 8,
     /** 卡牌行边框宽度 px（原 border = 1） */
@@ -71,23 +89,23 @@ export const PERSONALIZE_UI = {
     /** 卡牌行左右内边距 px（原 px-3 = 12） */
     cardRowPadX: 12,
     /** 费用圆 ↔ 卡名 的间距 px（原 gap-3 = 12） */
-    costNameGap: 12,
+    costNameGap: 24,
     /** 费用圆直径 px（原 w-6 h-6 = 24） */
-    costBadgeSize: 24,
+    costBadgeSize: 36,
     /** 费用圆全圆角 px（原 rounded-full = 9999） */
     costBadgeRadius: 9999,
     /** 费用数字字号 px（原 text-xs = 12） */
-    costBadgeFontSize: 12,
+    costBadgeFontSize: 24,
     /** 费用数字行高（原 text-xs 自带 line-height = 16） */
     /** 费用圆边框宽度 px（原 border = 1） */
     costBadgeBorderWidth: 1,
     /** 卡名字号 px（原 text-sm = 14） */
-    cardNameFontSize: 14,
+    cardNameFontSize: 28,
     /** 卡名行高（原 text-sm 自带 line-height = 20） */
     /** 卡名宽度 px（原 w-32 = 128） */
-    cardNameWidth: 128,
+    cardNameWidth: 256,
     /** 张数「xN」字号 px（原 text-sm = 14） */
-    cardCountFontSize: 14,
+    cardCountFontSize: 28,
     /** 张数「xN」行高（原 text-sm 自带 line-height = 20） */
     /** 底部编辑栏内边距 px（原 p-4 = 16） */
     footerPad: 16,
@@ -216,9 +234,23 @@ export const PERSONALIZE_UI = {
     /** 边框宽度 px（原 border = 1） */
     closeButtonBorderWidth: 1,
     /** 「×」图标 px（原 `<X size={24} />`） */
-    closeIconSize: 24,
+    closeIconSize: 48,
 
     // ══ ⑥ 悬停大图检视（FloatingCardPreview）══
+    /**
+     * ── 悬停大图的**四向偏移**（2026-10-16 程反馈：这里缺了上下 / 左右）──
+     * 位置算法：`left` = 大图**左边缘**离面板左边的距离 —— 所以**图越宽越容易盖到面板** ⇒ 卡背 / 牌桌**必须分开调**；
+     *           `top` 配 `-translate-y-1/2` **自居中** ⇒ 表达的是"大图**中心**落在面板的百分之几"，**与图高无关**。
+     * 💡 想让大图「贴面板左边缘、留 N px」：`left = -(大图宽 + N) / 面板宽 × 100%`（面板宽 = `rightPanelWidth`，现 288）。
+     */
+    /** 卡背大图 左偏移（原 `left-[105%]`；想挪到面板左侧就填负数，例如 `-95%`） */
+    previewCardBackLeft: '105%',
+    /** 牌桌大图 左偏移（原 `left-[105%]`；牌桌更宽 ⇒ 与卡背分开调） */
+    previewDeskLeft: '105%',
+    /** 卡背大图 纵向位置（原 `top-1/2` = `'50%'`；自居中，与图高无关） */
+    previewCardBackTop: '50%',
+    /** 牌桌大图 纵向位置（原 `top-1/2` = `'50%'`；自居中） */
+    previewDeskTop: '50%',
     /** 悬停大图放大倍数（原 `scale={1.25}`） */
     floatingPreviewScale: 1.25,
 } as const;
@@ -427,6 +459,20 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
         userSystem.saveDeck({ ...deck, ...patch });
     };
 
+    // 🎛️ 主旋钮：中翼立体盒子整体缩放（`PERSONALIZE_UI.dioramaScale`，1 = 原样）
+    //    `as const` 会让哨兵比较炸 TS2367 ⇒ 先过 Number() 拓宽（手册 §1.3 陷阱④）
+    const dioramaScale = Number(PERSONALIZE_UI.dioramaScale);
+    const dioramaScaled = dioramaScale !== 1;
+    const dioramaRef = useRef<HTMLDivElement>(null);
+    const [dioramaSidePad, setDioramaSidePad] = useState(0);
+    useLayoutEffect(() => {
+        if (!dioramaScaled) { setDioramaSidePad(0); return; }
+        const el = dioramaRef.current;
+        if (!el) return;
+        // ⚠️ 必须用 offsetWidth（布局宽，不含 transform）；getBoundingClientRect 会把缩放算进去 ⇒ 越放大越偏
+        setDioramaSidePad((el.offsetWidth * (dioramaScale - 1)) / 2);
+    }, [dioramaScaled, dioramaScale]);
+
     return (
         <div className="relative flex items-center justify-center h-full min-h-0" style={{ gap: PERSONALIZE_UI.rootGap }}>
             {/* 左翼：卡牌列表只读预览（悬停大图检视） */}
@@ -510,8 +556,18 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
                 </div>
             </div>
 
-            {/* 中翼：牌组图标（DeckDiorama） */}
-            <div className="flex flex-col items-center z-50" style={{ marginLeft: PERSONALIZE_UI.dioramaWrapMarginX, marginRight: PERSONALIZE_UI.dioramaWrapMarginX }}>
+            {/* 中翼：牌组图标（DeckDiorama）
+                🎛️ 主旋钮 `PERSONALIZE_UI.dioramaScale`：整块等比缩放（= 1 时**不加任何 transform** ⇒ 零变化）
+                ⚠️ 左右 margin 按**实测宽度**补一半（`transform` 不改布局宽度，不补就会压到左右两翼面板上） */}
+            <div
+                ref={dioramaRef}
+                className="flex flex-col items-center z-50"
+                style={{
+                    marginLeft: PERSONALIZE_UI.dioramaWrapMarginX + dioramaSidePad,
+                    marginRight: PERSONALIZE_UI.dioramaWrapMarginX + dioramaSidePad,
+                    ...(dioramaScaled ? { transform: `scale(${dioramaScale})`, transformOrigin: 'center center' } : {}),
+                }}
+            >
                 <DeckDiorama
                     deck={deck}
                     covers={covers}
@@ -542,9 +598,17 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
                     }}
                 >定制</div>
                 <div className="flex-1 flex flex-col justify-center items-center relative" style={{ gap: PERSONALIZE_UI.customizeBlockGap, paddingLeft: PERSONALIZE_UI.customizePadX, paddingRight: PERSONALIZE_UI.customizePadX }}>
-                    {/* 悬停预览（卡背/牌桌大图） */}
+                    {/* 悬停预览（卡背/牌桌大图）
+                        🎛️ 位置全部由 `PERSONALIZE_UI` 的四个偏移控制（原 className 写死 `left-[105%] top-1/2`）
+                        ⚠️ `-translate-y-1/2`（自居中）**保留在 class 里**，内联只给 left/top ⇒ 两者不打架 */}
                     {hubHoverItem && (
-                        <div className="absolute left-[105%] top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50">
+                        <div
+                            className="absolute -translate-y-1/2 pointer-events-none animate-fade-in z-50"
+                            style={{
+                                left: hubHoverItem === 'cardBack' ? PERSONALIZE_UI.previewCardBackLeft : PERSONALIZE_UI.previewDeskLeft,
+                                top: hubHoverItem === 'cardBack' ? PERSONALIZE_UI.previewCardBackTop : PERSONALIZE_UI.previewDeskTop,
+                            }}
+                        >
                             <div className="absolute inset-0 bg-black/80 backdrop-blur-xl" style={{ borderRadius: PERSONALIZE_UI.previewBackdropRadius, margin: PERSONALIZE_UI.previewBackdropMargin }}></div>
                             <div
                                 className="relative border-orange-500/50 overflow-hidden shadow-2xl"
