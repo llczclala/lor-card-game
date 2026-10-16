@@ -103,6 +103,38 @@ export default defineConfig(({ command }) => {
         },
       }),
     ].filter(Boolean),
+
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-10-16 莉莉子] 忽略「原子写工具的临时文件」—— 修「改了代码、雷电里没反应」
+    //
+    // 现象（程实测，日志为证）：改 `HUB_UI` 存盘后，dev server 窗口先打了
+    //   `[vite] hmr update /src/components/DeckBuilder.tsx`（说明**通路本来是好的**），
+    //   紧接着抛 `EBUSY: resource busy or locked, watch '...\.DeckBuilder.tsx.<pid>.<guid>.tmpdir\DeckBuilder.tsx.tmp'`，
+    //   **然后整个 vite 进程就退出了**（日志末尾回到了 shell 提示符 `F:\datamodel\lor-card-game>`）。
+    //   ⇒ 服务器没了，之后改任何文件都不会再有人理 —— 看起来像"热更新坏了"，
+    //     其实是 **dev server 崩了**（今早那次「打开游戏黑屏卡死」多半也是它，⚠️ 推测）。
+    //
+    // 真因：某些编辑器 / 写入工具**原子写盘**时，会在**同目录**先落一个
+    //   `.DeckBuilder.tsx.<pid>.<guid>.tmpdir\DeckBuilder.tsx.tmp`，写完再改名。
+    //   那个临时目录就落在**被监视的 `src/` 里** ⇒ chokidar 去 watch 它 ⇒
+    //   文件已被改名/占用 ⇒ `fs.watch` 抛 **EBUSY** ⇒ 而这个错误**没有被捕获** ⇒ vite 进程崩溃。
+    //
+    // ✅ 这里是**追加**忽略项，不会覆盖 Vite 自己的默认（已核源码 `resolveChokidarOptions`：
+    //    `ignored = ["**/.git/**", "**/node_modules/**", "**/test-results/**", cacheDir, ...arraify(用户配置)]`
+    //    —— 用户配的是**展开追加**，不是覆盖）。
+    // ⚠️ 改 `vite.config.ts` 本身**需要重启 dev server** 才生效
+    //    （关掉那个 `npm run dev` 窗口，重跑 `启动安卓调试.exe`）。
+    // ══════════════════════════════════════════════════════════════════
+    server: {
+      watch: {
+        ignored: [
+          '**/*.tmpdir/**', // 原子写的临时目录（把 vite 搞崩的就是它）
+          '**/*.tmpdir',
+          '**/*.tmp',       // 临时文件本体
+        ],
+      },
+    },
+
     build: {
       chunkSizeWarningLimit: 1500,
     }

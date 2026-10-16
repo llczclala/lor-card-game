@@ -147,10 +147,10 @@ export const DECK_UI = {
 // ══════════════════════════════════════════════════════════════════════
 export const HUB_UI = {
     // ══ ① 右上角关闭按钮（独立于三栏布局）═════════════════════════════
-    closeTop: 32,            // 距顶 px（原 top-8 = 32）
-    closeRight: 32,          // 距右 px（原 right-8 = 32）
+    closeTop: 16,            // 距顶 px（原 top-8 = 32）
+    closeRight: 16,          // 距右 px（原 right-8 = 32）
     closePad: 12,            // 内边距 px（原 p-3 = 12）
-    closeIconSize: 24,       // ✕ 图标 px（原 size={24}）
+    closeIconSize: 48,       // ✕ 图标 px（原 size={24}）
 
     // ══ ② 三栏之间的呼吸（间距）═══════════════════════════════════════
     leftPanelGap: 48,        // 左翼与正中之间 px（原左翼 mr-12 = 48）
