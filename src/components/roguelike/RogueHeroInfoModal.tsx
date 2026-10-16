@@ -43,8 +43,19 @@ const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
     marian: { icon: Bird, color: HERO_THEMES.marian.color },                  // Marian 品红
 };
 
-// [2026-08-13] 总览界面几何常量（程可微调，px）
-export const OVERVIEW_GEOMETRY = {
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 天启者配置 · **总览页**（`OverviewContent`）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一页 = 天启者配置界面**默认打开**的那一页（左：流派 + 难度 + 背景故事 ／ 右：手牌样式 + 确定选择）。
+// 📌 原名 `OVERVIEW_GEOMETRY`，2026-10-16 按《规范-界面调参区》§4 统一改名成 `OVERVIEW_UI` —— **值全部未变**。
+// 📌 本页只是「天启者配置」**六个页签之一**：外壳（返回／左列头像＋页签／内容窗／更换天启者）
+//    在 `RogueHeroSelect.tsx` 的 `ROGUE_HERO_UI`；**本块只管页签里面**。
+//    其余页签另有各自的小块：`LEVELS_GEOMETRY` / `DECK_GEOMETRY` / `DIV_*` / 武装那几组常量。
+// ⚠️ 右半两张图（手牌样式 / 武装槽）的**内部尺寸不在这一段** —— 它们整体由 `handScale` 缩放；
+//    其中武装槽的槽高 = `HAND_CARD_HEIGHT × handScale`（见本文件 `HAND_CARD_HEIGHT`）。
+// ══════════════════════════════════════════════════════════════════════
+export const OVERVIEW_UI = {
+    // ── 布局（原 `OVERVIEW_GEOMETRY`，值未变）────────────────────────────
     topGap: 200,           // 三个窗口离内容区顶部的距离（程可微调，px）
     topRowHeight: 300,    // 上排（流派/难度）窗口高度（≈ 初始牌组按钮顶部对齐；背景故事从此向下延伸到底部）
     rightWidth: 400,      // 卡牌样式区域宽度（≈ 画面右侧 1/3，设计宽 1680）
@@ -52,6 +63,52 @@ export const OVERVIEW_GEOMETRY = {
     handOffsetTop: 60,     // [2026-08-14] 右侧卡牌样式垂直位置偏移 px（正向下/负向上，程可微调）
     armamentGap: 36,      // [2026-08-14] 卡面与右侧武装槽组的间隔 px（程可微调）
     gap: 136,              // [2026-08-14] 卡面与左侧栏位（流派/难度/背景故事）的间距 px（程可微调，对齐 DECK_GEOMETRY.gap）
+
+    // ── 上排：流派 / 难度 两个窗口 ─────────────────────────────────────
+    /** 两个窗口之间间距 px（原 gap-3 = 12） */
+    rowGap: 12,
+    /** 窗口内「图标 → 标题 → 说明」纵向间距 px（原 gap-2 = 8） */
+    panelGap: 8,
+    /** 窗口内边距 px（原 p-3.5 = 14） */
+    panelPad: 14,
+    /** 窗口圆角 px（原 rounded-xl = 12） */
+    panelRadius: 12,
+    /** 流派图标 px（原 `<FIcon size={44} />`） */
+    factionIconSize: 44,
+    /** 流派名 / 难度名 字号 px（原 text-2xl = 24） */
+    panelTitleFontSize: 24,
+    /** 窗口说明文字字号 px（原 text-xs = 12） */
+    panelDescFontSize: 12,
+    /** 难度那 5 个三角的尺寸 px（原 `w-9 h-9` = 36） */
+    diffTriangleSize: 36,
+    /** 难度三角之间间距 px（原 gap-1 = 4） */
+    diffTriangleGap: 4,
+
+    // ── 背景故事块 ─────────────────────────────────────────────────────
+    /** 距上排窗口 px（原 mt-3 = 12） */
+    loreMarginTop: 12,
+    /** 内边距 px（原 p-4 = 16） */
+    lorePad: 16,
+    /** 圆角 px（原 rounded-xl = 12） */
+    loreRadius: 12,
+    /** 「背景故事」标签字号 px（原 text-xs = 12） */
+    loreLabelFontSize: 12,
+    /** 标签与正文的间距 px（原 mb-2 = 8） */
+    loreLabelMarginBottom: 8,
+    /** 背景故事正文字号 px（原 text-sm = 14） */
+    loreTextFontSize: 14,
+
+    // ── 右半：手牌样式 + 确定选择 ───────────────────────────────────────
+    /** 卡面 ↔ 确定按钮 纵向间距 px（原 gap-4 = 16） */
+    handColumnGap: 16,
+    /** 确定按钮左右内边距 px（原 px-10 = 40） */
+    confirmPadX: 40,
+    /** 确定按钮上下内边距 px（原 py-3 = 12） */
+    confirmPadY: 12,
+    /** 确定按钮圆角 px（原 rounded-xl = 16） */
+    confirmRadius: 16,
+    /** 确定按钮字号 px（原 text-lg = 18）—— 外壳里那个同款按钮在 `ROGUE_HERO_UI.confirmFontSize` */
+    confirmFontSize: 18,
 };
 
 // [2026-08-13] 等级界面几何（程可微调，px）
@@ -139,7 +196,7 @@ function buildLevelRows(): { level: number; color: string; label: string; value:
 }
 
 // ════════════ 内容 ①：天启者手牌样式（主视觉，单张英雄卡）════════
-// scale：放大倍数（1 原始；主体主视觉 1.35；总览右半 OVERVIEW_GEOMETRY.handScale 抵 1/3 画面）
+// scale：放大倍数（1 原始；主体主视觉见 `ROGUE_HERO_UI.handScale`；总览右半见 `OVERVIEW_UI.handScale` 抵 1/3 画面）
 export const HeroHandContent: React.FC<{ heroKey: string; scale?: number; noLabels?: boolean; equipIds?: string[] }> = ({ heroKey, scale = 1, noLabels, equipIds }) => {
     const card = CARD_DB[heroKey];
     if (!card) return null;
@@ -217,74 +274,94 @@ export const OverviewContent: React.FC<{
     const FIcon = faction.icon;
 
     return (
-        <div className="flex h-full min-h-0" style={{ gap: OVERVIEW_GEOMETRY.gap }}>
+        <div className="flex h-full min-h-0" style={{ gap: OVERVIEW_UI.gap }}>
             {/* 左半：上排（流派+难度等宽等高）+ 背景故事延伸到底部（paddingTop 控制离顶部距离） */}
-            <div className="flex-1 flex flex-col min-w-0 shrink-0" style={{ paddingTop: OVERVIEW_GEOMETRY.topGap }}>
+            <div className="flex-1 flex flex-col min-w-0 shrink-0" style={{ paddingTop: OVERVIEW_UI.topGap }}>
                 {/* 上排：玩法流派 + 难度说明（等宽等高窗口，内部垂直水平居中：图标→对应颜色文字→说明） */}
-                <div className="flex gap-3 shrink-0" style={{ height: OVERVIEW_GEOMETRY.topRowHeight }}>
+                <div className="flex shrink-0" style={{ gap: OVERVIEW_UI.rowGap, height: OVERVIEW_UI.topRowHeight }}>
                     {/* 流派窗口 */}
-                    <div className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl flex flex-col items-center justify-center gap-2 p-3.5 text-center">
-                        <FIcon size={44} style={{ color: faction.color }} />
-                        <div className="text-2xl font-black italic" style={{ color: faction.color }}>
+                    <div
+                        className="flex-1 min-w-0 bg-white/5 border border-white/10 flex flex-col items-center justify-center text-center"
+                        style={{ gap: OVERVIEW_UI.panelGap, padding: OVERVIEW_UI.panelPad, borderRadius: OVERVIEW_UI.panelRadius }}
+                    >
+                        <FIcon size={OVERVIEW_UI.factionIconSize} style={{ color: faction.color }} />
+                        <div className="font-black italic" style={{ color: faction.color, fontSize: OVERVIEW_UI.panelTitleFontSize }}>
                             {archetype?.factionName ?? '未知流派'}
                         </div>
-                        <p className="text-xs text-white leading-relaxed">{archetype?.factionDesc ?? '暂无流派说明'}</p>
+                        <p className="text-white leading-relaxed" style={{ fontSize: OVERVIEW_UI.panelDescFontSize }}>{archetype?.factionDesc ?? '暂无流派说明'}</p>
                     </div>
 
                     {/* 难度窗口 */}
-                    <div className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl flex flex-col items-center justify-center gap-2 p-3.5 text-center">
+                    <div
+                        className="flex-1 min-w-0 bg-white/5 border border-white/10 flex flex-col items-center justify-center text-center"
+                        style={{ gap: OVERVIEW_UI.panelGap, padding: OVERVIEW_UI.panelPad, borderRadius: OVERVIEW_UI.panelRadius }}
+                    >
                         {/* 图标：5 三角槽（奇数正放/偶数镜像） */}
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center" style={{ gap: OVERVIEW_UI.diffTriangleGap }}>
                             {[0, 1, 2, 3, 4].map(i => {
                                 const filled = i < difficulty;
                                 return (
                                     <svg
                                         key={i}
                                         viewBox="0 0 24 24"
-                                        className="w-9 h-9"
-                                        style={{ transform: i % 2 === 1 ? 'scaleX(-1)' : undefined }}
+                                        style={{
+                                            width: OVERVIEW_UI.diffTriangleSize,
+                                            height: OVERVIEW_UI.diffTriangleSize,
+                                            transform: i % 2 === 1 ? 'scaleX(-1)' : undefined,
+                                        }}
                                     >
                                         <path d="M2 20 L20 12 L2 4 Z" fill={filled ? diffColor : '#374151'} />
                                     </svg>
                                 );
                             })}
                         </div>
-                        <div className="text-2xl font-black italic" style={{ color: diffColor, textShadow: '0 0 12px rgba(0,0,0,0.6)' }}>
+                        <div className="font-black italic" style={{ color: diffColor, textShadow: '0 0 12px rgba(0,0,0,0.6)', fontSize: OVERVIEW_UI.panelTitleFontSize }}>
                             {diffLabel}
                         </div>
-                        <p className="text-xs text-white leading-relaxed">{archetype?.difficultyDesc ?? '暂无难度说明'}</p>
+                        <p className="text-white leading-relaxed" style={{ fontSize: OVERVIEW_UI.panelDescFontSize }}>{archetype?.difficultyDesc ?? '暂无难度说明'}</p>
                     </div>
                 </div>
 
                 {/* 背景故事：上边栏对齐初始牌组按钮（topRowHeight 起），下边栏延伸到画面最下方（flex-1） */}
-                <div className="flex-1 min-h-0 mt-3 bg-white/5 border border-white/10 rounded-xl p-4 overflow-y-auto custom-scrollbar">
-                    <p className="text-xs font-mono text-purple-300/80 mb-2">背景故事</p>
-                    <p className="text-sm text-gray-200 leading-relaxed whitespace-pre-line">{lore ?? '暂无背景故事'}</p>
+                <div
+                    className="flex-1 min-h-0 bg-white/5 border border-white/10 overflow-y-auto custom-scrollbar"
+                    style={{ marginTop: OVERVIEW_UI.loreMarginTop, borderRadius: OVERVIEW_UI.loreRadius, padding: OVERVIEW_UI.lorePad }}
+                >
+                    <p className="font-mono text-purple-300/80" style={{ fontSize: OVERVIEW_UI.loreLabelFontSize, marginBottom: OVERVIEW_UI.loreLabelMarginBottom }}>背景故事</p>
+                    <p className="text-gray-200 leading-relaxed whitespace-pre-line" style={{ fontSize: OVERVIEW_UI.loreTextFontSize }}>{lore ?? '暂无背景故事'}</p>
                 </div>
             </div>
 
             {/* 右半：卡牌样式（抵画面右侧 1/3）+ 右侧武装槽；确定按钮以卡面中心对齐（考虑武装槽占位偏移） */}
             <div
                 className="shrink-0 flex items-center justify-center"
-                style={{ width: OVERVIEW_GEOMETRY.rightWidth }}
+                style={{ width: OVERVIEW_UI.rightWidth }}
             >
-                <div className="flex items-center" style={{ gap: OVERVIEW_GEOMETRY.armamentGap }}>
+                <div className="flex items-center" style={{ gap: OVERVIEW_UI.armamentGap }}>
                     {/* 卡面 + 确定按钮：以卡面中心为基准纵向居中（按钮不受武装槽占位影响） */}
-                    <div className="flex flex-col items-center gap-4" style={{ marginTop: OVERVIEW_GEOMETRY.handOffsetTop }}>
-                        <HeroHandContent heroKey={heroKey} noLabels scale={OVERVIEW_GEOMETRY.handScale} equipIds={armValues.filter((v): v is string => !!v)} />
+                    <div className="flex flex-col items-center" style={{ gap: OVERVIEW_UI.handColumnGap, marginTop: OVERVIEW_UI.handOffsetTop }}>
+                        <HeroHandContent heroKey={heroKey} noLabels scale={OVERVIEW_UI.handScale} equipIds={armValues.filter((v): v is string => !!v)} />
                         {onConfirm && (
                             <button
                                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onConfirm(); }}
                                 disabled={confirmDisabled}
-                                className="px-10 py-3 rounded-xl text-lg font-black tracking-widest hover:scale-105 transition-all disabled:opacity-40 disabled:grayscale disabled:cursor-not-allowed"
-                                style={themeColor ? { background: `linear-gradient(to right, ${themeColor}, ${themeColor}99)`, boxShadow: `0 0 30px ${themeColor}55` } : undefined}
+                                className="font-black tracking-widest hover:scale-105 transition-all disabled:opacity-40 disabled:grayscale disabled:cursor-not-allowed"
+                                style={{
+                                    paddingLeft: OVERVIEW_UI.confirmPadX,
+                                    paddingRight: OVERVIEW_UI.confirmPadX,
+                                    paddingTop: OVERVIEW_UI.confirmPadY,
+                                    paddingBottom: OVERVIEW_UI.confirmPadY,
+                                    borderRadius: OVERVIEW_UI.confirmRadius,
+                                    fontSize: OVERVIEW_UI.confirmFontSize,
+                                    ...(themeColor ? { background: `linear-gradient(to right, ${themeColor}, ${themeColor}99)`, boxShadow: `0 0 30px ${themeColor}55` } : {}),
+                                }}
                             >
                                 确定选择
                             </button>
                         )}
                     </div>
                     {/* 武装槽（卡面右侧一列，总高 = 卡面高度）；[2026-08-15] 传已解锁槽位显示锁图标 */}
-                    <ArmamentSlots totalHeight={HAND_CARD_HEIGHT * OVERVIEW_GEOMETRY.handScale} values={armValues} unlockSlots={overviewUnlockSlots} caps={overviewCaps} />
+                    <ArmamentSlots totalHeight={HAND_CARD_HEIGHT * OVERVIEW_UI.handScale} values={armValues} unlockSlots={overviewUnlockSlots} caps={overviewCaps} />
                 </div>
             </div>
         </div>
