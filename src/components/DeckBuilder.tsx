@@ -206,9 +206,9 @@ export const HUB_UI = {
      *    ⚠️ 这三个数**你自己一调就变**（`centerGap` 已被你从 48 调到 96）⇒ 上限跟着变，
      *    真要往大调，先把它调小一点腾地方。**几何预算按最坏值算，别按顺眼的值算。**
      */
-    dioramaScale: 1,
+    dioramaScale: 1.5,
 
-    centerGap: 96,           // 卡组 / AI 难度 / 发车按钮 之间的纵向间距 px（原 gap-12 = 48）
+    centerGap: 48,           // 卡组 / AI 难度 / 发车按钮 之间的纵向间距 px（原 gap-12 = 48）
 
     diffGap: 12,             // 「AI 难度」标签与三档按钮之间 px（原 gap-3 = 12）
     diffLabelFontSize: 24,   // 「AI 难度」字号 px（原 text-xs = 12）
@@ -238,8 +238,18 @@ export const HUB_UI = {
     deskW: 384,              // 牌桌缩略图宽 px（原 w-48 = 192）
     deskH: 224,              // 牌桌缩略图高 px（原 h-28 = 112）
 
-    // 悬停缩略图时从面板右侧弹出的大图（`hubHoverItem` 决定显示哪张）
-    hoverPreviewOffsetLeft: '-135%', // 大图相对面板左侧的偏移（原 left-[105%]；用 `%` 是为了跟着面板宽走）
+    // ── 悬停缩略图时弹出的大图（`hubHoverItem` 决定显示哪张）──
+    // 【2026-10-16 程提需求 · 拆成两个】原来只有**一个** `hoverPreviewOffsetLeft`，
+    //   但两张图**宽高不同**（卡背 240 宽 / 牌桌 400 宽），而偏移算的是
+    //   「大图**左边缘**离面板左边缘多远」⇒ **图越宽，右边缘越容易盖住面板**。
+    //   同一个 `%` 落在两张图上效果并不一样 ⇒ 拆开各自调。
+    // ⚠️ 单位是**面板宽度的百分比**（面板宽 288 ⇒ `-135%` ≈ 往左 389px）。
+    //     **负值 = 挪到面板左边**（程 2026-10-16 定的方向：界面整体放大后右边放不下，改到左边看）。
+    // 📐 想让它「**贴着面板左边缘、留 N px 空隙**」，填 `-((图宽 + N) / 288 × 100)%`：
+    //     卡背（240 宽）留 16 ⇒ **`-89%`**；牌桌（400 宽）留 16 ⇒ **`-144%`**。
+    //     （现在两个都是 `-135%`，即程手调后的现状；想"贴边"就照上面换。）
+    hoverPreviewCardBackLeft: '-135%', // 卡背大图的横向偏移（见上方公式）
+    hoverPreviewDeskLeft: '-135%',     // 牌桌大图的横向偏移（同上；与卡背**分开**调）
     hoverPreviewCardBackW: 240, // 卡背大图宽 px（原 w-[240px]）
     hoverPreviewCardBackH: 360, // 卡背大图高 px（原 h-[360px]）
     hoverPreviewDeskW: 400,     // 牌桌大图宽 px（原 w-[400px]）
@@ -1477,7 +1487,15 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             {/* 右侧翼：完美复刻抽屉逻辑的个性化大面板（尺寸来自 🎛️ HUB_UI.rightPanel* / custom*）*/}
                             {/* [关键修正] 去掉 overflow-hidden 改为 overflow-visible，允许悬浮预览图溢出外侧！ */}
                             {/* [修复] 将 h-[85vh] 改为 h-fit pb-10，让面板高度自适应内部的两个按钮，去除多余空白 */}
-                            <motion.div initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="h-fit bg-[#1e293b]/90 border border-white/10 rounded-3xl flex flex-col shadow-2xl relative overflow-visible backdrop-blur-md z-40" style={{ width: HUB_UI.rightPanelWidth, paddingBottom: HUB_UI.rightPanelPadBottom, marginLeft: HUB_UI.rightPanelGap }} onContextMenu={(e) => e.stopPropagation()}>
+                            {/* ⚠️【层级 · 2026-10-16】这一块必须是 `z-[60]`，**不能退回原来的 `z-40`**。
+                                程报的现象：「大图挪到左边后，被中间那组卡组图片挡住了」。
+                                真因：悬浮大图挂在**本面板内部**，而本面板自己带 `z-40` ＋ framer 的 `transform`
+                                ⇒ 面板成了一个**层叠上下文** ⇒ 大图自己写的 `z-50` **只在面板内部有效、管不到外面**；
+                                而正中那一列是 **`z-50`** ⇒ 整个面板（连它的大图）都被压在下面。
+                                ⇒ 把面板抬到 `z-[60]`：**高于正中那一列的 50**，同时**低于**
+                                  `StyleSelector` 的 `z-[300]`（打开卡背/牌桌选择器时仍能盖住本面板）。
+                                ⚠️ 想改这个层级，**要连正中的 `z-50` 一起看** —— 只调大图自己是没用的。 */}
+                            <motion.div initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="h-fit bg-[#1e293b]/90 border border-white/10 rounded-3xl flex flex-col shadow-2xl relative overflow-visible backdrop-blur-md z-[60]" style={{ width: HUB_UI.rightPanelWidth, paddingBottom: HUB_UI.rightPanelPadBottom, marginLeft: HUB_UI.rightPanelGap }} onContextMenu={(e) => e.stopPropagation()}>
                                 <div className="bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0" style={{ padding: HUB_UI.panelTitlePad, fontSize: HUB_UI.panelTitleFontSize, marginBottom: HUB_UI.panelTitleMarginBottom }}>定制</div>
 
                                 {/* [修复] 稍微缩小 gap-16 为 gap-10，让上下图标布局更紧凑 */}
@@ -1485,7 +1503,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     {/* 悬停大图预览 (Floating Preview) - 完美复原抽屉的原生体验 */}
                                     {/* [修复] 将 right-[110%] 改为 left-[105%]，让大图朝向画面最右侧空旷区域弹出，完美避开中心卡组 */}
                                     {hubHoverItem && (
-                                        <div className="absolute top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50" style={{ left: HUB_UI.hoverPreviewOffsetLeft }}>
+                                        <div className="absolute top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50" style={{ left: hubHoverItem === 'cardBack' ? HUB_UI.hoverPreviewCardBackLeft : HUB_UI.hoverPreviewDeskLeft }}>
                                             <div className="absolute inset-0 bg-black/80 backdrop-blur-xl rounded-xl -m-4"></div>
                                             <div className="relative border-2 border-orange-500/50 rounded-lg overflow-hidden shadow-2xl" style={hubHoverItem === 'cardBack' ? { width: HUB_UI.hoverPreviewCardBackW, height: HUB_UI.hoverPreviewCardBackH } : { width: HUB_UI.hoverPreviewDeskW, height: HUB_UI.hoverPreviewDeskH }}>
                                                 {hubHoverItem === 'cardBack' ? (
