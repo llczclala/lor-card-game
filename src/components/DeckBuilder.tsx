@@ -147,10 +147,10 @@ export const DECK_UI = {
 // ══════════════════════════════════════════════════════════════════════
 export const HUB_UI = {
     // ══ ① 右上角关闭按钮（独立于三栏布局）═════════════════════════════
-    closeTop: 16,            // 距顶 px（原 top-8 = 32）
-    closeRight: 16,          // 距右 px（原 right-8 = 32）
+    closeTop: 8,            // 距顶 px（原 top-8 = 32）
+    closeRight: 8,          // 距右 px（原 right-8 = 32）
     closePad: 12,            // 内边距 px（原 p-3 = 12）
-    closeIconSize: 48,       // ✕ 图标 px（原 size={24}）
+    closeIconSize: 36,       // ✕ 图标 px（原 size={24}）
 
     // ══ ② 三栏之间的呼吸（间距）═══════════════════════════════════════
     leftPanelGap: 48,        // 左翼与正中之间 px（原左翼 mr-12 = 48）
@@ -158,64 +158,88 @@ export const HUB_UI = {
     centerPadX: 24,          // 正中那一列左右外边距 px（原 mx-6 = 24）
 
     // ══ ③ 左翼「卡组预览」面板 ═══════════════════════════════════════
-    leftPanelWidth: 320,     // 面板宽 px（原 w-80 = 320）
-    leftPanelHeight: 620,    // 面板高 px（原 h-[620px]）
+    leftPanelWidth: 400,     // 面板宽 px（原 w-80 = 320）
+    leftPanelHeight: 930,    // 面板高 px（原 h-[620px]）
     panelTitlePad: 20,       // 面板标题内边距 px（原 p-5 = 20；左右两个面板共用）
-    panelTitleFontSize: 16,  // 标题字号 px（原**没有** text-* 类 ⇒ 继承基准 16）
+    panelTitleFontSize: 32,  // 标题字号 px（原**没有** text-* 类 ⇒ 继承基准 16）
     panelTitleMarginBottom: 16, // 「定制」标题下间距 px（原 mb-4 = 16；左翼没有这一项）
 
     fadeMaskHeight: 40,      // 卡表上下两条"边缘虚化遮罩"高度 px（原 h-10 = 40）
     listPadX: 16,            // 卡表左右内边距 px（原 px-4 = 16）
     listPadY: 32,            // 卡表上下内边距 px（原 py-8 = 32）
     listRowGap: 8,           // 卡行之间间距 px（原 space-y-2 = 8）
-    cardRowHeight: 48,       // 单行卡高 px（原 h-12 = 48）
+    cardRowHeight: 72,       // 单行卡高 px（原 h-12 = 48）
     cardRowPadX: 12,         // 行内左右内边距 px（原 px-3 = 12）
     cardRowGap: 12,          // 行内「费用圈 ↔ 卡名」间距 px（原 gap-3 = 12）
-    costBadgeSize: 24,       // 费用圆圈直径 px（原 w-6 h-6 = 24）
-    costFontSize: 12,        // 费用数字字号 px（原 text-xs = 12）
-    nameWidth: 128,          // 卡名宽度 px（原 w-32 = 128，超出截断）
-    nameFontSize: 14,        // 卡名字号 px（原 text-sm = 14）
-    countFontSize: 14,       // 右侧「xN」数量字号 px（原 text-sm = 14）
+    costBadgeSize: 36,       // 费用圆圈直径 px（原 w-6 h-6 = 24）
+    costFontSize: 24,        // 费用数字字号 px（原 text-xs = 12）
+    nameWidth: 250,          // 卡名宽度 px（原 w-32 = 128，超出截断）
+    nameFontSize: 28,        // 卡名字号 px（原 text-sm = 14）
+    countFontSize: 28,       // 右侧「xN」数量字号 px（原 text-sm = 14）
 
     footerPad: 16,           // 面板底部按钮行内边距 px（原 p-4 = 16）
     footerGap: 8,            // 两个按钮之间间距 px（原 gap-2 = 8）
     delBtnPad: 16,           // 删除（垃圾桶）按钮内边距 px（原 p-4 = 16）
-    delBtnIconSize: 20,      // 垃圾桶图标 px（原 size={20}）
+    delBtnIconSize: 30,      // 垃圾桶图标 px（原 size={20}）
     editBtnPad: 16,          // 「编辑卡组」按钮内边距 px（原 p-4 = 16）
 
     // ══ ④ 正中一列（卡组 → AI 难度 → 发车）═══════════════════════════
-    centerGap: 48,           // 卡组 / AI 难度 / 发车按钮 之间的纵向间距 px（原 gap-12 = 48）
+    /**
+     * 【主旋钮】正中央那个**牌组立体盒子**（`DeckDiorama isHub`）的**整体缩放**（1 = 原样）。
+     *
+     * 🔴 **别去改 `DIORAMA_SIZE` 里的数值来放它** —— 方框「内部」的偏移 / 位移 / 旋转全是**写死的**
+     *    （`top-4` / `left-6` / `top-12` / `translate(20px,12px)` / `rotate(10deg)` / `bottom-6 right-6`…），
+     *    它们**不随外框尺寸联动** ⇒ 只放大外框 = **内部集体错位**（程 2026-10-15 实测过这个坑）。
+     *    而且那份 `DIORAMA_SIZE` 是**三个屏共享**的（`src/components/dioramaSpacing.ts`）
+     *    ⇒ 动它会把**牌组选择 / 肉鸽个性化 / 敌人卡组编辑器**一起改掉。
+     * ⇒ **正解就是这里**：对整块做 CSS `transform: scale()`，方框 · 内部卡牌 · 铭牌**一起等比缩放**。
+     *
+     * ⚠️ `transform` **不改变布局尺寸**（这是它的老毛病）—— 放大后视觉上会**压到下面的「AI 难度」**。
+     *    所以代码里按**实测高度**补了 `marginTop` / `marginBottom` **各一半**
+     *    （居中原点 ⇒ 上下对称地长，把上下邻居一起推开）。
+     *
+     * ⚠️ 默认 `1` 时**一项内联样式都不加**（也不套包装层）⇒ 与改动前逐字节等价。
+     *    实用上限（**算出来的，不是估的**）：本屏跑在 **1680×1050** 的虚拟视口里，
+     *    正中那一列在放大后总高 = `384 + (centerGap×2 + 难度行 + 发车按钮) + (scale-1)×384`
+     *    —— 取当前值（`centerGap 96`、难度行 ≈45、发车按钮 ≈76 ⇒ 常数项 ≈313）
+     *    ⇒ `697 + (scale-1)×384 ≤ 1050` ⇒ **`scale ≲ 1.9`**。
+     *    ⚠️ 这三个数**你自己一调就变**（`centerGap` 已被你从 48 调到 96）⇒ 上限跟着变，
+     *    真要往大调，先把它调小一点腾地方。**几何预算按最坏值算，别按顺眼的值算。**
+     */
+    dioramaScale: 1,
+
+    centerGap: 96,           // 卡组 / AI 难度 / 发车按钮 之间的纵向间距 px（原 gap-12 = 48）
 
     diffGap: 12,             // 「AI 难度」标签与三档按钮之间 px（原 gap-3 = 12）
-    diffLabelFontSize: 12,   // 「AI 难度」字号 px（原 text-xs = 12）
-    diffLabelMarginRight: 4, // 「AI 难度」右侧额外间距 px（原 mr-1 = 4）
+    diffLabelFontSize: 24,   // 「AI 难度」字号 px（原 text-xs = 12）
+    diffLabelMarginRight: 8, // 「AI 难度」右侧额外间距 px（原 mr-1 = 4）
     diffBtnPadX: 20,         // 每档按钮左右内边距 px（原 px-5 = 20）
     diffBtnPadY: 10,         // 每档按钮上下内边距 px（原 py-2.5 = 10）
-    diffBtnFontSize: 14,     // 档位名字号 px（原 text-sm = 14）
+    diffBtnFontSize: 28,     // 档位名字号 px（原 text-sm = 14）
     diffBtnGap: 8,           // 档位内「图标 / 名字 / 副标」间距 px（原 gap-2 = 8）
     diffDescFontSize: 10,    // 副标（温和 / 均衡 / 高压）字号 px（原 text-[10px]）
 
     startBtnWidth: 288,      // 发车按钮宽 px（原 w-72 = 288）
     startBtnPadY: 20,        // 发车按钮上下内边距 px（原 py-5 = 20）
-    startBtnFontSize: 24,    // 发车按钮字号 px（原 text-2xl = 24）
+    startBtnFontSize: 36,    // 发车按钮字号 px（原 text-2xl = 24）
     startBtnGap: 12,         // 按钮内「图标 ↔ 文字」间距 px（原 gap-3 = 12）
-    startBtnIconSize: 24,    // ▶ / 💾 图标 px（原 size={24}）
+    startBtnIconSize: 48,    // ▶ / 💾 图标 px（原 size={24}）
 
     // ══ ⑤ 右翼「定制」面板 ═══════════════════════════════════════════
-    rightPanelWidth: 288,    // 面板宽 px（原 w-72 = 288）
+    rightPanelWidth: 400,    // 面板宽 px（原 w-72 = 288）
     rightPanelPadBottom: 40, // 面板底部内边距 px（原 pb-10 = 40）
     customGap: 40,           // 「卡背」组与「牌桌」组之间 px（原 gap-10 = 40）
     customPadX: 24,          // 面板内容左右内边距 px（原 px-6 = 24）
     itemGap: 16,             // 「标签 ↔ 缩略图」间距 px（原 gap-4 = 16；两组共用）
-    itemLabelFontSize: 12,   // 「卡背」/「牌桌」标签字号 px（原 text-xs = 12）
+    itemLabelFontSize: 24,   // 「卡背」/「牌桌」标签字号 px（原 text-xs = 12）
 
-    cardBackW: 128,          // 卡背缩略图宽 px（原 w-32 = 128）
-    cardBackH: 192,          // 卡背缩略图高 px（原 h-48 = 192）
-    deskW: 192,              // 牌桌缩略图宽 px（原 w-48 = 192）
-    deskH: 112,              // 牌桌缩略图高 px（原 h-28 = 112）
+    cardBackW: 256,          // 卡背缩略图宽 px（原 w-32 = 128）
+    cardBackH: 384,          // 卡背缩略图高 px（原 h-48 = 192）
+    deskW: 384,              // 牌桌缩略图宽 px（原 w-48 = 192）
+    deskH: 224,              // 牌桌缩略图高 px（原 h-28 = 112）
 
     // 悬停缩略图时从面板右侧弹出的大图（`hubHoverItem` 决定显示哪张）
-    hoverPreviewOffsetLeft: '105%', // 大图相对面板左侧的偏移（原 left-[105%]；用 `%` 是为了跟着面板宽走）
+    hoverPreviewOffsetLeft: '-135%', // 大图相对面板左侧的偏移（原 left-[105%]；用 `%` 是为了跟着面板宽走）
     hoverPreviewCardBackW: 240, // 卡背大图宽 px（原 w-[240px]）
     hoverPreviewCardBackH: 360, // 卡背大图高 px（原 h-[360px]）
     hoverPreviewDeskW: 400,     // 牌桌大图宽 px（原 w-[400px]）
@@ -1113,6 +1137,36 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         // ⚠️ ResizeObserver 已经在盯着元素本身，所以"搜索过滤后牌组变少"这类变化也能自动重测
     }, [viewStyle, DECK_UI.deckScale]);
 
+    // [2026-10-16 莉莉子 · 程提需求] 备战枢纽正中那个**牌组立体盒子**的整体缩放
+    //   （主旋钮 `HUB_UI.dioramaScale`）
+    //   ── 与上面 `deckScale` 同一套做法（整块 `transform: scale` ＋ 用**实测布局高度**补空间），
+    //      只有一处不同：盒子在**竖直 flex 列**里、**上下都有邻居** ⇒ 补偿必须**上下各一半**
+    //      （`transform-origin: center` ⇒ 上下对称地长，把「卡组」上方与「AI 难度」一起推开），
+    //      而不是像网格那样只补一个 `marginBottom`。
+    //   ── 🔴 同款坑：`HUB_UI` 也是 `as const` ⇒ 值类型是**字面量**
+    //      ⇒ `HUB_UI.dioramaScale !== 1` 会在程把它拨离 1 的**那一刻**报 TS2367
+    //      ⇒ 先过 `Number()` 拓宽（运行时等价）。哨兵守卫一律用下面这两个派生量。
+    //   ── ⚠️ 量高度必须用 `offsetHeight`（**布局**高度），**不能用 `getBoundingClientRect()`**：
+    //      后者把 `transform` 之后的尺寸算进去 ⇒ 补偿会变成 `(scale-1) × 384 × scale`，
+    //      **越放大越偏**（而且 s<1 时还会反向补错）。这是这两个旋钮最容易写错的一处。
+    const hubDioramaScale = Number(HUB_UI.dioramaScale);
+    const hubDioramaScaled = hubDioramaScale !== 1;
+    const hubDioramaRef = React.useRef<HTMLDivElement>(null);
+    const [hubDioramaRealHeight, setHubDioramaRealHeight] = useState(0);
+    React.useLayoutEffect(() => {
+        if (!hubDioramaScaled) { setHubDioramaRealHeight(0); return; }
+        const el = hubDioramaRef.current;
+        if (!el) return; // 枢纽没打开（`viewMode !== 'SELECTION'`）⇒ 没东西可量，正常跳过
+        const measure = () => setHubDioramaRealHeight(el.offsetHeight);
+        measure();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+        // ⚠️ 依赖里必须带 `viewMode` / `hubDeckId`：枢纽是**条件渲染**的，
+        //    首次跑时 ref 还是空的；不带这两项，等枢纽打开时**钩子不会再跑** ⇒ 补偿永远是 0。
+    }, [viewMode, hubDeckId, hubDioramaScaled, HUB_UI.dioramaScale]);
+
     // 如果处于“选择模式”，渲染全新的“备战枢纽 2.0”
     if (viewMode === 'SELECTION') {
         const hubDeck = userSystem.decks.find((d: any) => d.id === hubDeckId);
@@ -1342,7 +1396,24 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                             {/* 正中心：主角微缩景观展示与发车按钮（尺寸来自 🎛️ HUB_UI.centerGap / diff* / startBtn*）*/}
                             <div className="flex flex-col items-center z-50" style={{ gap: HUB_UI.centerGap, marginLeft: HUB_UI.centerPadX, marginRight: HUB_UI.centerPadX }}>
-                                <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards, hubDeck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
+                                {/* 【主旋钮】牌组立体盒子整体缩放（🎛️ HUB_UI.dioramaScale）
+                                    ⚠️ 不能改 DIORAMA_SIZE 里的数去放它 —— 内部全是写死的 px 锚点（会集体错位），
+                                       而且那份是**三屏共享**（牌组选择 / 肉鸽个性化 / 敌人卡组编辑器会一起变）。
+                                    ⇒ 整块 `transform: scale()`；而 transform **不改布局高度**
+                                      ⇒ 按**实测布局高度**补**上下各一半**外边距（居中原点、上下对称地长）。
+                                    ⚠️ `dioramaScale === 1` 时**不加任何内联样式** ⇒ 视觉与布局零变化
+                                       （这一层只是给缩放用的量尺，本身不带任何样式）。 */}
+                                <div
+                                    ref={hubDioramaRef}
+                                    style={hubDioramaScaled ? {
+                                        transform: `scale(${hubDioramaScale})`,
+                                        transformOrigin: 'center center',
+                                        marginTop: Math.round((hubDioramaScale - 1) * hubDioramaRealHeight / 2),
+                                        marginBottom: Math.round((hubDioramaScale - 1) * hubDioramaRealHeight / 2),
+                                    } : undefined}
+                                >
+                                    <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards, hubDeck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
+                                </div>
 
                                 {/* [2026-08-06 莉莉子] AI 难度选择：三选一互斥 */}
                                 <div className="flex items-center" style={{ gap: HUB_UI.diffGap }}>
