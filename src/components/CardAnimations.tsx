@@ -7,7 +7,7 @@ import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, check
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
 import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
-import { isTouchInput } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 手牌「防误打」：上浮改由显式状态驱动
+import { isTouchInput, TOUCH_TUNE } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 手牌「防误打」：上浮改由显式状态驱动 · [2026-10-16] 聚焦 + 阈值
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
     hand: CardData[];
@@ -37,6 +37,7 @@ const AnimatedHandCard = ({
     c, isNew, initialX, isHovered, isDragging,
     translateY, translateX, baseScale, baseRotate, cardZIndex,
     vh,
+    handIndex, dragEnabled = true, // [2026-10-16] handIndex：聚焦命中检测用；dragEnabled：聚焦模式下关掉拖拽
     onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
     game, playerBench, combatField, enemyBench, cardBackUrl, cardBackVideoUrl, onViewArt, skinOverrides,
     animType, onAnimComplete, isCastingForHand, handTargetFilter, // [2026-08-08 莉莉子] 手牌动画支持 + HAND_CARD 高亮
@@ -89,6 +90,7 @@ const AnimatedHandCard = ({
     return (
         <motion.div
             key={c.id}
+            data-hand-index={handIndex}
             style={{
                 margin: '0 -12px',
                 zIndex: cardZIndex,
@@ -104,7 +106,7 @@ const AnimatedHandCard = ({
             onPointerUp={onPointerUp}
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
-            drag
+            drag={dragEnabled}
             dragSnapToOrigin={true}
             dragElastic={0.2}
             onDragStart={onDragStart}
@@ -266,6 +268,33 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
     const sunkGestureCardIdsRef = useRef<Set<string>>(new Set());
     /** 上一次的手牌张数（用来判断"是不是变短了"，见下方 effect） */
     const prevHandLenRef = useRef(hand.length);
+
+    // ── [2026-10-16 莉莉子] 手牌「聚焦」：触摸端补齐 PC 悬停的「单卡放大 + 邻牌让位」──
+    //   程 2026-10-16 拍板：
+    //     ① **叫牌那一下顺带聚焦**被点的那张（`TOUCH_TUNE.focusOnRaise`）—— 第一下不再白按
+    //     ② 叫牌态下**按住不动** `TOUCH_TUNE.longPressMs` ⇒ 进入"聚焦滑动"模式：
+    //        之后手指划过手牌 ⇒ **焦点挨个切换**（这次手势**不再出牌**）
+    //     ③ 抬手 ⇒ 焦点**保留**（方便慢慢看）
+    //     ④ 点**画面空白** ⇒ 整排沉底 + 清焦点
+    //   ⚠️ 进入聚焦模式会把 framer 那次拖拽**掐断**（靠 `focusGen` 换 key 强制重挂）：
+    //      framer 的 drag **没有位移阈值**，手指一动它就开始拖牌 ⇒
+    //      若不掐断，"划过看牌"会变成"把牌拖出去"。重挂后卡回到原位、且本手势 `drag` 关闭。
+    const [touchFocusIndex, setTouchFocusIndex] = useState<number | null>(null);
+    const [focusMode, setFocusMode] = useState(false);
+    /** 每进入一次聚焦模式 +1；作为卡牌 key 的一部分 ⇒ 强制重挂那批卡（见上方注释） */
+    const [focusGen, setFocusGen] = useState(0);
+    const focusModeRef = useRef(false);
+    const focusPressTimerRef = useRef<number | null>(null);
+    const focusPressPtRef = useRef<{ x: number; y: number } | null>(null);
+    /** 本次手势已被"聚焦滑动"接管 ⇒ 抬手时**不许出牌** */
+    const focusSwallowRef = useRef(false);
+    const focusRafRef = useRef<number | null>(null);
+    /** 手牌区外壳（用来判断"点的是不是画面空白"） */
+    const handAreaRef = useRef<HTMLDivElement | null>(null);
+    /** 哨兵/常量拓宽（`as const` 会让分支比较炸 TS2367，见《规范-界面调参区》§1.3 陷阱④） */
+    const focusOnRaise = Boolean(TOUCH_TUNE.focusOnRaise);
+    const focusScaleValue = touchMode ? TOUCH_TUNE.focusScale : HOVER_SCALE;
+    const focusPushValue = touchMode ? TOUCH_TUNE.focusPushPx : 125;
     // [2026-07-22 莉莉子] 手牌离场动画状态: cardId → animType
     const [animMap, setAnimMap] = useState<Record<string, 'dissolve' | 'shatter' | 'volatile_burn'>>({});
 
@@ -346,8 +375,90 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
         // [2026-10-15 莉莉子 · 触屏] 只有手牌**变短**（打出/离手）才自动沉底。
         //   ⚠️ 原实现挂在"长度变化"上 ⇒ **上浮中途抽到一张牌也会把整排摁回去**（独立审查发现）。
         if (hand.length < prevHandLenRef.current) setTouchRaised(false);
+        // [2026-10-16] 手牌数量一变，按下标记的聚焦就失效了 ⇒ 一并清掉（否则会聚焦到错的那张）
+        setTouchFocusIndex(null);
         prevHandLenRef.current = hand.length;
     }, [hand.length]);
+
+    // ── [2026-10-16] 聚焦滑动：全局指针（滑动切焦点 / 抬手收尾）──
+    useEffect(() => {
+        if (!touchMode) return;
+        const onMove = (e: PointerEvent) => {
+            if (e.pointerType === 'mouse') return;
+            if (!focusModeRef.current) {
+                // 还没进聚焦模式：移动超过 8px（切比雪夫，与游戏同范数）⇒ 那是拖拽，撤掉长按计时
+                const d = focusPressPtRef.current;
+                if (d && focusPressTimerRef.current !== null
+                    && Math.max(Math.abs(e.clientX - d.x), Math.abs(e.clientY - d.y)) > TOUCH_TUNE.moveCancelPx) {
+                    window.clearTimeout(focusPressTimerRef.current);
+                    focusPressTimerRef.current = null;
+                    focusPressPtRef.current = null;
+                }
+                return;
+            }
+            // 已进聚焦模式：手指滑到哪张就聚焦哪张（rAF 节流）
+            if (focusRafRef.current !== null) return;
+            const x = e.clientX;
+            const y = e.clientY;
+            focusRafRef.current = requestAnimationFrame(() => {
+                focusRafRef.current = null;
+                const el = document.elementFromPoint(x, y) as HTMLElement | null;
+                const cardEl = el ? (el.closest('[data-hand-index]') as HTMLElement | null) : null;
+                const raw = cardEl ? cardEl.getAttribute('data-hand-index') : null;
+                setTouchFocusIndex(raw != null && raw !== '' ? Number(raw) : null);
+            });
+        };
+        const onUp = (e: PointerEvent) => {
+            if (e.pointerType === 'mouse') return;
+            if (focusPressTimerRef.current !== null) {
+                window.clearTimeout(focusPressTimerRef.current);
+                focusPressTimerRef.current = null;
+            }
+            focusPressPtRef.current = null;
+            if (focusModeRef.current) {
+                focusModeRef.current = false;
+                setFocusMode(false); // 焦点**保留**（抬手后还要能慢慢看）
+                // "本次手势不许出牌"要等这一抬手的 click / dragEnd 都走完再放开
+                window.setTimeout(() => { focusSwallowRef.current = false; }, 0);
+            }
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+        return () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+            // [2026-10-16] 卸载时把长按计时器也清掉（否则组件走了它还会 setState）
+            if (focusPressTimerRef.current !== null) {
+                window.clearTimeout(focusPressTimerRef.current);
+                focusPressTimerRef.current = null;
+            }
+            if (focusRafRef.current !== null) { cancelAnimationFrame(focusRafRef.current); focusRafRef.current = null; }
+        };
+    }, [touchMode]);
+
+    // ── [2026-10-16] 点「画面空白」⇒ 叫牌的手牌重新沉底 + 清焦点（程 2026-10-16 要求）──
+    useEffect(() => {
+        if (!touchMode || !touchRaised) return;
+        const onDown = (e: PointerEvent) => {
+            if (e.pointerType === 'mouse') return;
+            // ① 落在手牌区矩形内（含卡与卡之间的空隙）⇒ 不算空白
+            const area = handAreaRef.current;
+            if (area) {
+                const r = area.getBoundingClientRect();
+                if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+            }
+            // ② 落在别的可交互元素上（按钮 / 卡牌 / 战场 / 备战席 / 可预览元素…）⇒ 也不算空白
+            const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+            if (el && el.closest('button, a, input, [data-entity-id], [data-hand-index], [data-combat-index], [data-gaze], [role="button"]')) return;
+            // ③ 真·空白 ⇒ 沉底 + 清焦点
+            setTouchRaised(false);
+            setTouchFocusIndex(null);
+        };
+        window.addEventListener('pointerdown', onDown, true);
+        return () => window.removeEventListener('pointerdown', onDown, true);
+    }, [touchMode, touchRaised]);
 
     // [2026-07-22 莉莉子] 清理已不存在的卡牌 animMap 条目（防内存泄漏）
     useEffect(() => {
@@ -375,11 +486,21 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
      * 触屏没有真正的 hover，但浏览器会**补发 mouseenter** ⇒ 被点那张卡会
      * `translateY=0` + `scale=HOVER_SCALE` + 邻牌被推开 ±125，抬手后还不还原
      * ⇒ 手机上看到的是"**一张卡炸开**"，而不是程要的"整排手牌齐平上浮"（独立审查发现）。
+     * [2026-10-16 莉莉子] 但"叫牌后看不清手牌"恰恰就是缺了这个放大
+     * ⇒ 触摸端改用**显式聚焦态** `touchFocusIndex` 顶替（视觉与 PC 悬停完全同款，
+     *    只是触发方式从 hover 换成"叫牌那一下 + 按住滑动"）。
      */
-    const effectiveHoverIndex = touchMode ? null : hoverIndex;
+    const effectiveHoverIndex = touchMode ? touchFocusIndex : hoverIndex;
 
     return (
         <div
+            ref={handAreaRef}
+            // [2026-10-16 莉莉子 · 触屏] 手牌区补 `touch-action: none`（问题②A）。
+            //   病根同 Battlefield.tsx:56-65 那条：全项目只有少数几处有 touch-action，
+            //   而**手牌区一处都没有** ⇒ 触摸上的竖向划动会被 WebView 当滚动/手势接管 ⇒
+            //   发 pointercancel ⇒ framer 的拖拽**中途断掉**（真机体感就是"拖不动"）。
+            //   ⚠️ 手牌区本来就是固定区域、不需要任何浏览器手势，所以这里是纯收益。
+            style={{ touchAction: 'none' }}
             // [动态容器层叠] 以下场景手牌容器提升至 z-[999] 层：
             // ① draggingId !== null — 拖拽卡牌时覆盖全屏
             // ② hasNewCard === true — 新抽卡牌飞入动画期间，防止被中间通报字幕盖住
@@ -405,13 +526,15 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
 
                     let translateX = 0;
                     if (effectiveHoverIndex !== null && !draggingId) {
-                        const pushDist = 125;
+                        // [2026-10-16] 让位距离：PC 走 125；触摸走 `TOUCH_TUNE.focusPushPx`（默认同为 125）
+                        const pushDist = focusPushValue;
                         if (index < effectiveHoverIndex) translateX = -pushDist;
                         if (index > effectiveHoverIndex) translateX = pushDist;
                     }
 
                     const rotate = isHovered || isDragging ? 0 : rotation;
-                    const scale = isDragging ? DRAG_SCALE : (isHovered ? HOVER_SCALE : 1.0);
+                    // [2026-10-16] 放大倍数：PC 走 HOVER_SCALE；触摸走 `TOUCH_TUNE.focusScale`（默认同为 2.5）
+                    const scale = isDragging ? DRAG_SCALE : (isHovered ? focusScaleValue : 1.0);
                     const cardZIndex = isDragging ? 999 : (isHovered ? 100 : index);
 
                     // [isNew] flex 偏移补偿：手牌越多新卡槽位越靠右，反向补偿锚定到屏幕中央
@@ -423,8 +546,12 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                     // 剥离原有的内联 motion.div，通过 props 将计算好的参数传递给独立的物理渲染核
                     return (
                         <AnimatedHandCard
-                            key={c.id}
+                            // [2026-10-16] key 带 `focusGen`：进入聚焦模式时**强制重挂**这批卡 ⇒
+                            //   干掉 framer 正在进行的那次 drag（否则"划过看牌"会变成"把牌拖出去"）
+                            key={`${focusGen}-${c.id}`}
                             c={c}
+                            handIndex={index}
+                            dragEnabled={!(touchMode && focusMode)}
                             isNew={isNewMap.get(c.id) || false}
                             initialX={initialX}
                             isHovered={isHovered}
@@ -466,9 +593,29 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                 //    Framer 会在越过拖拽阈值时才取 drag 的 originPoint，
                                 //    取到的会是弹簧动画的**中途值** ⇒ 卡与手指错位（独立审查发现）。
                                 //    改为"抬手时再叫起来"，既避开这个坑，反馈也依然是即时的。
+
+                                // [2026-10-16] 叫牌态 + 触摸 ⇒ 按住不动 `longPressMs` 后进入"聚焦滑动"：
+                                //   之后手指划过手牌 ⇒ 焦点挨个切换（本次手势不再出牌）。
+                                //   ⚠️ 一移动超过 8px 就撤掉计时（那是"拖出去"，见全局 pointermove）。
+                                if (touchMode && e.pointerType !== 'mouse' && touchRaised && !isCastingForHand) {
+                                    focusPressPtRef.current = { x: e.clientX, y: e.clientY };
+                                    if (focusPressTimerRef.current !== null) window.clearTimeout(focusPressTimerRef.current);
+                                    focusPressTimerRef.current = window.setTimeout(() => {
+                                        focusPressTimerRef.current = null;
+                                        focusPressPtRef.current = null;
+                                        focusSwallowRef.current = true;
+                                        focusModeRef.current = true;
+                                        setFocusGen(g => g + 1); // 重挂 ⇒ 掐断 framer 那次拖拽，卡回原位
+                                        setDraggingId(null);
+                                        setFocusMode(true);
+                                        setTouchFocusIndex(index);
+                                    }, TOUCH_TUNE.longPressMs);
+                                }
                             }}
                             onPointerUp={(e: any) => {
                                 if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
+                                // [2026-10-16] 本次手势已被"聚焦滑动"接管 ⇒ 抬手不出牌
+                                if (touchMode && focusSwallowRef.current) return;
                                 const dist = Math.hypot(e.clientX - pointerPos.current.x, e.clientY - pointerPos.current.y);
                                 // [触屏] 点击门限比鼠标宽（见 TOUCH_TAP_SLOP 注释）
                                 const slop = touchMode ? TOUCH_TAP_SLOP : 5;
@@ -477,6 +624,9 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                     if (sunkGestureCardIdsRef.current.has(c.id)) {
                                         sunkGestureCardIdsRef.current.delete(c.id);
                                         setTouchRaised(true);
+                                        // [2026-10-16] 合算设计：叫牌那一下**顺带聚焦**被点的这张
+                                        //   ⇒ 第一下不再白按（既防误打、又立刻看清这张是什么）
+                                        if (touchMode && focusOnRaise) setTouchFocusIndex(index);
                                         return;
                                     }
                                     onCardClick(c);
@@ -490,6 +640,11 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                 if (c.type?.includes('spell')) eventBus.emit(GameEvents.SFX_SPELL_DRAG);
                             }}
                             onDragEnd={(_e: any, info: any) => {
+                                // [2026-10-16] 本次手势已被"聚焦滑动"接管 ⇒ 抬手不许出牌
+                                if (touchMode && focusSwallowRef.current) {
+                                    setDraggingId(null); setHoverIndex(null); onHover(null);
+                                    return;
+                                }
                                 setDraggingId(null);
                                 setHoverIndex(null);
                                 onHover(null);
