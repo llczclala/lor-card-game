@@ -46,7 +46,7 @@ export const ROGUE_HERO_UI = {
     /** 按钮内边距 px（原 p-3 = 12） */
     backPad: 12,
     /** 箭头图标 px（原 `<ArrowLeft size={22} />`） */
-    backIconSize: 22,
+    backIconSize: 44,
 
     // ══ ② 整屏框架 ═════════════════════════════════════════════════════
     /** 左右内边距 px（原 px-6 = 24） */
@@ -58,25 +58,25 @@ export const ROGUE_HERO_UI = {
 
     // ══ ③ 左列：圆环头像 + 名字 + 星槽 ═════════════════════════════════
     /** 左列宽度 px（原 w-[280px] = 280） */
-    leftColumnWidth: 280,
+    leftColumnWidth: 380,
     /** 头像 ↔ 右侧文字 间距 px（原 gap-4 = 16） */
     avatarRowGap: 16,
     /** 名字 ↔ 星槽 纵向间距 px（原 gap-2 = 8） */
     nameColumnGap: 8,
     /** 名字字号 px（原 text-2xl = 24） */
-    nameFontSize: 24,
+    nameFontSize: 42,
     /** 星与星之间间距 px（原 gap-1.5 = 6） */
     starGap: 6,
     /** 单颗星尺寸 px（原 `<Star size={18} />`） */
-    starSize: 18,
+    starSize: 27,
 
     // ══ ④ 六个页签按钮（总览 / 初始牌组 / 天启者等级 / 武装 / 神格神经 / 个性化）═══
     /** 页签之间纵向间距 px（原 gap-2 = 8） */
     tabsGap: 8,
     /** 页签整列的上移量 px（原 `LEFT_COLUMN_OFFSET.buttonsShift` = -mt-64 = -256，**负值 = 往上**） */
-    tabsShift: -256,
+    tabsShift: -75,
     /** 单个页签内「指示点 ↔ 文字」间距 px（原 gap-3 = 12） */
-    tabItemGap: 12,
+    tabItemGap: 24,
     /** 单个页签左右内边距 px（原 px-2 = 8） */
     tabItemPadX: 8,
     /** 单个页签上下内边距 px（原 py-2 = 8） */
@@ -86,7 +86,7 @@ export const ROGUE_HERO_UI = {
     /** 指示点描边粗细 px（原 border-2） */
     tabDotBorder: 2,
     /** 页签文字字号 px（原 text-xl = 20） */
-    tabLabelFontSize: 20,
+    tabLabelFontSize: 40,
 
     // ══ ⑤ 主体：手牌样式大图 + 确定选择 ═════════════════════════════════
     /** 手牌样式列 ↔ 右侧内容窗 的间距 px（原 gap-6 = 24） */
@@ -118,13 +118,13 @@ export const ROGUE_HERO_UI = {
     /** 圆钮 ↔ 文字 间距 px（原 gap-1.5 = 6） */
     swapGroupGap: 6,
     /** 圆钮直径 px（原 w-14 h-14 = 56） */
-    swapBtnSize: 56,
+    swapBtnSize: 84,
     /** 圆钮描边粗细 px（原 border-2） */
     swapBtnBorder: 2,
     /** 圆钮图标 px（原 `<RefreshCcw size={22} />`） */
-    swapIconSize: 22,
+    swapIconSize: 33,
     /** 「更换天启者」文字字号 px（原 text-[10px] = 10） */
-    swapLabelFontSize: 10,
+    swapLabelFontSize: 20,
 } as const;
 
 interface RogueHeroSelectProps {
