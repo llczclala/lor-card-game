@@ -53,7 +53,7 @@ export const PERSONALIZE_UI = {
      *    盒子宽 288 ⇒ `288 × (s−1) ≤ 168` ⇒ **`s ≲ 1.55`**。
      *    ⚠️ 你一动左右面板宽度或根间距，这个上限就变 —— **几何预算按最坏值算**。
      */
-    dioramaScale: 1,
+    dioramaScale: 1.3,
 
     // ══ ① 整页：三翼布局 ══
     /** 左翼 ↔ 中翼 ↔ 右翼 的横向间距 px（原 gap-6 = 24） */
@@ -244,9 +244,9 @@ export const PERSONALIZE_UI = {
      * 💡 想让大图「贴面板左边缘、留 N px」：`left = -(大图宽 + N) / 面板宽 × 100%`（面板宽 = `rightPanelWidth`，现 288）。
      */
     /** 卡背大图 左偏移（原 `left-[105%]`；想挪到面板左侧就填负数，例如 `-95%`） */
-    previewCardBackLeft: '105%',
+    previewCardBackLeft: '-105%',
     /** 牌桌大图 左偏移（原 `left-[105%]`；牌桌更宽 ⇒ 与卡背分开调） */
-    previewDeskLeft: '105%',
+    previewDeskLeft: '-105%',
     /** 卡背大图 纵向位置（原 `top-1/2` = `'50%'`；自居中，与图高无关） */
     previewCardBackTop: '50%',
     /** 牌桌大图 纵向位置（原 `top-1/2` = `'50%'`；自居中） */
@@ -576,9 +576,15 @@ export const RoguePersonalize: React.FC<RoguePersonalizeProps> = ({ heroKey, use
                 />
             </div>
 
-            {/* 右翼：卡背 / 牌桌个性化 */}
+            {/* 右翼：卡背 / 牌桌个性化
+                ⚠️【层级 · 2026-10-16】这里必须是 `z-[60]`，**不能退回 `z-40`** —— 与 DeckBuilder 备战枢纽同款坑：
+                  ① 悬停大图挂在**本面板内部**；
+                  ② 面板自己带 `z-40` + `backdrop-blur-md` ⇒ **本身就是一个层叠上下文**
+                     ⇒ 大图写的 `z-50` **只在面板内部有效、管不到外面**；
+                  ③ 而中翼立体盒子是 `z-50` > 面板的 `z-40` ⇒ **整个面板（连同它的大图）都被压在盒子下面**。
+                ⇒ 抬到 `z-[60]`：**高于中翼的 50**，同时**低于**卡背/牌桌选择器的 `z-[300]`（选择器仍能盖住本面板）。 */}
             <div
-                className="h-fit bg-[#1e293b]/90 border-white/10 flex flex-col shadow-2xl relative overflow-visible backdrop-blur-md z-40"
+                className="h-fit bg-[#1e293b]/90 border-white/10 flex flex-col shadow-2xl relative overflow-visible backdrop-blur-md z-[60]"
                 style={{
                     width: PERSONALIZE_UI.rightPanelWidth,
                     paddingBottom: PERSONALIZE_UI.rightPanelPadBottom,
