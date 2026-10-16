@@ -59,7 +59,11 @@ const DeskMediaInner: React.FC<DeskMediaProps> = ({ deskIndex, dynamic = false, 
         );
     }
     // [2026-09-18] 兜底 desks[0]：存档里可能残留已失效的牌桌编号（如 09-18 重编号前的旧值）
-    return <img src={PERSONALIZATION_ASSETS.desks[deskIndex] ?? PERSONALIZATION_ASSETS.desks[0]} className={className} style={style} alt="牌桌" />;
+    // [2026-10-16 莉莉子 · 触屏] `draggable={false}`：Chromium 里 `<img>` **默认可拖拽**，
+    //   长按会启动"图片拖拽"手势 ⇒ 浏览器把手势接走（pointercancel / 打乱 hover）
+    //   ⇒ 备战枢纽里长按牌桌缩略图浮出的大图**存活不到 100ms**（程实测"按着就消失、松手才留住"）。
+    //   牌桌图在任何场景都只是背景/装饰，本就不该可拖拽 ⇒ 直接锁死，无副作用。
+    return <img src={PERSONALIZATION_ASSETS.desks[deskIndex] ?? PERSONALIZATION_ASSETS.desks[0]} draggable={false} className={className} style={style} alt="牌桌" />;
 };
 
 // ══════════════════════════════════════════════════════════════

@@ -1528,12 +1528,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         <div
                                             data-gaze="hub-thumb"
                                             className="relative group cursor-pointer"
+                                            style={{ touchAction: 'none' }}
                                             onMouseEnter={() => setHubHoverItem('cardBack')}
                                             onMouseLeave={() => setHubHoverItem(null)}
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSelectorType('cardBack'); }} // [新增] 音效
                                         >
                                             <div className="rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black" style={{ width: HUB_UI.cardBackW, height: HUB_UI.cardBackH }}>
-                                                <img src={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} className="w-full h-full object-cover" alt="卡背" />
+                                                {/* ⚠️ `draggable={false}` 是**必须**的：Chromium 里 `<img>` 默认可拖拽，
+                                                    长按会启动"图片拖拽"手势 ⇒ 浏览器把手势接走（pointercancel / 打乱 hover）
+                                                    ⇒ 长按浮出的大图**存活不到 100ms**。
+                                                    程 2026-10-16 实测："松手才留得住、按着就消失"。 */}
+                                                <img src={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} draggable={false} className="w-full h-full object-cover" alt="卡背" />
                                             </div>
                                         </div>
                                     </div>
@@ -1544,6 +1549,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         <div
                                             data-gaze="hub-thumb"
                                             className="relative group cursor-pointer"
+                                            style={{ touchAction: 'none' }}
                                             onMouseEnter={() => setHubHoverItem('desk')}
                                             onMouseLeave={() => setHubHoverItem(null)}
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSelectorType('desk'); }} // [新增] 音效
