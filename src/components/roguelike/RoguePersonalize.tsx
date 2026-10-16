@@ -186,7 +186,7 @@ export const PERSONALIZE_UI = {
     /** 定制内容区左右内边距 px（原 px-6 = 24） */
     customizePadX: 24,
     /** 「卡背」/「牌桌」小标签字号 px（原 text-xs = 12；两个标签共用） */
-    selectorLabelFontSize: 12,
+    selectorLabelFontSize: 24,
     /** 「卡背」/「牌桌」小标签行高（原 text-xs 自带 line-height = 16；两个标签共用） */
     /** 标签 ↔ 缩略图 的间距 px（原 gap-4 = 16；两个块共用） */
     selectorBlockGap: 16,
@@ -223,7 +223,7 @@ export const PERSONALIZE_UI = {
     /** 「PREVIEW」条上下内边距 px（原 py-1 = 4） */
     previewLabelPadY: 4,
     /** 「PREVIEW」字号 px（原 text-xs = 12） */
-    previewLabelFontSize: 12,
+    previewLabelFontSize: 24,
     /** 「PREVIEW」行高（原 text-xs 自带 line-height = 16） */
 
     // ══ ⑤ 关闭按钮（右上角悬浮）══
@@ -244,13 +244,13 @@ export const PERSONALIZE_UI = {
      * 💡 想让大图「贴面板左边缘、留 N px」：`left = -(大图宽 + N) / 面板宽 × 100%`（面板宽 = `rightPanelWidth`，现 288）。
      */
     /** 卡背大图 左偏移（原 `left-[105%]`；想挪到面板左侧就填负数，例如 `-95%`） */
-    previewCardBackLeft: '-105%',
+    previewCardBackLeft: '-75%',
     /** 牌桌大图 左偏移（原 `left-[105%]`；牌桌更宽 ⇒ 与卡背分开调） */
-    previewDeskLeft: '-105%',
+    previewDeskLeft: '-135%',
     /** 卡背大图 纵向位置（原 `top-1/2` = `'50%'`；自居中，与图高无关） */
-    previewCardBackTop: '50%',
+    previewCardBackTop: '20%',
     /** 牌桌大图 纵向位置（原 `top-1/2` = `'50%'`；自居中） */
-    previewDeskTop: '50%',
+    previewDeskTop: '85%',
     /** 悬停大图放大倍数（原 `scale={1.25}`） */
     floatingPreviewScale: 1.25,
 } as const;
