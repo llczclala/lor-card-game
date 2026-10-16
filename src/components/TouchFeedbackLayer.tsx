@@ -277,6 +277,37 @@ export const TouchFeedbackLayer: React.FC = () => {
         };
 
         /**
+         * ⚠️【2026-10-16 · 程实测「大图一出现就消失」】`pointercancel` 必须与 `blur` 分开处理。
+         *
+         * 原来的写法把两者都交给 `onInterrupt()` ⇒ **abort() ⇒ closePreview()**。
+         * 但 `pointercancel` 的语义是「浏览器把这个手势接走了」，**不是**「用户不要了」：
+         *   安卓在长按 ~500ms 时会因为**原生长按菜单 / 图片拖拽 / 手势导航**接管而派发它 ——
+         *   而我们的长按是 **400ms** 就浮出预览 ⇒ **预览只活 100ms 就被这一刀收掉**。
+         *
+         * ⇒ 在 `gaze`（预览已浮出）时，取消应当**等同于抬手**：走滞留那条路，让预览自己到期再关。
+         *   玩家的观感才是「我长按出来的东西留住了」。
+         * ⚠️ `blur` / `visibilitychange`（切后台）**仍然走 `onInterrupt()` 立即清** —— 那时该收就得收。
+         */
+        const onPointerCancel = () => {
+            if (rafRef.current !== null) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
+            if (modeRef.current === 'gaze') {
+                modeRef.current = 'linger';
+                touchLingerStore.set(true);
+                clearLingerTimer();
+                lingerTimerRef.current = window.setTimeout(() => {
+                    lingerTimerRef.current = null;
+                    closePreview();
+                    modeRef.current = 'idle';
+                }, TOUCH_TUNE.lingerMs);
+                return;
+            }
+            abort();
+        };
+
+        /**
          * 吃掉安卓 WebView 在**可预览元素**上的长按原生菜单。
          * 不加这一段的话，长按 ~500ms 会派发 contextmenu ⇒ 命中 Card.tsx:1960 的
          * onContextMenu ⇒ 弹出详情界面，和本层的悬停模式**抢同一个手势**。
@@ -315,7 +346,7 @@ export const TouchFeedbackLayer: React.FC = () => {
         window.addEventListener('pointerdown', onDown, { capture: true, passive: true });
         window.addEventListener('pointermove', onMove, { capture: true, passive: true });
         window.addEventListener('pointerup', onUp, { capture: true, passive: true });
-        window.addEventListener('pointercancel', onInterrupt, { capture: true, passive: true });
+        window.addEventListener('pointercancel', onPointerCancel, { capture: true, passive: true });
         window.addEventListener('contextmenu', onContextMenu, { capture: true });
         window.addEventListener('click', onClickCapture, { capture: true });
         // [边界] 切后台 / 来电 / 页面隐藏 ⇒ 必须清掉
@@ -335,7 +366,7 @@ export const TouchFeedbackLayer: React.FC = () => {
             window.removeEventListener('pointerdown', onDown, { capture: true });
             window.removeEventListener('pointermove', onMove, { capture: true });
             window.removeEventListener('pointerup', onUp, { capture: true });
-            window.removeEventListener('pointercancel', onInterrupt, { capture: true });
+            window.removeEventListener('pointercancel', onPointerCancel, { capture: true });
             window.removeEventListener('contextmenu', onContextMenu, { capture: true });
             window.removeEventListener('click', onClickCapture, { capture: true });
             window.removeEventListener('blur', onInterrupt);
