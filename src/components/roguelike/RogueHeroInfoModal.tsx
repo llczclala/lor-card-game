@@ -134,13 +134,13 @@ export const LEVELS_UI = {
     /** 头像 ↔ 经验数字 间距 px（原 gap-2.5 = 10） */
     avatarBlockGap: 10,
     /** 经验数字字号 px（原 text-xl = 20） */
-    expFontSize: 20,
+    expFontSize: 40,
 
     // ── 区域 2：下一个等级奖励 ──
     /** 「下一个等级奖励：」标题 ↔ 奖励条 间距 px（原 gap-2 = 8） */
     rewardBlockGap: 8,
     /** 标题字号 px（原 text-sm = 14） */
-    rewardTitleFontSize: 14,
+    rewardTitleFontSize: 28,
     /** 奖励条内「等级圆 ↔ 文字」间距 px（原 gap-5 = 20） */
     rewardRowGap: 20,
     /** 奖励条左右内边距 px（原 px-6 = 24） */
@@ -150,15 +150,15 @@ export const LEVELS_UI = {
     /** 奖励条圆角 px（原 rounded-2xl = 16） */
     rewardRadius: 16,
     /** 等级数字圆直径 px（原 w-16 h-16 = 64） */
-    levelCircleSize: 64,
+    levelCircleSize: 96,
     /** 等级数字字号 px（原 text-4xl = 36） */
-    levelNumberFontSize: 36,
+    levelNumberFontSize: 72,
     /** 「短名 ↔ 完整效果」间距 px（原 gap-1 = 4） */
     rewardTextGap: 4,
     /** 奖励短名字号 px（原 text-xl = 20） */
-    rewardLabelFontSize: 20,
+    rewardLabelFontSize: 40,
     /** 奖励完整效果字号 px（原 text-base = 16） */
-    rewardValueFontSize: 16,
+    rewardValueFontSize: 32,
 
     // ── 区域 3：按钮行 ──
     /** 按钮之间间距 px（原 gap-2 = 8） */
@@ -176,7 +176,7 @@ export const LEVELS_UI = {
     /** 圆角 px（原 rounded-xl = 12） */
     viewAllRadius: 12,
     /** 字号 px（原 text-base = 16） */
-    viewAllFontSize: 16,
+    viewAllFontSize: 32,
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -191,7 +191,7 @@ export const LEVELS_UI = {
 export const DECK_UI = {
     // ── 布局（原 `DECK_GEOMETRY`，值未变）──
     topGap: 75,            // 整体距离内容区顶部 px
-    listWidth: 800,        // 左侧卡牌列表宽度 px（[2026-08-26] 收窄，武装图标放每行卡牌后方独立区）
+    listWidth: 700,        // 左侧卡牌列表宽度 px（[2026-08-26] 收窄，武装图标放每行卡牌后方独立区）
     gap: 150,               // 手牌样式与左侧列表间距 px
     handScale: 2.5,        // 右侧手牌样式缩放大小
     handOffsetTop: 100,      // 右侧手牌样式垂直位置偏移 px
@@ -205,7 +205,7 @@ export const DECK_UI = {
     /** 单个卡行内「横条 ↔ 武装图标区」间距 px（原 gap-2.5 = 10） */
     rowGap: 10,
     /** 卡条高度 px（原 h-14 = 56） */
-    rowHeight: 56,
+    rowHeight: 84,
     /** 卡条圆角 px（原 rounded-lg = 8） */
     rowRadius: 8,
     /** 卡条内左右内边距 px（原 px-4 = 16） */
@@ -213,17 +213,17 @@ export const DECK_UI = {
     /** 「费用圆 ↔ 卡名」间距 px（原 gap-3 = 12） */
     costGap: 12,
     /** 费用圆直径 px（原 w-7 h-7 = 28） */
-    costSize: 28,
+    costSize: 56,
     /** 费用数字字号 px（原 text-sm = 14） */
-    costFontSize: 14,
+    costFontSize: 28,
     /** 费用圆描边粗细 px（原 border = 1） */
     costBorderWidth: 1,
     /** 卡名字号 px（原 text-base = 16） */
-    nameFontSize: 16,
+    nameFontSize: 32,
     /** 后方武装图标（六边形）尺寸 px（原 w-10 h-10 = 40） */
-    equipIconSize: 40,
+    equipIconSize: 80,
     /** 多个武装时的「Xn」字号 px（原 text-sm = 14） */
-    equipFontSize: 14,
+    equipFontSize: 28,
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -254,11 +254,11 @@ export const LEVEL_REWARDS_UI = {
     /** 标题栏下边框粗细 px（原 border-b = 1） */
     headerBorderWidth: 1,
     /** 「天启者等级奖励」字号 px（原 text-xl = 20） */
-    titleFontSize: 20,
+    titleFontSize: 40,
     /** 关闭按钮内边距 px（原 p-2 = 8） */
     closePad: 8,
     /** 关闭叉号图标 px（原 `<X size={20} />`） */
-    closeIconSize: 20,
+    closeIconSize: 40,
 
     // ── ③ 奖励列表 ──
     /** 列表内边距 px（原 p-4 = 16） */
@@ -276,15 +276,15 @@ export const LEVEL_REWARDS_UI = {
     /** 单行描边粗细 px（原 border = 1） */
     rowBorderWidth: 1,
     /** 等级数字圆直径 px（原 w-12 h-12 = 48） */
-    levelCircleSize: 48,
+    levelCircleSize: 72,
     /** 等级数字字号 px（原 text-2xl = 24） */
-    levelNumberFontSize: 24,
+    levelNumberFontSize: 36,
     /** 「短名 ↔ 完整效果」间距 px（原 gap-0.5 = 2） */
     textGap: 2,
     /** 奖励短名字号 px（原 text-base = 16） */
-    labelFontSize: 16,
+    labelFontSize: 32,
     /** 奖励完整效果字号 px（原 text-sm = 14） */
-    valueFontSize: 14,
+    valueFontSize: 28,
 } as const;
 
 // ══════════════════════════════════════════════════════════════════════
@@ -306,11 +306,21 @@ export const ARMAMENT_UI = {
 
     // ── ② 左侧：手牌样式 + 3 个武装槽 ──
     /** 手牌与武装槽组的间距 px（原 gap-10 = 40） */
-    leftGap: 40,
+    leftGap: 50,
     /** 手牌放大倍数（原写死字面量 1.9；`slotH` 用同一值，改这里两处一起变） */
-    handScale: 1.9,
+    handScale: 2.5,
     /** 3 个槽竖排间距 px（原内联 8） */
     slotColGap: 8,
+    /**
+     * 【槽大小旋钮】单个武装槽的**高度缩放**（1 = 原样）。
+     * ⚠️ 槽高本来是**派生**的：`slotH = (HAND_CARD_HEIGHT × handScale − ARMAMENT_MAX_STOCK) / 3`
+     *    ⇒ 想单独放大 / 缩小槽、又不想动右边手牌，就拨**这一个**数。
+     *    **别**去动 `handScale` —— 那个会连手牌一起放大（2026-10-16 程就是在这里找不到入口）。
+     * ⚠️ 它同时影响：左侧 3 个槽 + **拖拽跟手图标**（那个复用同一个 `slotH`）。
+     */
+    slotScale: 1,
+    /** 槽宽 / 槽高 比（六边形宽高比，原写死 0.88） */
+    slotWidthRatio: 0.88,
     /** 单个槽「六边形 ↔ 更换/卸载按钮列」间距 px（原 gap-3 = 12） */
     slotRowGap: 12,
     /** 更换/卸载按钮纵向间距 px（原 gap-1.5 = 6） */
@@ -322,11 +332,11 @@ export const ARMAMENT_UI = {
     /** 更换/卸载按钮描边粗细 px（原 border = 1） */
     btnBorderWidth: 1,
     /** 更换/卸载按钮图标 px（原 `<RefreshCw size={16} />` / `<Minus size={16} />`） */
-    btnIconSize: 16,
+    btnIconSize: 32,
 
     // ── ③ 右侧武装库抽屉 ──
     /** 抽屉展开宽度 px（原 w-[420px]；让位 marginRight / 开合按钮 right / 动效 width 同一值） */
-    drawerWidth: 420,
+    drawerWidth: 600,
     /** 抽屉左边缘描边粗细 px（原 border-l = 1） */
     drawerLeftBorderWidth: 1,
     /** 抽屉头部内边距 px（原 p-4 = 16） */
@@ -338,7 +348,7 @@ export const ARMAMENT_UI = {
     /** 抽屉头部「标题行 ↔ 工具条 ↔ 筛选面板 ↔ 常驻提示」间距 px（原 space-y-3 = 12，现由 flex 列 + gap 实现） */
     drawerHeadGap: 12,
     /** 「可装 N/M」计数标签字号 px（原 text-xs = 12） */
-    countFontSize: 12,
+    countFontSize: 24,
     /** 抽屉标题行「武装库 ↔ 可装计数」间距 px（原 gap-2 = 8） */
     titleRowGap: 8,
     /** 工具条按钮之间间距 px（原 gap-1.5 = 6） */
@@ -352,17 +362,17 @@ export const ARMAMENT_UI = {
     /** 搜索框圆角 px（原 rounded-md = 6） */
     searchRadius: 6,
     /** 搜索框字号 px（原 text-sm = 14） */
-    searchFontSize: 14,
+    searchFontSize: 28,
     /** 搜索框内放大镜图标 px（原 `<Search size={14} />`） */
-    searchIconSize: 14,
+    searchIconSize: 28,
     /** 工具条方形按钮内边距 px（原 p-2 = 8） */
     toolBtnPad: 8,
     /** 工具条方形按钮圆角 px（原 rounded-md = 6） */
     toolBtnRadius: 6,
     /** 工具条图标 px（原 `<Filter/ChevronDown/ArrowUpNarrowWide/ArrowDownWideNarrow/RotateCcw size={15} />`） */
-    toolIconSize: 15,
+    toolIconSize: 30,
     /** 排序下拉面板距按钮 px（原 mt-1 = 4） */
-    sortMenuMarginTop: 4,
+    sortMenuMarginTop: 8,
     /** 排序下拉面板宽度 px（原 w-32 = 128） */
     sortMenuWidth: 128,
     /** 排序下拉面板圆角 px（原 rounded-md = 6） */
@@ -374,7 +384,7 @@ export const ARMAMENT_UI = {
     /** 排序下拉项上下内边距 px（原 py-2 = 8） */
     sortItemPadY: 8,
     /** 排序下拉项字号 px（原 text-xs = 12） */
-    sortItemFontSize: 12,
+    sortItemFontSize: 24,
 
     // ── ④ 抽屉内筛选面板 ──
     /** 筛选面板「可用性 ↔ 品质」两组间距 px（原 space-y-3 = 12，现由 flex 列 + gap 实现） */
@@ -392,15 +402,15 @@ export const ARMAMENT_UI = {
     /** 可用性/品质小按钮圆角 px（原 rounded = 4） */
     chipRadius: 4,
     /** 可用性/品质小按钮字号 px（原 text-xs = 12） */
-    chipFontSize: 12,
+    chipFontSize: 24,
     /** 可用性/品质小按钮描边粗细 px（原 border = 1） */
     chipBorderWidth: 1,
     /** 品质多选按钮之间间距 px（原 gap-1.5 = 6） */
     rarityGap: 6,
     /** 常驻提示行（仅显示可装入此槽）字号 px（原 text-[11px]） */
-    hintFontSize: 11,
+    hintFontSize: 22,
     /** 常驻提示行「文字 ↔ 显示全部」间距 px（原 gap-2 = 8） */
-    hintGap: 8,
+    hintGap: 16,
 
     // ── ⑤ 抽屉内武装列表 ──
     /** 列表内边距 px（原 p-4 = 16） */
@@ -414,11 +424,11 @@ export const ARMAMENT_UI = {
     /** 空状态图标与下方文字间距 px（原 mb-3 = 12） */
     emptyIconMarginBottom: 12,
     /** 空状态主文案字号 px（原 text-sm = 14） */
-    emptyTitleFontSize: 14,
+    emptyTitleFontSize: 28,
     /** 空状态主文案下方间距 px（原 mb-1 = 4） */
     emptyTitleMarginBottom: 4,
     /** 空状态副文案字号 px（原 text-xs = 12） */
-    emptyDescFontSize: 12,
+    emptyDescFontSize: 24,
     /** 空状态副文案下方间距 px（原 mb-4 = 16） */
     emptyDescMarginBottom: 16,
     /** 「显示全部武装」左右内边距 px（原 px-3 = 12） */
@@ -428,7 +438,7 @@ export const ARMAMENT_UI = {
     /** 「显示全部武装」圆角 px（原 rounded = 4） */
     emptyBtnRadius: 4,
     /** 「显示全部武装」字号 px（原 text-xs = 12） */
-    emptyBtnFontSize: 12,
+    emptyBtnFontSize: 24,
     /** 可用/不可用分隔带上/下内边距 px（原 pt-1 = 4 / pb-0.5 = 2） */
     dividerPadTop: 4,
     /** 分隔带下内边距 px（原 pb-0.5 = 2） */
@@ -445,28 +455,41 @@ export const ARMAMENT_UI = {
     itemPadX: 16,
     /** 列表项上下内边距 px（原 py-5 = 20） */
     itemPadY: 20,
+    /**
+     * 【卡片大小旋钮】列表项里那个**六边形图标的宽度** px。
+     * ⚠️ 原代码这里是**写死的裸数字 60**（`style={{ width: 60, height: 60 * 1.14 }}`）⇒ 以前没有入口。
+     * 它 + `itemPadY` 一起决定「一张武装卡有多高」（行高本来就是**内容撑开**、没有写死值）。
+     */
+    itemIconWidth: 60,
+    /** 上述六边形图标的高 / 宽比（原写死 1.14 —— 拉长是为了六边形不变形） */
+    itemIconAspect: 1.14,
+    /**
+     * 列表项**最小高度** px（**0 = 不介入**，保持"内容撑开"的原样）。
+     * 想直接给卡片定高就填正数（内容超了仍会被撑开，不会裁切）。
+     */
+    itemMinHeight: 0,
     /** 列表项圆角 px（原 rounded-xl = 12） */
     itemRadius: 12,
     /** 列表项描边粗细 px（原 border = 1） */
     itemBorderWidth: 1,
     /** 列表项右下角「X 数量」角标字号 px（原 text-xs = 12） */
-    stockFontSize: 12,
+    stockFontSize: 24,
     /** 列表项武装名字号 px（原 text-lg = 18） */
-    itemNameFontSize: 18,
+    itemNameFontSize: 36,
     /** 列表项描述字号 px（原 text-sm = 14） */
-    itemDescFontSize: 14,
+    itemDescFontSize: 28,
     /** 列表项品质描述字号 px（原 text-xs = 12） */
-    itemRarityFontSize: 12,
+    itemRarityFontSize: 24,
 
     // ── ⑥ 右缘开合按钮 ──
     /** 开合按钮宽 px（原 w-8 = 32） */
-    handleWidth: 32,
+    handleWidth: 64,
     /** 开合按钮高 px（原 h-14 = 56） */
-    handleHeight: 56,
+    handleHeight: 112,
     /** 开合按钮左侧圆角 px（原 rounded-l-lg = 8） */
-    handleRadius: 8,
+    handleRadius: 16,
     /** 开合按钮箭头图标 px（原 `<ChevronsLeft size={18} />` / `<ChevronsRight size={18} />`） */
-    handleIconSize: 18,
+    handleIconSize: 36,
 } as const;
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1747,7 +1770,11 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
     }, []);
 
     // 武装界面手牌 scale 1.9 → 槽总高 = 手牌高度 202×1.9（对齐其他界面）；倍数与手牌共用 ARMAMENT_UI.handScale
-    const slotH = (HAND_CARD_HEIGHT * ARMAMENT_UI.handScale - ARMAMENT_MAX_STOCK) / 3;
+    // 🎛️ 想**单独**调槽大小 ⇒ 拨 `ARMAMENT_UI.slotScale`（1 = 原样）；动 `handScale` 会把右边手牌一起放大。
+    //     `itemMinHeight` 是**哨兵**（0 = 不介入）⇒ 先过 Number() 拓宽，否则程一填数字就报 TS2367。
+    const slotScale = Number(ARMAMENT_UI.slotScale);
+    const itemMinHeight = Number(ARMAMENT_UI.itemMinHeight);
+    const slotH = ((HAND_CARD_HEIGHT * ARMAMENT_UI.handScale - ARMAMENT_MAX_STOCK) / 3) * slotScale;
 
     // 可选列表：开发者=全部装备+武装；普通玩家=库存>0 的武装（[2026-09-07] 数量库存）
     const armStockMap = readArmStock(userSystem?.settings as any);
@@ -1863,7 +1890,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                             <div
                                 ref={el => { slotRefs.current[i] = el; }}
                                 className="relative shrink-0 transition-[filter]"
-                                style={{ width: slotH * 0.88, height: slotH }}
+                                style={{ width: slotH * ARMAMENT_UI.slotWidthRatio, height: slotH }}
                                 /* [2026-09-10 莉莉子 修复] 只在「无自定义大卡」时留原生提示：锁定槽/空槽保留操作提示，
                                    已装槽（def 有值）里层 img 挂了 bindArmamentGaze → 摘掉 title 防双弹 */
                                 title={locked ? '需要更高天启者等级解锁（在等级界面升级）' : def ? undefined : '拖拽武装到此处配置'}
@@ -2155,6 +2182,8 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                                 borderRadius: ARMAMENT_UI.itemRadius,
                                                 borderWidth: ARMAMENT_UI.itemBorderWidth,
                                                 borderStyle: 'solid',
+                                                // 哨兵：0 = 不介入（保持"内容撑开"的原样）⇒ 值为 0 时**一项都不加**
+                                                ...(itemMinHeight > 0 ? { minHeight: itemMinHeight } : {}),
                                             }}
                                             /* [2026-09-10 莉莉子 修复] 摘掉原生 title：列表项名称/描述画面已直出、内层六边形又挂了武装大卡，
                                                原 title 的「描述 + 点击或拖拽配置」纯属重复 → hover 只剩一层检视 */
@@ -2162,7 +2191,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                             {/* 六边形图标 + 右下角数量（拖拽从六边形图标开始）；[2026-08-26] 悬停浮现武装大卡 */}
                                             <div
                                                 className="relative shrink-0 cursor-grab active:cursor-grabbing"
-                                                style={{ width: 60, height: 60 * 1.14 }}
+                                                style={{ width: ARMAMENT_UI.itemIconWidth, height: ARMAMENT_UI.itemIconWidth * ARMAMENT_UI.itemIconAspect }}
                                                 onPointerDown={disabled ? undefined : (e) => { e.stopPropagation(); e.preventDefault(); eventBus.emit(GameEvents.UI_CLICK); beginDrag('lib', def.id, -1, e.clientX, e.clientY); }}
                                                 {...bindArmamentGaze(def.id)}
                                             >
@@ -2217,7 +2246,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
             {/* 拖拽跟手图标：Portal 渲染到 document.body，逃出 ScaleWrapper 缩放容器保证 1:1 跟手（同卡牌 DragGhostCard）；DRAG_ICON_OFFSET 仅调观感 */}
             {drag && createPortal(
                 <div className="fixed z-[700] pointer-events-none select-none" style={{ left: drag.x + DRAG_ICON_OFFSET.dx, top: drag.y + DRAG_ICON_OFFSET.dy, transform: 'translate(-50%, -50%)' }}>
-                    <div className="relative" style={{ width: slotH * 0.88, height: slotH }}>
+                    <div className="relative" style={{ width: slotH * ARMAMENT_UI.slotWidthRatio, height: slotH }}>
                         <div className="absolute inset-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: EQUIP_RARITY_COLOR[getEquipmentById(drag.id)?.rarity ?? 'common'] ?? '#22c55e', filter: 'drop-shadow(0 0 14px rgba(255,255,255,0.6))' }} />
                         <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: '#020617' }}>
                             <img src={getEquipmentById(drag.id)?.icon} alt="" className="w-full h-full object-cover" />
