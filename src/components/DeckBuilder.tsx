@@ -238,23 +238,19 @@ export const HUB_UI = {
     deskW: 384,              // 牌桌缩略图宽 px（原 w-48 = 192）
     deskH: 224,              // 牌桌缩略图高 px（原 h-28 = 112）
 
-    // ── 悬停缩略图时弹出的大图（`hubHoverItem` 决定显示哪张）──
-    // 【2026-10-16 程提需求 · 拆成两个】原来只有**一个** `hoverPreviewOffsetLeft`，
-    //   但两张图**宽高不同**（卡背 240 宽 / 牌桌 400 宽），而偏移算的是
-    //   「大图**左边缘**离面板左边缘多远」⇒ **图越宽，右边缘越容易盖住面板**。
-    //   同一个 `%` 落在两张图上效果并不一样 ⇒ 拆开各自调。
-    // ⚠️ 单位是**面板宽度的百分比**（面板宽 288 ⇒ `-135%` ≈ 往左 389px）。
-    //     **负值 = 挪到面板左边**（程 2026-10-16 定的方向：界面整体放大后右边放不下，改到左边看）。
-    // 📐 想让它「**贴着面板左边缘、留 N px 空隙**」，填 `-((图宽 + N) / 288 × 100)%`：
-    //     卡背（240 宽）留 16 ⇒ **`-89%`**；牌桌（400 宽）留 16 ⇒ **`-144%`**。
-    //     （现在两个都是 `-135%`，即程手调后的现状；想"贴边"就照上面换。）
-    hoverPreviewCardBackLeft: '-135%', // 卡背大图的横向偏移（见上方公式）
+    // 悬停大图（`hubHoverItem` 决定显示哪张）—— 横纵各两个值：两张图**尺寸不同** ⇒ 必须分开调
+    // 📐 横向：「贴面板左边缘留 N px」= `-((图宽 + N) / 288 × 100)%`；**负值 = 挪到面板左边**
+    // 📐 纵向：**内容容器高度**的百分比，`'50%'` = 垂直居中（配下面的 `-translate-y-1/2` 自居中 ⇒ 与图高无关，故两张图可共用默认值）
+    //         卡背缩略图在面板**上半**、牌桌在**下半** ⇒ 想让大图跟着"悬停那一组"走：卡背往**小**调（如 30~35%）、牌桌往**大**调（如 70~75%）
+    hoverPreviewCardBackLeft: '-70%', // 卡背大图的横向偏移（见上方公式）
     hoverPreviewDeskLeft: '-135%',     // 牌桌大图的横向偏移（同上；与卡背**分开**调）
-    hoverPreviewCardBackW: 240, // 卡背大图宽 px（原 w-[240px]）
-    hoverPreviewCardBackH: 360, // 卡背大图高 px（原 h-[360px]）
-    hoverPreviewDeskW: 400,     // 牌桌大图宽 px（原 w-[400px]）
-    hoverPreviewDeskH: 225,     // 牌桌大图高 px（原 h-[225px]）
-    previewLabelFontSize: 12,   // 大图底部「PREVIEW」字号 px（原 text-xs = 12）
+    hoverPreviewCardBackTop: '50%',   // 卡背大图的**纵向**位置（见上方公式）
+    hoverPreviewDeskTop: '50%',       // 牌桌大图的**纵向**位置（同上；与卡背**分开**调）
+    hoverPreviewCardBackW: 360, // 卡背大图宽 px（原 w-[240px]）
+    hoverPreviewCardBackH: 540, // 卡背大图高 px（原 h-[360px]）
+    hoverPreviewDeskW: 600,     // 牌桌大图宽 px（原 w-[400px]）
+    hoverPreviewDeskH: 337,     // 牌桌大图高 px（原 h-[225px]）
+    previewLabelFontSize: 26,   // 大图底部「PREVIEW」字号 px（原 text-xs = 12）
     previewLabelPadY: 4,        // 「PREVIEW」条上下内边距 px（原 py-1 = 4）
 
     // ══ ⑥ 悬停卡牌时跟随指针的大图（`FloatingCardPreview`）═════════════
@@ -1503,7 +1499,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     {/* 悬停大图预览 (Floating Preview) - 完美复原抽屉的原生体验 */}
                                     {/* [修复] 将 right-[110%] 改为 left-[105%]，让大图朝向画面最右侧空旷区域弹出，完美避开中心卡组 */}
                                     {hubHoverItem && (
-                                        <div className="absolute top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50" style={{ left: hubHoverItem === 'cardBack' ? HUB_UI.hoverPreviewCardBackLeft : HUB_UI.hoverPreviewDeskLeft }}>
+                                        <div className="absolute -translate-y-1/2 pointer-events-none animate-fade-in z-50" style={{ left: hubHoverItem === 'cardBack' ? HUB_UI.hoverPreviewCardBackLeft : HUB_UI.hoverPreviewDeskLeft, top: hubHoverItem === 'cardBack' ? HUB_UI.hoverPreviewCardBackTop : HUB_UI.hoverPreviewDeskTop }}>
                                             <div className="absolute inset-0 bg-black/80 backdrop-blur-xl rounded-xl -m-4"></div>
                                             <div className="relative border-2 border-orange-500/50 rounded-lg overflow-hidden shadow-2xl" style={hubHoverItem === 'cardBack' ? { width: HUB_UI.hoverPreviewCardBackW, height: HUB_UI.hoverPreviewCardBackH } : { width: HUB_UI.hoverPreviewDeskW, height: HUB_UI.hoverPreviewDeskH }}>
                                                 {hubHoverItem === 'cardBack' ? (
