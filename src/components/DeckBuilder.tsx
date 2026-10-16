@@ -124,6 +124,110 @@ export const DECK_UI = {
 } as const;
 
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 备战枢纽（点开某个牌组后盖满全屏的那一屏）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 在「牌组选择」里点中央那个牌组（`setHubDeckId`）之后盖满全屏的枢纽图层
+//          （`hubDeckId && hubDeck` 那段，代码注释叫「备战枢纽核心交互大图层」）。
+//          三栏：左翼卡组预览 · 正中 卡组+AI难度+发车 · 右翼 定制（卡背 / 牌桌）。
+// 管：三栏宽高与间距 · 面板标题 · 卡表行 · 面板底部按钮 · AI 难度三档 ·
+//     发车/完成构筑按钮 · 定制两张缩略图 · 悬停弹出的大图 · 右上角关闭按钮。
+// 改完存盘即生效（HMR —— 雷电里 1~3 秒就能看到，不用出包、不用重装）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对 px**、直接进 style；注释标注**原来的 Tailwind 类**。
+// ⚠️ 它与上面那个 `DECK_UI` **同文件但不同屏**：`DECK_UI` 管「牌组选择」主画面，
+//    本块管**点进去之后**的枢纽层。**别改错块**（两块都在这一个文件里）。
+// ⚠️ 视口单位（`vh`/`vw`）一律不许用 —— 本屏本来就一个都没有，**别加**
+//    （理由见 `技术手册/规范-界面调参区.md` §2 硬规矩 6 与 `design-guide.md` §3）。
+// ⚠️ 字号只搬了 `fontSize`，**没有**搬 `text-*` 自带的行高 ⇒ 行高走 Tailwind preflight 的
+//    继承值 **1.5**（与本项目其它 5 个调参区同一惯例，不是这一块特有的）。
+//    这正是 `STYLE_UI` 那边「64 × 1.5 = 行盒 96」的算法来源 ⇒ 做几何预算时按 1.5 算。
+// ⚠️ 两个面板标题（「卡组预览」/「定制」）原本**没有** `text-*` 类 ⇒ 继承基准字号。
+//    这里显式写成 16 是**等价替换**：全项目（css / tailwind 配置 / index.html）
+//    **没有任何 `font-size` 声明** ⇒ 基准就是浏览器默认的 16px。
+// ══════════════════════════════════════════════════════════════════════
+export const HUB_UI = {
+    // ══ ① 右上角关闭按钮（独立于三栏布局）═════════════════════════════
+    closeTop: 32,            // 距顶 px（原 top-8 = 32）
+    closeRight: 32,          // 距右 px（原 right-8 = 32）
+    closePad: 12,            // 内边距 px（原 p-3 = 12）
+    closeIconSize: 24,       // ✕ 图标 px（原 size={24}）
+
+    // ══ ② 三栏之间的呼吸（间距）═══════════════════════════════════════
+    leftPanelGap: 48,        // 左翼与正中之间 px（原左翼 mr-12 = 48）
+    rightPanelGap: 48,       // 右翼与正中之间 px（原右翼 ml-12 = 48）
+    centerPadX: 24,          // 正中那一列左右外边距 px（原 mx-6 = 24）
+
+    // ══ ③ 左翼「卡组预览」面板 ═══════════════════════════════════════
+    leftPanelWidth: 320,     // 面板宽 px（原 w-80 = 320）
+    leftPanelHeight: 620,    // 面板高 px（原 h-[620px]）
+    panelTitlePad: 20,       // 面板标题内边距 px（原 p-5 = 20；左右两个面板共用）
+    panelTitleFontSize: 16,  // 标题字号 px（原**没有** text-* 类 ⇒ 继承基准 16）
+    panelTitleMarginBottom: 16, // 「定制」标题下间距 px（原 mb-4 = 16；左翼没有这一项）
+
+    fadeMaskHeight: 40,      // 卡表上下两条"边缘虚化遮罩"高度 px（原 h-10 = 40）
+    listPadX: 16,            // 卡表左右内边距 px（原 px-4 = 16）
+    listPadY: 32,            // 卡表上下内边距 px（原 py-8 = 32）
+    listRowGap: 8,           // 卡行之间间距 px（原 space-y-2 = 8）
+    cardRowHeight: 48,       // 单行卡高 px（原 h-12 = 48）
+    cardRowPadX: 12,         // 行内左右内边距 px（原 px-3 = 12）
+    cardRowGap: 12,          // 行内「费用圈 ↔ 卡名」间距 px（原 gap-3 = 12）
+    costBadgeSize: 24,       // 费用圆圈直径 px（原 w-6 h-6 = 24）
+    costFontSize: 12,        // 费用数字字号 px（原 text-xs = 12）
+    nameWidth: 128,          // 卡名宽度 px（原 w-32 = 128，超出截断）
+    nameFontSize: 14,        // 卡名字号 px（原 text-sm = 14）
+    countFontSize: 14,       // 右侧「xN」数量字号 px（原 text-sm = 14）
+
+    footerPad: 16,           // 面板底部按钮行内边距 px（原 p-4 = 16）
+    footerGap: 8,            // 两个按钮之间间距 px（原 gap-2 = 8）
+    delBtnPad: 16,           // 删除（垃圾桶）按钮内边距 px（原 p-4 = 16）
+    delBtnIconSize: 20,      // 垃圾桶图标 px（原 size={20}）
+    editBtnPad: 16,          // 「编辑卡组」按钮内边距 px（原 p-4 = 16）
+
+    // ══ ④ 正中一列（卡组 → AI 难度 → 发车）═══════════════════════════
+    centerGap: 48,           // 卡组 / AI 难度 / 发车按钮 之间的纵向间距 px（原 gap-12 = 48）
+
+    diffGap: 12,             // 「AI 难度」标签与三档按钮之间 px（原 gap-3 = 12）
+    diffLabelFontSize: 12,   // 「AI 难度」字号 px（原 text-xs = 12）
+    diffLabelMarginRight: 4, // 「AI 难度」右侧额外间距 px（原 mr-1 = 4）
+    diffBtnPadX: 20,         // 每档按钮左右内边距 px（原 px-5 = 20）
+    diffBtnPadY: 10,         // 每档按钮上下内边距 px（原 py-2.5 = 10）
+    diffBtnFontSize: 14,     // 档位名字号 px（原 text-sm = 14）
+    diffBtnGap: 8,           // 档位内「图标 / 名字 / 副标」间距 px（原 gap-2 = 8）
+    diffDescFontSize: 10,    // 副标（温和 / 均衡 / 高压）字号 px（原 text-[10px]）
+
+    startBtnWidth: 288,      // 发车按钮宽 px（原 w-72 = 288）
+    startBtnPadY: 20,        // 发车按钮上下内边距 px（原 py-5 = 20）
+    startBtnFontSize: 24,    // 发车按钮字号 px（原 text-2xl = 24）
+    startBtnGap: 12,         // 按钮内「图标 ↔ 文字」间距 px（原 gap-3 = 12）
+    startBtnIconSize: 24,    // ▶ / 💾 图标 px（原 size={24}）
+
+    // ══ ⑤ 右翼「定制」面板 ═══════════════════════════════════════════
+    rightPanelWidth: 288,    // 面板宽 px（原 w-72 = 288）
+    rightPanelPadBottom: 40, // 面板底部内边距 px（原 pb-10 = 40）
+    customGap: 40,           // 「卡背」组与「牌桌」组之间 px（原 gap-10 = 40）
+    customPadX: 24,          // 面板内容左右内边距 px（原 px-6 = 24）
+    itemGap: 16,             // 「标签 ↔ 缩略图」间距 px（原 gap-4 = 16；两组共用）
+    itemLabelFontSize: 12,   // 「卡背」/「牌桌」标签字号 px（原 text-xs = 12）
+
+    cardBackW: 128,          // 卡背缩略图宽 px（原 w-32 = 128）
+    cardBackH: 192,          // 卡背缩略图高 px（原 h-48 = 192）
+    deskW: 192,              // 牌桌缩略图宽 px（原 w-48 = 192）
+    deskH: 112,              // 牌桌缩略图高 px（原 h-28 = 112）
+
+    // 悬停缩略图时从面板右侧弹出的大图（`hubHoverItem` 决定显示哪张）
+    hoverPreviewOffsetLeft: '105%', // 大图相对面板左侧的偏移（原 left-[105%]；用 `%` 是为了跟着面板宽走）
+    hoverPreviewCardBackW: 240, // 卡背大图宽 px（原 w-[240px]）
+    hoverPreviewCardBackH: 360, // 卡背大图高 px（原 h-[360px]）
+    hoverPreviewDeskW: 400,     // 牌桌大图宽 px（原 w-[400px]）
+    hoverPreviewDeskH: 225,     // 牌桌大图高 px（原 h-[225px]）
+    previewLabelFontSize: 12,   // 大图底部「PREVIEW」字号 px（原 text-xs = 12）
+    previewLabelPadY: 4,        // 「PREVIEW」条上下内边距 px（原 py-1 = 4）
+
+    // ══ ⑥ 悬停卡牌时跟随指针的大图（`FloatingCardPreview`）═════════════
+    gazeScale: 1.25,         // 悬停预览缩放（原写死的 scale={1.25}）
+} as const;
+
+
 interface DeckBuilderProps {
     onStartGame: (deck: string[]) => void;
     userSystem: ReturnType<typeof useUserSystem>;
@@ -1192,54 +1296,57 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             className="absolute inset-0 z-[100] bg-black/85 backdrop-blur-xl flex items-center justify-center select-none"
                             onContextMenu={(e) => { e.preventDefault(); eventBus.emit(GameEvents.UI_BACK); setHubDeckId(null); }} // [体验核心] 背景高斯模糊处右键立刻退出
                         >
-                            {/* 关闭枢纽大按钮 */}
-                            <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setHubDeckId(null); }} className="absolute top-8 right-8 text-gray-400 hover:text-white bg-white/5 border border-white/10 p-3 rounded-full transition-all hover:bg-red-500/80 z-50"><X size={24} /></button> {/* [新增] 音效 */}
+                            {/* 关闭枢纽大按钮（尺寸来自 🎛️ HUB_UI.close*）*/}
+                            <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setHubDeckId(null); }} className="absolute text-gray-400 hover:text-white bg-white/5 border border-white/10 rounded-full transition-all hover:bg-red-500/80 z-50" style={{ top: HUB_UI.closeTop, right: HUB_UI.closeRight, padding: HUB_UI.closePad }}><X size={HUB_UI.closeIconSize} /></button> {/* [新增] 音效 */}
 
-                            {/* 左侧翼：卡牌列表只读预览 */}
-                            <motion.div initial={{ x: -60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-80 h-[620px] bg-slate-900/90 border border-white/10 rounded-3xl flex flex-col mr-12 shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden" onContextMenu={(e) => e.stopPropagation()}>
-                                <div className="p-5 bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0 z-20">卡组预览</div>
+                            {/* 左侧翼：卡牌列表只读预览（尺寸来自 🎛️ HUB_UI.leftPanel* / panelTitle* / list* / cardRow*）*/}
+                            <motion.div initial={{ x: -60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="bg-slate-900/90 border border-white/10 rounded-3xl flex flex-col shadow-[0_30px_60px_rgba(0,0,0,0.8)] relative overflow-hidden" style={{ width: HUB_UI.leftPanelWidth, height: HUB_UI.leftPanelHeight, marginRight: HUB_UI.leftPanelGap }} onContextMenu={(e) => e.stopPropagation()}>
+                                <div className="bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0 z-20" style={{ padding: HUB_UI.panelTitlePad, fontSize: HUB_UI.panelTitleFontSize }}>卡组预览</div>
 
                                 {/* 痛点 1 & 5：隐藏滚动条，并架设上下两层凸出的半透明黑影渐变层进行卡牌边缘裁剪虚化 */}
                                 <div className="flex-1 relative overflow-hidden bg-slate-950">
-                                    {/* 顶部向下凸出虚化遮罩 */}
-                                    <div className="absolute top-0 left-0 w-full h-10 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
+                                    {/* 顶部向下凸出虚化遮罩（高度来自 🎛️ HUB_UI.fadeMaskHeight）*/}
+                                    <div className="absolute top-0 left-0 w-full bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none" style={{ height: HUB_UI.fadeMaskHeight }}></div>
 
+                                    {/* ⚠️ 原 `space-y-2` 改成了 flex 列 + gap（值等价）⇒ 子项必须 `shrink-0`，
+                                        否则列方向 flex 会把卡行压扁、滚动区反而滚不动 */}
                                     <div
-                                        className="h-full overflow-y-auto px-4 py-8 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                                        className="h-full overflow-y-auto flex flex-col [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                                        style={{ paddingLeft: HUB_UI.listPadX, paddingRight: HUB_UI.listPadX, paddingTop: HUB_UI.listPadY, paddingBottom: HUB_UI.listPadY, gap: HUB_UI.listRowGap }}
                                     >
                                         {Object.entries(hubDeck.cards).map(([key, count]: any) => {
                                             const card = CARD_DB[key];
                                             if (!card) return null;
                                             return (
-                                                <div key={key} className="relative flex items-center h-12 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help" {...bindGazeEvents(card as CardData)}>
+                                                <div key={key} className="relative flex items-center bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help shrink-0" style={{ height: HUB_UI.cardRowHeight }} {...bindGazeEvents(card as CardData)}>
                                                     {/* [皮肤修复] 动态提取枢纽卡组中配置的皮肤图 */}
                                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${getSkinImage(key, hubDeck.skinOverrides?.[key] || 0) || card.imageUrl})` }}></div>
                                                     <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
-                                                    <div className="absolute inset-0 flex items-center justify-between px-3">
-                                                        <div className="flex gap-3 items-center"><span className="w-6 h-6 rounded-full bg-blue-900 flex justify-center items-center text-xs font-bold border border-blue-500 text-blue-200">{card.cost}</span><span className="text-sm font-bold truncate w-32 drop-shadow-md">{card.name}</span></div>
-                                                        <span className="text-yellow-400 font-black text-sm">x{count}</span>
+                                                    <div className="absolute inset-0 flex items-center justify-between" style={{ paddingLeft: HUB_UI.cardRowPadX, paddingRight: HUB_UI.cardRowPadX }}>
+                                                        <div className="flex items-center" style={{ gap: HUB_UI.cardRowGap }}><span className="rounded-full bg-blue-900 flex justify-center items-center font-bold border border-blue-500 text-blue-200" style={{ width: HUB_UI.costBadgeSize, height: HUB_UI.costBadgeSize, fontSize: HUB_UI.costFontSize }}>{card.cost}</span><span className="font-bold truncate drop-shadow-md" style={{ width: HUB_UI.nameWidth, fontSize: HUB_UI.nameFontSize }}>{card.name}</span></div>
+                                                        <span className="text-yellow-400 font-black" style={{ fontSize: HUB_UI.countFontSize }}>x{count}</span>
                                                     </div>
                                                 </div>
                                             );
                                         })}
                                     </div>
-                                    {/* 底部向上凸出虚化遮罩 */}
-                                    <div className="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none"></div>
+                                    {/* 底部向上凸出虚化遮罩（高度来自 🎛️ HUB_UI.fadeMaskHeight）*/}
+                                    <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent z-10 pointer-events-none" style={{ height: HUB_UI.fadeMaskHeight }}></div>
                                 </div>
 
-                                <div className="p-4 shrink-0 flex gap-2 border-t border-white/10 bg-black/40 z-20">
-                                    <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setConfirmModal({ title: "DELETE DECK", message: "确认删除该卡组？此操作不可逆。", type: 'danger', onConfirm: () => { userSystem.deleteDeck(hubDeckId); setConfirmModal(null); setHubDeckId(null); } }); }} className="p-4 bg-red-950/40 hover:bg-red-600 text-red-200 rounded-xl transition-colors border border-red-900/30"><Trash2 size={20} /></button> {/* [新增] 音效 */}
-                                    <button onClick={() => handleEnterDeck(hubDeckId)} className="flex-1 p-4 bg-blue-900 hover:bg-blue-600 text-white font-black tracking-widest rounded-xl transition-all">编辑卡组</button>
+                                <div className="shrink-0 flex border-t border-white/10 bg-black/40 z-20" style={{ padding: HUB_UI.footerPad, gap: HUB_UI.footerGap }}>
+                                    <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setConfirmModal({ title: "DELETE DECK", message: "确认删除该卡组？此操作不可逆。", type: 'danger', onConfirm: () => { userSystem.deleteDeck(hubDeckId); setConfirmModal(null); setHubDeckId(null); } }); }} className="bg-red-950/40 hover:bg-red-600 text-red-200 rounded-xl transition-colors border border-red-900/30" style={{ padding: HUB_UI.delBtnPad }}><Trash2 size={HUB_UI.delBtnIconSize} /></button> {/* [新增] 音效 */}
+                                    <button onClick={() => handleEnterDeck(hubDeckId)} className="flex-1 bg-blue-900 hover:bg-blue-600 text-white font-black tracking-widest rounded-xl transition-all" style={{ padding: HUB_UI.editBtnPad }}>编辑卡组</button>
                                 </div>
                             </motion.div>
 
-                            {/* 正中心：主角微缩景观展示与发车按钮 */}
-                            <div className="flex flex-col items-center gap-12 z-50 mx-6">
+                            {/* 正中心：主角微缩景观展示与发车按钮（尺寸来自 🎛️ HUB_UI.centerGap / diff* / startBtn*）*/}
+                            <div className="flex flex-col items-center z-50" style={{ gap: HUB_UI.centerGap, marginLeft: HUB_UI.centerPadX, marginRight: HUB_UI.centerPadX }}>
                                 <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards, hubDeck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
 
                                 {/* [2026-08-06 莉莉子] AI 难度选择：三选一互斥 */}
-                                <div className="flex items-center gap-3">
-                                    <span className="text-gray-400 text-xs font-bold tracking-[0.25em] mr-1">AI 难度</span>
+                                <div className="flex items-center" style={{ gap: HUB_UI.diffGap }}>
+                                    <span className="text-gray-400 font-bold tracking-[0.25em]" style={{ fontSize: HUB_UI.diffLabelFontSize, marginRight: HUB_UI.diffLabelMarginRight }}>AI 难度</span>
                                     {([
                                         { key: 'easy', label: '简单', icon: '🌱', desc: '温和' },
                                         { key: 'normal', label: '普通', icon: '⚔️', desc: '均衡' },
@@ -1252,19 +1359,20 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                 setLocalDifficulty(opt.key);
                                                 onDifficultyChange?.(opt.key);
                                             }}
-                                            className={`px-5 py-2.5 rounded-xl font-black text-sm tracking-widest border-2 transition-all flex items-center gap-2
+                                            className={`rounded-xl font-black tracking-widest border-2 transition-all flex items-center
                                                 ${localDifficulty === opt.key
                                                     ? 'bg-gradient-to-r from-orange-500/30 to-red-500/30 border-orange-400 text-orange-200 shadow-[0_0_20px_rgba(249,115,22,0.4)] scale-105'
                                                     : 'bg-black/40 border-white/15 text-gray-400 hover:border-white/40 hover:text-white'}`}
+                                            style={{ paddingLeft: HUB_UI.diffBtnPadX, paddingRight: HUB_UI.diffBtnPadX, paddingTop: HUB_UI.diffBtnPadY, paddingBottom: HUB_UI.diffBtnPadY, fontSize: HUB_UI.diffBtnFontSize, gap: HUB_UI.diffBtnGap }}
                                         >
                                             <span>{opt.icon}</span>
                                             <span>{opt.label}</span>
-                                            <span className={`text-[10px] font-bold opacity-70 ${localDifficulty === opt.key ? 'text-orange-300' : 'text-gray-500'}`}>{opt.desc}</span>
+                                            <span className={`font-bold opacity-70 ${localDifficulty === opt.key ? 'text-orange-300' : 'text-gray-500'}`} style={{ fontSize: HUB_UI.diffDescFontSize }}>{opt.desc}</span>
                                         </button>
                                     ))}
                                 </div>
 
-                                {/* [修正] 根据来源区分发车/完成构筑按钮 */}
+                                {/* [修正] 根据来源区分发车/完成构筑按钮（尺寸来自 🎛️ HUB_UI.startBtn*）*/}
                                 {fromSource === 'mode_select' ? (
                                     <button
                                         onClick={() => {
@@ -1278,70 +1386,72 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             }
                                         }}
                                         disabled={!isFull}
-                                        className={`w-72 py-5 rounded-2xl font-black text-2xl tracking-[0.2em] flex items-center justify-center gap-3 transition-all ${isFull ? 'bg-gradient-to-r from-blue-600 to-cyan-400 text-white hover:scale-110 shadow-[0_10px_40px_rgba(59,130,246,0.6)] border border-cyan-300/20' : 'bg-gray-900/80 text-red-500 cursor-not-allowed border border-red-900/50 backdrop-blur-md'}`}
+                                        className={`rounded-2xl font-black tracking-[0.2em] flex items-center justify-center transition-all ${isFull ? 'bg-gradient-to-r from-blue-600 to-cyan-400 text-white hover:scale-110 shadow-[0_10px_40px_rgba(59,130,246,0.6)] border border-cyan-300/20' : 'bg-gray-900/80 text-red-500 cursor-not-allowed border border-red-900/50 backdrop-blur-md'}`}
+                                        style={{ width: HUB_UI.startBtnWidth, paddingTop: HUB_UI.startBtnPadY, paddingBottom: HUB_UI.startBtnPadY, fontSize: HUB_UI.startBtnFontSize, gap: HUB_UI.startBtnGap }}
                                     >
-                                        <Play fill="currentColor" size={24} /> {isFull ? '开始游戏' : '卡组未满'}
+                                        <Play fill="currentColor" size={HUB_UI.startBtnIconSize} /> {isFull ? '开始游戏' : '卡组未满'}
                                     </button>
                                 ) : (
                                     <button
                                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); if (isFull) { handleSaveDeck(); handleGlobalBack(); } }}
                                         disabled={!isFull}
-                                        className={`w-72 py-5 rounded-2xl font-black text-2xl tracking-[0.2em] flex items-center justify-center gap-3 transition-all ${isFull ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/30 hover:scale-105' : 'bg-gray-900/80 text-gray-500 cursor-not-allowed border border-gray-700 backdrop-blur-md'}`}
+                                        className={`rounded-2xl font-black tracking-[0.2em] flex items-center justify-center transition-all ${isFull ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/30 hover:scale-105' : 'bg-gray-900/80 text-gray-500 cursor-not-allowed border border-gray-700 backdrop-blur-md'}`}
+                                        style={{ width: HUB_UI.startBtnWidth, paddingTop: HUB_UI.startBtnPadY, paddingBottom: HUB_UI.startBtnPadY, fontSize: HUB_UI.startBtnFontSize, gap: HUB_UI.startBtnGap }}
                                     >
-                                        <Save fill="currentColor" size={24} /> {isFull ? '完成构筑' : '卡组未满'}
+                                        <Save fill="currentColor" size={HUB_UI.startBtnIconSize} /> {isFull ? '完成构筑' : '卡组未满'}
                                     </button>
                                 )}
                             </div>
 
-                            {/* 右侧翼：完美复刻抽屉逻辑的个性化大面板 */}
+                            {/* 右侧翼：完美复刻抽屉逻辑的个性化大面板（尺寸来自 🎛️ HUB_UI.rightPanel* / custom*）*/}
                             {/* [关键修正] 去掉 overflow-hidden 改为 overflow-visible，允许悬浮预览图溢出外侧！ */}
                             {/* [修复] 将 h-[85vh] 改为 h-fit pb-10，让面板高度自适应内部的两个按钮，去除多余空白 */}
-                            <motion.div initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-72 h-fit pb-10 bg-[#1e293b]/90 border border-white/10 rounded-3xl flex flex-col ml-12 shadow-2xl relative overflow-visible backdrop-blur-md z-40" onContextMenu={(e) => e.stopPropagation()}>
-                                <div className="p-5 bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0 mb-4">定制</div>
+                            <motion.div initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="h-fit bg-[#1e293b]/90 border border-white/10 rounded-3xl flex flex-col shadow-2xl relative overflow-visible backdrop-blur-md z-40" style={{ width: HUB_UI.rightPanelWidth, paddingBottom: HUB_UI.rightPanelPadBottom, marginLeft: HUB_UI.rightPanelGap }} onContextMenu={(e) => e.stopPropagation()}>
+                                <div className="bg-black/40 font-black text-gray-400 tracking-[0.3em] text-center border-b border-white/10 shrink-0" style={{ padding: HUB_UI.panelTitlePad, fontSize: HUB_UI.panelTitleFontSize, marginBottom: HUB_UI.panelTitleMarginBottom }}>定制</div>
 
                                 {/* [修复] 稍微缩小 gap-16 为 gap-10，让上下图标布局更紧凑 */}
-                                <div className="flex-1 flex flex-col justify-center items-center gap-10 px-6 relative">
+                                <div className="flex-1 flex flex-col justify-center items-center relative" style={{ gap: HUB_UI.customGap, paddingLeft: HUB_UI.customPadX, paddingRight: HUB_UI.customPadX }}>
                                     {/* 悬停大图预览 (Floating Preview) - 完美复原抽屉的原生体验 */}
                                     {/* [修复] 将 right-[110%] 改为 left-[105%]，让大图朝向画面最右侧空旷区域弹出，完美避开中心卡组 */}
                                     {hubHoverItem && (
-                                        <div className="absolute left-[105%] top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50">
+                                        <div className="absolute top-1/2 -translate-y-1/2 pointer-events-none animate-fade-in z-50" style={{ left: HUB_UI.hoverPreviewOffsetLeft }}>
                                             <div className="absolute inset-0 bg-black/80 backdrop-blur-xl rounded-xl -m-4"></div>
-                                            <div className={`relative border-2 border-orange-500/50 rounded-lg overflow-hidden shadow-2xl ${hubHoverItem === 'cardBack' ? 'w-[240px] h-[360px]' : 'w-[400px] h-[225px]'}`}>
+                                            <div className="relative border-2 border-orange-500/50 rounded-lg overflow-hidden shadow-2xl" style={hubHoverItem === 'cardBack' ? { width: HUB_UI.hoverPreviewCardBackW, height: HUB_UI.hoverPreviewCardBackH } : { width: HUB_UI.hoverPreviewDeskW, height: HUB_UI.hoverPreviewDeskH }}>
                                                 {hubHoverItem === 'cardBack' ? (
                                                     <img src={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} className="w-full h-full object-cover" alt="预览" />
                                                 ) : (
                                                     <DeskMedia deskIndex={hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex} dynamic={(userSystem.settings as any)?.deskDynamic} className="w-full h-full object-cover" />
                                                 )}
-                                                <div className="absolute bottom-0 w-full bg-black/60 text-white text-center text-xs py-1 font-mono tracking-widest backdrop-blur-sm">PREVIEW</div>
+                                                <div className="absolute bottom-0 w-full bg-black/60 text-white text-center font-mono tracking-widest backdrop-blur-sm" style={{ fontSize: HUB_UI.previewLabelFontSize, paddingTop: HUB_UI.previewLabelPadY, paddingBottom: HUB_UI.previewLabelPadY }}>PREVIEW</div>
                                             </div>
                                         </div>
                                     )}
 
-                                    {/* 卡背更换大按钮 - 还原原生 group-hover 倾斜特效 */}
-                                    <div className="flex flex-col items-center gap-4 w-full">
-                                        <span className="text-xs text-yellow-600 font-bold tracking-widest uppercase">卡背</span>
+                                    {/* 卡背更换大按钮 - 还原原生 group-hover 倾斜特效（尺寸来自 🎛️ HUB_UI.item* / cardBack*）*/}
+                                    <div className="flex flex-col items-center w-full" style={{ gap: HUB_UI.itemGap }}>
+                                        <span className="text-yellow-600 font-bold tracking-widest uppercase" style={{ fontSize: HUB_UI.itemLabelFontSize }}>卡背</span>
                                         <div
                                             className="relative group cursor-pointer"
                                             onMouseEnter={() => setHubHoverItem('cardBack')}
                                             onMouseLeave={() => setHubHoverItem(null)}
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSelectorType('cardBack'); }} // [新增] 音效
                                         >
-                                            <div className="w-32 h-48 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
+                                            <div className="rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black" style={{ width: HUB_UI.cardBackW, height: HUB_UI.cardBackH }}>
                                                 <img src={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} className="w-full h-full object-cover" alt="卡背" />
                                             </div>
                                         </div>
                                     </div>
 
-                                    {/* 棋盘桌垫更换大按钮 - 还原原生 group-hover 倾斜特效 */}
-                                    <div className="flex flex-col items-center gap-4 w-full">
-                                        <span className="text-xs text-yellow-600 font-bold tracking-widest uppercase">牌桌</span>
+                                    {/* 棋盘桌垫更换大按钮 - 还原原生 group-hover 倾斜特效（尺寸来自 🎛️ HUB_UI.item* / desk*）*/}
+                                    <div className="flex flex-col items-center w-full" style={{ gap: HUB_UI.itemGap }}>
+                                        <span className="text-yellow-600 font-bold tracking-widest uppercase" style={{ fontSize: HUB_UI.itemLabelFontSize }}>牌桌</span>
                                         <div
                                             className="relative group cursor-pointer"
                                             onMouseEnter={() => setHubHoverItem('desk')}
                                             onMouseLeave={() => setHubHoverItem(null)}
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSelectorType('desk'); }} // [新增] 音效
                                         >
-                                            <div className="w-48 h-28 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:-rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black">
+                                            <div className="rounded-lg overflow-hidden border-2 border-white/20 shadow-lg transition-all duration-300 group-hover:scale-110 group-hover:-rotate-[15deg] group-hover:border-orange-500 group-hover:shadow-[0_0_20px_orange] z-10 relative bg-black" style={{ width: HUB_UI.deskW, height: HUB_UI.deskH }}>
                                                 <DeskMedia deskIndex={hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex} dynamic={(userSystem.settings as any)?.deskDynamic} className="w-full h-full object-cover" />
                                             </div>
                                         </div>
@@ -1353,7 +1463,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             <FloatingCardPreview
                                 gazeTarget={gazeTarget}
                                 mode="follow"
-                                scale={1.25}
+                                scale={HUB_UI.gazeScale}
                                 interactive
                                 skinId={userSystem.activeDeck?.skinOverrides?.[gazeTarget?.card.key || ''] || 0}
                                 onMouseEnter={keepAlive}
