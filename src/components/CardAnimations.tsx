@@ -37,7 +37,7 @@ const AnimatedHandCard = ({
     c, isNew, initialX, isHovered, isDragging,
     translateY, translateX, baseScale, baseRotate, cardZIndex,
     vh,
-    handIndex, dragEnabled = true, // [2026-10-16] handIndex：聚焦命中检测用；dragEnabled：聚焦模式下关掉拖拽
+    handIndex, // [2026-10-16] 手牌下标：供"点空白沉底"的命中检测用
     onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onDragStart, onDragEnd,
     game, playerBench, combatField, enemyBench, cardBackUrl, cardBackVideoUrl, onViewArt, skinOverrides,
     animType, onAnimComplete, isCastingForHand, handTargetFilter, // [2026-08-08 莉莉子] 手牌动画支持 + HAND_CARD 高亮
@@ -106,7 +106,7 @@ const AnimatedHandCard = ({
             onPointerUp={onPointerUp}
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
-            drag={dragEnabled}
+            drag
             dragSnapToOrigin={true}
             dragElastic={0.2}
             onDragStart={onDragStart}
@@ -270,29 +270,23 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
     const prevHandLenRef = useRef(hand.length);
 
     // ── [2026-10-16 莉莉子] 手牌「聚焦」：触摸端补齐 PC 悬停的「单卡放大 + 邻牌让位」──
-    //   程 2026-10-16 拍板：
+    //   程 2026-10-16 拍板（**已按真机反馈改版**）：
     //     ① **叫牌那一下顺带聚焦**被点的那张（`TOUCH_TUNE.focusOnRaise`）—— 第一下不再白按
-    //     ② 叫牌态下**按住不动** `TOUCH_TUNE.longPressMs` ⇒ 进入"聚焦滑动"模式：
-    //        之后手指划过手牌 ⇒ **焦点挨个切换**（这次手势**不再出牌**）
-    //     ③ 抬手 ⇒ 焦点**保留**（方便慢慢看）
+    //     ② 叫牌后**单击另一张 ⇒ 切换放大、不直接打出**；**点已放大的那张**才打出
+    //        （`TOUCH_TUNE.focusTapToConfirm` ⇒ "选中 → 确认"两段式，误打概率更低）
+    //     ③ 焦点**保留**（抬手不消失），直到：点别的卡 / 打出 / 点画面空白
     //     ④ 点**画面空白** ⇒ 整排沉底 + 清焦点
-    //   ⚠️ 进入聚焦模式会把 framer 那次拖拽**掐断**（靠 `focusGen` 换 key 强制重挂）：
-    //      framer 的 drag **没有位移阈值**，手指一动它就开始拖牌 ⇒
-    //      若不掐断，"划过看牌"会变成"把牌拖出去"。重挂后卡回到原位、且本手势 `drag` 关闭。
+    //   📌 曾经的"**按住不动 ⇒ 划过挨个放大**"版本**已废弃**（程 2026-10-16 真机实测）：
+    //      framer 的 drag **没有位移阈值**，手指一动它就开始拖牌 ⇒ 当时想靠"换 key 强制重挂"
+    //      掐断那次拖拽，**实测无效**（卡照样跟着手指跑、上一张也不缩回去）。
+    //      ⇒ 改用 ② 的"点击切换"，从根上避开"滑动 = 拖拽"这个冲突。
+    //      （若日后仍想要"划过即看"，得先把手牌拖拽换成备战席那套自研指针引擎 —— 见日记待办）
     const [touchFocusIndex, setTouchFocusIndex] = useState<number | null>(null);
-    const [focusMode, setFocusMode] = useState(false);
-    /** 每进入一次聚焦模式 +1；作为卡牌 key 的一部分 ⇒ 强制重挂那批卡（见上方注释） */
-    const [focusGen, setFocusGen] = useState(0);
-    const focusModeRef = useRef(false);
-    const focusPressTimerRef = useRef<number | null>(null);
-    const focusPressPtRef = useRef<{ x: number; y: number } | null>(null);
-    /** 本次手势已被"聚焦滑动"接管 ⇒ 抬手时**不许出牌** */
-    const focusSwallowRef = useRef(false);
-    const focusRafRef = useRef<number | null>(null);
     /** 手牌区外壳（用来判断"点的是不是画面空白"） */
     const handAreaRef = useRef<HTMLDivElement | null>(null);
     /** 哨兵/常量拓宽（`as const` 会让分支比较炸 TS2367，见《规范-界面调参区》§1.3 陷阱④） */
     const focusOnRaise = Boolean(TOUCH_TUNE.focusOnRaise);
+    const focusTapToConfirm = Boolean(TOUCH_TUNE.focusTapToConfirm);
     const focusScaleValue = touchMode ? TOUCH_TUNE.focusScale : HOVER_SCALE;
     const focusPushValue = touchMode ? TOUCH_TUNE.focusPushPx : 125;
     // [2026-07-22 莉莉子] 手牌离场动画状态: cardId → animType
@@ -379,64 +373,6 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
         setTouchFocusIndex(null);
         prevHandLenRef.current = hand.length;
     }, [hand.length]);
-
-    // ── [2026-10-16] 聚焦滑动：全局指针（滑动切焦点 / 抬手收尾）──
-    useEffect(() => {
-        if (!touchMode) return;
-        const onMove = (e: PointerEvent) => {
-            if (e.pointerType === 'mouse') return;
-            if (!focusModeRef.current) {
-                // 还没进聚焦模式：移动超过 8px（切比雪夫，与游戏同范数）⇒ 那是拖拽，撤掉长按计时
-                const d = focusPressPtRef.current;
-                if (d && focusPressTimerRef.current !== null
-                    && Math.max(Math.abs(e.clientX - d.x), Math.abs(e.clientY - d.y)) > TOUCH_TUNE.moveCancelPx) {
-                    window.clearTimeout(focusPressTimerRef.current);
-                    focusPressTimerRef.current = null;
-                    focusPressPtRef.current = null;
-                }
-                return;
-            }
-            // 已进聚焦模式：手指滑到哪张就聚焦哪张（rAF 节流）
-            if (focusRafRef.current !== null) return;
-            const x = e.clientX;
-            const y = e.clientY;
-            focusRafRef.current = requestAnimationFrame(() => {
-                focusRafRef.current = null;
-                const el = document.elementFromPoint(x, y) as HTMLElement | null;
-                const cardEl = el ? (el.closest('[data-hand-index]') as HTMLElement | null) : null;
-                const raw = cardEl ? cardEl.getAttribute('data-hand-index') : null;
-                setTouchFocusIndex(raw != null && raw !== '' ? Number(raw) : null);
-            });
-        };
-        const onUp = (e: PointerEvent) => {
-            if (e.pointerType === 'mouse') return;
-            if (focusPressTimerRef.current !== null) {
-                window.clearTimeout(focusPressTimerRef.current);
-                focusPressTimerRef.current = null;
-            }
-            focusPressPtRef.current = null;
-            if (focusModeRef.current) {
-                focusModeRef.current = false;
-                setFocusMode(false); // 焦点**保留**（抬手后还要能慢慢看）
-                // "本次手势不许出牌"要等这一抬手的 click / dragEnd 都走完再放开
-                window.setTimeout(() => { focusSwallowRef.current = false; }, 0);
-            }
-        };
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
-        window.addEventListener('pointercancel', onUp);
-        return () => {
-            window.removeEventListener('pointermove', onMove);
-            window.removeEventListener('pointerup', onUp);
-            window.removeEventListener('pointercancel', onUp);
-            // [2026-10-16] 卸载时把长按计时器也清掉（否则组件走了它还会 setState）
-            if (focusPressTimerRef.current !== null) {
-                window.clearTimeout(focusPressTimerRef.current);
-                focusPressTimerRef.current = null;
-            }
-            if (focusRafRef.current !== null) { cancelAnimationFrame(focusRafRef.current); focusRafRef.current = null; }
-        };
-    }, [touchMode]);
 
     // ── [2026-10-16] 点「画面空白」⇒ 叫牌的手牌重新沉底 + 清焦点（程 2026-10-16 要求）──
     useEffect(() => {
@@ -546,12 +482,9 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                     // 剥离原有的内联 motion.div，通过 props 将计算好的参数传递给独立的物理渲染核
                     return (
                         <AnimatedHandCard
-                            // [2026-10-16] key 带 `focusGen`：进入聚焦模式时**强制重挂**这批卡 ⇒
-                            //   干掉 framer 正在进行的那次 drag（否则"划过看牌"会变成"把牌拖出去"）
-                            key={`${focusGen}-${c.id}`}
+                            key={c.id}
                             c={c}
-                            handIndex={index}
-                            dragEnabled={!(touchMode && focusMode)}
+                            handIndex={index} // [2026-10-16] 惰性属性：供"点空白沉底"的命中检测用
                             isNew={isNewMap.get(c.id) || false}
                             initialX={initialX}
                             isHovered={isHovered}
@@ -593,29 +526,9 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                 //    Framer 会在越过拖拽阈值时才取 drag 的 originPoint，
                                 //    取到的会是弹簧动画的**中途值** ⇒ 卡与手指错位（独立审查发现）。
                                 //    改为"抬手时再叫起来"，既避开这个坑，反馈也依然是即时的。
-
-                                // [2026-10-16] 叫牌态 + 触摸 ⇒ 按住不动 `longPressMs` 后进入"聚焦滑动"：
-                                //   之后手指划过手牌 ⇒ 焦点挨个切换（本次手势不再出牌）。
-                                //   ⚠️ 一移动超过 8px 就撤掉计时（那是"拖出去"，见全局 pointermove）。
-                                if (touchMode && e.pointerType !== 'mouse' && touchRaised && !isCastingForHand) {
-                                    focusPressPtRef.current = { x: e.clientX, y: e.clientY };
-                                    if (focusPressTimerRef.current !== null) window.clearTimeout(focusPressTimerRef.current);
-                                    focusPressTimerRef.current = window.setTimeout(() => {
-                                        focusPressTimerRef.current = null;
-                                        focusPressPtRef.current = null;
-                                        focusSwallowRef.current = true;
-                                        focusModeRef.current = true;
-                                        setFocusGen(g => g + 1); // 重挂 ⇒ 掐断 framer 那次拖拽，卡回原位
-                                        setDraggingId(null);
-                                        setFocusMode(true);
-                                        setTouchFocusIndex(index);
-                                    }, TOUCH_TUNE.longPressMs);
-                                }
                             }}
                             onPointerUp={(e: any) => {
                                 if (e.button !== 0) return; // [核心修复] 仅响应鼠标左键，放过右键
-                                // [2026-10-16] 本次手势已被"聚焦滑动"接管 ⇒ 抬手不出牌
-                                if (touchMode && focusSwallowRef.current) return;
                                 const dist = Math.hypot(e.clientX - pointerPos.current.x, e.clientY - pointerPos.current.y);
                                 // [触屏] 点击门限比鼠标宽（见 TOUCH_TAP_SLOP 注释）
                                 const slop = touchMode ? TOUCH_TAP_SLOP : 5;
@@ -629,6 +542,12 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                         if (touchMode && focusOnRaise) setTouchFocusIndex(index);
                                         return;
                                     }
+                                    // [2026-10-16 程真机反馈后定] 叫牌后**点另一张 = 切换放大、不打出**；
+                                    //   点**已放大的那张**才打出 ⇒ "选中 → 确认"两段式，误打概率更低。
+                                    if (touchMode && touchRaised && focusTapToConfirm && touchFocusIndex !== index) {
+                                        setTouchFocusIndex(index);
+                                        return;
+                                    }
                                     onCardClick(c);
                                 }
                             }}
@@ -640,11 +559,6 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                 if (c.type?.includes('spell')) eventBus.emit(GameEvents.SFX_SPELL_DRAG);
                             }}
                             onDragEnd={(_e: any, info: any) => {
-                                // [2026-10-16] 本次手势已被"聚焦滑动"接管 ⇒ 抬手不许出牌
-                                if (touchMode && focusSwallowRef.current) {
-                                    setDraggingId(null); setHoverIndex(null); onHover(null);
-                                    return;
-                                }
                                 setDraggingId(null);
                                 setHoverIndex(null);
                                 onHover(null);
