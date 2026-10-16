@@ -50,7 +50,7 @@ const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
 // 📌 原名 `OVERVIEW_GEOMETRY`，2026-10-16 按《规范-界面调参区》§4 统一改名成 `OVERVIEW_UI` —— **值全部未变**。
 // 📌 本页只是「天启者配置」**六个页签之一**：外壳（返回／左列头像＋页签／内容窗／更换天启者）
 //    在 `RogueHeroSelect.tsx` 的 `ROGUE_HERO_UI`；**本块只管页签里面**。
-//    其余页签另有各自的小块：`LEVELS_GEOMETRY` / `DECK_GEOMETRY` / `DIV_*` / 武装那几组常量。
+//    其余页签另有各自的小块：`LEVELS_UI` / `DECK_UI` / `LEVEL_REWARDS_UI`（弹窗）/ `ARMAMENT_UI` / `DIV_*` 常量族。
 // ⚠️ 右半两张图（手牌样式 / 武装槽）的**内部尺寸不在这一段** —— 它们整体由 `handScale` 缩放；
 //    其中武装槽的槽高 = `HAND_CARD_HEIGHT × handScale`（见本文件 `HAND_CARD_HEIGHT`）。
 // ══════════════════════════════════════════════════════════════════════
@@ -74,13 +74,13 @@ export const OVERVIEW_UI = {
     /** 窗口圆角 px（原 rounded-xl = 12） */
     panelRadius: 12,
     /** 流派图标 px（原 `<FIcon size={44} />`） */
-    factionIconSize: 44,
+    factionIconSize: 66,
     /** 流派名 / 难度名 字号 px（原 text-2xl = 24） */
-    panelTitleFontSize: 24,
+    panelTitleFontSize: 36,
     /** 窗口说明文字字号 px（原 text-xs = 12） */
-    panelDescFontSize: 12,
+    panelDescFontSize: 18,
     /** 难度那 5 个三角的尺寸 px（原 `w-9 h-9` = 36） */
-    diffTriangleSize: 36,
+    diffTriangleSize: 48,
     /** 难度三角之间间距 px（原 gap-1 = 4） */
     diffTriangleGap: 4,
 
@@ -92,11 +92,11 @@ export const OVERVIEW_UI = {
     /** 圆角 px（原 rounded-xl = 12） */
     loreRadius: 12,
     /** 「背景故事」标签字号 px（原 text-xs = 12） */
-    loreLabelFontSize: 12,
+    loreLabelFontSize: 24,
     /** 标签与正文的间距 px（原 mb-2 = 8） */
     loreLabelMarginBottom: 8,
     /** 背景故事正文字号 px（原 text-sm = 14） */
-    loreTextFontSize: 14,
+    loreTextFontSize: 24,
 
     // ── 右半：手牌样式 + 确定选择 ───────────────────────────────────────
     /** 卡面 ↔ 确定按钮 纵向间距 px（原 gap-4 = 16） */
@@ -111,22 +111,396 @@ export const OVERVIEW_UI = {
     confirmFontSize: 18,
 };
 
-// [2026-08-13] 等级界面几何（程可微调，px）
-export const LEVELS_GEOMETRY = {
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 天启者配置 · **天启者等级页**（`LevelsContent`）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一页 = 竖排三块：①圆环头像 + 经验数字 ②「下一个等级奖励」横条（+ 开发者加减级按钮）③查看全部按钮。
+// 📌 原名 `LEVELS_GEOMETRY`，2026-10-16 按手册 §4 改名 `LEVELS_UI` 并补齐页内尺寸（**原值全部未变**）。
+// ⚠️ 「所有等级奖励」那个弹窗（`LevelRewardsModal`）的尺寸在文件顶部的 `LEVEL_REWARDS_UI`，**不在本块**。
+// ══════════════════════════════════════════════════════════════════════
+export const LEVELS_UI = {
+    // ── 布局（原 `LEVELS_GEOMETRY`，值未变）──
     topGap: 100,           // 三个区域离内容区顶部的距离（程可微调，px）
     avatarSize: 400,       // 区域1 圆环头像直径 px（缩放大小）
     rewardWidth: 1000,      // 区域2 下一个等级奖励长方形宽度 px
+
+    // ── 整页 ──
+    /** 三个区域之间纵向间距 px（原 gap-5 = 20） */
+    sectionGap: 20,
+    /** 整页上下内边距 px（原 py-2 = 8） */
+    pagePadY: 8,
+
+    // ── 区域 1：头像 + 经验 ──
+    /** 头像 ↔ 经验数字 间距 px（原 gap-2.5 = 10） */
+    avatarBlockGap: 10,
+    /** 经验数字字号 px（原 text-xl = 20） */
+    expFontSize: 20,
+
+    // ── 区域 2：下一个等级奖励 ──
+    /** 「下一个等级奖励：」标题 ↔ 奖励条 间距 px（原 gap-2 = 8） */
+    rewardBlockGap: 8,
+    /** 标题字号 px（原 text-sm = 14） */
+    rewardTitleFontSize: 14,
+    /** 奖励条内「等级圆 ↔ 文字」间距 px（原 gap-5 = 20） */
+    rewardRowGap: 20,
+    /** 奖励条左右内边距 px（原 px-6 = 24） */
+    rewardPadX: 24,
+    /** 奖励条上下内边距 px（原 py-4 = 16） */
+    rewardPadY: 16,
+    /** 奖励条圆角 px（原 rounded-2xl = 16） */
+    rewardRadius: 16,
+    /** 等级数字圆直径 px（原 w-16 h-16 = 64） */
+    levelCircleSize: 64,
+    /** 等级数字字号 px（原 text-4xl = 36） */
+    levelNumberFontSize: 36,
+    /** 「短名 ↔ 完整效果」间距 px（原 gap-1 = 4） */
+    rewardTextGap: 4,
+    /** 奖励短名字号 px（原 text-xl = 20） */
+    rewardLabelFontSize: 20,
+    /** 奖励完整效果字号 px（原 text-base = 16） */
+    rewardValueFontSize: 16,
+
+    // ── 区域 3：按钮行 ──
+    /** 按钮之间间距 px（原 gap-2 = 8） */
+    btnRowGap: 8,
+    /** 开发者加减级按钮尺寸 px（原 w-11 h-11 = 44） */
+    devBtnSize: 44,
+    /** 开发者按钮圆角 px（原 rounded-xl = 12） */
+    devBtnRadius: 12,
+    /** 开发者按钮字号 px（原 text-2xl = 24） */
+    devBtnFontSize: 24,
+    /** 「查看所有天启者等级奖励」左右内边距 px（原 px-8 = 32） */
+    viewAllPadX: 32,
+    /** 上下内边距 px（原 py-3 = 12） */
+    viewAllPadY: 12,
+    /** 圆角 px（原 rounded-xl = 12） */
+    viewAllRadius: 12,
+    /** 字号 px（原 text-base = 16） */
+    viewAllFontSize: 16,
 };
 
-// [2026-08-13] 初始牌组界面几何（程可微调，px）
-export const DECK_GEOMETRY = {
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 天启者配置 · **初始牌组页**（`DeckContent`）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一页 = 左「卡牌列表（横条 + 悬停大图检视 + 后方武装图标）」／右「手牌样式大图（无按钮）」。
+// 📌 原名 `DECK_GEOMETRY`，2026-10-16 按手册 §4 改名 `DECK_UI` 并补齐页内尺寸（**原值全部未变**）。
+// 🔴 `listRowGap` 是把原来的 `space-y-2` 换成 **flex 列 + gap** 实现的 ——
+//    因此每一行必须带 `shrink-0`：**列方向 flex 会压扁子项**，不补就会出现"行被压扁、滚动区反而滚不动"
+//    （2026-10-16 在备战枢纽上踩过同一条，别再犯）。
+// ══════════════════════════════════════════════════════════════════════
+export const DECK_UI = {
+    // ── 布局（原 `DECK_GEOMETRY`，值未变）──
     topGap: 75,            // 整体距离内容区顶部 px
     listWidth: 800,        // 左侧卡牌列表宽度 px（[2026-08-26] 收窄，武装图标放每行卡牌后方独立区）
     gap: 150,               // 手牌样式与左侧列表间距 px
     handScale: 2.5,        // 右侧手牌样式缩放大小
     handOffsetTop: 100,      // 右侧手牌样式垂直位置偏移 px
     armamentGap: 24,       // [2026-08-14] 卡面与右侧武装槽组的间隔 px（程可微调）
+
+    // ── 左侧卡牌列表 ──
+    /** 列表右侧留白 px（原 pr-2 = 8） */
+    listPadRight: 8,
+    /** 卡行之间纵向间距 px（原 space-y-2 = 8，现由 flex 列 + gap 实现） */
+    listRowGap: 8,
+    /** 单个卡行内「横条 ↔ 武装图标区」间距 px（原 gap-2.5 = 10） */
+    rowGap: 10,
+    /** 卡条高度 px（原 h-14 = 56） */
+    rowHeight: 56,
+    /** 卡条圆角 px（原 rounded-lg = 8） */
+    rowRadius: 8,
+    /** 卡条内左右内边距 px（原 px-4 = 16） */
+    rowPadX: 16,
+    /** 「费用圆 ↔ 卡名」间距 px（原 gap-3 = 12） */
+    costGap: 12,
+    /** 费用圆直径 px（原 w-7 h-7 = 28） */
+    costSize: 28,
+    /** 费用数字字号 px（原 text-sm = 14） */
+    costFontSize: 14,
+    /** 费用圆描边粗细 px（原 border = 1） */
+    costBorderWidth: 1,
+    /** 卡名字号 px（原 text-base = 16） */
+    nameFontSize: 16,
+    /** 后方武装图标（六边形）尺寸 px（原 w-10 h-10 = 40） */
+    equipIconSize: 40,
+    /** 多个武装时的「Xn」字号 px（原 text-sm = 14） */
+    equipFontSize: 14,
 };
+
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 天启者配置 · **所有等级奖励弹窗**（`LevelRewardsModal`）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一块 = 等级页点「查看所有天启者等级奖励」后弹出来的那个窗（标题栏 + 1~30 级奖励列表，可滚动）。
+// 📌 2026-10-16 新建：尺寸原先散在 `LevelRewardsModal` 的 JSX 里（`LEVELS_UI` 只管等级页本体）。
+// 🔴 列表原为 `space-y-2` —— 已按本文件惯例改成 **flex 列 + gap**（`rowGap`），
+//    因此每一行都补了 `shrink-0`：**列方向 flex 会压扁子项**，不补会出现「行被压扁、滚动区反而滚不动」
+//    （同 `DECK_UI.listRowGap` 那条踩坑记录）。
+// ══════════════════════════════════════════════════════════════════════
+export const LEVEL_REWARDS_UI = {
+    // ── ① 弹窗主体 ──
+    /** 弹窗宽度 px（原 w-[720px]） */
+    panelWidth: 720,
+    /** 弹窗最大高度（原 max-h-[80%]，**保持百分比**，不换算 px） */
+    panelMaxHeightPct: '80%',
+    /** 弹窗圆角 px（原 rounded-2xl = 16） */
+    panelRadius: 16,
+    /** 弹窗描边粗细 px（原 border = 1） */
+    panelBorderWidth: 1,
+
+    // ── ② 标题栏 ──
+    /** 标题栏左右内边距 px（原 px-6 = 24） */
+    headerPadX: 24,
+    /** 标题栏上下内边距 px（原 py-4 = 16） */
+    headerPadY: 16,
+    /** 标题栏下边框粗细 px（原 border-b = 1） */
+    headerBorderWidth: 1,
+    /** 「天启者等级奖励」字号 px（原 text-xl = 20） */
+    titleFontSize: 20,
+    /** 关闭按钮内边距 px（原 p-2 = 8） */
+    closePad: 8,
+    /** 关闭叉号图标 px（原 `<X size={20} />`） */
+    closeIconSize: 20,
+
+    // ── ③ 奖励列表 ──
+    /** 列表内边距 px（原 p-4 = 16） */
+    listPad: 16,
+    /** 行与行之间纵向间距 px（原 space-y-2 = 8，现由 flex 列 + gap 实现） */
+    rowGap: 8,
+    /** 单行内「等级圆 ↔ 文字」间距 px（原 gap-4 = 16） */
+    rowInnerGap: 16,
+    /** 单行左右内边距 px（原 px-4 = 16） */
+    rowPadX: 16,
+    /** 单行上下内边距 px（原 py-2.5 = 10） */
+    rowPadY: 10,
+    /** 单行圆角 px（原 rounded-xl = 12） */
+    rowRadius: 12,
+    /** 单行描边粗细 px（原 border = 1） */
+    rowBorderWidth: 1,
+    /** 等级数字圆直径 px（原 w-12 h-12 = 48） */
+    levelCircleSize: 48,
+    /** 等级数字字号 px（原 text-2xl = 24） */
+    levelNumberFontSize: 24,
+    /** 「短名 ↔ 完整效果」间距 px（原 gap-0.5 = 2） */
+    textGap: 2,
+    /** 奖励短名字号 px（原 text-base = 16） */
+    labelFontSize: 16,
+    /** 奖励完整效果字号 px（原 text-sm = 14） */
+    valueFontSize: 14,
+} as const;
+
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 天启者配置 · **武装页**（`ArmamentContent`）+ 武装共享件 · 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一块 = 武装页：左手牌样式 ／ 中 3 个武装槽（+ 更换·卸载按钮）／ 右侧武装库抽屉 ／ 右缘开合按钮 ／ 拖拽跟手图标。
+// 🔴 共享件 `ArmamentSlot` / `ArmamentSlots` / `HandWithArmament`（总览页 `OVERVIEW_UI`、初始牌组页 `DECK_UI` 都在用）：
+//    · 本块**只收「原先写死在 JSX 里的 Tailwind 尺寸类」**；既有默认参数（`height = 48` / `gap = 10`）
+//      与既有常量（`HAND_CARD_HEIGHT` / `ARMAMENT_HEXAGON_CLIP` / `ARM_RARITY_ORDER` /
+//      `ARMAMENT_MAX_STOCK` / `DRAG_ICON_OFFSET`）**原名原值一律不动** ⇒ 其它页面视觉零变化。
+//    · `ArmamentSlot` 的内部尺寸全部由 `height` 参数派生（宽 = height×0.88、锁图标 = height×0.3），
+//      **没有**可搬的写死尺寸类（剩下的只有 `inset-*` / `inset-[3px]` 定位类，按规范不搬）。
+//    · `ArmamentSlots` 的间距来自 `gap` 参数、槽高由 `totalHeight` 均分 ⇒ 同样无可搬项。
+// ══════════════════════════════════════════════════════════════════════
+export const ARMAMENT_UI = {
+    // ── ① 共享件：手牌样式 + 右侧武装槽组合 ──
+    /** `HandWithArmament` 内「手牌 ↔ 武装槽组」间距 px（原 gap-6 = 24，**不被 gap 参数覆盖**） */
+    handGroupGap: 24,
+
+    // ── ② 左侧：手牌样式 + 3 个武装槽 ──
+    /** 手牌与武装槽组的间距 px（原 gap-10 = 40） */
+    leftGap: 40,
+    /** 手牌放大倍数（原写死字面量 1.9；`slotH` 用同一值，改这里两处一起变） */
+    handScale: 1.9,
+    /** 3 个槽竖排间距 px（原内联 8） */
+    slotColGap: 8,
+    /** 单个槽「六边形 ↔ 更换/卸载按钮列」间距 px（原 gap-3 = 12） */
+    slotRowGap: 12,
+    /** 更换/卸载按钮纵向间距 px（原 gap-1.5 = 6） */
+    btnColGap: 6,
+    /** 更换/卸载按钮内边距 px（原 p-2.5 = 10） */
+    btnPad: 10,
+    /** 更换/卸载按钮圆角 px（原 rounded-md = 6） */
+    btnRadius: 6,
+    /** 更换/卸载按钮描边粗细 px（原 border = 1） */
+    btnBorderWidth: 1,
+    /** 更换/卸载按钮图标 px（原 `<RefreshCw size={16} />` / `<Minus size={16} />`） */
+    btnIconSize: 16,
+
+    // ── ③ 右侧武装库抽屉 ──
+    /** 抽屉展开宽度 px（原 w-[420px]；让位 marginRight / 开合按钮 right / 动效 width 同一值） */
+    drawerWidth: 420,
+    /** 抽屉左边缘描边粗细 px（原 border-l = 1） */
+    drawerLeftBorderWidth: 1,
+    /** 抽屉头部内边距 px（原 p-4 = 16） */
+    drawerHeadPad: 16,
+    /** 抽屉头部下内边距 px（原 pb-3 = 12） */
+    drawerHeadPadBottom: 12,
+    /** 抽屉头部下边框粗细 px（原 border-b = 1） */
+    drawerHeadBorderWidth: 1,
+    /** 抽屉头部「标题行 ↔ 工具条 ↔ 筛选面板 ↔ 常驻提示」间距 px（原 space-y-3 = 12，现由 flex 列 + gap 实现） */
+    drawerHeadGap: 12,
+    /** 「可装 N/M」计数标签字号 px（原 text-xs = 12） */
+    countFontSize: 12,
+    /** 抽屉标题行「武装库 ↔ 可装计数」间距 px（原 gap-2 = 8） */
+    titleRowGap: 8,
+    /** 工具条按钮之间间距 px（原 gap-1.5 = 6） */
+    toolbarGap: 6,
+    /** 搜索框上下内边距 px（原 py-2 = 8） */
+    searchPadY: 8,
+    /** 搜索框左内边距 px（原 pl-8 = 32，给放大镜留位） */
+    searchPadLeft: 32,
+    /** 搜索框右内边距 px（原 pr-2 = 8） */
+    searchPadRight: 8,
+    /** 搜索框圆角 px（原 rounded-md = 6） */
+    searchRadius: 6,
+    /** 搜索框字号 px（原 text-sm = 14） */
+    searchFontSize: 14,
+    /** 搜索框内放大镜图标 px（原 `<Search size={14} />`） */
+    searchIconSize: 14,
+    /** 工具条方形按钮内边距 px（原 p-2 = 8） */
+    toolBtnPad: 8,
+    /** 工具条方形按钮圆角 px（原 rounded-md = 6） */
+    toolBtnRadius: 6,
+    /** 工具条图标 px（原 `<Filter/ChevronDown/ArrowUpNarrowWide/ArrowDownWideNarrow/RotateCcw size={15} />`） */
+    toolIconSize: 15,
+    /** 排序下拉面板距按钮 px（原 mt-1 = 4） */
+    sortMenuMarginTop: 4,
+    /** 排序下拉面板宽度 px（原 w-32 = 128） */
+    sortMenuWidth: 128,
+    /** 排序下拉面板圆角 px（原 rounded-md = 6） */
+    sortMenuRadius: 6,
+    /** 排序下拉面板描边粗细 px（原 border = 1） */
+    sortMenuBorderWidth: 1,
+    /** 排序下拉项左右内边距 px（原 px-3 = 12） */
+    sortItemPadX: 12,
+    /** 排序下拉项上下内边距 px（原 py-2 = 8） */
+    sortItemPadY: 8,
+    /** 排序下拉项字号 px（原 text-xs = 12） */
+    sortItemFontSize: 12,
+
+    // ── ④ 抽屉内筛选面板 ──
+    /** 筛选面板「可用性 ↔ 品质」两组间距 px（原 space-y-3 = 12，现由 flex 列 + gap 实现） */
+    filterBlockGap: 12,
+    /** 筛选面板上内边距 px（原 pt-1 = 4） */
+    filterPadTop: 4,
+    /** 「可用性 / 品质」标签字号 px（原 text-[10px]） */
+    filterLabelFontSize: 10,
+    /** 标签与下方控件的间距 px（原 mb-1.5 = 6） */
+    filterLabelMarginBottom: 6,
+    /** 可用性/品质小按钮左右内边距 px（原 px-2.5 = 10） */
+    chipPadX: 10,
+    /** 可用性/品质小按钮上下内边距 px（原 py-1 = 4） */
+    chipPadY: 4,
+    /** 可用性/品质小按钮圆角 px（原 rounded = 4） */
+    chipRadius: 4,
+    /** 可用性/品质小按钮字号 px（原 text-xs = 12） */
+    chipFontSize: 12,
+    /** 可用性/品质小按钮描边粗细 px（原 border = 1） */
+    chipBorderWidth: 1,
+    /** 品质多选按钮之间间距 px（原 gap-1.5 = 6） */
+    rarityGap: 6,
+    /** 常驻提示行（仅显示可装入此槽）字号 px（原 text-[11px]） */
+    hintFontSize: 11,
+    /** 常驻提示行「文字 ↔ 显示全部」间距 px（原 gap-2 = 8） */
+    hintGap: 8,
+
+    // ── ⑤ 抽屉内武装列表 ──
+    /** 列表内边距 px（原 p-4 = 16） */
+    listPad: 16,
+    /** 列表项之间纵向间距 px（原 space-y-3 = 12，现由 flex 列 + gap 实现） */
+    listGap: 12,
+    /** 空状态上下内边距 px（原 py-14 = 56） */
+    emptyPadY: 56,
+    /** 空状态放大镜图标 px（原 `<Search size={28} />`） */
+    emptyIconSize: 28,
+    /** 空状态图标与下方文字间距 px（原 mb-3 = 12） */
+    emptyIconMarginBottom: 12,
+    /** 空状态主文案字号 px（原 text-sm = 14） */
+    emptyTitleFontSize: 14,
+    /** 空状态主文案下方间距 px（原 mb-1 = 4） */
+    emptyTitleMarginBottom: 4,
+    /** 空状态副文案字号 px（原 text-xs = 12） */
+    emptyDescFontSize: 12,
+    /** 空状态副文案下方间距 px（原 mb-4 = 16） */
+    emptyDescMarginBottom: 16,
+    /** 「显示全部武装」左右内边距 px（原 px-3 = 12） */
+    emptyBtnPadX: 12,
+    /** 「显示全部武装」上下内边距 px（原 py-1.5 = 6） */
+    emptyBtnPadY: 6,
+    /** 「显示全部武装」圆角 px（原 rounded = 4） */
+    emptyBtnRadius: 4,
+    /** 「显示全部武装」字号 px（原 text-xs = 12） */
+    emptyBtnFontSize: 12,
+    /** 可用/不可用分隔带上/下内边距 px（原 pt-1 = 4 / pb-0.5 = 2） */
+    dividerPadTop: 4,
+    /** 分隔带下内边距 px（原 pb-0.5 = 2） */
+    dividerPadBottom: 2,
+    /** 分隔带「线 ↔ 文字」间距 px（原 gap-2 = 8） */
+    dividerGap: 8,
+    /** 分隔带细线高度 px（原 h-px = 1） */
+    dividerLineHeight: 1,
+    /** 分隔带文字字号 px（原 text-[10px]） */
+    dividerFontSize: 10,
+    /** 列表项「六边形 ↔ 名称描述 ↔ 品质描述」间距 px（原 gap-4 = 16） */
+    itemGap: 16,
+    /** 列表项左右内边距 px（原 px-4 = 16） */
+    itemPadX: 16,
+    /** 列表项上下内边距 px（原 py-5 = 20） */
+    itemPadY: 20,
+    /** 列表项圆角 px（原 rounded-xl = 12） */
+    itemRadius: 12,
+    /** 列表项描边粗细 px（原 border = 1） */
+    itemBorderWidth: 1,
+    /** 列表项右下角「X 数量」角标字号 px（原 text-xs = 12） */
+    stockFontSize: 12,
+    /** 列表项武装名字号 px（原 text-lg = 18） */
+    itemNameFontSize: 18,
+    /** 列表项描述字号 px（原 text-sm = 14） */
+    itemDescFontSize: 14,
+    /** 列表项品质描述字号 px（原 text-xs = 12） */
+    itemRarityFontSize: 12,
+
+    // ── ⑥ 右缘开合按钮 ──
+    /** 开合按钮宽 px（原 w-8 = 32） */
+    handleWidth: 32,
+    /** 开合按钮高 px（原 h-14 = 56） */
+    handleHeight: 56,
+    /** 开合按钮左侧圆角 px（原 rounded-l-lg = 8） */
+    handleRadius: 8,
+    /** 开合按钮箭头图标 px（原 `<ChevronsLeft size={18} />` / `<ChevronsRight size={18} />`） */
+    handleIconSize: 18,
+} as const;
+
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 天启者配置 · **共享小件**（`HeroHandContent` / `HeroAvatarRing`）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这两个是**被多处复用的共享件**（总览 `OVERVIEW_UI` / 初始牌组 `DECK_UI` / 等级 `LEVELS_UI` /
+// 武装 `ARMAMENT_UI` / 以及外壳 `RogueHeroSelect` 都在用），所以**只收原先写死的尺寸**，不动参数与结构：
+//   · `HeroHandContent`：**卡面本身由 `scale` 参数缩放**（各页各自传 2.5 / 1.9 …）→ 不在这里；
+//     这里收的是**不受 scale 影响的**外层：标签间距 + 上下两行标签字号 + scale 溢出补偿系数。
+//   · `HeroAvatarRing`：**圆环直径由 `size` 参数给定**（等级页传 `LEVELS_UI.avatarSize`）→ 不在这里；
+//     这里收的是**不随 size 变化**的底部等级黑圆（直径/字号/描边）。
+// ⚠️ 未收：头像那个 `<CroppedAvatar>` 实例上的 2px 描边（原 Tailwind 的 border-2）—— `CroppedAvatar` 组件**只接 className、
+//    没有 style 口子**（见 `components/CroppedAvatar.tsx` 的 props：cardKey / skinId / className），
+//    要搬就得改别的文件 ⇒ 按本轮"只改本文件"的红线**原地保留**。
+// ══════════════════════════════════════════════════════════════════════
+export const HERO_SHARED_UI = {
+    // ── HeroHandContent（单张英雄卡主视觉）──
+    /** 「上标签 ↔ 卡面 ↔ 卡名」纵向间距 px（原 gap-3 = 12） */
+    handLabelGap: 12,
+    /** 上标签「天启者 · 手牌样式」字号 px（原 text-xs = 12） */
+    handLabelSmallFontSize: 12,
+    /** 下标签「卡名」字号 px（原 text-base = 16） */
+    handLabelNameFontSize: 16,
+    /** 卡面缩放后的溢出补偿系数 px（原字面量 134；`margin: (scale−1)×134`） */
+    handScaleMarginComp: 134,
+
+    // ── HeroAvatarRing（圆环头像）──
+    /** 底部等级黑圆直径 px（原 w-10 h-10 = 40，**不随 size 缩放**） */
+    avatarLevelBadgeSize: 40,
+    /** 等级数字字号 px（原 text-xl = 20） */
+    avatarLevelFontSize: 20,
+    /** 等级黑圆描边粗细 px（原 border-2 = 2） */
+    avatarLevelBorderWidth: 2,
+} as const;
 
 // 内容类型：总览 / 初始牌组 / 天启者等级 / 武装 / 神格神经图 / 个性化（null = 未选）
 export type HeroInfoWindow = 'overview' | 'deck' | 'levels' | 'divinity' | 'armament' | 'personalize' | null;
@@ -204,13 +578,13 @@ export const HeroHandContent: React.FC<{ heroKey: string; scale?: number; noLabe
     let cardData = toFullCardData(card, card.key);
     if (equipIds?.length) for (const id of equipIds) cardData = attachEquipment(cardData, id);
     return (
-        <div className="flex flex-col items-center gap-3">
-            {!noLabels && <p className="text-xs font-mono text-purple-300/80">天启者 · 手牌样式</p>}
+        <div className="flex flex-col items-center" style={{ gap: HERO_SHARED_UI.handLabelGap }}>
+            {!noLabels && <p className="font-mono text-purple-300/80" style={{ fontSize: HERO_SHARED_UI.handLabelSmallFontSize }}>天启者 · 手牌样式</p>}
             {/* [2026-08-13] transform scale 放大 + margin 按比例补偿溢出；key 强制重挂载避免切换英雄残留特效 */}
-            <div style={{ transform: `scale(${scale})`, margin: `${(scale - 1) * 134}px 0` }}>
+            <div style={{ transform: `scale(${scale})`, margin: `${(scale - 1) * HERO_SHARED_UI.handScaleMarginComp}px 0` }}>
                 <Card key={card.key} data={cardData} location="deck-builder" isFaceUp showShopIcon={false} isCostReduced={(cardData.customProgress || 0) & 2 ? true : false} />
             </div>
-            {!noLabels && <p className="text-base font-black text-white tracking-wide">{card.name}</p>}
+            {!noLabels && <p className="font-black text-white tracking-wide" style={{ fontSize: HERO_SHARED_UI.handLabelNameFontSize }}>{card.name}</p>}
         </div>
     );
 };
@@ -236,8 +610,9 @@ export const HeroAvatarRing: React.FC<{
             <CroppedAvatar cardKey={heroKey} className="absolute inset-1.5 w-[calc(100%-12px)] h-[calc(100%-12px)] rounded-full border-2 border-white/20" />
             {/* 黑圆等级数字（底部） */}
             <div className="absolute inset-x-0 bottom-1 flex justify-center pointer-events-none">
-                <div className="w-10 h-10 rounded-full bg-black/85 border-2 border-white/30 flex items-center justify-center shadow-[0_0_10px_rgba(0,0,0,0.8)]">
-                    <span className="text-xl font-black italic leading-none" style={{ color: getLevelNumberColor(level) }}>{level}</span>
+                <div className="rounded-full bg-black/85 border-white/30 flex items-center justify-center shadow-[0_0_10px_rgba(0,0,0,0.8)]"
+                    style={{ width: HERO_SHARED_UI.avatarLevelBadgeSize, height: HERO_SHARED_UI.avatarLevelBadgeSize, borderWidth: HERO_SHARED_UI.avatarLevelBorderWidth, borderStyle: 'solid' }}>
+                    <span className="font-black italic leading-none" style={{ color: getLevelNumberColor(level), fontSize: HERO_SHARED_UI.avatarLevelFontSize }}>{level}</span>
                 </div>
             </div>
         </div>
@@ -388,10 +763,10 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
     const heroEquipIds = getArmament(heroKey, heroProgression.getHeroLevel(heroKey)).filter((v): v is string => !!v);
 
     return (
-        <div className="flex h-full min-h-0" style={{ paddingTop: DECK_GEOMETRY.topGap, gap: DECK_GEOMETRY.gap }}>
+        <div className="flex h-full min-h-0" style={{ paddingTop: DECK_UI.topGap, gap: DECK_UI.gap }}>
             {/* 左：卡牌列表（宽度可调，横排行，悬停大图检视） */}
-            <div className="min-w-0 overflow-y-auto custom-scrollbar pr-2 shrink-0" style={{ width: DECK_GEOMETRY.listWidth }}>
-                <div className="space-y-2">
+            <div className="min-w-0 overflow-y-auto custom-scrollbar shrink-0" style={{ width: DECK_UI.listWidth, paddingRight: DECK_UI.listPadRight }}>
+                <div className="flex flex-col" style={{ gap: DECK_UI.listRowGap }}>
                     {[...cardCounts.entries()].map(([key, count]) => {
                         const card = CARD_DB[key];
                         if (!card) return null;
@@ -408,20 +783,30 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
                         }
                         const equips = key === heroKey ? heroEquipIds : []; // [2026-08-26] 该卡武装（当前仅英雄卡配置武装）
                         return (
-                            <div key={key} className="flex items-center gap-2.5">
+                            <div key={key} className="flex items-center shrink-0" style={{ gap: DECK_UI.rowGap }}>
                                 {/* 卡牌横条（flex-1 占列表内剩余，武装图标在后方独立区，不叠放） */}
                                 <div
-                                    className="relative flex items-center h-14 flex-1 min-w-0 bg-gray-800/90 rounded-lg border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help"
+                                    className="relative flex items-center flex-1 min-w-0 bg-gray-800/90 border border-gray-700/60 hover:border-blue-500 overflow-hidden cursor-help"
+                                    style={{ height: DECK_UI.rowHeight, borderRadius: DECK_UI.rowRadius }}
                                     {...bindGazeEvents(fullCard)}
                                 >
                                     {/* 卡面背景（暗化） */}
                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
                                     <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/40 to-transparent"></div>
                                     {/* 内容：费用圆 + 卡名 + 数量 */}
-                                    <div className="absolute inset-0 flex items-center justify-between px-4">
-                                        <div className="flex gap-3 items-center min-w-0">
-                                            <span className={`w-7 h-7 rounded-full flex justify-center items-center text-sm font-bold border shrink-0 ${isReduced ? 'bg-green-900 border-green-500 text-green-300' : 'bg-blue-900 border-blue-500 text-blue-200'}`}>{displayCost}</span>
-                                            <span className="text-base font-bold truncate drop-shadow-md">{card.name}</span>
+                                    <div className="absolute inset-0 flex items-center justify-between" style={{ paddingLeft: DECK_UI.rowPadX, paddingRight: DECK_UI.rowPadX }}>
+                                        <div className="flex items-center min-w-0" style={{ gap: DECK_UI.costGap }}>
+                                            <span
+                                                className={`rounded-full flex justify-center items-center font-bold shrink-0 ${isReduced ? 'bg-green-900 border-green-500 text-green-300' : 'bg-blue-900 border-blue-500 text-blue-200'}`}
+                                                style={{
+                                                    width: DECK_UI.costSize,
+                                                    height: DECK_UI.costSize,
+                                                    fontSize: DECK_UI.costFontSize,
+                                                    borderWidth: DECK_UI.costBorderWidth,
+                                                    borderStyle: 'solid',
+                                                }}
+                                            >{displayCost}</span>
+                                            <span className="font-bold truncate drop-shadow-md" style={{ fontSize: DECK_UI.nameFontSize }}>{card.name}</span>
                                         </div>
                                         <span className="text-yellow-400 font-black shrink-0">X{count}</span>
                                     </div>
@@ -429,12 +814,12 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
                                 {/* [2026-08-26] 武装图标区（卡牌后方独立区 40px）：1 个显示对应武装图标；多个显示黑色六边形 Xn；悬停浮现武装大卡 */}
                                 {/* [2026-09-10 莉莉子 修复] 摘掉原生 title：它与 bindArmamentGaze 大卡重叠 → hover 双弹（浏览器小白框 + 我们的武装大卡） */}
                                 {equips.length === 1 && (
-                                    <div className="w-10 h-10 shrink-0" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.06)' }} {...bindArmamentGaze(equips[0])}>
+                                    <div className="shrink-0" style={{ width: DECK_UI.equipIconSize, height: DECK_UI.equipIconSize, clipPath: ARMAMENT_HEXAGON_CLIP, border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.06)' }} {...bindArmamentGaze(equips[0])}>
                                         <img src={getEquipmentById(equips[0])?.icon} alt="" className="w-full h-full object-cover" draggable={false} />
                                     </div>
                                 )}
                                 {equips.length > 1 && (
-                                    <div className="w-10 h-10 shrink-0 flex items-center justify-center bg-black/85 text-white text-sm font-black" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, border: '1px solid rgba(255,255,255,0.25)' }} {...bindArmamentGaze(equips)}>
+                                    <div className="shrink-0 flex items-center justify-center bg-black/85 text-white font-black" style={{ width: DECK_UI.equipIconSize, height: DECK_UI.equipIconSize, fontSize: DECK_UI.equipFontSize, clipPath: ARMAMENT_HEXAGON_CLIP, border: '1px solid rgba(255,255,255,0.25)' }} {...bindArmamentGaze(equips)}>
                                         X{equips.length}
                                     </div>
                                 )}
@@ -445,8 +830,8 @@ export const DeckContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ h
             </div>
 
             {/* 右：手牌样式大图 + 武装槽（位置/缩放/间隔可调，无按钮） */}
-            <div className="shrink-0" style={{ marginTop: DECK_GEOMETRY.handOffsetTop }}>
-                <HandWithArmament heroKey={heroKey} noLabels scale={DECK_GEOMETRY.handScale} gap={DECK_GEOMETRY.armamentGap} />
+            <div className="shrink-0" style={{ marginTop: DECK_UI.handOffsetTop }}>
+                <HandWithArmament heroKey={heroKey} noLabels scale={DECK_UI.handScale} gap={DECK_UI.armamentGap} />
             </div>
 
             {/* 悬停大图检视 */}
@@ -474,45 +859,69 @@ export const LevelsContent: React.FC<{ heroKey: string; userSystem?: any }> = ({
     const nextParts = nextReward ? rewardParts(nextReward) : null;
 
     return (
-        <div className="flex flex-col items-center h-full gap-5 overflow-y-auto custom-scrollbar py-2" style={{ paddingTop: LEVELS_GEOMETRY.topGap }}>
+        <div
+            className="flex flex-col items-center h-full overflow-y-auto custom-scrollbar"
+            style={{ gap: LEVELS_UI.sectionGap, paddingTop: LEVELS_UI.topGap, paddingBottom: LEVELS_UI.pagePadY }}
+        >
             {/* 区域 1：圆环头像（头像+等级黑圆+圆环经验槽+蓝条）+ X/N */}
-            <div className="flex flex-col items-center gap-2.5">
-                <HeroAvatarRing heroKey={heroKey} level={level} exp={exp} expToNext={expToNext} size={LEVELS_GEOMETRY.avatarSize} />
-                <div className="text-xl font-mono font-bold text-white tracking-wider">
+            <div className="flex flex-col items-center" style={{ gap: LEVELS_UI.avatarBlockGap }}>
+                <HeroAvatarRing heroKey={heroKey} level={level} exp={exp} expToNext={expToNext} size={LEVELS_UI.avatarSize} />
+                <div className="font-mono font-bold text-white tracking-wider" style={{ fontSize: LEVELS_UI.expFontSize }}>
                     {expToNext > 0 ? `${exp}/${expToNext}` : 'MAX'}
                 </div>
             </div>
 
             {/* 区域 2：下一个等级奖励 */}
-            <div className="flex flex-col items-center gap-2 w-full">
-                <div className="text-sm font-mono text-purple-300/80">下一个等级奖励：</div>
+            <div className="flex flex-col items-center w-full" style={{ gap: LEVELS_UI.rewardBlockGap }}>
+                <div className="font-mono text-purple-300/80" style={{ fontSize: LEVELS_UI.rewardTitleFontSize }}>下一个等级奖励：</div>
                 {nextReward && nextParts ? (
-                    <div className="flex items-center gap-5 px-6 py-4 rounded-2xl bg-white/5 border border-white/15" style={{ width: LEVELS_GEOMETRY.rewardWidth }}>
+                    <div
+                        className="flex items-center bg-white/5 border border-white/15"
+                        style={{
+                            gap: LEVELS_UI.rewardRowGap,
+                            paddingLeft: LEVELS_UI.rewardPadX,
+                            paddingRight: LEVELS_UI.rewardPadX,
+                            paddingTop: LEVELS_UI.rewardPadY,
+                            paddingBottom: LEVELS_UI.rewardPadY,
+                            borderRadius: LEVELS_UI.rewardRadius,
+                            width: LEVELS_UI.rewardWidth,
+                        }}
+                    >
                         {/* 左：等级数字圆 */}
                         <div
-                            className="w-16 h-16 rounded-full flex items-center justify-center shrink-0"
-                            style={{ background: 'rgba(0,0,0,0.7)', border: `2px solid ${getLevelNumberColor(nextLevel)}`, boxShadow: `0 0 15px ${getLevelNumberColor(nextLevel)}44` }}
+                            className="rounded-full flex items-center justify-center shrink-0"
+                            style={{ width: LEVELS_UI.levelCircleSize, height: LEVELS_UI.levelCircleSize, background: 'rgba(0,0,0,0.7)', border: `2px solid ${getLevelNumberColor(nextLevel)}`, boxShadow: `0 0 15px ${getLevelNumberColor(nextLevel)}44` }}
                         >
-                            <span className="text-4xl font-black italic" style={{ color: getLevelNumberColor(nextLevel) }}>{nextLevel}</span>
+                            <span className="font-black italic" style={{ color: getLevelNumberColor(nextLevel), fontSize: LEVELS_UI.levelNumberFontSize }}>{nextLevel}</span>
                         </div>
                         {/* 右上简介 / 下具体效果 */}
-                        <div className="flex flex-col gap-1">
-                            <div className="text-xl font-black text-white">{nextParts.label}</div>
-                            <div className="text-base text-gray-300">{nextParts.value}</div>
+                        <div className="flex flex-col" style={{ gap: LEVELS_UI.rewardTextGap }}>
+                            <div className="font-black text-white" style={{ fontSize: LEVELS_UI.rewardLabelFontSize }}>{nextParts.label}</div>
+                            <div className="text-gray-300" style={{ fontSize: LEVELS_UI.rewardValueFontSize }}>{nextParts.value}</div>
                         </div>
                     </div>
                 ) : (
-                    <div className="px-6 py-4 rounded-2xl bg-white/5 border border-white/10 text-white font-black tracking-widest">已达最高等级（Lv.30）</div>
+                    <div
+                        className="bg-white/5 border border-white/10 text-white font-black tracking-widest"
+                        style={{
+                            paddingLeft: LEVELS_UI.rewardPadX,
+                            paddingRight: LEVELS_UI.rewardPadX,
+                            paddingTop: LEVELS_UI.rewardPadY,
+                            paddingBottom: LEVELS_UI.rewardPadY,
+                            borderRadius: LEVELS_UI.rewardRadius,
+                        }}
+                    >已达最高等级（Lv.30）</div>
                 )}
             </div>
 
             {/* 区域 3：查看所有等级奖励按钮（开发者：左右加减号按钮，升降级测试等级数字颜色） */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center" style={{ gap: LEVELS_UI.btnRowGap }}>
                 {isDev && (
                     <button
                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); heroProgression.setHeroLevel(heroKey, level - 1); }}
                         disabled={level <= 1}
-                        className="w-11 h-11 rounded-xl bg-slate-800 text-2xl font-black text-gray-200 border border-white/10 hover:bg-slate-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="bg-slate-800 font-black text-gray-200 border border-white/10 hover:bg-slate-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        style={{ width: LEVELS_UI.devBtnSize, height: LEVELS_UI.devBtnSize, borderRadius: LEVELS_UI.devBtnRadius, fontSize: LEVELS_UI.devBtnFontSize }}
                         title="降级（开发者专属）"
                     >
                         −
@@ -520,7 +929,15 @@ export const LevelsContent: React.FC<{ heroKey: string; userSystem?: any }> = ({
                 )}
                 <button
                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setShowModal(true); }}
-                    className="px-8 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-purple-400 text-base font-black tracking-widest hover:scale-105 transition-all hover:shadow-[0_0_30px_rgba(168,85,247,0.6)]"
+                    className="bg-gradient-to-r from-purple-600 to-purple-400 font-black tracking-widest hover:scale-105 transition-all hover:shadow-[0_0_30px_rgba(168,85,247,0.6)]"
+                    style={{
+                        paddingLeft: LEVELS_UI.viewAllPadX,
+                        paddingRight: LEVELS_UI.viewAllPadX,
+                        paddingTop: LEVELS_UI.viewAllPadY,
+                        paddingBottom: LEVELS_UI.viewAllPadY,
+                        borderRadius: LEVELS_UI.viewAllRadius,
+                        fontSize: LEVELS_UI.viewAllFontSize,
+                    }}
                 >
                     查看所有天启者等级奖励
                 </button>
@@ -528,7 +945,8 @@ export const LevelsContent: React.FC<{ heroKey: string; userSystem?: any }> = ({
                     <button
                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); heroProgression.setHeroLevel(heroKey, level + 1); }}
                         disabled={level >= MAX_HERO_LEVEL}
-                        className="w-11 h-11 rounded-xl bg-slate-800 text-2xl font-black text-gray-200 border border-white/10 hover:bg-slate-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="bg-slate-800 font-black text-gray-200 border border-white/10 hover:bg-slate-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        style={{ width: LEVELS_UI.devBtnSize, height: LEVELS_UI.devBtnSize, borderRadius: LEVELS_UI.devBtnRadius, fontSize: LEVELS_UI.devBtnFontSize }}
                         title="升级（开发者专属）"
                     >
                         +
@@ -570,31 +988,65 @@ const LevelRewardsModal: React.FC<{ isOpen: boolean; currentLevel: number; onClo
                     exit={{ scale: 0.92, opacity: 0, y: 20 }}
                     transition={{ type: "spring", stiffness: 260, damping: 24 }}
                     onClick={e => e.stopPropagation()}
-                    className="relative w-[720px] max-h-[80%] bg-slate-900/95 border border-purple-500/30 rounded-2xl shadow-[0_0_60px_rgba(88,28,135,0.4)] flex flex-col overflow-hidden"
+                    className="relative bg-slate-900/95 border-purple-500/30 shadow-[0_0_60px_rgba(88,28,135,0.4)] flex flex-col overflow-hidden"
+                    style={{
+                        width: LEVEL_REWARDS_UI.panelWidth,
+                        maxHeight: LEVEL_REWARDS_UI.panelMaxHeightPct,
+                        borderRadius: LEVEL_REWARDS_UI.panelRadius,
+                        borderWidth: LEVEL_REWARDS_UI.panelBorderWidth,
+                        borderStyle: 'solid',
+                    }}
                 >
                     {/* 头部 */}
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
-                        <h3 className="text-xl font-black tracking-widest text-white">天启者等级奖励</h3>
-                        <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="p-2 rounded-full text-gray-400 hover:bg-white/10 hover:text-white transition-all">
-                            <X size={20} />
+                    <div
+                        className="flex items-center justify-between border-white/10 shrink-0"
+                        style={{
+                            paddingLeft: LEVEL_REWARDS_UI.headerPadX,
+                            paddingRight: LEVEL_REWARDS_UI.headerPadX,
+                            paddingTop: LEVEL_REWARDS_UI.headerPadY,
+                            paddingBottom: LEVEL_REWARDS_UI.headerPadY,
+                            borderBottomWidth: LEVEL_REWARDS_UI.headerBorderWidth,
+                            borderStyle: 'solid',
+                        }}
+                    >
+                        <h3 className="font-black tracking-widest text-white" style={{ fontSize: LEVEL_REWARDS_UI.titleFontSize }}>天启者等级奖励</h3>
+                        <button
+                            onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
+                            className="rounded-full text-gray-400 hover:bg-white/10 hover:text-white transition-all"
+                            style={{ padding: LEVEL_REWARDS_UI.closePad }}
+                        >
+                            <X size={LEVEL_REWARDS_UI.closeIconSize} />
                         </button>
                     </div>
                     {/* 列表：达到亮起 / 未激活灰 */}
-                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
+                    <div
+                        className="flex-1 overflow-y-auto custom-scrollbar flex flex-col"
+                        style={{ padding: LEVEL_REWARDS_UI.listPad, gap: LEVEL_REWARDS_UI.rowGap }}
+                    >
                         {rows.map(r => {
                             const reached = r.level <= currentLevel;
                             return (
                                 <div key={r.level}
-                                    className={`flex items-center gap-4 px-4 py-2.5 rounded-xl border transition-all ${reached ? 'bg-white/5 border-white/15' : 'bg-transparent border-white/5 opacity-40 grayscale'}`}>
+                                    className={`flex items-center shrink-0 transition-all ${reached ? 'bg-white/5 border-white/15' : 'bg-transparent border-white/5 opacity-40 grayscale'}`}
+                                    style={{
+                                        gap: LEVEL_REWARDS_UI.rowInnerGap,
+                                        paddingLeft: LEVEL_REWARDS_UI.rowPadX,
+                                        paddingRight: LEVEL_REWARDS_UI.rowPadX,
+                                        paddingTop: LEVEL_REWARDS_UI.rowPadY,
+                                        paddingBottom: LEVEL_REWARDS_UI.rowPadY,
+                                        borderRadius: LEVEL_REWARDS_UI.rowRadius,
+                                        borderWidth: LEVEL_REWARDS_UI.rowBorderWidth,
+                                        borderStyle: 'solid',
+                                    }}>
                                     {/* 等级数字圆（激活色按 getLevelNumberColor 6 段设计） */}
-                                    <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
-                                        style={{ background: 'rgba(0,0,0,0.7)', border: `2px solid ${reached ? getLevelNumberColor(r.level) : '#4b5563'}` }}>
-                                        <span className="text-2xl font-black italic" style={{ color: reached ? getLevelNumberColor(r.level) : '#9ca3af' }}>{r.level}</span>
+                                    <div className="rounded-full flex items-center justify-center shrink-0"
+                                        style={{ width: LEVEL_REWARDS_UI.levelCircleSize, height: LEVEL_REWARDS_UI.levelCircleSize, background: 'rgba(0,0,0,0.7)', border: `2px solid ${reached ? getLevelNumberColor(r.level) : '#4b5563'}` }}>
+                                        <span className="font-black italic" style={{ color: reached ? getLevelNumberColor(r.level) : '#9ca3af', fontSize: LEVEL_REWARDS_UI.levelNumberFontSize }}>{r.level}</span>
                                     </div>
                                     {/* 简介 + 具体效果 */}
-                                    <div className="flex flex-col gap-0.5">
-                                        <div className={`text-base font-black ${reached ? 'text-white' : 'text-gray-500'}`}>{r.label}</div>
-                                        {r.value && <div className={`text-sm ${reached ? 'text-gray-300' : 'text-gray-600'}`}>{r.value}</div>}
+                                    <div className="flex flex-col" style={{ gap: LEVEL_REWARDS_UI.textGap }}>
+                                        <div className={`font-black ${reached ? 'text-white' : 'text-gray-500'}`} style={{ fontSize: LEVEL_REWARDS_UI.labelFontSize }}>{r.label}</div>
+                                        {r.value && <div className={reached ? 'text-gray-300' : 'text-gray-600'} style={{ fontSize: LEVEL_REWARDS_UI.valueFontSize }}>{r.value}</div>}
                                     </div>
                                 </div>
                             );
@@ -621,6 +1073,15 @@ const LevelRewardsModal: React.FC<{ isOpen: boolean; currentLevel: number; onClo
 //      本内容区 ≈ **1288 宽 × 686 高**（1680 − 280 左列 − 48 px-6 − 24 gap-6 − 40 p-5；
 //      高度已扣掉顶栏 / 详情栏。divinity 下手牌主视觉是隐藏的，不占宽）
 //   ⚠️ 铁律：**总宽必须 < 1288**，否则会出横向滚动条、溢出还会压到左侧星槽
+//
+// ── 📋 本页可调项一览（2026-10-16 补齐页内写死的尺寸类）────────────────────
+//   · 舞台骨架（**勿改名**，`DIV_STAGE_W` 派生式依赖）：DIV_CARD_W / DIV_CARD_H / DIV_ICON_PX /
+//     DIV_ICON_INNER_PX / DIV_BLOCK_W / DIV_CARD_GAP / DIV_ARC_OFFSET / ARC_OFFSETS
+//   · ① 空占位（未实装天启者）：DIV_EMPTY_*
+//   · ② 顶部条（标题 + 星数 + 碎片钱包 + 开发者重置）：DIV_TOP_* / DIV_CHIP_* / DIV_WALLET_*
+//   · ③ 节点按钮（左右各 3 个）：DIV_NODE_*
+//   · ④ 中央天启者卡面：DIV_CARD_NAME_* / DIV_CARD_STAR_* / DIV_FADE_* / DIV_CORE_LABEL_*
+//   · ⑤ 底部详情 + 激活按钮：DIV_DETAIL_* / DIV_BADGE_* / DIV_COST_* / DIV_ACT_*
 const DIV_CARD_W = 310;                    // 中央卡面宽（**显式写死**）
 //   ↑ 不能改用 aspect-ratio + flex-1 —— 在 auto 宽容器里宽度会算飞，直接撑爆面板（踩过）
 const DIV_CARD_H = 540;                    // 中央卡面高
@@ -642,6 +1103,91 @@ const ARC_OFFSETS: Record<'left' | 'right', number[]> = {
 /** 舞台总宽（供参考/自检：应远小于 1288） */
 const DIV_STAGE_W = DIV_BLOCK_W * 2 + DIV_CARD_GAP * 2 + DIV_CARD_W + DIV_ARC_OFFSET * 2;
 
+// ── ① 空占位（该天启者神格神经未实装时）──
+const DIV_EMPTY_PAD_Y = 64;                // 上下内边距（原 py-16 = 64）
+const DIV_EMPTY_GAP = 16;                  // 图标 / 标题 / 说明 之间间距（原 gap-4 = 16）
+const DIV_EMPTY_ICON_PX = 48;              // 顶部 Sparkles 图标（原 `<Sparkles size={48} />`）
+const DIV_EMPTY_TITLE_FONT = 18;           // 「神格神经图」字号（原 text-lg = 18）
+const DIV_EMPTY_NOTE_PAD_X = 16;           // 说明块左右内边距（原 px-4 = 16）
+const DIV_EMPTY_NOTE_PAD_Y = 8;            // 说明块上下内边距（原 py-2 = 8）
+const DIV_EMPTY_NOTE_RADIUS = 8;           // 说明块圆角（原 rounded-lg = 8）
+const DIV_EMPTY_NOTE_BORDER = 1;           // 说明块描边粗细（原 border = 1）
+const DIV_EMPTY_NOTE_FONT = 12;            // 说明块字号（原 text-xs = 12）
+
+// ── ② 顶部条：标题 + 星数 + 开发者重置 + 碎片钱包 ──
+const DIV_TOP_GAP = 12;                    // 顶部条 ↔ 神经图 ↔ 详情 的纵向间距（原 gap-3 = 12）
+const DIV_TOP_PAD_X = 8;                   // 顶部条左右内边距（原 px-2 = 8）
+const DIV_TOP_ROW_GAP = 8;                 // 左组（标题/星数）与右组（按钮/钱包）内部间距（原 gap-2 = 8）
+const DIV_HEAD_FONT = 14;                  // 「神格神经图」小标题字号（原 text-sm = 14）
+const DIV_STAR_ROW_GAP = 2;                // 星数那一排 ★ 的间距（原 gap-0.5 = 2）
+const DIV_HEAD_STAR_FONT = 13;             // 顶部星数字号（原 text-[13px]）
+const DIV_COUNT_FONT = 12;                 // 「N/6」计数号字号（原 text-xs = 12）
+const DIV_CHIP_PAD_X = 12;                 // 胶囊（重置按钮 / 碎片钱包）左右内边距（原 px-3 = 12）
+const DIV_CHIP_PAD_Y = 4;                  // 胶囊上下内边距（原 py-1 = 4）
+const DIV_CHIP_RADIUS = 8;                 // 胶囊圆角（原 rounded-lg = 8）
+const DIV_CHIP_FONT = 12;                  // 胶囊字号（原 text-xs = 12）
+const DIV_CHIP_BORDER = 1;                 // 胶囊描边粗细（原 border = 1）
+const DIV_CHIP_GAP = 6;                    // 胶囊内「图标 ↔ 文字」间距（原 gap-1.5 = 6）
+const DIV_WALLET_ICON_PX = 20;             // 碎片钱包里的碎片图标（原 `<ShardIcon size={20} />`）
+
+// ── ③ 节点按钮 ──
+const DIV_NODE_GAP = 16;                   // 徽章 ↔ 文案 横向间距（原 gap-4 = 16）
+const DIV_NODE_PAD_X = 16;                 // 按钮左右内边距（原内联 `padding: '14px 16px'` 的 16）
+const DIV_NODE_PAD_Y = 14;                 // 按钮上下内边距（原内联 `padding: '14px 16px'` 的 14）
+const DIV_NODE_RADIUS = 16;                // 按钮圆角（原 rounded-2xl = 16）
+const DIV_NODE_BORDER = 1;                 // 按钮描边粗细（原 border = 1）
+const DIV_NODE_SLOT_FONT = 20;             // 无图标时兜底显示的节点号字号（原 text-xl = 20）
+const DIV_NODE_TEXT_GAP = 6;               // 文案三行之间间距（原 gap-1.5 = 6）
+const DIV_NODE_NUM_FONT = 13;              // 「节点 N」字号（原 text-[13px]）
+const DIV_NODE_TITLE_FONT = 21;            // 节点名字号（原 text-[21px]）
+const DIV_NODE_STATUS_FONT = 15;           // 状态行（已激活 / 消耗 N 片）字号（原 text-[15px]）
+const DIV_NODE_STATUS_GAP = 6;             // 状态行内「图标 ↔ 文字」间距（原 gap-1.5 = 6）
+const DIV_NODE_SHARD_PX = 16;              // 状态行里的碎片图标（原 `<ShardIcon size={16} />`）
+const DIV_STAR_BADGE_PX = 24;              // 已激活右下角金星直径（原 w-6 h-6 = 24）
+const DIV_STAR_BADGE_FONT = 13;            // 金星字号（原 text-[13px]）
+const DIV_STAR_BADGE_BORDER = 2;           // 金星描边粗细（原 border-2 = 2）
+const DIV_DOT_PX = 16;                     // 可激活提示点直径（原 w-4 h-4 = 16）
+const DIV_DOT_BORDER = 2;                  // 提示点描边粗细（原 border-2 = 2）
+
+// ── ④ 中央天启者卡面 ──
+const DIV_COLUMN_PAD_Y = 4;                // 左右两列上下内边距（原内联 paddingTop / paddingBottom = 4）
+const DIV_CARD_RADIUS = 16;                // 卡面圆角（原 rounded-2xl = 16）
+const DIV_FADE_TOP_H = 96;                 // 顶部主题色淡染高度（原 h-24 = 96）
+const DIV_FADE_BOTTOM_H = 144;             // 底部沉底渐隐高度（原 h-36 = 144）
+const DIV_CARD_NAME_PAD_X = 12;            // 名字区左右内边距（原 px-3 = 12）
+const DIV_CARD_NAME_PAD_BOTTOM = 16;       // 名字区下内边距（原 pb-4 = 16）
+const DIV_CARD_NAME_GAP = 8;               // 「名字 ↔ 卡面星数」间距（原 gap-2 = 8）
+const DIV_CARD_NAME_FONT = 30;             // 卡面名字字号（原 text-[30px]）
+const DIV_CARD_STAR_GAP = 6;               // 卡面星数那一排 ★ 的间距（原 gap-1.5 = 6）
+const DIV_CARD_STAR_FONT = 19;             // 卡面星数字号（原 text-[19px]）
+const DIV_CORE_LABEL_MARGIN_TOP = 12;      // 「NEURAL CORE」距卡面（原 mt-3 = 12）
+const DIV_CORE_LABEL_FONT = 11;            // 「NEURAL CORE」字号（原 text-[11px]）
+
+// ── ⑤ 底部详情 + 激活按钮 ──
+const DIV_DETAIL_RADIUS = 12;              // 详情块圆角（原 rounded-xl = 12）
+const DIV_DETAIL_BORDER = 1;               // 详情块描边粗细（原 border = 1）
+const DIV_DETAIL_PAD_X = 16;               // 详情块左右内边距（原 px-4 = 16）
+const DIV_DETAIL_PAD_Y = 12;               // 详情块上下内边距（原 py-3 = 12）
+const DIV_DETAIL_HEAD_GAP = 8;             // 标题行内「名字 ↔ 节点徽标 ↔ 固定槽」间距（原 gap-2 = 8）
+const DIV_DETAIL_HEAD_MARGIN_BOTTOM = 4;   // 标题行与描述间距（原 mb-1 = 4）
+const DIV_BADGE_FONT = 10;                 // 「节点 N」小徽标 / 「全英雄固定槽」字号（原 text-[10px]）
+const DIV_BADGE_PAD_X = 6;                 // 小徽标左右内边距（原 px-1.5 = 6）
+const DIV_BADGE_PAD_Y = 2;                 // 小徽标上下内边距（原 py-0.5 = 2）
+const DIV_BADGE_RADIUS = 4;                // 小徽标圆角（原 rounded = 4）
+const DIV_DESC_FONT = 12;                  // 节点描述字号（原 text-xs = 12）
+const DIV_DESC_MARGIN_BOTTOM = 8;          // 描述与消耗行间距（原 mb-2 = 8）
+const DIV_COST_FONT = 12;                  // 消耗明细行字号（原 text-[12px]）
+const DIV_COST_GAP_X = 8;                  // 消耗明细横向间距（原 gap-x-2 = 8）
+const DIV_COST_GAP_Y = 4;                  // 消耗明细纵向间距（原 gap-y-1 = 4）
+const DIV_COST_ITEM_GAP = 4;               // 消耗明细内「碎片图标 ↔ 数字」间距（原 gap-1 = 4）
+const DIV_COST_MARGIN_BOTTOM = 8;          // 消耗明细与前置行间距（原 mb-2 = 8）
+const DIV_DETAIL_FOOT_GAP = 12;            // 底行「前置 ↔ 激活按钮」间距（原 gap-3 = 12）
+const DIV_REQ_FONT = 11;                   // 「前置：…」字号（原 text-[11px]）
+const DIV_ACT_BTN_PAD_X = 20;              // 激活按钮左右内边距（原 px-5 = 20）
+const DIV_ACT_BTN_PAD_Y = 6;               // 激活按钮上下内边距（原 py-1.5 = 6）
+const DIV_ACT_BTN_RADIUS = 8;              // 激活按钮圆角（原 rounded-lg = 8）
+const DIV_ACT_BTN_FONT = 12;               // 激活按钮字号（原 text-xs = 12）
+
 export const DivinityContent: React.FC<{ heroKey: string; heroName: string; userSystem?: any }> = ({ heroKey, heroName, userSystem }) => {
     const { getUnlocked, getHeroShardCount, getUniversalShardCount, getSpendPlan, canUnlock, unlockNode, resetHero } = useHeroDivinity();
     const nodes = getDivinityNodes(heroKey);
@@ -657,10 +1203,21 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
     // 未设计的天启者 → 占位（里芙纵切先行）
     if (nodes.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center h-full">
-                <Sparkles className="text-purple-500/60" size={48} />
-                <p className="text-lg font-black text-white">神格神经图</p>
-                <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-gray-400">
+            <div className="flex flex-col items-center justify-center text-center h-full"
+                style={{ paddingTop: DIV_EMPTY_PAD_Y, paddingBottom: DIV_EMPTY_PAD_Y, gap: DIV_EMPTY_GAP }}>
+                <Sparkles className="text-purple-500/60" size={DIV_EMPTY_ICON_PX} />
+                <p className="font-black text-white" style={{ fontSize: DIV_EMPTY_TITLE_FONT }}>神格神经图</p>
+                <div className="bg-white/5 border-white/10 text-gray-400"
+                    style={{
+                        paddingLeft: DIV_EMPTY_NOTE_PAD_X,
+                        paddingRight: DIV_EMPTY_NOTE_PAD_X,
+                        paddingTop: DIV_EMPTY_NOTE_PAD_Y,
+                        paddingBottom: DIV_EMPTY_NOTE_PAD_Y,
+                        borderRadius: DIV_EMPTY_NOTE_RADIUS,
+                        borderWidth: DIV_EMPTY_NOTE_BORDER,
+                        borderStyle: 'solid',
+                        fontSize: DIV_EMPTY_NOTE_FONT,
+                    }}>
                     {heroName} 的神格神经尚在设计中（里芙已实装）
                 </div>
             </div>
@@ -690,10 +1247,17 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                 <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); setPickId(n.id); }}
-                    className={`group flex items-center gap-4 rounded-2xl border outline-none transition-all ${side === 'left' ? 'flex-row-reverse text-right' : 'text-left'} ${active ? 'scale-[1.04]' : 'hover:scale-[1.03]'}`}
+                    className={`group flex items-center outline-none transition-all ${side === 'left' ? 'flex-row-reverse text-right' : 'text-left'} ${active ? 'scale-[1.04]' : 'hover:scale-[1.03]'}`}
                     style={{
                         width: DIV_BLOCK_W,
-                        padding: '14px 16px',
+                        gap: DIV_NODE_GAP,
+                        paddingLeft: DIV_NODE_PAD_X,
+                        paddingRight: DIV_NODE_PAD_X,
+                        paddingTop: DIV_NODE_PAD_Y,
+                        paddingBottom: DIV_NODE_PAD_Y,
+                        borderRadius: DIV_NODE_RADIUS,
+                        borderWidth: DIV_NODE_BORDER,
+                        borderStyle: 'solid',
                         background: active ? `${color}1f` : (on ? 'rgba(30,41,59,0.5)' : 'rgba(30,41,59,0.42)'),
                         borderColor: active ? `${color}99` : (on ? `${color}44` : 'rgba(255,255,255,0.07)'),
                         boxShadow: active ? `0 0 28px ${color}66` : (on ? `0 0 18px ${color}22` : 'none'),
@@ -715,27 +1279,29 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                                     <img src={iconSrc} alt={n.name} className="w-full h-full object-cover" draggable={false}
                                         style={{ filter: on || st.ok ? 'none' : 'grayscale(0.9) brightness(0.6)' }} />
                                 ) : (
-                                    <span className="w-full h-full flex items-center justify-center font-black text-white/70 text-xl">{n.slot}</span>
+                                    <span className="w-full h-full flex items-center justify-center font-black text-white/70" style={{ fontSize: DIV_NODE_SLOT_FONT }}>{n.slot}</span>
                                 )}
                             </div>
                         </div>
                         {/* 已激活：右下角金星 */}
                         {on && (
-                            <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-amber-400 text-black text-[13px] font-black flex items-center justify-center border-2 border-slate-950">★</span>
+                            <span className="absolute -bottom-1 -right-1 rounded-full bg-amber-400 text-black font-black flex items-center justify-center border-slate-950"
+                                style={{ width: DIV_STAR_BADGE_PX, height: DIV_STAR_BADGE_PX, fontSize: DIV_STAR_BADGE_FONT, borderWidth: DIV_STAR_BADGE_BORDER, borderStyle: 'solid' }}>★</span>
                         )}
                         {/* 可激活未激活：右上角提示点 */}
                         {!on && st.ok && (
-                            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-emerald-400 border-2 border-slate-950 animate-pulse" />
+                            <span className="absolute -top-0.5 -right-0.5 rounded-full bg-emerald-400 border-slate-950 animate-pulse"
+                                style={{ width: DIV_DOT_PX, height: DIV_DOT_PX, borderWidth: DIV_DOT_BORDER, borderStyle: 'solid' }} />
                         )}
                     </div>
                     {/* 文案：节点号 + 名字 + 状态 */}
-                    <div className={`flex flex-col gap-1.5 min-w-0 ${side === 'left' ? 'items-end' : 'items-start'}`}>
-                        <span className="text-[13px] font-mono text-gray-500 tracking-wider">节点 {n.slot}</span>
-                        <span className={`text-[21px] font-black leading-tight whitespace-nowrap ${on ? 'text-amber-200' : st.ok ? 'text-white' : 'text-gray-400'}`}>
+                    <div className={`flex flex-col min-w-0 ${side === 'left' ? 'items-end' : 'items-start'}`} style={{ gap: DIV_NODE_TEXT_GAP }}>
+                        <span className="font-mono text-gray-500 tracking-wider" style={{ fontSize: DIV_NODE_NUM_FONT }}>节点 {n.slot}</span>
+                        <span className={`font-black leading-tight whitespace-nowrap ${on ? 'text-amber-200' : st.ok ? 'text-white' : 'text-gray-400'}`} style={{ fontSize: DIV_NODE_TITLE_FONT }}>
                             {n.name}
                         </span>
-                        <span className={`text-[15px] font-mono flex items-center gap-1.5 ${on ? 'text-amber-400/90' : st.ok ? 'text-emerald-300' : 'text-gray-500'}`}>
-                            {on ? '已激活' : st.reason === 'locked' ? '🔒 前置未开' : (<><ShardIcon heroKey={heroKey} size={16} />{plan.total}</>)}
+                        <span className={`font-mono flex items-center ${on ? 'text-amber-400/90' : st.ok ? 'text-emerald-300' : 'text-gray-500'}`} style={{ fontSize: DIV_NODE_STATUS_FONT, gap: DIV_NODE_STATUS_GAP }}>
+                            {on ? '已激活' : st.reason === 'locked' ? '🔒 前置未开' : (<><ShardIcon heroKey={heroKey} size={DIV_NODE_SHARD_PX} />{plan.total}</>)}
                         </span>
                     </div>
                 </button>
@@ -744,19 +1310,19 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
     };
 
     return (
-        <div className="h-full flex flex-col gap-3">
+        <div className="h-full flex flex-col" style={{ gap: DIV_TOP_GAP }}>
             {/* 顶部：星数 + 碎片钱包 */}
-            <div className="shrink-0 flex items-center justify-between px-2">
-                <div className="flex items-center gap-2">
-                    <span className="text-sm font-black text-white tracking-widest">神格神经图</span>
-                    <span className="flex items-center gap-0.5">
+            <div className="shrink-0 flex items-center justify-between" style={{ paddingLeft: DIV_TOP_PAD_X, paddingRight: DIV_TOP_PAD_X }}>
+                <div className="flex items-center" style={{ gap: DIV_TOP_ROW_GAP }}>
+                    <span className="font-black text-white tracking-widest" style={{ fontSize: DIV_HEAD_FONT }}>神格神经图</span>
+                    <span className="flex items-center" style={{ gap: DIV_STAR_ROW_GAP }}>
                         {Array.from({ length: MAX_DIVINITY_LEVEL }).map((_, i) => (
-                            <span key={i} className={`text-[13px] leading-none ${i < starCount ? 'text-amber-400' : 'text-gray-600'}`}>★</span>
+                            <span key={i} className={`leading-none ${i < starCount ? 'text-amber-400' : 'text-gray-600'}`} style={{ fontSize: DIV_HEAD_STAR_FONT }}>★</span>
                         ))}
                     </span>
-                    <span className="text-xs font-mono text-gray-400">{starCount}/{MAX_DIVINITY_LEVEL}</span>
+                    <span className="font-mono text-gray-400" style={{ fontSize: DIV_COUNT_FONT }}>{starCount}/{MAX_DIVINITY_LEVEL}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center" style={{ gap: DIV_TOP_ROW_GAP }}>
                     {isDev && (
                         <button
                             type="button"
@@ -769,24 +1335,36 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                                 setPickId(null);
                             }}
                             onBlur={() => setResetArmed(false)}
-                            className={`px-3 py-1 rounded-lg font-black text-xs border transition-all ${
+                            className={`font-black transition-all ${
                                 resetArmed
                                     ? 'bg-red-600/80 border-red-400 text-white animate-pulse'
                                     : 'bg-slate-800 border-white/10 text-gray-300 hover:bg-slate-700'
                             }`}
+                            style={{
+                                paddingLeft: DIV_CHIP_PAD_X,
+                                paddingRight: DIV_CHIP_PAD_X,
+                                paddingTop: DIV_CHIP_PAD_Y,
+                                paddingBottom: DIV_CHIP_PAD_Y,
+                                borderRadius: DIV_CHIP_RADIUS,
+                                fontSize: DIV_CHIP_FONT,
+                                borderWidth: DIV_CHIP_BORDER,
+                                borderStyle: 'solid',
+                            }}
                             title="重置该天启者的神格神经（开发者专属，两段确认）"
                         >
                             {resetArmed ? '确认重置？' : '重置'}
                         </button>
                     )}
                     {/* [2026-09-29 程拍板] 碎片钱包：本英雄专属（头像菱形）+ 万能（橙菱形） */}
-                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-500/15 border border-purple-400/40 text-purple-200 font-black text-xs"
+                    <span className="flex items-center bg-purple-500/15 border-purple-400/40 text-purple-200 font-black"
+                        style={{ gap: DIV_CHIP_GAP, paddingLeft: DIV_CHIP_PAD_X, paddingRight: DIV_CHIP_PAD_X, paddingTop: DIV_CHIP_PAD_Y, paddingBottom: DIV_CHIP_PAD_Y, borderRadius: DIV_CHIP_RADIUS, fontSize: DIV_CHIP_FONT, borderWidth: DIV_CHIP_BORDER, borderStyle: 'solid' }}
                         title={`${heroName}的神格碎片（专属，只能点本英雄）`}>
-                        <ShardIcon heroKey={heroKey} size={20} /> {heroName}碎片 {heroShards}
+                        <ShardIcon heroKey={heroKey} size={DIV_WALLET_ICON_PX} /> {heroName}碎片 {heroShards}
                     </span>
-                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/15 border border-amber-400/40 text-amber-200 font-black text-xs"
+                    <span className="flex items-center bg-amber-500/15 border-amber-400/40 text-amber-200 font-black"
+                        style={{ gap: DIV_CHIP_GAP, paddingLeft: DIV_CHIP_PAD_X, paddingRight: DIV_CHIP_PAD_X, paddingTop: DIV_CHIP_PAD_Y, paddingBottom: DIV_CHIP_PAD_Y, borderRadius: DIV_CHIP_RADIUS, fontSize: DIV_CHIP_FONT, borderWidth: DIV_CHIP_BORDER, borderStyle: 'solid' }}
                         title="万能碎片（可替代任何天启者的专属碎片）">
-                        <ShardIcon size={20} /> 万能 {uniShards}
+                        <ShardIcon size={DIV_WALLET_ICON_PX} /> 万能 {uniShards}
                     </span>
                 </div>
             </div>
@@ -802,7 +1380,7 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                 <div className="flex items-center justify-center" style={{ maxWidth: DIV_STAGE_W }}>
                     {/* 左列：① ③ ⑤（右对齐朝卡面；仅中间 ③ 外推） */}
                     <div className="flex flex-col justify-between items-end h-full"
-                        style={{ height: DIV_CARD_H + 26, paddingTop: 4, paddingBottom: 4 }}>
+                        style={{ height: DIV_CARD_H + 26, paddingTop: DIV_COLUMN_PAD_Y, paddingBottom: DIV_COLUMN_PAD_Y }}>
                         {leftCol.map((n, i) => <NodeBtn key={n.id} n={n} side="left" offsetX={ARC_OFFSETS.left[i] ?? 0} />)}
                     </div>
 
@@ -810,9 +1388,10 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                     <div className="shrink-0 flex flex-col items-center"
                         style={{ marginLeft: DIV_CARD_GAP, marginRight: DIV_CARD_GAP }}>
                         <div
-                            className="relative rounded-2xl overflow-hidden shrink-0"
+                            className="relative overflow-hidden shrink-0"
                             style={{
                                 width: DIV_CARD_W, height: DIV_CARD_H,
+                                borderRadius: DIV_CARD_RADIUS,
                                 border: `3px solid ${theme.color}`,
                                 boxShadow: `0 0 44px ${theme.glow}, 0 0 110px ${theme.color}44, inset 0 0 40px rgba(0,0,0,0.65)`,
                             }}
@@ -826,26 +1405,27 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                             {/* [2026-09-29 程拍板] 渐隐改用**天启者主题色**（原来用黑 → 把立绘的脸压黑了）
                                 · 顶部：主题亮色淡染（让卡面融进背景，但不遮脸）
                                 · 底部：阵营深色(soft) 沉底 → 主题色过渡，保证名字/星数可读 */}
-                            <div className="absolute inset-x-0 top-0 h-24 pointer-events-none"
-                                style={{ background: `linear-gradient(to bottom, ${theme.color}59, transparent)` }} />
-                            <div className="absolute inset-x-0 bottom-0 h-36 pointer-events-none"
-                                style={{ background: `linear-gradient(to top, ${theme.soft}F2, ${theme.color}55 55%, transparent)` }} />
+                            <div className="absolute inset-x-0 top-0 pointer-events-none"
+                                style={{ height: DIV_FADE_TOP_H, background: `linear-gradient(to bottom, ${theme.color}59, transparent)` }} />
+                            <div className="absolute inset-x-0 bottom-0 pointer-events-none"
+                                style={{ height: DIV_FADE_BOTTOM_H, background: `linear-gradient(to top, ${theme.soft}F2, ${theme.color}55 55%, transparent)` }} />
                             {/* 卡面底部：名字 + 星数 */}
-                            <div className="absolute inset-x-0 bottom-0 px-3 pb-4 flex flex-col items-center gap-2">
-                                <span className="text-[30px] font-black text-white tracking-wide drop-shadow-[0_0_10px_rgba(0,0,0,0.95)]">{heroName}</span>
-                                <span className="flex items-center gap-1.5">
+                            <div className="absolute inset-x-0 bottom-0 flex flex-col items-center"
+                                style={{ paddingLeft: DIV_CARD_NAME_PAD_X, paddingRight: DIV_CARD_NAME_PAD_X, paddingBottom: DIV_CARD_NAME_PAD_BOTTOM, gap: DIV_CARD_NAME_GAP }}>
+                                <span className="font-black text-white tracking-wide drop-shadow-[0_0_10px_rgba(0,0,0,0.95)]" style={{ fontSize: DIV_CARD_NAME_FONT }}>{heroName}</span>
+                                <span className="flex items-center" style={{ gap: DIV_CARD_STAR_GAP }}>
                                     {Array.from({ length: MAX_DIVINITY_LEVEL }).map((_, i) => (
-                                        <span key={i} className={`text-[19px] leading-none ${i < starCount ? 'text-amber-400' : 'text-white/25'}`}>★</span>
+                                        <span key={i} className={`leading-none ${i < starCount ? 'text-amber-400' : 'text-white/25'}`} style={{ fontSize: DIV_CARD_STAR_FONT }}>★</span>
                                     ))}
                                 </span>
                             </div>
                         </div>
-                        <span className="shrink-0 mt-3 text-[11px] text-gray-500 font-mono tracking-[0.42em]">NEURAL CORE</span>
+                        <span className="shrink-0 text-gray-500 font-mono tracking-[0.42em]" style={{ marginTop: DIV_CORE_LABEL_MARGIN_TOP, fontSize: DIV_CORE_LABEL_FONT }}>NEURAL CORE</span>
                     </div>
 
                     {/* 右列：② ④ ⑥（左对齐朝卡面；仅中间 ④ 外推） */}
                     <div className="flex flex-col justify-between items-start h-full"
-                        style={{ height: DIV_CARD_H + 26, paddingTop: 4, paddingBottom: 4 }}>
+                        style={{ height: DIV_CARD_H + 26, paddingTop: DIV_COLUMN_PAD_Y, paddingBottom: DIV_COLUMN_PAD_Y }}>
                         {rightCol.map((n, i) => <NodeBtn key={n.id} n={n} side="right" offsetX={ARC_OFFSETS.right[i] ?? 0} />)}
                     </div>
                 </div>
@@ -858,32 +1438,42 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                 const plan = getSpendPlan(heroKey, picked);
                 const reqNames = picked.requires.map(r => nodes.find(x => x.id === r)?.name ?? r).join('、');
                 return (
-                    <div className="shrink-0 rounded-xl border border-white/10 bg-black/40 px-4 py-3">
-                        <div className="flex items-center gap-2 mb-1">
+                    <div className="shrink-0 border-white/10 bg-black/40"
+                        style={{
+                            borderRadius: DIV_DETAIL_RADIUS,
+                            borderWidth: DIV_DETAIL_BORDER,
+                            borderStyle: 'solid',
+                            paddingLeft: DIV_DETAIL_PAD_X,
+                            paddingRight: DIV_DETAIL_PAD_X,
+                            paddingTop: DIV_DETAIL_PAD_Y,
+                            paddingBottom: DIV_DETAIL_PAD_Y,
+                        }}>
+                        <div className="flex items-center" style={{ gap: DIV_DETAIL_HEAD_GAP, marginBottom: DIV_DETAIL_HEAD_MARGIN_BOTTOM }}>
                             <span className="font-black text-white">{picked.name}</span>
-                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ color: theme.color, border: `1px solid ${theme.color}55` }}>
+                            <span className="font-mono" style={{ fontSize: DIV_BADGE_FONT, paddingLeft: DIV_BADGE_PAD_X, paddingRight: DIV_BADGE_PAD_X, paddingTop: DIV_BADGE_PAD_Y, paddingBottom: DIV_BADGE_PAD_Y, borderRadius: DIV_BADGE_RADIUS, color: theme.color, border: `1px solid ${theme.color}55` }}>
                                 节点 {picked.slot}
                             </span>
-                            {picked.slot === 5 && <span className="text-[10px] text-gray-400">（全英雄固定槽）</span>}
+                            {picked.slot === 5 && <span className="text-gray-400" style={{ fontSize: DIV_BADGE_FONT }}>（全英雄固定槽）</span>}
                         </div>
-                        <p className="text-xs text-gray-300 leading-relaxed mb-2">{picked.description}</p>
+                        <p className="text-gray-300 leading-relaxed" style={{ fontSize: DIV_DESC_FONT, marginBottom: DIV_DESC_MARGIN_BOTTOM }}>{picked.description}</p>
                         {/* [2026-09-29 程拍板] 花费明细：先花专属、万能补足（万能可全额替代）—— 带碎片图标 */}
                         {!on && (
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] font-mono text-gray-400 mb-2">
+                            <div className="flex flex-wrap items-center font-mono text-gray-400"
+                                style={{ columnGap: DIV_COST_GAP_X, rowGap: DIV_COST_GAP_Y, fontSize: DIV_COST_FONT, marginBottom: DIV_COST_MARGIN_BOTTOM }}>
                                 <span>消耗：</span>
-                                <span className="flex items-center gap-1 text-purple-300">
-                                    <ShardIcon heroKey={heroKey} size={16} />{plan.heroSpend} 专属
+                                <span className="flex items-center text-purple-300" style={{ gap: DIV_COST_ITEM_GAP }}>
+                                    <ShardIcon heroKey={heroKey} size={DIV_NODE_SHARD_PX} />{plan.heroSpend} 专属
                                 </span>
                                 {plan.universalSpend > 0 && (
-                                    <span className="flex items-center gap-1 text-amber-300">
-                                        <ShardIcon size={16} />{plan.universalSpend} 万能
+                                    <span className="flex items-center text-amber-300" style={{ gap: DIV_COST_ITEM_GAP }}>
+                                        <ShardIcon size={DIV_NODE_SHARD_PX} />{plan.universalSpend} 万能
                                     </span>
                                 )}
                                 <span className="text-gray-500">（共 {plan.total} 片）</span>
                             </div>
                         )}
-                        <div className="flex items-center justify-between gap-3">
-                            <span className="text-[11px] text-gray-500">
+                        <div className="flex items-center justify-between" style={{ gap: DIV_DETAIL_FOOT_GAP }}>
+                            <span className="text-gray-500" style={{ fontSize: DIV_REQ_FONT }}>
                                 {reqNames ? `前置：${reqNames}` : '无前置'}
                             </span>
                             <button
@@ -894,11 +1484,19 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                                     eventBus.emit(GameEvents.UI_CLICK);
                                     unlockNode(picked);
                                 }}
-                                className={`px-5 py-1.5 rounded-lg font-black text-xs tracking-wider transition-all ${
+                                className={`font-black tracking-wider transition-all ${
                                     on ? 'bg-amber-500/20 text-amber-200 cursor-default'
                                         : st.ok ? 'bg-gradient-to-r from-purple-600 to-fuchsia-500 hover:scale-105 shadow-[0_0_16px_rgba(168,85,247,0.45)] text-white'
                                         : 'bg-white/5 text-gray-500 cursor-not-allowed'
                                 }`}
+                                style={{
+                                    paddingLeft: DIV_ACT_BTN_PAD_X,
+                                    paddingRight: DIV_ACT_BTN_PAD_X,
+                                    paddingTop: DIV_ACT_BTN_PAD_Y,
+                                    paddingBottom: DIV_ACT_BTN_PAD_Y,
+                                    borderRadius: DIV_ACT_BTN_RADIUS,
+                                    fontSize: DIV_ACT_BTN_FONT,
+                                }}
                             >
                                 {on ? '已激活'
                                     : st.reason === 'locked' ? '前置未开'
@@ -914,6 +1512,7 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
 };
 
 // ════════════ 内容 ⑤：武装（装备系统 · 武装槽）════════
+// 🎛️ 本节的**视觉调参区在文件顶部 `ARMAMENT_UI`**（武装页 + 共享件 ArmamentSlot / ArmamentSlots / HandWithArmament）。
 // [2026-08-14 莉莉子] 武装=特殊装备，与其他装备同在 data/equipment.ts 管理，
 //   但**不能在局内获取，只能局外带入**（进入游戏前配置）。本界面先做武装槽视觉：
 //   左侧当前天启者手牌样式 + 右侧从上到下 3 个武装空槽（六边形白色描边黑色空底）。
@@ -1039,7 +1638,7 @@ export const HandWithArmament: React.FC<{ heroKey: string; scale?: number; noLab
         [heroBonus.armamentRarity, handTiers],
     );
     return (
-        <div className="flex items-center gap-6">
+        <div className="flex items-center" style={{ gap: ARMAMENT_UI.handGroupGap }}>
             <HeroHandContent heroKey={heroKey} scale={scale} noLabels={noLabels} equipIds={values.filter((v): v is string => !!v)} />
             <ArmamentSlots totalHeight={HAND_CARD_HEIGHT * scale} gap={gap} values={values} unlockSlots={unlockSlots} caps={handCaps} />
         </div>
@@ -1147,8 +1746,8 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
         return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
     }, []);
 
-    // 武装界面手牌 scale 1.9 → 槽总高 = 手牌高度 202×1.9（对齐其他界面）
-    const slotH = (HAND_CARD_HEIGHT * 1.9 - ARMAMENT_MAX_STOCK) / 3;
+    // 武装界面手牌 scale 1.9 → 槽总高 = 手牌高度 202×1.9（对齐其他界面）；倍数与手牌共用 ARMAMENT_UI.handScale
+    const slotH = (HAND_CARD_HEIGHT * ARMAMENT_UI.handScale - ARMAMENT_MAX_STOCK) / 3;
 
     // 可选列表：开发者=全部装备+武装；普通玩家=库存>0 的武装（[2026-09-07] 数量库存）
     const armStockMap = readArmStock(userSystem?.settings as any);
@@ -1244,13 +1843,13 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
         <div className="relative flex h-full w-full">
             {/* 左侧：手牌 + 槽（抽屉展开时 margin-right 让位，手牌被往左挤） */}
             <div
-                className="flex-1 min-w-0 flex items-center justify-center gap-10 transition-[margin] duration-300"
-                style={{ marginRight: activeSlot !== null ? 420 : 0 }}
+                className="flex-1 min-w-0 flex items-center justify-center transition-[margin] duration-300"
+                style={{ gap: ARMAMENT_UI.leftGap, marginRight: activeSlot !== null ? ARMAMENT_UI.drawerWidth : 0 }}
             >
                 {/* [2026-08-28 莉莉子 修复] 手牌只反映已解锁槽位武装 */}
-                <HeroHandContent heroKey={heroKey} scale={1.9} noLabels equipIds={activeSlots.filter((v): v is string => !!v)} />
+                <HeroHandContent heroKey={heroKey} scale={ARMAMENT_UI.handScale} noLabels equipIds={activeSlots.filter((v): v is string => !!v)} />
                 {/* 3 个武装槽（放大到与手牌同高对齐） */}
-                <div className="flex flex-col" style={{ gap: 8 }}>
+                <div className="flex flex-col" style={{ gap: ARMAMENT_UI.slotColGap }}>
                 {[0, 1, 2].map(i => {
                     const locked = i >= unlockSlots; // [2026-08-14] 未达等级未解锁（所有账号按等级）
                     const slotId = slots[i] ?? null;
@@ -1259,7 +1858,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                     const capColor = EQUIP_RARITY_COLOR[slotCap(i)] ?? '#22c55e';
                     const rColor = def ? EQUIP_RARITY_COLOR[def.rarity] : capColor;
                     return (
-                        <div key={i} className="flex items-center gap-3">
+                        <div key={i} className="flex items-center" style={{ gap: ARMAMENT_UI.slotRowGap }}>
                             {/* 六边形槽：已解锁=显示配置/空槽可拖放；未解锁=灰色锁（拖上去弹回） */}
                             <div
                                 ref={el => { slotRefs.current[i] = el; }}
@@ -1300,22 +1899,24 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                             </div>
                             {/* 更换 + 卸载按钮（锁定槽不显示） */}
                             {!locked && (
-                            <div className="flex flex-col gap-1.5">
+                            <div className="flex flex-col" style={{ gap: ARMAMENT_UI.btnColGap }}>
                                 <button
                                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setActiveSlot(activeSlot === i ? null : i); }}
-                                    className={`p-2.5 rounded-md border transition-all ${activeSlot === i ? 'bg-purple-600 text-white border-purple-400' : 'bg-slate-800/80 text-gray-300 border-white/10 hover:bg-slate-700'}`}
+                                    className={`transition-all ${activeSlot === i ? 'bg-purple-600 text-white border-purple-400' : 'bg-slate-800/80 text-gray-300 border-white/10 hover:bg-slate-700'}`}
+                                    style={{ padding: ARMAMENT_UI.btnPad, borderRadius: ARMAMENT_UI.btnRadius, borderWidth: ARMAMENT_UI.btnBorderWidth, borderStyle: 'solid' }}
                                     title={slotId ? '更换武装' : '配置武装'}
                                 >
-                                    <RefreshCw size={16} />
+                                    <RefreshCw size={ARMAMENT_UI.btnIconSize} />
                                 </button>
                                 {/* 红色减号：快速卸载（装备自动回武器库） */}
                                 <button
                                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setArmamentSlot(heroKey, i, null); }}
                                     disabled={!slotId}
-                                    className="p-2.5 rounded-md border border-red-500/30 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white transition-all disabled:opacity-25 disabled:cursor-not-allowed"
+                                    className="border-red-500/30 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white transition-all disabled:opacity-25 disabled:cursor-not-allowed"
+                                    style={{ padding: ARMAMENT_UI.btnPad, borderRadius: ARMAMENT_UI.btnRadius, borderWidth: ARMAMENT_UI.btnBorderWidth, borderStyle: 'solid' }}
                                     title={slotId ? '卸载武装（自动回武器库）' : '空槽'}
                                 >
-                                    <Minus size={16} />
+                                    <Minus size={ARMAMENT_UI.btnIconSize} />
                                 </button>
                             </div>
                             )}
@@ -1330,60 +1931,82 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                 {activeSlot !== null && (
                     <motion.div
                         initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 420, opacity: 1 }}
+                        animate={{ width: ARMAMENT_UI.drawerWidth, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ type: 'spring', stiffness: 320, damping: 32 }}
                         className="fixed right-0 top-0 bottom-0 z-[610] overflow-hidden flex flex-col"
                     >
-                        <div className="w-[420px] h-full flex flex-col bg-slate-900/95 border-l border-white/10">
+                        <div className="h-full flex flex-col bg-slate-900/95 border-white/10"
+                            style={{ width: ARMAMENT_UI.drawerWidth, borderLeftWidth: ARMAMENT_UI.drawerLeftBorderWidth, borderStyle: 'solid' }}>
                             {/* 头部（开合由抽屉外侧常驻按钮控制）+ [2026-09-26 莉莉子] 筛选排序工具条 */}
-                            <div className="p-4 pb-3 border-b border-white/10 shrink-0 space-y-3">
-                                <div className="flex items-baseline justify-between gap-2">
+                            <div className="border-white/10 shrink-0 flex flex-col"
+                                style={{
+                                    paddingLeft: ARMAMENT_UI.drawerHeadPad,
+                                    paddingRight: ARMAMENT_UI.drawerHeadPad,
+                                    paddingTop: ARMAMENT_UI.drawerHeadPad,
+                                    paddingBottom: ARMAMENT_UI.drawerHeadPadBottom,
+                                    borderBottomWidth: ARMAMENT_UI.drawerHeadBorderWidth,
+                                    borderStyle: 'solid',
+                                    gap: ARMAMENT_UI.drawerHeadGap,
+                                }}>
+                                <div className="flex items-baseline justify-between shrink-0" style={{ gap: ARMAMENT_UI.titleRowGap }}>
                                     <h3 className="font-black text-white tracking-widest">{isDev ? '武装库 · 全部装备/武装' : '武装库'}</h3>
                                     {/* 计数标签：一眼看清「这个槽现在能装几个」 */}
-                                    <span className="text-xs font-mono text-gray-400 shrink-0">
+                                    <span className="font-mono text-gray-400 shrink-0" style={{ fontSize: ARMAMENT_UI.countFontSize }}>
                                         可装 <span className="text-emerald-400 font-black">{armUsableCount}</span>/{options.length}
                                     </span>
                                 </div>
 
                                 {/* 工具条：搜索 + 筛选 + 排序 + 方向 + 清空（抽屉仅 420px 宽 → 图标化压缩） */}
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center shrink-0" style={{ gap: ARMAMENT_UI.toolbarGap }}>
                                     <div className="relative flex-1 min-w-0">
-                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
+                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" size={ARMAMENT_UI.searchIconSize} />
                                         <input
                                             type="text"
                                             placeholder="搜索武装..."
                                             value={armSearch}
                                             onChange={e => setArmSearch(e.target.value)}
-                                            className="w-full bg-slate-800/80 rounded-md py-2 pl-8 pr-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-purple-500 transition-all"
+                                            className="w-full bg-slate-800/80 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-purple-500 transition-all"
+                                            style={{
+                                                paddingTop: ARMAMENT_UI.searchPadY,
+                                                paddingBottom: ARMAMENT_UI.searchPadY,
+                                                paddingLeft: ARMAMENT_UI.searchPadLeft,
+                                                paddingRight: ARMAMENT_UI.searchPadRight,
+                                                borderRadius: ARMAMENT_UI.searchRadius,
+                                                fontSize: ARMAMENT_UI.searchFontSize,
+                                            }}
                                         />
                                     </div>
                                     <button
                                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsArmFilterOpen(o => !o); }}
                                         title="筛选"
-                                        className={`p-2 rounded-md transition-colors shrink-0 ${isArmFilterOpen ? 'bg-purple-600 text-white' : isArmFilterActive ? 'bg-purple-600/40 text-purple-200 hover:bg-purple-600/60' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                        className={`transition-colors shrink-0 ${isArmFilterOpen ? 'bg-purple-600 text-white' : isArmFilterActive ? 'bg-purple-600/40 text-purple-200 hover:bg-purple-600/60' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                        style={{ padding: ARMAMENT_UI.toolBtnPad, borderRadius: ARMAMENT_UI.toolBtnRadius }}
                                     >
-                                        <Filter size={15} />
+                                        <Filter size={ARMAMENT_UI.toolIconSize} />
                                     </button>
                                     <div className="relative shrink-0">
                                         <button
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsArmSortOpen(o => !o); }}
                                             title={`排序：${ARM_SORT_LABELS[armSortMode]}`}
-                                            className={`p-2 rounded-md transition-colors ${isArmSortOpen ? 'bg-purple-600 text-white' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                            className={`transition-colors ${isArmSortOpen ? 'bg-purple-600 text-white' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                            style={{ padding: ARMAMENT_UI.toolBtnPad, borderRadius: ARMAMENT_UI.toolBtnRadius }}
                                         >
-                                            <ChevronDown size={15} className={isArmSortOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                                            <ChevronDown size={ARMAMENT_UI.toolIconSize} className={isArmSortOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
                                         </button>
                                         <AnimatePresence>
                                             {isArmSortOpen && (
                                                 <motion.div
                                                     initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
-                                                    className="absolute right-0 top-full mt-1 w-32 rounded-md bg-slate-800 border border-white/10 shadow-xl z-30 overflow-hidden"
+                                                    className="absolute right-0 top-full bg-slate-800 border-white/10 shadow-xl z-30 overflow-hidden"
+                                                    style={{ marginTop: ARMAMENT_UI.sortMenuMarginTop, width: ARMAMENT_UI.sortMenuWidth, borderRadius: ARMAMENT_UI.sortMenuRadius, borderWidth: ARMAMENT_UI.sortMenuBorderWidth, borderStyle: 'solid' }}
                                                 >
                                                     {(Object.keys(ARM_SORT_LABELS) as ArmSortMode[]).map(m => (
                                                         <button
                                                             key={m}
                                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setArmSortMode(m); setIsArmSortOpen(false); }}
-                                                            className={`w-full text-left px-3 py-2 text-xs font-bold transition-colors ${armSortMode === m ? 'bg-purple-600/40 text-white' : 'text-gray-300 hover:bg-white/5'}`}
+                                                            className={`w-full text-left font-bold transition-colors ${armSortMode === m ? 'bg-purple-600/40 text-white' : 'text-gray-300 hover:bg-white/5'}`}
+                                                            style={{ paddingLeft: ARMAMENT_UI.sortItemPadX, paddingRight: ARMAMENT_UI.sortItemPadX, paddingTop: ARMAMENT_UI.sortItemPadY, paddingBottom: ARMAMENT_UI.sortItemPadY, fontSize: ARMAMENT_UI.sortItemFontSize }}
                                                         >
                                                             {ARM_SORT_LABELS[m]}
                                                         </button>
@@ -1395,37 +2018,40 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                     <button
                                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setArmSortDir(d => (d === 'asc' ? 'desc' : 'asc')); }}
                                         title={armSortDir === 'asc' ? '当前顺序排列，点击切换倒序' : '当前倒序排列，点击切换顺序'}
-                                        className={`p-2 rounded-md transition-colors shrink-0 ${armSortDir === 'desc' ? 'bg-purple-600/40 text-white' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                        className={`transition-colors shrink-0 ${armSortDir === 'desc' ? 'bg-purple-600/40 text-white' : 'bg-slate-800/80 text-gray-300 hover:bg-slate-700'}`}
+                                        style={{ padding: ARMAMENT_UI.toolBtnPad, borderRadius: ARMAMENT_UI.toolBtnRadius }}
                                     >
-                                        {armSortDir === 'asc' ? <ArrowUpNarrowWide size={15} /> : <ArrowDownWideNarrow size={15} />}
+                                        {armSortDir === 'asc' ? <ArrowUpNarrowWide size={ARMAMENT_UI.toolIconSize} /> : <ArrowDownWideNarrow size={ARMAMENT_UI.toolIconSize} />}
                                     </button>
                                     <button
                                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); resetArmFilters(); }}
                                         disabled={!isArmFilterActive}
                                         title="清空筛选"
-                                        className={`p-2 rounded-md transition-colors shrink-0 ${isArmFilterActive ? 'bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
+                                        className={`transition-colors shrink-0 ${isArmFilterActive ? 'bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
+                                        style={{ padding: ARMAMENT_UI.toolBtnPad, borderRadius: ARMAMENT_UI.toolBtnRadius }}
                                     >
-                                        <RotateCcw size={15} />
+                                        <RotateCcw size={ARMAMENT_UI.toolIconSize} />
                                     </button>
                                 </div>
 
                                 {/* 筛选面板（折叠）：可用性 + 品质多选 */}
                                 <AnimatePresence>
                                     {isArmFilterOpen && (
-                                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                                            <div className="space-y-3 pt-1">
-                                                <div>
-                                                    <span className="text-[10px] text-gray-500 font-bold tracking-widest block mb-1.5">可用性</span>
+                                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden shrink-0">
+                                            <div className="flex flex-col" style={{ gap: ARMAMENT_UI.filterBlockGap, paddingTop: ARMAMENT_UI.filterPadTop }}>
+                                                <div className="shrink-0">
+                                                    <span className="text-gray-500 font-bold tracking-widest block" style={{ fontSize: ARMAMENT_UI.filterLabelFontSize, marginBottom: ARMAMENT_UI.filterLabelMarginBottom }}>可用性</span>
                                                     <button
                                                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setOnlyEquippable(v => !v); }}
-                                                        className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${onlyEquippable ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.4)]' : 'bg-slate-800 text-gray-400 hover:bg-slate-700'}`}
+                                                        className={`font-bold transition-all ${onlyEquippable ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.4)]' : 'bg-slate-800 text-gray-400 hover:bg-slate-700'}`}
+                                                        style={{ paddingLeft: ARMAMENT_UI.chipPadX, paddingRight: ARMAMENT_UI.chipPadX, paddingTop: ARMAMENT_UI.chipPadY, paddingBottom: ARMAMENT_UI.chipPadY, borderRadius: ARMAMENT_UI.chipRadius, fontSize: ARMAMENT_UI.chipFontSize }}
                                                     >
                                                         只看能装入此槽
                                                     </button>
                                                 </div>
-                                                <div>
-                                                    <span className="text-[10px] text-gray-500 font-bold tracking-widest block mb-1.5">品质</span>
-                                                    <div className="flex flex-wrap gap-1.5">
+                                                <div className="shrink-0">
+                                                    <span className="text-gray-500 font-bold tracking-widest block" style={{ fontSize: ARMAMENT_UI.filterLabelFontSize, marginBottom: ARMAMENT_UI.filterLabelMarginBottom }}>品质</span>
+                                                    <div className="flex flex-wrap" style={{ gap: ARMAMENT_UI.rarityGap }}>
                                                         {ARM_RARITY_ORDER.map(r => {
                                                             const on = armRarities.includes(r);
                                                             const c = EQUIP_RARITY_COLOR[r];
@@ -1433,8 +2059,18 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                                                 <button
                                                                     key={r}
                                                                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setArmRarities(p => on ? p.filter(x => x !== r) : [...p, r]); }}
-                                                                    style={on ? { background: c, borderColor: c, color: '#0f172a' } : { color: c, borderColor: 'transparent' }}
-                                                                    className={`px-2.5 py-1 rounded text-xs font-bold border transition-all ${on ? '' : 'bg-slate-800 hover:bg-slate-700'}`}
+                                                                    style={{
+                                                                        ...(on ? { background: c, borderColor: c, color: '#0f172a' } : { color: c, borderColor: 'transparent' }),
+                                                                        paddingLeft: ARMAMENT_UI.chipPadX,
+                                                                        paddingRight: ARMAMENT_UI.chipPadX,
+                                                                        paddingTop: ARMAMENT_UI.chipPadY,
+                                                                        paddingBottom: ARMAMENT_UI.chipPadY,
+                                                                        borderRadius: ARMAMENT_UI.chipRadius,
+                                                                        fontSize: ARMAMENT_UI.chipFontSize,
+                                                                        borderWidth: ARMAMENT_UI.chipBorderWidth,
+                                                                        borderStyle: 'solid',
+                                                                    }}
+                                                                    className={`font-bold transition-all ${on ? '' : 'bg-slate-800 hover:bg-slate-700'}`}
                                                                 >
                                                                     {RARITY_LABEL[r]}
                                                                 </button>
@@ -1450,7 +2086,7 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                 {/* [2026-09-26 莉莉子] 槽位智能默认的常驻提示
                                     筛选面板默认折叠，若不提示，玩家会以为「武装不见了」而不知道是哪个开关在过滤 */}
                                 {onlyEquippable && (
-                                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                                    <div className="flex items-center justify-between shrink-0" style={{ gap: ARMAMENT_UI.hintGap, fontSize: ARMAMENT_UI.hintFontSize }}>
                                         <span className="text-emerald-400/80 font-bold">仅显示可装入此槽</span>
                                         <button
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setOnlyEquippable(false); }}
@@ -1462,17 +2098,20 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                 )}
                             </div>
                             {/* 列表（六边形图标 + X数量 + 名称描述 + 品质描述） */}
-                            <div className="flex-1 overflow-y-auto p-4 space-y-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                            <div className="flex-1 overflow-y-auto flex flex-col [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                                style={{ padding: ARMAMENT_UI.listPad, gap: ARMAMENT_UI.listGap }}>
                                 {armVisible.length === 0 ? (
                                     // [2026-09-26 莉莉子] 空状态：筛选后无结果时给出路（design-guide checklist 要求）
-                                    <div className="flex flex-col items-center justify-center py-14 text-center">
-                                        <Search size={28} className="text-gray-600 mb-3" />
-                                        <p className="text-sm text-gray-300 font-bold mb-1">没有符合条件的武装</p>
-                                        <p className="text-xs text-gray-500 mb-4">试试放宽筛选条件</p>
+                                    <div className="flex flex-col items-center justify-center text-center shrink-0"
+                                        style={{ paddingTop: ARMAMENT_UI.emptyPadY, paddingBottom: ARMAMENT_UI.emptyPadY }}>
+                                        <Search size={ARMAMENT_UI.emptyIconSize} className="text-gray-600" style={{ marginBottom: ARMAMENT_UI.emptyIconMarginBottom }} />
+                                        <p className="text-gray-300 font-bold" style={{ fontSize: ARMAMENT_UI.emptyTitleFontSize, marginBottom: ARMAMENT_UI.emptyTitleMarginBottom }}>没有符合条件的武装</p>
+                                        <p className="text-gray-500" style={{ fontSize: ARMAMENT_UI.emptyDescFontSize, marginBottom: ARMAMENT_UI.emptyDescMarginBottom }}>试试放宽筛选条件</p>
                                         {/* 一键放开所有条件（含「只看能装入此槽」）—— 槽位上限/库存导致的空列表也能立刻看到东西 */}
                                         <button
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); resetArmFilters(); setOnlyEquippable(false); }}
-                                            className="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-xs font-bold text-gray-200 transition-colors"
+                                            className="bg-slate-700 hover:bg-slate-600 font-bold text-gray-200 transition-colors"
+                                            style={{ paddingLeft: ARMAMENT_UI.emptyBtnPadX, paddingRight: ARMAMENT_UI.emptyBtnPadX, paddingTop: ARMAMENT_UI.emptyBtnPadY, paddingBottom: ARMAMENT_UI.emptyBtnPadY, borderRadius: ARMAMENT_UI.emptyBtnRadius, fontSize: ARMAMENT_UI.emptyBtnFontSize }}
                                         >
                                             显示全部武装
                                         </button>
@@ -1489,23 +2128,34 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                     return (
                                         <React.Fragment key={def.id}>
                                         {showUsableDivider && (
-                                            <div className="flex items-center gap-2 pt-1 pb-0.5">
-                                                <div className="h-px flex-1 bg-white/10" />
-                                                <span className="text-[10px] font-bold tracking-widest text-gray-500">
+                                            <div className="flex items-center shrink-0"
+                                                style={{ gap: ARMAMENT_UI.dividerGap, paddingTop: ARMAMENT_UI.dividerPadTop, paddingBottom: ARMAMENT_UI.dividerPadBottom }}>
+                                                <div className="flex-1 bg-white/10" style={{ height: ARMAMENT_UI.dividerLineHeight }} />
+                                                <span className="font-bold tracking-widest text-gray-500" style={{ fontSize: ARMAMENT_UI.dividerFontSize }}>
                                                     {disabled ? '以下：装不下 / 无库存' : '以下：可装入此槽'}
                                                 </span>
-                                                <div className="h-px flex-1 bg-white/10" />
+                                                <div className="flex-1 bg-white/10" style={{ height: ARMAMENT_UI.dividerLineHeight }} />
                                             </div>
                                         )}
                                         <button
                                             key={def.id}
                                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleChoose(def.id); }}
                                             disabled={disabled}
-                                            className={`flex items-center gap-4 w-full px-4 py-5 rounded-xl border transition-colors text-left ${
+                                            className={`flex items-center w-full transition-colors text-left shrink-0 ${
                                                 disabled
                                                     ? 'bg-gray-800/50 border-white/5 opacity-50 cursor-not-allowed'
                                                     : 'bg-white/5 border-white/10 hover:bg-purple-600/30'
                                             }`}
+                                            style={{
+                                                gap: ARMAMENT_UI.itemGap,
+                                                paddingLeft: ARMAMENT_UI.itemPadX,
+                                                paddingRight: ARMAMENT_UI.itemPadX,
+                                                paddingTop: ARMAMENT_UI.itemPadY,
+                                                paddingBottom: ARMAMENT_UI.itemPadY,
+                                                borderRadius: ARMAMENT_UI.itemRadius,
+                                                borderWidth: ARMAMENT_UI.itemBorderWidth,
+                                                borderStyle: 'solid',
+                                            }}
                                             /* [2026-09-10 莉莉子 修复] 摘掉原生 title：列表项名称/描述画面已直出、内层六边形又挂了武装大卡，
                                                原 title 的「描述 + 点击或拖拽配置」纯属重复 → hover 只剩一层检视 */
                                         >
@@ -1520,17 +2170,17 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                                 <div className="absolute inset-[3px] overflow-hidden" style={{ clipPath: ARMAMENT_HEXAGON_CLIP, background: '#020617' }}>
                                                     <img src={def.icon} alt="" className="w-full h-full object-cover opacity-80" draggable={false} />
                                                 </div>
-                                                <span className="absolute -bottom-1 -right-0.5 text-xs font-mono font-black" style={{ color: disabled ? '#6b7280' : '#facc15' }}>
+                                                <span className="absolute -bottom-1 -right-0.5 font-mono font-black" style={{ fontSize: ARMAMENT_UI.stockFontSize, color: disabled ? '#6b7280' : '#facc15' }}>
                                                     X{stock}
                                                 </span>
                                             </div>
                                             {/* 名称 + 描述 */}
                                             <span className="flex-1 min-w-0">
-                                                <span className={`block text-lg font-bold truncate ${disabled ? 'text-gray-500' : 'text-white'}`}>{def.name}</span>
-                                                <span className="block text-sm text-gray-400 truncate">{def.description}</span>
+                                                <span className={`block font-bold truncate ${disabled ? 'text-gray-500' : 'text-white'}`} style={{ fontSize: ARMAMENT_UI.itemNameFontSize }}>{def.name}</span>
+                                                <span className="block text-gray-400 truncate" style={{ fontSize: ARMAMENT_UI.itemDescFontSize }}>{def.description}</span>
                                             </span>
                                             {/* 品质描述：史诗武装 / 普通装备 */}
-                                            <span className="text-xs font-mono shrink-0" style={{ color: disabled ? '#6b7280' : EQUIP_RARITY_COLOR[def.rarity] }}>
+                                            <span className="font-mono shrink-0" style={{ fontSize: ARMAMENT_UI.itemRarityFontSize, color: disabled ? '#6b7280' : EQUIP_RARITY_COLOR[def.rarity] }}>
                                                 {RARITY_LABEL[def.rarity]}{def.isArmament ? '武装' : '装备'}
                                             </span>
                                         </button>
@@ -1546,16 +2196,22 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
             {/* 抽屉外侧常驻开合按钮：收起=画面右缘（点击打开）；打开=抽屉左外侧（点击收起） */}
             <button
                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setActiveSlot(activeSlot === null ? 0 : null); }}
-                className="fixed top-1/2 -translate-y-1/2 z-[620] w-8 h-14 flex items-center justify-center rounded-l-lg border transition-all duration-300"
+                className="fixed top-1/2 -translate-y-1/2 z-[620] flex items-center justify-center transition-all duration-300"
                 style={{
-                    right: activeSlot === null ? 0 : 420,
+                    width: ARMAMENT_UI.handleWidth,
+                    height: ARMAMENT_UI.handleHeight,
+                    borderTopLeftRadius: ARMAMENT_UI.handleRadius,
+                    borderBottomLeftRadius: ARMAMENT_UI.handleRadius,
+                    borderWidth: ARMAMENT_UI.btnBorderWidth,
+                    borderStyle: 'solid',
+                    right: activeSlot === null ? 0 : ARMAMENT_UI.drawerWidth,
                     background: activeSlot === null ? 'rgba(30,27,75,0.9)' : 'rgba(30,27,75,0.95)',
                     borderColor: activeSlot === null ? 'rgba(255,255,255,0.15)' : 'rgba(168,85,247,0.4)',
                     color: activeSlot === null ? '#d1d5db' : '#e9d5ff',
                 }}
                 title={activeSlot === null ? '打开武装库' : '收起武装库'}
             >
-                {activeSlot === null ? <ChevronsLeft size={18} /> : <ChevronsRight size={18} />}
+                {activeSlot === null ? <ChevronsLeft size={ARMAMENT_UI.handleIconSize} /> : <ChevronsRight size={ARMAMENT_UI.handleIconSize} />}
             </button>
 
             {/* 拖拽跟手图标：Portal 渲染到 document.body，逃出 ScaleWrapper 缩放容器保证 1:1 跟手（同卡牌 DragGhostCard）；DRAG_ICON_OFFSET 仅调观感 */}
