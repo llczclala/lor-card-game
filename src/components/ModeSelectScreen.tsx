@@ -34,7 +34,7 @@ export const MODE_UI = {
     /** 标题距顶 px（原 top-12 = 48） */
     titleTop: 48,
     /** 标题字号 px（原 text-4xl = 36） */
-    titleFontSize: 36,
+    titleFontSize: 72,
 
     /** 返回按钮距顶 px（原 top-8 = 32） */
     backTop: 32,
@@ -43,11 +43,11 @@ export const MODE_UI = {
     /** 返回按钮内边距 px（原 p-3 = 12） */
     backPad: 12,
     /** 返回箭头图标 px（原 `<ArrowLeft size={24} />`） */
-    backIconSize: 24,
+    backIconSize: 48,
 
     // ══ ② 3×3 舞台框 ═══════════════════════════════════════════════════
     /** 舞台高度 px（原 h-[683px]；更早是 65vh —— 1050 × 65% = 683） */
-    stageHeight: 683,
+    stageHeight: 700,
     /** 舞台内三行三列间距 px（原 gap-6 = 24） */
     stageGap: 24,
     /** 舞台内边距 px（原 p-8 = 32） */
@@ -64,19 +64,19 @@ export const MODE_UI = {
 
     // ══ ③ 四张角卡（地下清理 / 悖论迷宫 / 精神拟境 / 战术考核）═══════════
     /** 角卡宽 px（原 w-64 = 256） */
-    cardWidth: 256,
+    cardWidth: 384,
     /** 角卡高 px（原 h-40 = 160） */
-    cardHeight: 160,
+    cardHeight: 240,
     /** 角卡圆角 px（原 rounded-2xl = 16） */
     cardRadius: 16,
     /** 卡内「图标 ↔ 文字」纵向间距 px（原 gap-2 = 8） */
     cardGap: 8,
     /** 卡内图标 px（原 `size={40}`） */
-    cardIconSize: 40,
+    cardIconSize: 80,
     /** 卡名 字号 px（原 text-xl = 20） */
-    cardTitleFontSize: 20,
+    cardTitleFontSize: 40,
     /** 卡副标 字号 px（原 text-[10px]） */
-    cardDescFontSize: 10,
+    cardDescFontSize: 20,
     /** 「精神拟境」锁遮罩里 LOCKED 的字号 px（原 text-xs = 12） */
     lockFontSize: 12,
     /** 卡顶那根 hover 装饰横条的高度 px（原 h-1 = 4） */
@@ -84,15 +84,15 @@ export const MODE_UI = {
 
     // ══ ④ 正中「超元链接」大圆 ═════════════════════════════════════════
     /** 圆直径 px（原 w-80 h-80 = 320） */
-    centerSize: 320,
+    centerSize: 480,
     /** 圆环描边粗细 px（原 border-2） */
     centerBorderWidth: 2,
     /** 圆内图标 px（原 `size={80}`） */
-    centerIconSize: 80,
+    centerIconSize: 120,
     /** 圆内主标题字号 px（原 text-4xl = 36） */
-    centerTitleFontSize: 36,
+    centerTitleFontSize: 72,
     /** 圆内副标字号 px（原 text-xs = 12） */
-    centerDescFontSize: 12,
+    centerDescFontSize: 18,
     /** 副标的上外边距 px（原 mt-2 = 8） */
     centerDescMarginTop: 8,
     /** 圆内「图标 ↔ 文字」纵向间距 px（原 gap-4 = 16） */
@@ -102,15 +102,15 @@ export const MODE_UI = {
     /** 徽章左右内边距 px（原 px-4 = 16） */
     badgePadX: 16,
     /** 徽章上下内边距 px（原 py-1 = 4） */
-    badgePadY: 4,
+    badgePadY: 8,
     /** 徽章字号 px（原 text-[10px]） */
-    badgeFontSize: 10,
+    badgeFontSize: 15,
 
     // ══ ⑤ 底部「返回大厅」═══════════════════════════════════════════════
     /** 距底 px（原 bottom-12 = 48） */
     lobbyBtnBottom: 48,
     /** 字号 px（原 text-sm = 14） */
-    lobbyBtnFontSize: 14,
+    lobbyBtnFontSize: 28,
 } as const;
 
 /** 四张角卡**共用**的盒子尺寸（都读 `MODE_UI` ⇒ 改一处、四张一起变） */
@@ -166,7 +166,7 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
 
             {/* 标题 */}
             <h2
-                className="absolute font-black tracking-tighter italic text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 drop-shadow-lg z-30"
+                className="absolute font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 drop-shadow-lg z-30"
                 style={{ top: MODE_UI.titleTop, fontSize: MODE_UI.titleFontSize }}
             >
                 模式选择
