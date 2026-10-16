@@ -460,7 +460,7 @@ export const ARMAMENT_UI = {
      * ⚠️ 原代码这里是**写死的裸数字 60**（`style={{ width: 60, height: 60 * 1.14 }}`）⇒ 以前没有入口。
      * 它 + `itemPadY` 一起决定「一张武装卡有多高」（行高本来就是**内容撑开**、没有写死值）。
      */
-    itemIconWidth: 60,
+    itemIconWidth: 100,
     /** 上述六边形图标的高 / 宽比（原写死 1.14 —— 拉长是为了六边形不变形） */
     itemIconAspect: 1.14,
     /**
@@ -2203,10 +2203,14 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
                                                     X{stock}
                                                 </span>
                                             </div>
-                                            {/* 名称 + 描述 */}
+                                            {/* 名称 + 描述
+                                                [2026-10-16 程实测] 原来是 `truncate`（强制单行 + 省略号）
+                                                ⇒ 字号一调大就被截成「…」，且**永远不换行 ⇒ 卡片永远撑不高**。
+                                                改成 `break-words` 让它**正常换行**：文本多长、卡片就多高
+                                                （父级 `flex-1 min-w-0` 已具备换行条件；右侧品质文字 `shrink-0` 不受影响）。 */}
                                             <span className="flex-1 min-w-0">
-                                                <span className={`block font-bold truncate ${disabled ? 'text-gray-500' : 'text-white'}`} style={{ fontSize: ARMAMENT_UI.itemNameFontSize }}>{def.name}</span>
-                                                <span className="block text-gray-400 truncate" style={{ fontSize: ARMAMENT_UI.itemDescFontSize }}>{def.description}</span>
+                                                <span className={`block font-bold break-words ${disabled ? 'text-gray-500' : 'text-white'}`} style={{ fontSize: ARMAMENT_UI.itemNameFontSize }}>{def.name}</span>
+                                                <span className="block text-gray-400 break-words" style={{ fontSize: ARMAMENT_UI.itemDescFontSize }}>{def.description}</span>
                                             </span>
                                             {/* 品质描述：史诗武装 / 普通装备 */}
                                             <span className="font-mono shrink-0" style={{ fontSize: ARMAMENT_UI.itemRarityFontSize, color: disabled ? '#6b7280' : EQUIP_RARITY_COLOR[def.rarity] }}>
