@@ -56,6 +56,147 @@ interface GameLobbyProps {
 // 用法：先拧【主旋钮】btnScale 把按钮整体大小定下来，再动下面的细节值。
 // 换算：按钮/图标的最终尺寸 = 基础值 × btnScale；字号 = 基础值 × fontScale。
 // ══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 玩家档案面板（`isProfileOpen` 那一层）· 视觉调参区
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 大厅点头像/档案后弹出的「DEVELOPER (全卡测试)」面板：
+//   大号动态头像 + MODIFY 改动按钮 + 名字/UID/账号等级/EXP + 战绩三格 + 收藏三格 + 关闭。
+// 管：①面板外壳 ②头像与名字列（含 UID / 等级 / EXP）③战绩三格 ④收藏三格 ⑤底部关闭行
+// 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
+// 🔴 **本文件已有 `LOBBY_UI`（大厅主界面 6 个区块）** —— 那是**另一屏**，与本块互不相干，别改错块。
+// ⚠️ 「关闭」按钮用的是共享件 `GlassButton`（className 传 `w-32 h-12 rounded-sm`）——
+//   它的尺寸由那个组件自己决定 ⇒ **不在本块**，本块只暴露外层的上边距。
+// ⚠️ 头像画廊 / 头像裁剪是另两条独立分支（`isGalleryOpen` / `isCropperOpen`）⇒ 本块只管档案面板。
+// ══════════════════════════════════════════════════════════════════════
+export const PROFILE_UI = {
+    // ══ ① 面板外壳 ═══════════════════════════════════════════════════
+    /** 面板宽 px（原 w-[600px] = 600） */
+    panelWidth: 600,
+    /** 面板圆角 px（原 rounded-sm = 2） */
+    panelRadius: 2,
+    /** 面板内边距 px（原 p-8 = 32） */
+    panelPad: 32,
+    /** 面板内各分区行距 px（原 gap-8 = 32） */
+    panelGap: 32,
+    /** 面板描边 px（原 border = 1） */
+    panelBorderWidth: 1,
+
+    // ══ ② 头像 + 名字 / UID / 等级 / EXP ══════════════════════════════
+    /** 顶部两列间距 px（原 gap-6 = 24） */
+    topRowGap: 24,
+    /** 头像边长 px（原 w-32 h-32 = 128） */
+    avatarSize: 128,
+    /** 头像圆角 px（原 rounded-sm = 2） */
+    avatarRadius: 2,
+    /** 头像描边 px（原 border-4 = 4） */
+    avatarBorderWidth: 4,
+    /** MODIFY 条上下内边距 px（原 py-1 = 4） */
+    modifyPadY: 4,
+    /** MODIFY 条字号 px（原 text-xs = 12） */
+    modifyFontSize: 12,
+    /** MODIFY 条图标与文字间距 px（原 gap-1 = 4） */
+    modifyGap: 4,
+    /** MODIFY 条图标 px（原 <Crop size={12} /> = 12） */
+    modifyIconSize: 12,
+    /** 右列各行间距 px（原 gap-3 = 12） */
+    nameColGap: 12,
+    /** 名字行高 px（原 h-12 = 48） */
+    nameRowHeight: 48,
+    /** 名字行内间距 px（原 gap-3 = 12） */
+    nameRowGap: 12,
+    /** 名字行下内边距 px（原 pb-2 = 8） */
+    nameRowPadBottom: 8,
+    /** 名字行分割线 px（原 border-b = 1） */
+    nameRowBorderWidth: 1,
+    /** 名字编辑框字号 px（原 text-2xl = 24） */
+    nameInputFontSize: 24,
+    /** 名字编辑框左右内边距 px（原 px-2 = 8） */
+    nameInputPadX: 8,
+    /** 名字编辑框上下内边距 px（原 py-1 = 4） */
+    nameInputPadY: 4,
+    /** 名字编辑框圆角 px（原 rounded-sm = 2） */
+    nameInputRadius: 2,
+    /** 名字字号 px（原 text-3xl = 30） */
+    nameFontSize: 30,
+    /** 编辑小按钮内边距 px（原 p-2 = 8） */
+    editBtnPad: 8,
+    /** 编辑小按钮圆角 px（原 rounded-sm = 2） */
+    editBtnRadius: 2,
+    /** 编辑图标 px（原 <Edit3 size={18} /> = 18） */
+    editIconSize: 18,
+    /** UID 行间距 px（原 gap-4 = 16） */
+    uidRowGap: 16,
+    /** UID 字号 px（原 text-sm = 14） */
+    uidFontSize: 14,
+    /** 复制图标 px（原 <Copy size={14} /> = 14） */
+    copyIconSize: 14,
+    /** 等级行间距 px（原 gap-3 = 12） */
+    lvRowGap: 12,
+    /** 等级行上距 px（原 mt-2 = 8） */
+    lvRowMarginTop: 8,
+    /** 「账号 LV.」徽章左右内边距 px（原 px-3 = 12） */
+    lvBadgePadX: 12,
+    /** 「账号 LV.」徽章上下内边距 px（原 py-1 = 4） */
+    lvBadgePadY: 4,
+    /** 「账号 LV.」徽章圆角 px（原 rounded-sm = 2） */
+    lvBadgeRadius: 2,
+    /** 「账号 LV.」徽章描边 px（原 border = 1） */
+    lvBadgeBorderWidth: 1,
+    /** EXP 进度条高 px（原 h-2 = 8） */
+    expBarHeight: 8,
+    /** EXP 进度条描边 px（原 border = 1） */
+    expBarBorderWidth: 1,
+    /** EXP 文字字号 px（原 text-xs = 12） */
+    expFontSize: 12,
+
+    // ══ ③④ 两个三格区（战绩 / 收藏）共用的分区参数 ════════════════════
+    /** 三格之间间距 px（原 gap-4 = 16） */
+    gridGap: 16,
+    /** 分区上边距（含分割线）px（原 pt-6 = 24） */
+    sectionPadTop: 24,
+    /** 分区上分割线 px（原 border-t = 1） */
+    sectionBorderWidth: 1,
+    /** 统计卡内边距 px（原 p-4 = 16） */
+    statCardPad: 16,
+    /** 统计卡圆角 px（原 rounded-sm = 2） */
+    statCardRadius: 2,
+    /** 统计卡描边 px（原 border = 1） */
+    statCardBorderWidth: 1,
+
+    // ══ ③ 战绩三格 ═══════════════════════════════════════════════════
+    /** 标签字号 px（原 text-xs = 12） */
+    statLabelFontSize: 12,
+    /** 标签下距 px（原 mb-1 = 4） */
+    statLabelMarginBottom: 4,
+    /** 主数值字号 px（原 text-2xl = 24） */
+    statValueFontSize: 24,
+    /** 胜负里的「/ 负数」字号 px（原 text-base = 16） */
+    statSubFontSize: 16,
+    /** 「代表英雄：」整行字号 px（原 text-xs = 12） */
+    heroLineFontSize: 12,
+
+    // ══ ④ 收藏三格 ═══════════════════════════════════════════════════
+    /** 卡内行距 px（原 gap-1 = 4） */
+    collectCardGap: 4,
+    /** 标签字号 px（原 text-[10px] = 10） */
+    collectLabelFontSize: 10,
+    /** 标签下距 px（原 mb-1 = 4） */
+    collectLabelMarginBottom: 4,
+    /** 主数值字号 px（原 text-xl = 20） */
+    collectValueFontSize: 20,
+    /** 斜杠后小字字号 px（原 text-xs = 12） */
+    collectSubFontSize: 12,
+    /** 进度条高 px（原 h-1 = 4） */
+    collectBarHeight: 4,
+    /** 「棋盘 N/M」小字字号 px（原 text-[10px] = 10） */
+    collectNoteFontSize: 10,
+
+    // ══ ⑤ 底部关闭行 ═════════════════════════════════════════════════
+    /** 关闭行上边距 px（原 mt-4 = 16） */
+    footerMarginTop: 16,
+} as const;
+
 export const LOBBY_UI = {
     /** 【主旋钮】所有按钮 / 图标的尺寸倍率（1 = 原样） */
     btnScale: 1.25,
@@ -1097,22 +1238,23 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                         initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
                         className="absolute inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-md"
                     >
-                        <div className="w-[600px] bg-slate-900 border border-white/10 rounded-sm shadow-2xl p-8 flex flex-col gap-8" style={{ transform: 'skewY(-1deg)' }}>
+                        <div className="bg-slate-900 border border-white/10 shadow-2xl flex flex-col" style={{ width: PROFILE_UI.panelWidth, borderRadius: PROFILE_UI.panelRadius, padding: PROFILE_UI.panelPad, gap: PROFILE_UI.panelGap, borderWidth: PROFILE_UI.panelBorderWidth, borderStyle: 'solid', transform: 'skewY(-1deg)' }}>
                             {/* 顶部信息 */}
-                            <div className="flex gap-6 items-start">
+                            <div className="flex items-start" style={{ gap: PROFILE_UI.topRowGap }}>
                                 {/* 大号动态头像 */}
-                                <div className="w-32 h-32 rounded-sm border-4 border-gray-600 overflow-hidden relative group">
+                                <div className="border-gray-600 overflow-hidden relative group" style={{ width: PROFILE_UI.avatarSize, height: PROFILE_UI.avatarSize, borderRadius: PROFILE_UI.avatarRadius, borderWidth: PROFILE_UI.avatarBorderWidth, borderStyle: 'solid' }}>
                                     {renderAvatar(profile?.avatarConfig, profile?.avatarId)}
                                     <button
                                         onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsGalleryOpen(true); }} // [新增] 音效
-                                        className="absolute bottom-0 w-full py-1 bg-black/70 text-white text-xs font-mono opacity-0 group-hover:opacity-100 transition-opacity flex justify-center items-center gap-1"
+                                        className="absolute bottom-0 w-full bg-black/70 text-white font-mono opacity-0 group-hover:opacity-100 transition-opacity flex justify-center items-center"
+                                        style={{ paddingTop: PROFILE_UI.modifyPadY, paddingBottom: PROFILE_UI.modifyPadY, fontSize: PROFILE_UI.modifyFontSize, gap: PROFILE_UI.modifyGap }}
                                     >
-                                        <Crop size={12} /> MODIFY
+                                        <Crop size={PROFILE_UI.modifyIconSize} /> MODIFY
                                     </button>
                                 </div>
                                 {/* 名字与等级 */}
-                                <div className="flex-1 flex flex-col gap-3">
-                                    <div className="flex items-center gap-3 border-b border-white/10 pb-2 h-12">
+                                <div className="flex-1 flex flex-col" style={{ gap: PROFILE_UI.nameColGap }}>
+                                    <div className="flex items-center border-b border-white/10" style={{ gap: PROFILE_UI.nameRowGap, paddingBottom: PROFILE_UI.nameRowPadBottom, height: PROFILE_UI.nameRowHeight, borderBottomWidth: PROFILE_UI.nameRowBorderWidth, borderBottomStyle: 'solid' }}>
                                         {isEditingName ? (
                                             <input
                                                 autoFocus
@@ -1129,83 +1271,88 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                                     if (e.key === 'Enter') e.currentTarget.blur(); // 回车触发 onBlur 保存
                                                     if (e.key === 'Escape') { setEditName(profile?.displayName || 'ADJUTANT'); setIsEditingName(false); }
                                                 }}
-                                                className="bg-black/50 border border-blue-500/50 text-2xl font-black text-white outline-none flex-1 tracking-widest px-2 py-1 rounded-sm shadow-[0_0_10px_rgba(37,99,235,0.2)]"
+                                                className="bg-black/50 border border-blue-500/50 font-black text-white outline-none flex-1 tracking-widest shadow-[0_0_10px_rgba(37,99,235,0.2)]"
+                                                style={{ fontSize: PROFILE_UI.nameInputFontSize, paddingLeft: PROFILE_UI.nameInputPadX, paddingRight: PROFILE_UI.nameInputPadX, paddingTop: PROFILE_UI.nameInputPadY, paddingBottom: PROFILE_UI.nameInputPadY, borderRadius: PROFILE_UI.nameInputRadius }}
                                                 maxLength={12}
                                             />
                                         ) : (
                                             <>
-                                                <span className="text-3xl font-black text-white outline-none flex-1 tracking-widest truncate">
+                                                <span className="font-black text-white outline-none flex-1 tracking-widest truncate" style={{ fontSize: PROFILE_UI.nameFontSize }}>
                                                     {profile?.displayName || 'ADJUTANT'}
                                                 </span>
                                                 <button
                                                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setEditName(profile?.displayName || 'ADJUTANT'); setIsEditingName(true); }}
-                                                    className="p-2 bg-white/5 hover:bg-white/20 rounded-sm text-gray-400 hover:text-white transition-colors"
+                                                    className="bg-white/5 hover:bg-white/20 text-gray-400 hover:text-white transition-colors"
+                                                    style={{ padding: PROFILE_UI.editBtnPad, borderRadius: PROFILE_UI.editBtnRadius }}
                                                 >
-                                                    <Edit3 size={18} />
+                                                    <Edit3 size={PROFILE_UI.editIconSize} />
                                                 </button>
                                             </>
                                         )}
                                     </div>
-                                    <div className="flex items-center gap-4 text-sm font-mono text-gray-400">
+                                    <div className="flex items-center font-mono text-gray-400" style={{ gap: PROFILE_UI.uidRowGap, fontSize: PROFILE_UI.uidFontSize }}>
                                         <span>UID: {userSystem.userId}</span>
-                                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); navigator.clipboard.writeText(userSystem.userId); }} className="hover:text-white"><Copy size={14} /></button> {/* [新增] 音效 */}
+                                        <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); navigator.clipboard.writeText(userSystem.userId); }} className="hover:text-white"><Copy size={PROFILE_UI.copyIconSize} /></button> {/* [新增] 音效 */}
                                     </div>
-                                    <div className="flex items-center gap-3 mt-2">
-                                        <span className="px-3 py-1 bg-yellow-500/20 text-yellow-300 font-bold rounded-sm border border-yellow-500/30">账号 LV.{accLevel}</span>
-                                        <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden border border-white/5">
+                                    <div className="flex items-center" style={{ gap: PROFILE_UI.lvRowGap, marginTop: PROFILE_UI.lvRowMarginTop }}>
+                                        <span
+                                            className="bg-yellow-500/20 text-yellow-300 font-bold border border-yellow-500/30"
+                                            style={{ paddingLeft: PROFILE_UI.lvBadgePadX, paddingRight: PROFILE_UI.lvBadgePadX, paddingTop: PROFILE_UI.lvBadgePadY, paddingBottom: PROFILE_UI.lvBadgePadY, borderRadius: PROFILE_UI.lvBadgeRadius, borderWidth: PROFILE_UI.lvBadgeBorderWidth, borderStyle: 'solid' }}
+                                        >账号 LV.{accLevel}</span>
+                                        <div className="flex-1 bg-gray-800 rounded-full overflow-hidden border border-white/5" style={{ height: PROFILE_UI.expBarHeight, borderWidth: PROFILE_UI.expBarBorderWidth, borderStyle: 'solid' }}>
                                             <div className="h-full bg-yellow-500" style={{ width: `${accPct}%` }} />
                                         </div>
                                     </div>
-                                    <div className="text-xs font-mono text-gray-500">
+                                    <div className="font-mono text-gray-500" style={{ fontSize: PROFILE_UI.expFontSize }}>
                                         EXP {accExp} / {accExpToNext > 0 ? accExpToNext : 'MAX'} · 服役 {serveDays} 天
                                     </div>
                                 </div>
                             </div>
 
                             {/* 真实战绩（持久记录，非 mock） */}
-                            <div className="grid grid-cols-3 gap-4 border-t border-white/10 pt-6">
-                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center">
-                                    <span className="text-gray-400 text-xs font-mono mb-1">TOTAL MATCHES</span>
-                                    <span className="text-2xl font-black text-white">{totalMatches}</span>
+                            <div className="grid grid-cols-3 border-t border-white/10" style={{ gap: PROFILE_UI.gridGap, paddingTop: PROFILE_UI.sectionPadTop, borderTopWidth: PROFILE_UI.sectionBorderWidth, borderTopStyle: 'solid' }}>
+                                <div className="bg-black/30 flex flex-col items-center" style={{ padding: PROFILE_UI.statCardPad, borderRadius: PROFILE_UI.statCardRadius, borderWidth: PROFILE_UI.statCardBorderWidth, borderStyle: 'solid' }}>
+                                    <span className="text-gray-400 font-mono" style={{ fontSize: PROFILE_UI.statLabelFontSize, marginBottom: PROFILE_UI.statLabelMarginBottom }}>TOTAL MATCHES</span>
+                                    <span className="font-black text-white" style={{ fontSize: PROFILE_UI.statValueFontSize }}>{totalMatches}</span>
                                 </div>
-                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center">
-                                    <span className="text-gray-400 text-xs font-mono mb-1">WINS / LOSS</span>
-                                    <span className="text-2xl font-black text-green-400">{wins}<span className="text-white/40 text-base font-mono"> / {losses}</span></span>
+                                <div className="bg-black/30 flex flex-col items-center" style={{ padding: PROFILE_UI.statCardPad, borderRadius: PROFILE_UI.statCardRadius, borderWidth: PROFILE_UI.statCardBorderWidth, borderStyle: 'solid' }}>
+                                    <span className="text-gray-400 font-mono" style={{ fontSize: PROFILE_UI.statLabelFontSize, marginBottom: PROFILE_UI.statLabelMarginBottom }}>WINS / LOSS</span>
+                                    <span className="font-black text-green-400" style={{ fontSize: PROFILE_UI.statValueFontSize }}>{wins}<span className="text-white/40 font-mono" style={{ fontSize: PROFILE_UI.statSubFontSize }}> / {losses}</span></span>
                                 </div>
-                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center">
-                                    <span className="text-gray-400 text-xs font-mono mb-1">WIN RATE</span>
-                                    <span className="text-2xl font-black text-green-400">{winRate}%</span>
+                                <div className="bg-black/30 flex flex-col items-center" style={{ padding: PROFILE_UI.statCardPad, borderRadius: PROFILE_UI.statCardRadius, borderWidth: PROFILE_UI.statCardBorderWidth, borderStyle: 'solid' }}>
+                                    <span className="text-gray-400 font-mono" style={{ fontSize: PROFILE_UI.statLabelFontSize, marginBottom: PROFILE_UI.statLabelMarginBottom }}>WIN RATE</span>
+                                    <span className="font-black text-green-400" style={{ fontSize: PROFILE_UI.statValueFontSize }}>{winRate}%</span>
                                 </div>
                             </div>
-                            <div className="text-center text-xs font-mono text-gray-500">
+                            <div className="text-center font-mono text-gray-500" style={{ fontSize: PROFILE_UI.heroLineFontSize }}>
                                 代表英雄：<span className="text-blue-400 font-bold tracking-widest">{topHeroName}</span>
                             </div>
 
                             {/* 收藏 / 养成进度（真实数据） */}
-                            <div className="grid grid-cols-3 gap-4 border-t border-white/10 pt-6">
-                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center gap-1">
-                                    <span className="text-gray-400 text-[10px] font-mono mb-1 tracking-widest">卡牌收藏</span>
-                                    <span className="text-xl font-black text-white">{ownedCardsCount}<span className="text-white/40 text-xs"> / {collectibleTotal}</span></span>
-                                    <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
+                            <div className="grid grid-cols-3 border-t border-white/10" style={{ gap: PROFILE_UI.gridGap, paddingTop: PROFILE_UI.sectionPadTop, borderTopWidth: PROFILE_UI.sectionBorderWidth, borderTopStyle: 'solid' }}>
+                                <div className="bg-black/30 flex flex-col items-center" style={{ padding: PROFILE_UI.statCardPad, borderRadius: PROFILE_UI.statCardRadius, borderWidth: PROFILE_UI.statCardBorderWidth, borderStyle: 'solid', gap: PROFILE_UI.collectCardGap }}>
+                                    <span className="text-gray-400 font-mono tracking-widest" style={{ fontSize: PROFILE_UI.collectLabelFontSize, marginBottom: PROFILE_UI.collectLabelMarginBottom }}>卡牌收藏</span>
+                                    <span className="font-black text-white" style={{ fontSize: PROFILE_UI.collectValueFontSize }}>{ownedCardsCount}<span className="text-white/40" style={{ fontSize: PROFILE_UI.collectSubFontSize }}> / {collectibleTotal}</span></span>
+                                    <div className="w-full bg-gray-800 rounded-full overflow-hidden" style={{ height: PROFILE_UI.collectBarHeight }}>
                                         <div className="h-full bg-blue-500" style={{ width: `${collectibleTotal ? Math.min(100, (ownedCardsCount / collectibleTotal) * 100) : 0}%` }} />
                                     </div>
                                 </div>
-                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center gap-1">
-                                    <span className="text-gray-400 text-[10px] font-mono mb-1 tracking-widest">武装收藏</span>
-                                    <span className="text-xl font-black text-white">{armCount}<span className="text-white/40 text-xs"> / {armTotal}</span></span>
-                                    <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
+                                <div className="bg-black/30 flex flex-col items-center" style={{ padding: PROFILE_UI.statCardPad, borderRadius: PROFILE_UI.statCardRadius, borderWidth: PROFILE_UI.statCardBorderWidth, borderStyle: 'solid', gap: PROFILE_UI.collectCardGap }}>
+                                    <span className="text-gray-400 font-mono tracking-widest" style={{ fontSize: PROFILE_UI.collectLabelFontSize, marginBottom: PROFILE_UI.collectLabelMarginBottom }}>武装收藏</span>
+                                    <span className="font-black text-white" style={{ fontSize: PROFILE_UI.collectValueFontSize }}>{armCount}<span className="text-white/40" style={{ fontSize: PROFILE_UI.collectSubFontSize }}> / {armTotal}</span></span>
+                                    <div className="w-full bg-gray-800 rounded-full overflow-hidden" style={{ height: PROFILE_UI.collectBarHeight }}>
                                         <div className="h-full bg-purple-500" style={{ width: `${armTotal ? Math.min(100, (armCount / armTotal) * 100) : 0}%` }} />
                                     </div>
                                 </div>
-                                <div className="bg-black/30 p-4 rounded-sm border border-white/5 flex flex-col items-center gap-1">
-                                    <span className="text-gray-400 text-[10px] font-mono mb-1 tracking-widest">卡背 / 棋盘</span>
-                                    <span className="text-xl font-black text-white">{cardBackOwned}<span className="text-white/40 text-xs"> / {cardBackTotal}</span></span>
-                                    <span className="text-[10px] font-mono text-gray-500">棋盘 {deskOwned}/{deskTotal}</span>
+                                <div className="bg-black/30 flex flex-col items-center" style={{ padding: PROFILE_UI.statCardPad, borderRadius: PROFILE_UI.statCardRadius, borderWidth: PROFILE_UI.statCardBorderWidth, borderStyle: 'solid', gap: PROFILE_UI.collectCardGap }}>
+                                    <span className="text-gray-400 font-mono tracking-widest" style={{ fontSize: PROFILE_UI.collectLabelFontSize, marginBottom: PROFILE_UI.collectLabelMarginBottom }}>卡背 / 棋盘</span>
+                                    <span className="font-black text-white" style={{ fontSize: PROFILE_UI.collectValueFontSize }}>{cardBackOwned}<span className="text-white/40" style={{ fontSize: PROFILE_UI.collectSubFontSize }}> / {cardBackTotal}</span></span>
+                                    <span className="font-mono text-gray-500" style={{ fontSize: PROFILE_UI.collectNoteFontSize }}>棋盘 {deskOwned}/{deskTotal}</span>
                                 </div>
                             </div>
 
                             {/* 关闭按钮 */}
-                            <div className="flex justify-end mt-4">
+                            <div className="flex justify-end" style={{ marginTop: PROFILE_UI.footerMarginTop }}>
                                 <GlassButton onClick={() => { setIsProfileOpen(false); setShowUI(true); }} className="w-32 h-12 rounded-sm" label="关闭" />
                             </div>
                         </div>
