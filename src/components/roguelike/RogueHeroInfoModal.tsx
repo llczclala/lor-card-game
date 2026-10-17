@@ -1193,23 +1193,23 @@ const DIV_DETAIL_PAD_X = 16;               // 详情块左右内边距（原 px-
 const DIV_DETAIL_PAD_Y = 12;               // 详情块上下内边距（原 py-3 = 12）
 const DIV_DETAIL_HEAD_GAP = 8;             // 标题行内「名字 ↔ 节点徽标 ↔ 固定槽」间距（原 gap-2 = 8）
 const DIV_DETAIL_HEAD_MARGIN_BOTTOM = 4;   // 标题行与描述间距（原 mb-1 = 4）
-const DIV_BADGE_FONT = 10;                 // 「节点 N」小徽标 / 「全英雄固定槽」字号（原 text-[10px]）
+const DIV_BADGE_FONT = 15;                 // 「节点 N」小徽标 / 「全英雄固定槽」字号（原 text-[10px]）
 const DIV_BADGE_PAD_X = 6;                 // 小徽标左右内边距（原 px-1.5 = 6）
 const DIV_BADGE_PAD_Y = 2;                 // 小徽标上下内边距（原 py-0.5 = 2）
 const DIV_BADGE_RADIUS = 4;                // 小徽标圆角（原 rounded = 4）
-const DIV_DESC_FONT = 12;                  // 节点描述字号（原 text-xs = 12）
+const DIV_DESC_FONT = 24;                  // 节点描述字号（原 text-xs = 12）
 const DIV_DESC_MARGIN_BOTTOM = 8;          // 描述与消耗行间距（原 mb-2 = 8）
-const DIV_COST_FONT = 12;                  // 消耗明细行字号（原 text-[12px]）
+const DIV_COST_FONT = 24;                  // 消耗明细行字号（原 text-[12px]）
 const DIV_COST_GAP_X = 8;                  // 消耗明细横向间距（原 gap-x-2 = 8）
 const DIV_COST_GAP_Y = 4;                  // 消耗明细纵向间距（原 gap-y-1 = 4）
 const DIV_COST_ITEM_GAP = 4;               // 消耗明细内「碎片图标 ↔ 数字」间距（原 gap-1 = 4）
 const DIV_COST_MARGIN_BOTTOM = 8;          // 消耗明细与前置行间距（原 mb-2 = 8）
 const DIV_DETAIL_FOOT_GAP = 12;            // 底行「前置 ↔ 激活按钮」间距（原 gap-3 = 12）
-const DIV_REQ_FONT = 11;                   // 「前置：…」字号（原 text-[11px]）
+const DIV_REQ_FONT = 22;                   // 「前置：…」字号（原 text-[11px]）
 const DIV_ACT_BTN_PAD_X = 20;              // 激活按钮左右内边距（原 px-5 = 20）
 const DIV_ACT_BTN_PAD_Y = 6;               // 激活按钮上下内边距（原 py-1.5 = 6）
 const DIV_ACT_BTN_RADIUS = 8;              // 激活按钮圆角（原 rounded-lg = 8）
-const DIV_ACT_BTN_FONT = 12;               // 激活按钮字号（原 text-xs = 12）
+const DIV_ACT_BTN_FONT = 24;               // 激活按钮字号（原 text-xs = 12）
 
 export const DivinityContent: React.FC<{ heroKey: string; heroName: string; userSystem?: any }> = ({ heroKey, heroName, userSystem }) => {
     const { getUnlocked, getHeroShardCount, getUniversalShardCount, getSpendPlan, canUnlock, unlockNode, resetHero } = useHeroDivinity();

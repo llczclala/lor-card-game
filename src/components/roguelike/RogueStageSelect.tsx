@@ -34,7 +34,7 @@ import type { useUserSystem } from '../../hooks/useUserSystem';
 // ══════════════════════════════════════════════════════════════════════
 export const ROGUE_STAGE_UI = {
     /** 【主旋钮】三组角落控件（关卡列表 / 难度+推演 / 返回）整体缩放（1 = 原样） */
-    uiScale: 1,
+    uiScale: 1.5,
 
     // ══ ① 左上：关卡列表 ═══════════════════════════════════════════════
     /** 距左 px（原 left-8 = 32） */
@@ -96,7 +96,7 @@ export const ROGUE_STAGE_UI = {
     /** 进行推演：圆角 px（原 rounded-xl = 12） */
     startBtnRadius: 12,
     /** 进行推演：字号 px（原 text-lg = 18） */
-    startBtnFontSize: 18,
+    startBtnFontSize: 36,
 
     // ══ ③ 右上：返回 ═════════════════════════════════════════════════
     /** 距顶 px（原 top-8 = 32） */
@@ -456,7 +456,7 @@ export const RogueStageSelect: React.FC<RogueStageSelectProps> = ({ onBack, onSt
             {/* 右上角：返回主界面（尺寸见 🎛️ ROGUE_STAGE_UI.back*） */}
             <button
                 onClick={() => { eventBus.emit(GameEvents.UI_BACK); onBack(); }}
-                className="absolute z-[999] rounded-full bg-white/5 hover:bg-white/20 border-white/10 hover:border-white/50 transition-all group"
+                className="absolute z-[999] rounded-full bg-white/50 hover:bg-white/50 border-white/50 hover:border-white/50 transition-all group"
                 style={{
                     top: ROGUE_STAGE_UI.backTop,
                     right: ROGUE_STAGE_UI.backRight,
