@@ -263,9 +263,9 @@ export const REST_NODE_UI = {
     /** 图标与标题间距 px（原 gap-3 = 12） */
     headerGap: 12,
     /** 火焰图标 px（原 <Flame size={28} /> = 28） */
-    headerIconSize: 28,
+    headerIconSize: 42,
     /** 标题字号 px（原 text-2xl = 24） */
-    titleFontSize: 24,
+    titleFontSize: 36,
     /** 「返回菜单」左右内边距 px（原 px-3 = 12） */
     backBtnPadX: 12,
     /** 「返回菜单」上下内边距 px（原 py-1 = 4） */
