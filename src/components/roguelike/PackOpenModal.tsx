@@ -33,6 +33,189 @@ import {
 import { getGameScale } from '../../utils/gameScale'; // [2026-09-04] 详情 portal 逃出 scale 容器后按 gameScale 补偿
 import { BulkOpenSummaryModal, type BulkSummaryItem } from './BulkOpenSummaryModal'; // [2026-10-04 程拍板] 一键全开的完整结果汇总窗
 import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 开卡包 / 关闭 / 详情 音效
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 肉鸽「卡包开启」演出（`PackOpenModal`）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 悖论迷宫「待打开卡包」点开启后弹出的老虎机转盘：转盘待命慢转 → 冲刺定格
+//   → 定格瞬间弹「奖励匣」详情弹窗 → 底部可「再开一包 / 一键全开」。
+// 管：①面板本体 ②标题与副标题 ③滚动展示窗（转盘）④六边形格 ⑤中奖揭示与光环
+//     ⑥转盘下的提示语 ⑦底部按钮行 ⑧右上关闭 ⑨定格详情弹窗（portal）。
+// 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
+// ⚠️ **滚轮几何不在本块里**：本文件顶部那组裸常量 `CARD_W` / `CARD_H` / `WINDOW_W` /
+//     `HEX_SIZE` / `BIG_HEX`（连同 `INITIAL_SEQ_LEN` / `ROLL_CELLS` / `IDLE_MAX` / `ROLL_DUR` …
+//     的演出参数）**本来就是可调的**，本块**不重复收录**（同一部件两处各一份 = 改一处不生效）。
+//     要改「窗口多大 / 格子多宽 / 六边形多大」请直接改文件顶部那组常量。
+// ⚠️ 面板整体已按 `gameScale` 缩放（`getGameScale()`），本块的 px 都在**缩放之前**的坐标系里。
+// ⚠️ 刻意**没搬**的类（都是"单个数值就够用"的观感量，不是尺寸）：
+//     `z-[15]/z-20/z-30`（标记线、渐隐、▲ 的层序）· `p-2` 之外的小图标尺寸已单独提值 ·
+//     `leading-none` / `leading-relaxed`（**行高刻意留给继承**：字号成倍放大时不压字）·
+//     `tracking-*` · `font-*` · `hover:scale-105` · `drop-shadow-*` · `shadow-*` · `bg-*` / `text-<色>`
+//     · `inset-0` / `inset-y-0` / `left-1/2 top-0` 等铺满与居中定位 · `will-change-transform`
+// ⚠️ 本屏无 `max-w-*`，也没有 `vh` / `vw`（合 `design-guide.md` §3 铁律）。
+// ══════════════════════════════════════════════════════════════════════
+export const PACK_OPEN_UI = {
+    // ══ ① 面板本体 ════════════════════════════════════════════════════
+    /** 面板宽 px（原 w-[1180px]） */
+    panelWidth: 1180,
+    /** 面板圆角 px（原 rounded-3xl = 24） */
+    panelRadius: 24,
+    /** 面板描边 px（原 border = 1） */
+    panelBorderWidth: 1,
+    /** 面板四周内边距 px（原 p-8 = 32） */
+    panelPad: 32,
+
+    // ══ ② 标题与副标题 ════════════════════════════════════════════════
+    /** 「卡包开启」行内图标与文字间距 px（原 gap-2 = 8） */
+    titleRowGap: 8,
+    /** 标题行与下方副标题的间距 px（原 mb-1 = 4） */
+    titleRowMarginBottom: 4,
+    /** 标题左侧礼盒图标 px（原 size={34}） */
+    titleIconSize: 34,
+    /** 「卡包开启」字号 px（原 text-4xl = 36） */
+    titleFontSize: 36,
+    /** 副标题（待打开卡包 ×N）字号 px（原 text-sm = 14） */
+    subtitleFontSize: 14,
+    /** 副标题与转盘之间的间距 px（原 mb-5 = 20） */
+    subtitleMarginBottom: 20,
+
+    // ══ ③ 滚动展示窗（老虎机转盘）═════════════════════════════════════
+    /** 窗口圆角 px（原 rounded-xl = 12）· ⚠️ 窗口**宽高**在顶部 `WINDOW_W` / `CARD_H` */
+    windowRadius: 12,
+    /** 窗口描边 px（原 border = 1） */
+    windowBorderWidth: 1,
+    /** 中央黄色标记线宽 px（原 w-[3px] = 3） */
+    markerWidth: 3,
+    /** 左右两侧渐隐带宽度 px（原 w-28 = 112，左右共用） */
+    fadeWidth: 112,
+    /** 底部轨道条高 px（原 h-6 = 24） */
+    trackHeight: 24,
+    /** 轨道条顶边线 px（原 border-t = 1） */
+    trackBorderWidth: 1,
+
+    // ══ ④ 六边形格（滚动序列里每一格）═════════════════════════════════
+    /** 六边形内侧深底内缩 px（原 inset-[3px] = 3）· ⚠️ 六边形**边长**在顶部 `HEX_SIZE` */
+    hexInnerInset: 3,
+    /** 六边形内图标与文字的间距 px（原 gap-1 = 4） */
+    hexInnerGap: 4,
+    /** 六边形内礼盒图标 px（原 size={32}） */
+    hexIconSize: 32,
+    /** 六边形内「武装 / 碎片」字号 px（原 text-[12px] = 12） */
+    hexLabelFontSize: 12,
+
+    // ══ ⑤ 中奖揭示与光环 ══════════════════════════════════════════════
+    /** 定格后目标格上方「▲」字号 px（原 text-lg = 18） */
+    revealMarkerFontSize: 18,
+    /** 光环描边宽 px（原 style 里的 3px solid） */
+    haloBorderWidth: 3,
+
+    // ══ ⑥ 转盘下的提示语 ══════════════════════════════════════════════
+    /** 「🎁 卡包开出的是奖励匣…」字号 px（原 text-xs = 12） */
+    hintFontSize: 12,
+    /** 该提示与转盘的间距 px（原 mt-3 = 12） */
+    hintMarginTop: 12,
+    /** 一键全开进度行字号 px（原 text-xs = 12） */
+    bulkHintFontSize: 12,
+    /** 该进度行与上一行的间距 px（原 mt-2 = 8） */
+    bulkHintMarginTop: 8,
+
+    // ══ ⑦ 底部按钮行 ══════════════════════════════════════════════════
+    /** 按钮行最小高 px（原 min-h-[64px] = 64）—— 防止三种状态切换时面板跳动 */
+    buttonRowMinHeight: 64,
+    /** 行内按钮间距 px（原 gap-2.5 = 10） */
+    buttonRowGap: 10,
+    /** 按钮行与提示语的上间距 px（原 mt-1 = 4） */
+    buttonRowMarginTop: 4,
+    /** 「开启卡包！」左右内边距 px（原 px-12 = 48）· 与「开启中…」占位共用 */
+    mainBtnPadX: 48,
+    /** 该按钮上下内边距 px（原 py-3.5 = 14） */
+    mainBtnPadY: 14,
+    /** 该按钮圆角 px（原 rounded-xl = 12） */
+    mainBtnRadius: 12,
+    /** 该按钮字号 px（原 text-xl = 20） */
+    mainBtnFontSize: 20,
+    /** 「一键全开」左右内边距 px（原 px-7 = 28） */
+    openAllBtnPadX: 28,
+    /** 该按钮上下内边距 px（原 py-3.5 = 14） */
+    openAllBtnPadY: 14,
+    /** 该按钮圆角 px（原 rounded-xl = 12） */
+    openAllBtnRadius: 12,
+    /** 该按钮字号 px（原 text-lg = 18） */
+    openAllBtnFontSize: 18,
+    /** 结果态两个按钮左右内边距 px（原 px-6 = 24） */
+    resultBtnPadX: 24,
+    /** 结果态两个按钮上下内边距 px（原 py-3 = 12） */
+    resultBtnPadY: 12,
+    /** 结果态两个按钮圆角 px（原 rounded-xl = 12） */
+    resultBtnRadius: 12,
+
+    // ══ ⑧ 右上关闭 ════════════════════════════════════════════════════
+    /** 距面板顶 px（原 top-4 = 16） */
+    closeTop: 16,
+    /** 距面板右 px（原 right-4 = 16） */
+    closeRight: 16,
+    /** 按钮内边距 px（原 p-2 = 8） */
+    closePad: 8,
+    /** ✕ 图标 px（原 size={20}） */
+    closeIconSize: 20,
+
+    // ══ ⑨ 定格详情弹窗（portal 到 body 的全屏浮层）═════════════════════
+    /** 弹窗宽 px（原 w-[520px]） */
+    detailWidth: 520,
+    /** 弹窗圆角 px（原 rounded-2xl = 16） */
+    detailRadius: 16,
+    /** 弹窗描边 px（原 border = 1） */
+    detailBorderWidth: 1,
+    /** 弹窗四周内边距 px（原 p-7 = 28） */
+    detailPad: 28,
+    /** 弹窗内各行间距 px（原 gap-3 = 12） */
+    detailGap: 12,
+    /** 「✨ 获得奖励匣 ✨」字号 px（原 text-lg = 18） */
+    detailTitleFontSize: 18,
+    /** 大六边形内侧深底内缩 px（原 inset-[3px] = 3）· ⚠️ 其**边长**在顶部 `BIG_HEX` */
+    bigHexInnerInset: 3,
+    /** 大六边形内图标与文字间距 px（原 gap-1.5 = 6） */
+    bigHexInnerGap: 6,
+    /** 大六边形内礼盒图标 px（原 size={46}） */
+    bigHexIconSize: 46,
+    /** 大六边形内「武装 / 碎片」字号 px（原 text-[13px] = 13） */
+    bigHexLabelFontSize: 13,
+    /** 匣子名（例：紫色·神格碎片匣）字号 px（原 text-xl = 20） */
+    chestNameFontSize: 20,
+    /** 品质 / 大类两个 chip 的间距 px（原 gap-1.5 = 6） */
+    chipsGap: 6,
+    /** chip 字号 px（原 text-xs = 12） */
+    chipFontSize: 12,
+    /** chip 左右内边距 px（原 px-2 = 8） */
+    chipPadX: 8,
+    /** chip 上下内边距 px（原 py-0.5 = 2） */
+    chipPadY: 2,
+    /** chip 圆角 px（原 rounded = 4） */
+    chipRadius: 4,
+    /** chip 描边 px（原 border = 1） */
+    chipBorderWidth: 1,
+    /** 开出内容预告（正文）字号 px（原 text-sm = 14） */
+    descFontSize: 14,
+    /** 「碎片每 N 片为一组…」字号 px（原 text-[11px] = 11） */
+    shardNoteFontSize: 11,
+    /** 该行与正文的间距 px（原 mt-1 = 4） */
+    shardNoteMarginTop: 4,
+    /** 「匣子已存入『待打开匣子』…」字号 px（原 text-[11px] = 11） */
+    detailFootFontSize: 11,
+    /** 该行上边距 px（原 -mt-1 = -4，负值把两行拉近） */
+    detailFootMarginTop: -4,
+    /** 弹窗内按钮行间距 px（原 gap-2.5 = 10） */
+    detailBtnRowGap: 10,
+    /** 按钮行与正文的间距 px（原 mt-2 = 8） */
+    detailBtnRowMarginTop: 8,
+    /** 弹窗内三个按钮左右内边距 px（原 px-5 = 20） */
+    detailBtnPadX: 20,
+    /** 弹窗内三个按钮上下内边距 px（原 py-2.5 = 10） */
+    detailBtnPadY: 10,
+    /** 弹窗内三个按钮圆角 px（原 rounded-xl = 12） */
+    detailBtnRadius: 12,
+} as const;
+
 
 interface PackOpenModalProps {
     isOpen: boolean;
@@ -338,15 +521,15 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                         <motion.div
                             initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
                             transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-                            className="relative w-[1180px] rounded-3xl bg-gradient-to-b from-slate-900 via-purple-950/50 to-slate-900 border border-purple-500/30 p-8 flex flex-col items-center shadow-[0_0_80px_rgba(88,28,135,0.5)] overflow-hidden"
+                            className="relative bg-gradient-to-b from-slate-900 via-purple-950/50 to-slate-900 border-purple-500/30 flex flex-col items-center shadow-[0_0_80px_rgba(88,28,135,0.5)] overflow-hidden" style={{ width: PACK_OPEN_UI.panelWidth, borderRadius: PACK_OPEN_UI.panelRadius, borderWidth: PACK_OPEN_UI.panelBorderWidth, borderStyle: 'solid', padding: PACK_OPEN_UI.panelPad }}
                         >
                             {/* 标题 */}
-                            <div className="flex items-center gap-2 mb-1">
-                                <Package size={34} className="text-purple-300" />
+                            <div className="flex items-center" style={{ gap: PACK_OPEN_UI.titleRowGap, marginBottom: PACK_OPEN_UI.titleRowMarginBottom }}>
+                                <Package size={PACK_OPEN_UI.titleIconSize} className="text-purple-300" />
                                 {/* [2026-10-02 #6] 术语统一：这里做的是**开卡包**，不叫「开匣」 */}
-                                <h3 className="text-4xl font-black tracking-widest text-white">卡包开启</h3>
+                                <h3 className="font-black tracking-widest text-white" style={{ fontSize: PACK_OPEN_UI.titleFontSize }}>卡包开启</h3>
                             </div>
-                            <p className="text-sm text-purple-300/70 mb-5 font-mono tracking-wider">
+                            <p className="text-purple-300/70 font-mono tracking-wider" style={{ fontSize: PACK_OPEN_UI.subtitleFontSize, marginBottom: PACK_OPEN_UI.subtitleMarginBottom }}>
                                 {phase === 'idle'
                                     ? `待打开卡包 ×${pendingPacks} · 点击开启`
                                     : phase === 'rolling' ? '开启中…' : '已获得奖励匣'}
@@ -354,16 +537,16 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
 
                             {/* ── 滚动展示窗（老虎机转盘）── */}
                             <div
-                                className="relative overflow-hidden rounded-xl bg-black/60 border border-white/10"
-                                style={{ width: WINDOW_W, height: CARD_H }}
+                                className="relative overflow-hidden bg-black/60 border-white/10"
+                                style={{borderRadius: PACK_OPEN_UI.windowRadius, borderWidth: PACK_OPEN_UI.windowBorderWidth, borderStyle: 'solid', width: WINDOW_W, height: CARD_H }}
                             >
                                 {/* 中间标记线（+ 停住脉冲光） */}
-                                <div className="absolute left-1/2 top-0 bottom-0 -translate-x-1/2 w-[3px] bg-yellow-400 shadow-[0_0_14px_rgba(250,204,21,0.9)] z-20" />
+                                <div className="absolute left-1/2 top-0 bottom-0 -translate-x-1/2 bg-yellow-400 shadow-[0_0_14px_rgba(250,204,21,0.9)] z-20" style={{ width: PACK_OPEN_UI.markerWidth }} />
                                 {/* 两侧渐隐 */}
-                                <div className="absolute inset-y-0 left-0 w-28 bg-gradient-to-r from-black/80 to-transparent z-10 pointer-events-none" />
-                                <div className="absolute inset-y-0 right-0 w-28 bg-gradient-to-l from-black/80 to-transparent z-10 pointer-events-none" />
+                                <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-black/80 to-transparent z-10 pointer-events-none" style={{ width: PACK_OPEN_UI.fadeWidth }} />
+                                <div className="absolute inset-y-0 right-0 bg-gradient-to-l from-black/80 to-transparent z-10 pointer-events-none" style={{ width: PACK_OPEN_UI.fadeWidth }} />
                                 {/* 底部轨道条 */}
-                                <div className="absolute bottom-0 left-0 right-0 h-6 bg-black/50 border-t border-white/5 z-10 pointer-events-none" />
+                                <div className="absolute bottom-0 left-0 right-0 bg-black/50 border-white/5 z-10 pointer-events-none" style={{ height: PACK_OPEN_UI.trackHeight, borderTopWidth: PACK_OPEN_UI.trackBorderWidth, borderTopStyle: 'solid' }} />
 
                                 {/* 滚动序列（rAF 手动 transform） */}
                                 <div ref={stripRef} className="absolute top-0 left-0 flex will-change-transform">
@@ -390,9 +573,9 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                                     animate={isReveal ? { scale: 1.6 } : { scale: 1 }}
                                                     transition={{ type: 'spring', stiffness: 300, damping: 15 }}
                                                 >
-                                                    <div className="absolute inset-[3px] overflow-hidden flex flex-col items-center justify-center gap-1" style={{ clipPath: HEXAGON, background: '#0d1320' }}>
-                                                        <Package size={32} className="text-white/80" />
-                                                        <span className="text-[12px] font-black leading-none" style={{ color: meta.color }}>
+                                                    <div className="absolute overflow-hidden flex flex-col items-center justify-center" style={{inset: PACK_OPEN_UI.hexInnerInset, gap: PACK_OPEN_UI.hexInnerGap, clipPath: HEXAGON, background: '#0d1320' }}>
+                                                        <Package size={PACK_OPEN_UI.hexIconSize} className="text-white/80" />
+                                                        <span className="font-black leading-none" style={{fontSize: PACK_OPEN_UI.hexLabelFontSize, color: meta.color }}>
                                                             {chest.kind === 'armament' ? '武装' : '碎片'}
                                                         </span>
                                                     </div>
@@ -401,7 +584,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                                 {isReveal && (
                                                     <motion.div
                                                         initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.18 }}
-                                                        className="absolute top-0 left-1/2 -translate-x-1/2 z-30 text-yellow-300 text-lg drop-shadow-[0_0_8px_rgba(250,204,21,0.9)]"
+                                                        className="absolute top-0 left-1/2 -translate-x-1/2 z-30 text-yellow-300 drop-shadow-[0_0_8px_rgba(250,204,21,0.9)]" style={{ fontSize: PACK_OPEN_UI.revealMarkerFontSize }}
                                                     >
                                                         ▲
                                                     </motion.div>
@@ -420,7 +603,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                             width: HEX_SIZE, height: HEX_SIZE,
                                             marginLeft: -HEX_SIZE / 2, marginTop: -HEX_SIZE / 2,
                                             clipPath: HEXAGON,
-                                            border: `3px solid ${resultMeta.color}`,
+                                            border: `${PACK_OPEN_UI.haloBorderWidth}px solid ${resultMeta.color}`,
                                             filter: `drop-shadow(0 0 14px ${resultMeta.color})`,
                                         }}
                                         initial={{ opacity: 0, scale: 0.7 }}
@@ -430,13 +613,13 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                 )}
                             </div>
 
-                            <p className="text-xs text-gray-500 mt-3 font-mono tracking-wider pointer-events-none">
+                            <p className="text-gray-500 font-mono tracking-wider pointer-events-none" style={{ fontSize: PACK_OPEN_UI.hintFontSize, marginTop: PACK_OPEN_UI.hintMarginTop }}>
                                 🎁 卡包开出的是**奖励匣** · 停下中间的即为抽中，随后可在「待打开匣子」里开启
                             </p>
 
                             {/* [2026-10-04 程拍板] 一键全开：连播中显示进度（已播 n/总数），全部播完显示汇总 */}
                             {bulkTotal > 1 && (
-                                <p className="text-xs mt-2 font-mono tracking-wider pointer-events-none" style={{ color: '#a5f3fc' }}>
+                                <p className="font-mono tracking-wider pointer-events-none" style={{fontSize: PACK_OPEN_UI.bulkHintFontSize, marginTop: PACK_OPEN_UI.bulkHintMarginTop, color: '#a5f3fc' }}>
                                     {bulkDone < bulkTotal
                                         ? `⚡ 一键开启中… ${Math.min(bulkDone + 1, bulkTotal)}/${bulkTotal}`
                                         : `⚡ 本次一键开启 ${bulkTotal} 个卡包 —— 已全部存入「待打开匣子」`}
@@ -444,38 +627,38 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                             )}
 
                             {/* ── 底部按钮：待命 / 滚动中 / 结果兜底 ── */}
-                            <div className="min-h-[64px] flex items-center gap-2.5 mt-1">
+                            <div className="flex items-center" style={{ minHeight: PACK_OPEN_UI.buttonRowMinHeight, gap: PACK_OPEN_UI.buttonRowGap, marginTop: PACK_OPEN_UI.buttonRowMarginTop }}>
                                 {phase === 'idle' && (
                                     <>
                                         <button onClick={handleOpen} disabled={!canOpen}
-                                            className={`px-12 py-3.5 rounded-xl font-black text-xl tracking-widest transition-all ${
+                                            className={`font-black tracking-widest transition-all ${
                                                 canOpen
                                                     ? 'bg-gradient-to-r from-purple-600 to-purple-400 text-white hover:scale-105 shadow-[0_0_30px_rgba(168,85,247,0.5)]'
                                                     : 'bg-white/5 text-gray-500 cursor-not-allowed'
-                                            }`}>
+                                            }`} style={{ paddingLeft: PACK_OPEN_UI.mainBtnPadX, paddingRight: PACK_OPEN_UI.mainBtnPadX, paddingTop: PACK_OPEN_UI.mainBtnPadY, paddingBottom: PACK_OPEN_UI.mainBtnPadY, borderRadius: PACK_OPEN_UI.mainBtnRadius, fontSize: PACK_OPEN_UI.mainBtnFontSize }}>
                                             🎁 开启卡包！
                                         </button>
                                         {/* [2026-10-04 程拍板] 一键全开（≥2 个时才出现 —— 1 个时与单开无差别） */}
                                         {pendingPacks > 1 && (
                                             <button onClick={handleOpenAll}
-                                                className="px-7 py-3.5 rounded-xl font-black text-lg tracking-widest bg-gradient-to-r from-cyan-600 to-teal-400 text-white hover:scale-105 transition-all shadow-[0_0_30px_rgba(34,211,238,0.5)]">
+                                                className="font-black tracking-widest bg-gradient-to-r from-cyan-600 to-teal-400 text-white hover:scale-105 transition-all shadow-[0_0_30px_rgba(34,211,238,0.5)]" style={{ paddingLeft: PACK_OPEN_UI.openAllBtnPadX, paddingRight: PACK_OPEN_UI.openAllBtnPadX, paddingTop: PACK_OPEN_UI.openAllBtnPadY, paddingBottom: PACK_OPEN_UI.openAllBtnPadY, borderRadius: PACK_OPEN_UI.openAllBtnRadius, fontSize: PACK_OPEN_UI.openAllBtnFontSize }}>
                                                 ⚡ 一键全开（×{pendingPacks}）
                                             </button>
                                         )}
                                     </>
                                 )}
                                 {phase === 'rolling' && (
-                                    <div className="px-12 py-3.5 rounded-xl bg-white/5 text-gray-500 font-black text-xl tracking-widest cursor-wait">开启中…</div>
+                                    <div className="bg-white/5 text-gray-500 font-black tracking-widest cursor-wait" style={{ paddingLeft: PACK_OPEN_UI.mainBtnPadX, paddingRight: PACK_OPEN_UI.mainBtnPadX, paddingTop: PACK_OPEN_UI.mainBtnPadY, paddingBottom: PACK_OPEN_UI.mainBtnPadY, borderRadius: PACK_OPEN_UI.mainBtnRadius, fontSize: PACK_OPEN_UI.mainBtnFontSize }}>开启中…</div>
                                 )}
                                 {/* [2026-10-02 #5] 结果态兜底：详情弹窗关掉后这里仍有可点，不再"底部空白" */}
                                 {phase === 'result' && (
                                     <>
                                         <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setDetailOpen(true); }}
-                                            className="px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all">
+                                            className="bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all" style={{ paddingLeft: PACK_OPEN_UI.resultBtnPadX, paddingRight: PACK_OPEN_UI.resultBtnPadX, paddingTop: PACK_OPEN_UI.resultBtnPadY, paddingBottom: PACK_OPEN_UI.resultBtnPadY, borderRadius: PACK_OPEN_UI.resultBtnRadius }}>
                                             🔍 查看详情
                                         </button>
                                         <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
-                                            className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-purple-400 text-white font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(168,85,247,0.45)]">
+                                            className="bg-gradient-to-r from-purple-600 to-purple-400 text-white font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(168,85,247,0.45)]" style={{ paddingLeft: PACK_OPEN_UI.resultBtnPadX, paddingRight: PACK_OPEN_UI.resultBtnPadX, paddingTop: PACK_OPEN_UI.resultBtnPadY, paddingBottom: PACK_OPEN_UI.resultBtnPadY, borderRadius: PACK_OPEN_UI.resultBtnRadius }}>
                                             {canOpen ? '收起' : '完成'}
                                         </button>
                                     </>
@@ -484,8 +667,8 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
 
                             {/* 右上关闭（滚动中禁用） */}
                             {phase !== 'rolling' && (
-                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="absolute top-4 right-4 p-2 rounded-full text-gray-500 hover:bg-white/10 hover:text-white transition-all">
-                                    <X size={20} />
+                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }} className="absolute rounded-full text-gray-500 hover:bg-white/10 hover:text-white transition-all" style={{ top: PACK_OPEN_UI.closeTop, right: PACK_OPEN_UI.closeRight, padding: PACK_OPEN_UI.closePad }}>
+                                    <X size={PACK_OPEN_UI.closeIconSize} />
                                 </button>
                             )}
 
@@ -507,65 +690,65 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                 <motion.div
                                     initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
                                     transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-                                    className="w-[520px] rounded-2xl border p-7 flex flex-col items-center gap-3 shadow-[0_0_60px_rgba(0,0,0,0.9)]"
-                                    style={{ background: resultMeta.cardBg, borderColor: `${resultMeta.color}66`, boxShadow: `0 0 40px ${resultMeta.color}44` }}
+                                    className="flex flex-col items-center shadow-[0_0_60px_rgba(0,0,0,0.9)]"
+                                    style={{width: PACK_OPEN_UI.detailWidth, borderRadius: PACK_OPEN_UI.detailRadius, borderWidth: PACK_OPEN_UI.detailBorderWidth, borderStyle: 'solid', padding: PACK_OPEN_UI.detailPad, gap: PACK_OPEN_UI.detailGap, background: resultMeta.cardBg, borderColor: `${resultMeta.color}66`, boxShadow: `0 0 40px ${resultMeta.color}44` }}
                                     onClick={(e) => e.stopPropagation()}
                                 >
-                                    <div className="text-lg font-black tracking-widest" style={{ color: resultMeta.color, textShadow: `0 0 18px ${resultMeta.color}88` }}>
+                                    <div className="font-black tracking-widest" style={{fontSize: PACK_OPEN_UI.detailTitleFontSize, color: resultMeta.color, textShadow: `0 0 18px ${resultMeta.color}88` }}>
                                         ✨ 获得奖励匣 ✨
                                     </div>
                                     {/* 六边形大图标（外层品质色环 + 内层深底 + 匣子标识） */}
                                     <div className="relative"
                                         style={{ width: BIG_HEX, height: BIG_HEX, clipPath: HEXAGON, background: resultMeta.color, filter: `drop-shadow(0 0 18px ${resultMeta.color}aa)` }}>
-                                        <div className="absolute inset-[3px] overflow-hidden flex flex-col items-center justify-center gap-1.5" style={{ clipPath: HEXAGON, background: '#0d1320' }}>
-                                            <Package size={46} className="text-white/85" />
-                                            <span className="text-[13px] font-black" style={{ color: resultMeta.color }}>
+                                        <div className="absolute overflow-hidden flex flex-col items-center justify-center" style={{inset: PACK_OPEN_UI.bigHexInnerInset, gap: PACK_OPEN_UI.bigHexInnerGap, clipPath: HEXAGON, background: '#0d1320' }}>
+                                            <Package size={PACK_OPEN_UI.bigHexIconSize} className="text-white/85" />
+                                            <span className="font-black" style={{fontSize: PACK_OPEN_UI.bigHexLabelFontSize, color: resultMeta.color }}>
                                                 {result.kind === 'armament' ? '武装' : '碎片'}
                                             </span>
                                         </div>
                                     </div>
                                     {/* 名称 */}
-                                    <div className="text-xl font-black tracking-wide text-center" style={{ color: '#fff', textShadow: `0 0 10px ${resultMeta.color}88` }}>
+                                    <div className="font-black tracking-wide text-center" style={{fontSize: PACK_OPEN_UI.chestNameFontSize, color: '#fff', textShadow: `0 0 10px ${resultMeta.color}88` }}>
                                         {chestName(result)}
                                     </div>
                                     {/* 品质 + 大类 chips */}
-                                    <div className="flex flex-wrap justify-center gap-1.5">
-                                        <span className="text-xs px-2 py-0.5 rounded font-mono" style={{ color: resultMeta.color, border: `1px solid ${resultMeta.color}55`, background: `${resultMeta.color}11` }}>
+                                    <div className="flex flex-wrap justify-center" style={{ gap: PACK_OPEN_UI.chipsGap }}>
+                                        <span className="font-mono" style={{fontSize: PACK_OPEN_UI.chipFontSize, paddingLeft: PACK_OPEN_UI.chipPadX, paddingRight: PACK_OPEN_UI.chipPadX, paddingTop: PACK_OPEN_UI.chipPadY, paddingBottom: PACK_OPEN_UI.chipPadY, borderRadius: PACK_OPEN_UI.chipRadius, color: resultMeta.color, border: `1px solid ${resultMeta.color}55`, background: `${resultMeta.color}11` }}>
                                             {resultMeta.label}
                                         </span>
-                                        <span className="text-xs px-2 py-0.5 rounded font-mono text-amber-200 border border-amber-300/30 bg-amber-400/10">
+                                        <span className="font-mono text-amber-200 border-amber-300/30 bg-amber-400/10" style={{ fontSize: PACK_OPEN_UI.chipFontSize, paddingLeft: PACK_OPEN_UI.chipPadX, paddingRight: PACK_OPEN_UI.chipPadX, paddingTop: PACK_OPEN_UI.chipPadY, paddingBottom: PACK_OPEN_UI.chipPadY, borderRadius: PACK_OPEN_UI.chipRadius, borderWidth: PACK_OPEN_UI.chipBorderWidth, borderStyle: 'solid' }}>
                                             {CHEST_KIND_LABEL[result.kind]}
                                         </span>
                                     </div>
                                     {/* 开出内容预告 */}
-                                    <p className="text-gray-200 text-sm leading-relaxed text-center">
+                                    <p className="text-gray-200 leading-relaxed text-center" style={{ fontSize: PACK_OPEN_UI.descFontSize }}>
                                         {describeChestContent(result.kind, result.rarity)}
                                         {result.kind === 'shard' && (
-                                            <span className="block text-[11px] text-cyan-300/80 mt-1">
+                                            <span className="block text-cyan-300/80" style={{ fontSize: PACK_OPEN_UI.shardNoteFontSize, marginTop: PACK_OPEN_UI.shardNoteMarginTop }}>
                                                 {/* [2026-10-02 #10] 用常量，别硬编码 5 */}
                                                 碎片每 {SHARD_GROUP_SIZE} 片为一组，随机归属一位天启者 · 万能碎片不会从这里开出
                                             </span>
                                         )}
                                     </p>
-                                    <p className="text-[11px] text-purple-200/70 text-center -mt-1">
+                                    <p className="text-purple-200/70 text-center" style={{ fontSize: PACK_OPEN_UI.detailFootFontSize, marginTop: PACK_OPEN_UI.detailFootMarginTop }}>
                                         匣子已存入「待打开匣子」，开启后才会得到道具
                                     </p>
                                     {/* 按钮：去开匣子 / 再开一包 / 收起 */}
-                                    <div className="flex flex-wrap justify-center gap-2.5 mt-2">
+                                    <div className="flex flex-wrap justify-center" style={{ gap: PACK_OPEN_UI.detailBtnRowGap, marginTop: PACK_OPEN_UI.detailBtnRowMarginTop }}>
                                         {onOpenChest && (
                                             <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onClose(); onOpenChest(); }}
-                                                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.5)]">
+                                                className="bg-gradient-to-r from-amber-500 to-yellow-400 text-black font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.5)]" style={{ paddingLeft: PACK_OPEN_UI.detailBtnPadX, paddingRight: PACK_OPEN_UI.detailBtnPadX, paddingTop: PACK_OPEN_UI.detailBtnPadY, paddingBottom: PACK_OPEN_UI.detailBtnPadY, borderRadius: PACK_OPEN_UI.detailBtnRadius }}>
                                                 🔓 去开匣子
                                             </button>
                                         )}
                                         {canOpen && (
                                             <button onClick={handleOpen}
-                                                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-purple-400 text-white font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(168,85,247,0.5)]">
+                                                className="bg-gradient-to-r from-purple-600 to-purple-400 text-white font-black tracking-widest hover:scale-105 transition-all shadow-[0_0_25px_rgba(168,85,247,0.5)]" style={{ paddingLeft: PACK_OPEN_UI.detailBtnPadX, paddingRight: PACK_OPEN_UI.detailBtnPadX, paddingTop: PACK_OPEN_UI.detailBtnPadY, paddingBottom: PACK_OPEN_UI.detailBtnPadY, borderRadius: PACK_OPEN_UI.detailBtnRadius }}>
                                                 🎁 再开一包（×{pendingPacks}）
                                             </button>
                                         )}
                                         <button onClick={() => { if (canOpen) { eventBus.emit(GameEvents.UI_CLICK); backToIdle(); } else { eventBus.emit(GameEvents.UI_BACK); onClose(); } }}
-                                            className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all">
+                                            className="bg-white/10 hover:bg-white/20 text-white font-black tracking-widest transition-all" style={{ paddingLeft: PACK_OPEN_UI.detailBtnPadX, paddingRight: PACK_OPEN_UI.detailBtnPadX, paddingTop: PACK_OPEN_UI.detailBtnPadY, paddingBottom: PACK_OPEN_UI.detailBtnPadY, borderRadius: PACK_OPEN_UI.detailBtnRadius }}>
                                             {canOpen ? '收起' : '完成'}
                                         </button>
                                     </div>
