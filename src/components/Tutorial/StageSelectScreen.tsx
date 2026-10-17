@@ -39,7 +39,7 @@ import { isStageCompleted } from '../../utils/tutorialProgress'; // [新增] 完
 export const STAGE_SELECT_UI = {
     // ══ ① 左栏：考核列表面板（含头部与空态） ═══════════════════════════
     /** 左栏宽 px（原 w-[280px] = 280） */
-    listPanelWidth: 280,
+    listPanelWidth: 360,
     /** 左栏右侧分隔线宽 px（原 border-r = 1） */
     listPanelBorderRightWidth: 1,
     /** 头部内边距 px（原 p-5 = 20） */
@@ -53,15 +53,15 @@ export const STAGE_SELECT_UI = {
     /** 返回钮圆角 px（原 rounded-lg = 8） */
     backBtnRadius: 8,
     /** 返回箭头图标 px（原 <ArrowLeft size={20} /> = 20） */
-    backIconSize: 20,
+    backIconSize: 30,
     /** 分类名胶囊字号 px（原 text-xs = 12） */
-    categoryChipFontSize: 12,
+    categoryChipFontSize: 18,
     /** 分类名胶囊左右内边距 px（原 px-2 = 8） */
     categoryChipPadX: 8,
     /** 分类名胶囊上下内边距 px（原 py-0.5 = 2） */
     categoryChipPadY: 2,
     /** 「考核列表」字号 px（原 text-sm = 14） */
-    listTitleFontSize: 14,
+    listTitleFontSize: 21,
     /** 列表滚动区上下内边距 px（原 p-4 = 16） */
     listBodyPad: 16,
     /** 列表顶部虚化条高 px（原 h-4 = 16） */
@@ -71,11 +71,11 @@ export const STAGE_SELECT_UI = {
     /** 空态（📭）左右内边距 px（原 px-6 = 24） */
     listEmptyPadX: 24,
     /** 空态 📭 字号 px（原 text-3xl = 30） */
-    listEmptyIconFontSize: 30,
+    listEmptyIconFontSize: 45,
     /** 空态 📭 下距 px（原 mb-3 = 12） */
     listEmptyIconMarginBottom: 12,
     /** 空态「暂无关卡」字号 px（原 text-sm = 14） */
-    listEmptyTextFontSize: 14,
+    listEmptyTextFontSize: 21,
 
     // ══ ② 左栏：关卡缩略卡 ═════════════════════════════════════════════
     /** 缩略卡高 px（原 h-24 = 96） */
@@ -93,17 +93,17 @@ export const STAGE_SELECT_UI = {
     /** 编号与名称间距 px（原 gap-2 = 8） */
     stageCardRowGap: 8,
     /** 编号方块边长 px（原 w-5 h-5 = 20） */
-    stageNoSize: 20,
+    stageNoSize: 30,
     /** 编号方块圆角 px（原 rounded = 4） */
     stageNoRadius: 4,
     /** 编号字号 px（原 text-[10px] = 10） */
-    stageNoFontSize: 10,
+    stageNoFontSize: 15,
     /** 关卡名字号 px（原 text-sm = 14） */
-    stageNameFontSize: 14,
+    stageNameFontSize: 21,
     /** 已完成 ✓ 字号 px（原 text-sm = 14） */
-    stageCheckFontSize: 14,
+    stageCheckFontSize: 21,
     /** 「N OBJECTIVES / COMPLETED」字号 px（原 text-[10px] = 10） */
-    stageMetaFontSize: 10,
+    stageMetaFontSize: 15,
     /** 该行上距 px（原 mt-1 = 4） */
     stageMetaMarginTop: 4,
     /** 该行左缩进 px（原 pl-7 = 28） */
@@ -117,13 +117,13 @@ export const STAGE_SELECT_UI = {
     /** 敌方 HUD 距右 px（原 right-10 = 40） */
     sideLabelRight: 40,
     /** 「ADJUTANT / ENEMY」字号 px（原 text-xs = 12） */
-    sideLabelFontSize: 12,
+    sideLabelFontSize: 16,
     /** 该行图标与文字间距 px（原 gap-1 = 4） */
     sideLabelGap: 4,
     /** 该行小图标 px（原 <Shield size={12}/> / <Sword size={12}/> = 12） */
-    sideLabelIconSize: 12,
+    sideLabelIconSize: 16,
     /** 阵营名字号 px（原 text-3xl = 30） */
-    sideNameFontSize: 30,
+    sideNameFontSize: 45,
     /** 阵营名上距 px（原 mt-1 = 4） */
     sideNameMarginTop: 4,
     /** 中央分隔柱宽 px（原 w-32 = 128） */
@@ -169,25 +169,25 @@ export const STAGE_SELECT_UI = {
     /** STAGE 徽章上下内边距 px（原 py-0.5 = 2） */
     stageBadgePadY: 2,
     /** STAGE 徽章字号 px（原 text-xs = 12） */
-    stageBadgeFontSize: 12,
+    stageBadgeFontSize: 18,
     /** STAGE 徽章圆角 px（原 rounded = 4） */
     stageBadgeRadius: 4,
     /** STAGE 徽章描边 px（原 border = 1） */
     stageBadgeBorderWidth: 1,
     /** 关卡名字号 px（原 text-4xl = 36） */
-    stageTitleFontSize: 36,
+    stageTitleFontSize: 54,
     /** 关卡描述字号 px（原 text-sm = 14） */
-    stageDescFontSize: 14,
+    stageDescFontSize: 21,
     /** 描述最大宽（原 max-w-2xl —— 被 `index.css:56` 的 `!important` 打死过 ⇒ 默认锁 `'none'`） */
     stageDescMaxWidth: 'none',
     /** 「EXAM OBJECTIVES」字号 px（原 text-xs = 12） */
-    objectivesTitleFontSize: 12,
+    objectivesTitleFontSize: 18,
     /** 该标题下距 px（原 mb-4 = 16） */
     objectivesTitleMarginBottom: 16,
     /** 图标与文字间距 px（原 gap-2 = 8） */
     objectivesTitleGap: 8,
     /** 该标题图标 px（原 <Target size={14} /> = 14） */
-    objectivesTitleIconSize: 14,
+    objectivesTitleIconSize: 21,
 
     // ══ ⑥ 右栏：考核目标卡 ═════════════════════════════════════════════
     /** 目标卡之间间距 px（原 gap-4 = 16） */
@@ -203,13 +203,13 @@ export const STAGE_SELECT_UI = {
     /** 单卡描边 px（原 border = 1） */
     objectiveItemBorderWidth: 1,
     /** 图标圆直径 px（原 w-10 h-10 = 40） */
-    objectiveIconSize: 40,
+    objectiveIconSize: 60,
     /** 图标圆描边 px（原 border = 1） */
     objectiveIconBorderWidth: 1,
     /** 目标文字上内边距 px（原 pt-2 = 8） */
     objectiveTextPadTop: 8,
     /** 目标文字字号 px（原 text-sm = 14） */
-    objectiveTextFontSize: 14,
+    objectiveTextFontSize: 21,
 
     // ══ ⑦ 右栏：底部操作栏（查看牌组 / 开始考核） ══════════════════════
     /** 操作栏左右内边距 px（原 px-10 = 40） */

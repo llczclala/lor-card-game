@@ -458,7 +458,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                         {/* ========== 音频标签 ========== */}
                                         {activeTab === 'audio' && (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap }}>
-                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Audio Volume</h3>
+                                                <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Audio Volume</h3>
                                                 <VolumeSlider label="音乐" icon={Music} value={volumes.bgm} onChange={(v) => onVolumeChange('bgm', v)} />
                                                 <VolumeSlider label="音效" icon={Volume2} value={volumes.sfx} onChange={(v) => onVolumeChange('sfx', v)} />
                                                 <VolumeSlider label="语音" icon={Mic} value={volumes.voice} onChange={(v) => onVolumeChange('voice', v)} />
@@ -471,7 +471,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                             <>
                                                 {onResolutionChange && (
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap }}>
-                                                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Video Quality</h3>
+                                                        <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Video Quality</h3>
                                                         <div className="flex bg-black/60 border-white/5" style={{ padding: SETTINGS_UI.segPad, borderRadius: SETTINGS_UI.segRadius, borderWidth: SETTINGS_UI.segBorderWidth, borderStyle: 'solid' }}>
                                                             {(['1k', '2k', '4k'] as const).map(res => (
                                                                 <button
@@ -491,11 +491,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
 
                                                 {/* [2026-10-14 程拍板] 全屏开关 —— 原右上角独立按钮收进设置窗口「显示」区 */}
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap, paddingTop: SETTINGS_UI.sectionPadTop }}>
-                                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Display</h3>
+                                                    <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Display</h3>
                                                     <ToggleRow title="全屏显示" desc="以全屏模式运行游戏（等同 F11）" enabled={isFullscreen} onToggle={toggleFullscreen} />
                                                 </div>
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap, paddingTop: SETTINGS_UI.sectionPadTop }}>
-                                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>动态特效</h3>
+                                                    <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>动态特效</h3>
                                                     <ToggleRow title="动态牌桌" desc="使用动态视频牌桌（15 张牌桌全部支持）" enabled={deskDynamic} onToggle={onToggleDeskDynamic} />
                                                     <ToggleRow title="动态卡面" desc="对局内英雄卡面使用动态视频（6 位天启者全部支持）" enabled={heroDynamic} onToggle={onToggleHeroDynamic} />
                                                     <ToggleRow title="动态法术卡牌" desc="对局内法术/单位卡面使用动态视频（71 张法术全部支持）" enabled={spellDynamic} onToggle={onToggleSpellDynamic} />
@@ -507,7 +507,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                         {/* ========== 游戏标签 ========== */}
                                         {activeTab === 'game' && (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap }}>
-                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Gameplay</h3>
+                                                <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Gameplay</h3>
                                                 <ToggleRow title="快速开局抽卡" desc="换牌后直接获得卡牌，跳过抽卡动画" enabled={skipStartDrawAnimation} onToggle={onToggleSkipDraw} />
                                                 <ToggleRow title="默认跳过升级影片" desc="英雄升级时自动跳过动画影片" enabled={skipLevelupMovie} onToggle={onToggleSkipLevelup} />
                                                 <ToggleRow title="默认跳过胜利影片" desc="对局胜利时自动跳过胜利动画影片" enabled={skipVictoryMovie} onToggle={onToggleSkipVictory} />
@@ -517,7 +517,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                         {/* ========== 系统标签 ========== */}
                                         {activeTab === 'system' && (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap }}>
-                                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>System</h3>
+                                                <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>System</h3>
                                                 <div className="flex flex-col items-center justify-center bg-white/5 border-white/5" style={{ gap: SETTINGS_UI.sysBoxGap, padding: SETTINGS_UI.sysBoxPad, borderRadius: SETTINGS_UI.sysBoxRadius, borderWidth: SETTINGS_UI.sysBoxBorderWidth, borderStyle: 'solid' }}>
                                                     <p className="text-gray-400" style={{ fontSize: SETTINGS_UI.sysTextFontSize }}>
                                                         当前版本 <span className="text-blue-300 font-black tracking-widest" style={{ marginLeft: SETTINGS_UI.sysVersionMarginLeft }}>v{import.meta.env.PACKAGE_VERSION}</span>

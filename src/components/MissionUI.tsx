@@ -150,7 +150,7 @@ export const MISSION_UI = {
     /** 进度条描边 px（原 border = 1） */
     progressBorderWidth: 1,
     /** 「PROGRESS: n / m」字号 px（原 text-[10px] = 10） */
-    progressTextFontSize: 10,
+    progressTextFontSize: 20,
     /** 该行与进度条的间距 px（原 mt-1 = 4） */
     progressTextMarginTop: 4,
     /** 行内右半区（奖励 + 状态按钮）的间距 px（原 gap-6 = 24） */
@@ -174,7 +174,7 @@ export const MISSION_UI = {
     /** 数据金 chip 的图标与数字间距 px（原 gap-1.5 = 6，这个 chip 没有 min-w） */
     goldChipGap: 6,
     /** 数据金图标 px（原 w-5 h-5 = 20） */
-    goldIconSize: 20,
+    goldIconSize: 30,
     /** 缩略图边长 px（原 w-8 h-8 = 32，卡牌 / 武装 / 外观三处共用） */
     rewardThumbSize: 32,
     /** 缩略图圆角 px（原 rounded = 4） */
@@ -182,11 +182,11 @@ export const MISSION_UI = {
     /** 缩略图描边 px（原 border = 1） */
     rewardThumbBorderWidth: 1,
     /** 没有缩略图时的礼盒兜底图标 px（原 size={18}） */
-    rewardFallbackIconSize: 18,
+    rewardFallbackIconSize: 36,
     /** 「CARD / PACK / SHARD / SKIN」小标签字号 px（原 text-[8px] = 8） */
     rewardTagFontSize: 8,
     /** 奖励名（N 张 / 迷宫卡包 ×1…）字号 px（原 text-xs = 12） */
-    rewardNameFontSize: 12,
+    rewardNameFontSize: 24,
     /** 奖励名最大宽度。**默认 `'none'`**（原 `max-w-[90px]` 同样被 `index.css:56` 打死）。填 90 才启用截断。 */
     rewardNameMaxWidth: 'none',
 
@@ -200,7 +200,7 @@ export const MISSION_UI = {
     /** 按钮描边 px（原 border = 1，已领取 / 进行中两个状态框用） */
     claimBtnBorderWidth: 1,
     /** 按钮字号 px（原 text-sm = 14） */
-    claimBtnFontSize: 14,
+    claimBtnFontSize: 28,
     /** 「已领取」里勾图标与文字的间距 px（原 gap-2 = 8） */
     claimedGap: 8,
     /** 「已领取」勾图标 px（原 size={16}） */
@@ -449,7 +449,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                             <Gift size={MISSION_UI.rewardFallbackIconSize} className="text-yellow-400 shrink-0" />
                                                             <div className="flex flex-col items-start overflow-hidden">
                                                                 <span className="font-bold text-yellow-500/80 tracking-widest uppercase" style={{ fontSize: MISSION_UI.rewardTagFontSize }}>PACK</span>
-                                                                <span className="font-bold text-xs text-yellow-300">迷宫卡包 ×{mission.reward.amount ?? 1}</span>
+                                                                <span className="font-bold text-yellow-300" style={{ fontSize: MISSION_UI.rewardNameFontSize }}>迷宫卡包 ×{mission.reward.amount ?? 1}</span>
                                                             </div>
                                                         </div>
                                                     );
@@ -462,7 +462,7 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                             <ShardIcon size={20} className="shrink-0" />
                                                             <div className="flex flex-col items-start overflow-hidden">
                                                                 <span className="font-bold text-amber-500/80 tracking-widest uppercase" style={{ fontSize: MISSION_UI.rewardTagFontSize }}>SHARD</span>
-                                                                <span className="font-bold text-xs text-amber-200">万能碎片 ×{mission.reward.amount ?? 0}</span>
+                                                                <span className="font-bold text-amber-200" style={{ fontSize: MISSION_UI.rewardNameFontSize }}>万能碎片 ×{mission.reward.amount ?? 0}</span>
                                                             </div>
                                                         </div>
                                                     );

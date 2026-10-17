@@ -62,7 +62,7 @@ export const PACK_OPEN_UI = {
      *     **不需要补 margin**（同 `MODE_UI.stageScale` 的判据；对照 `HUB_UI.dioramaScale` 那个要补上下各一半）。
      *  ⚠️ 与**定格详情弹窗**共用这一个旋钮（同一个界面的两态一起放大）；不想联动就说一声，删掉 689 行那处即可。
      *  📐 面板逻辑宽 1180；`1180 × panelScale ≤ 1680`（画布宽）⇒ **实用上限约 1.4**（再大左右会被切）。 */
-    panelScale: 1,
+    panelScale: 1.75,
     panelWidth: 1180,
     /** 面板圆角 px（原 rounded-3xl = 24） */
     panelRadius: 24,
