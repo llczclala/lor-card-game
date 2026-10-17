@@ -44,8 +44,10 @@ import { CURRENCY_ICONS, EFFECT_IMAGES } from '../../../data/imageData';
 //     ⑦删卡子步骤 ⑧开发者「事件列表」入口 ⑨删卡卡面按钮（`DeckPickCard`）
 // 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
 // 命名与用法**对齐 `TITLE_UI`**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
-// 🔴 本调参区**只管事件分支**。同文件里还有 强化三选一 / 篝火休整 / 商店·宝箱占位 /
-//   开发者全量选择器 四种分支 —— 它们**一个旋钮都没有**（按程的口径：做到需要调参的地方再说）。
+// 🔴 本调参区**只管事件分支**，别改错块：
+//   · **篝火休整**分支已有自己的调参区 `REST_NODE_UI`（在文件下半部分）
+//   · 强化三选一 / 商店·宝箱占位 / 开发者全量选择器 三种分支**仍一个旋钮都没有**
+//     （按口径：做到需要调参的地方再说）
 // ⚠️ ⑨ 那组是 `DeckPickCard`，与「篝火休整」**共用** ⇒ 改它**两屏一起变**（有意如此）。
 // ⚠️ 两个 `max-w-*` 的陷阱（见 `panelMaxWidth` / `pickCardNameMaxWidth`）：原类被
 //   `index.css:56` 的 `[class*="max-w-"]{max-width:none!important}` 打死过 ⇒ 默认必须写 `'none'`
@@ -64,13 +66,13 @@ export const EVENT_NODE_UI = {
     /** 徽章行与事件名之间 px（原 mb-2 = 8） */
     badgeRowMarginBottom: 8,
     /** 徽章字号 px（原 text-[11px] = 11） */
-    badgeFontSize: 11,
+    badgeFontSize: 22,
     /** 徽章左右内边距 px（原 px-2.5 = 10） */
     badgePadX: 10,
     /** 徽章上下内边距 px（原 py-1 = 4） */
     badgePadY: 4,
     /** 事件名字号 px（原 text-4xl = 36） */
-    titleFontSize: 36,
+    titleFontSize: 72,
 
     // ══ ② 中下方：叙事文案 ═════════════════════════════════════════════
     /** 距左（原 left-[6%]，相对父容器） */
@@ -80,7 +82,7 @@ export const EVENT_NODE_UI = {
     /** 距底（原 bottom-[9%]） */
     storyBottom: '9%',
     /** 正文字号 px（原 text-[19px] = 19）· ⚠️ 行高交给 `leading-[2.05]` 类，**不要写死** */
-    storyFontSize: 19,
+    storyFontSize: 25,
 
     // ══ ③ 右侧：选项栏容器 ═════════════════════════════════════════════
     /** 距右（原 right-[4%]） */
@@ -92,7 +94,7 @@ export const EVENT_NODE_UI = {
     /** 最大宽（原 max-w-[430px] —— **被 index.css:56 打死过**，故默认 'none' 锁住现状） */
     panelMaxWidth: 'none',
     /** 选项之间行距 px（原 gap-4 = 16） */
-    panelGap: 16,
+    panelGap: 32,
 
     // ══ ④ 选项按钮（长条平行四边形） ═══════════════════════════════════
     /** 左右内边距 px（原 px-6 = 24） */
@@ -104,11 +106,11 @@ export const EVENT_NODE_UI = {
     /** 图标尺寸 px（原 `<Sword size={22} />` 等 lucide 图标 = 22） */
     choiceIconSize: 22,
     /** 图片图标尺寸 px（原 w-7 h-7 = 28，用于生命 / 数据金） */
-    choiceImgIconSize: 28,
+    choiceImgIconSize: 56,
     /** 行为文案字号 px（原 text-lg = 18） */
-    choiceTitleFontSize: 18,
+    choiceTitleFontSize: 27,
     /** 代价/奖励小字字号 px（原 text-[11.5px]） */
-    choiceSubFontSize: 11.5,
+    choiceSubFontSize: 16,
     /** 小字与文案之间 px（原 mt-1 = 4） */
     choiceSubMarginTop: 4,
 
@@ -223,6 +225,91 @@ export const EVENT_NODE_UI = {
     pickCardNameFontSize: 11,
     /** 卡名最大宽（原 max-w-[130px] —— **同样被 index.css:56 打死过**，默认 'none' 锁住现状） */
     pickCardNameMaxWidth: 'none',
+} as const;
+
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 悖论迷宫 · **篝火休整节点**（`NodeEventModal` 的 `type === 'rest'` 分支）· 视觉调参区
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 地图上踩到休整节点后弹出的橙色面板：
+//   菜单态（休整 / 净化卡牌 / 复制卡牌 / 探路 四选一）→ 选卡态（挑一张牌）→ 二次确认。
+// 管：①弹窗外壳 ②头部（火焰 + 标题 + 返回菜单）③菜单态四张行动卡 ④选卡态标题与空态
+// 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
+// 🔴 **本文件有两块调参区，别改错块**：
+//   `EVENT_NODE_UI`（事件分支 · 文件顶部）· **本块 `REST_NODE_UI`（篝火休整分支）**
+// ⚠️ 选卡态那些卡面按钮（`DeckPickCard`）的尺寸**不在本块** —— 它与事件删卡子步骤**共用**，
+//   旋钮在 `EVENT_NODE_UI.pickCard*`（9 项），改那里**两处一起变**（有意如此）。
+// ⚠️ 卡面的排布间距走共享常量 `GAP_HAND` / `CARD_ROW_GAP_Y`（`../uiSpacing`）⇒ 不在本块。
+// ⚠️ 行动卡的网格列数是 `grid-cols-2 md:grid-cols-4`（**响应式类**，按**视口宽**判定而非画布）
+//   ⇒ 刻意留在类名里没提参；要改列数说一声。
+// ⚠️ 二次确认弹窗是共享件 `ConfirmDialog` ⇒ 不在本块（要调得单独排期）。
+// ══════════════════════════════════════════════════════════════════════
+export const REST_NODE_UI = {
+    // ══ ① 弹窗外壳 ═══════════════════════════════════════════════════
+    /** 面板宽 px（原 w-[920px] = 920） */
+    panelWidth: 920,
+    /** 面板最大高 px（原 max-h-[924px] = 924 · `max-h` 不受那条 `!important` 影响，本来就是活的） */
+    panelMaxHeight: 924,
+    /** 面板圆角 px（原 rounded-2xl = 16） */
+    panelRadius: 16,
+    /** 面板内边距 px（原 p-6 = 24） */
+    panelPad: 24,
+    /** 面板描边 px（原 border = 1） */
+    panelBorderWidth: 1,
+
+    // ══ ② 头部（火焰图标 + 「篝火 · 休整」+ 返回菜单） ════════════════
+    /** 头部下距 px（原 mb-4 = 16） */
+    headerMarginBottom: 16,
+    /** 图标与标题间距 px（原 gap-3 = 12） */
+    headerGap: 12,
+    /** 火焰图标 px（原 <Flame size={28} /> = 28） */
+    headerIconSize: 28,
+    /** 标题字号 px（原 text-2xl = 24） */
+    titleFontSize: 24,
+    /** 「返回菜单」左右内边距 px（原 px-3 = 12） */
+    backBtnPadX: 12,
+    /** 「返回菜单」上下内边距 px（原 py-1 = 4） */
+    backBtnPadY: 4,
+    /** 「返回菜单」圆角 px（原 rounded-lg = 8） */
+    backBtnRadius: 8,
+    /** 「返回菜单」字号 px（原 text-xs = 12） */
+    backBtnFontSize: 12,
+
+    // ══ ③ 菜单态：四张行动卡 ═════════════════════════════════════════
+    /** 顶部说明字号 px（原 text-sm = 14） */
+    hintFontSize: 14,
+    /** 顶部说明下距 px（原 mb-4 = 16） */
+    hintMarginBottom: 16,
+    /** 行动卡之间间距 px（原 gap-3 = 12） */
+    gridGap: 12,
+    /** 行动卡左右内边距 px（原 px-4 = 16） */
+    actionPadX: 16,
+    /** 行动卡上下内边距 px（原 py-4 = 16） */
+    actionPadY: 16,
+    /** 行动卡圆角 px（原 rounded-xl = 12） */
+    actionRadius: 12,
+    /** 行动卡描边 px（原 border = 1） */
+    actionBorderWidth: 1,
+    /** 行动卡内行距 px（原 gap-2 = 8） */
+    actionGap: 8,
+    /** 行动卡图标 px（原 <Flame size={20} /> 等四个 = 20） */
+    actionIconSize: 20,
+    /** 行动卡标题字号 px（原**没有** text-* 类 ⇒ 继承基准 16 · 全项目无 font-size 声明） */
+    actionTitleFontSize: 16,
+    /** 行动卡描述字号 px（原 text-[11px] = 11） */
+    actionDescFontSize: 11,
+    /** 描述与标题间距 px（原 mt-0.5 = 2） */
+    actionDescMarginTop: 2,
+
+    // ══ ④ 选卡态：标题与空态 ═════════════════════════════════════════
+    /** 「净化 · 选择要移除的卡」字号 px（原 text-sm = 14） */
+    selectLabelFontSize: 14,
+    /** 该标题下距 px（原 mb-3 = 12） */
+    selectLabelMarginBottom: 12,
+    /** 空态字号 px（原 text-sm = 14） */
+    emptyFontSize: 14,
+    /** 空态上下内边距 px（原 py-4 = 16） */
+    emptyPadY: 16,
 } as const;
 
 interface NodeEventModalProps {
@@ -1336,10 +1423,10 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                 ? restDeck.filter(k => !CARD_DB[k]?.isChampion)
                 : restDeck;
         const restChoices = [
-            { key: 'rest', icon: <Flame size={20} className="text-amber-400" />, title: '休整', desc: '恢复 30% 生命值', color: 'border-amber-500/40 hover:border-amber-400' },
-            { key: 'remove', icon: <Trash2 size={20} className="text-red-400" />, title: '净化卡牌', desc: '免费移除一张卡', color: 'border-red-500/40 hover:border-red-400' },
-            { key: 'copy', icon: <Copy size={20} className="text-blue-400" />, title: '复制卡牌', desc: '复制一张已有卡牌', color: 'border-blue-500/40 hover:border-blue-400' },
-            { key: 'scout', icon: <MapPin size={20} className="text-emerald-400" />, title: '探路', desc: '派单位卡探路，2 节点后带装备回归', color: 'border-emerald-500/40 hover:border-emerald-400' },
+            { key: 'rest', icon: <Flame size={REST_NODE_UI.actionIconSize} className="text-amber-400" />, title: '休整', desc: '恢复 30% 生命值', color: 'border-amber-500/40 hover:border-amber-400' },
+            { key: 'remove', icon: <Trash2 size={REST_NODE_UI.actionIconSize} className="text-red-400" />, title: '净化卡牌', desc: '免费移除一张卡', color: 'border-red-500/40 hover:border-red-400' },
+            { key: 'copy', icon: <Copy size={REST_NODE_UI.actionIconSize} className="text-blue-400" />, title: '复制卡牌', desc: '复制一张已有卡牌', color: 'border-blue-500/40 hover:border-blue-400' },
+            { key: 'scout', icon: <MapPin size={REST_NODE_UI.actionIconSize} className="text-emerald-400" />, title: '探路', desc: '派单位卡探路，2 节点后带装备回归', color: 'border-emerald-500/40 hover:border-emerald-400' },
         ] as const;
         const restLabels: Record<string, string> = { remove: '净化 · 选择要移除的卡', copy: '复制 · 选择要复制的卡', scout: '探路 · 选择要派遣的单位卡' };
         return (
@@ -1347,22 +1434,27 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                 <div className="fixed inset-0 z-[700] flex items-center justify-center bg-black/80 backdrop-blur-sm">
                     <motion.div
                         initial={{ scale: 0.92, opacity: 0, y: 16 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.92, opacity: 0, y: 16 }}
-                        className="w-[920px] max-h-[924px] rounded-2xl border border-amber-500/30 bg-gradient-to-b from-slate-900 via-amber-950/40 to-slate-900 p-6 text-white shadow-[0_0_50px_rgba(245,158,11,0.15)] overflow-y-auto"
+                        className="border border-amber-500/30 bg-gradient-to-b from-slate-900 via-amber-950/40 to-slate-900 text-white shadow-[0_0_50px_rgba(245,158,11,0.15)] overflow-y-auto"
+                        style={{ width: REST_NODE_UI.panelWidth, maxHeight: REST_NODE_UI.panelMaxHeight, borderRadius: REST_NODE_UI.panelRadius, padding: REST_NODE_UI.panelPad, borderWidth: REST_NODE_UI.panelBorderWidth, borderStyle: 'solid' }}
                     >
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                                <Flame size={28} className="text-amber-400" />
-                                <h3 className="text-2xl font-black tracking-widest">篝火 · 休整</h3>
+                        <div className="flex items-center justify-between" style={{ marginBottom: REST_NODE_UI.headerMarginBottom }}>
+                            <div className="flex items-center" style={{ gap: REST_NODE_UI.headerGap }}>
+                                <Flame size={REST_NODE_UI.headerIconSize} className="text-amber-400" />
+                                <h3 className="font-black tracking-widest" style={{ fontSize: REST_NODE_UI.titleFontSize }}>篝火 · 休整</h3>
                             </div>
                             {restStep === 'select' && (
-                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setRestStep('menu'); }} className="text-xs text-gray-400 hover:text-white px-3 py-1 rounded-lg bg-white/5 transition-colors">返回菜单</button>
+                                <button
+                                    onClick={() => { eventBus.emit(GameEvents.UI_BACK); setRestStep('menu'); }}
+                                    className="text-gray-400 hover:text-white bg-white/5 transition-colors"
+                                    style={{ fontSize: REST_NODE_UI.backBtnFontSize, paddingLeft: REST_NODE_UI.backBtnPadX, paddingRight: REST_NODE_UI.backBtnPadX, paddingTop: REST_NODE_UI.backBtnPadY, paddingBottom: REST_NODE_UI.backBtnPadY, borderRadius: REST_NODE_UI.backBtnRadius }}
+                                >返回菜单</button>
                             )}
                         </div>
 
                         {restStep === 'menu' ? (
                             <>
-                                <p className="text-sm text-amber-200/70 mb-4">旅途中的休整地，选择一个行动（当前 HP {hp}/{maxHp}）</p>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <p className="text-amber-200/70" style={{ fontSize: REST_NODE_UI.hintFontSize, marginBottom: REST_NODE_UI.hintMarginBottom }}>旅途中的休整地，选择一个行动（当前 HP {hp}/{maxHp}）</p>
+                                <div className="grid grid-cols-2 md:grid-cols-4" style={{ gap: REST_NODE_UI.gridGap }}>
                                     {restChoices.map(c => {
                                         // [2026-10-08 莉莉子 · 交互回响层 批次2] 满血时「休整」= 白白用掉节点唯一机会
                                         //   ⇒ 直接置灰（不弹确认框：这里要的是"劝住"，不是"再问一次"）
@@ -1375,12 +1467,13 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                                     if (c.key === 'rest') { onRest(); onClose(); }
                                                     else { setRestMode(c.key); setRestStep('select'); }
                                                 }}
-                                                className={`flex flex-col items-center gap-2 px-4 py-4 rounded-xl bg-white/5 border transition-all ${blocked ? 'opacity-40 cursor-not-allowed border-white/10' : `hover:scale-[1.02] ${c.color}`}`}
+                                                style={{ paddingLeft: REST_NODE_UI.actionPadX, paddingRight: REST_NODE_UI.actionPadX, paddingTop: REST_NODE_UI.actionPadY, paddingBottom: REST_NODE_UI.actionPadY, borderRadius: REST_NODE_UI.actionRadius, gap: REST_NODE_UI.actionGap, borderWidth: REST_NODE_UI.actionBorderWidth, borderStyle: 'solid' }}
+                                                className={`flex flex-col items-center bg-white/5 border transition-all ${blocked ? 'opacity-40 cursor-not-allowed border-white/10' : `hover:scale-[1.02] ${c.color}`}`}
                                             >
                                                 <div className="shrink-0">{c.icon}</div>
                                                 <div className="text-center">
-                                                    <div className="font-black">{c.title}</div>
-                                                    <div className="text-[11px] text-gray-400 mt-0.5 leading-snug">{blocked ? '生命值已满' : c.desc}</div>
+                                                    <div className="font-black" style={{ fontSize: REST_NODE_UI.actionTitleFontSize }}>{c.title}</div>
+                                                    <div className="text-gray-400 leading-snug" style={{ fontSize: REST_NODE_UI.actionDescFontSize, marginTop: REST_NODE_UI.actionDescMarginTop }}>{blocked ? '生命值已满' : c.desc}</div>
                                                 </div>
                                             </button>
                                         );
@@ -1389,9 +1482,9 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                             </>
                         ) : (
                             <>
-                                <h4 className="text-sm font-bold text-gray-300 mb-3">{restLabels[restMode]}</h4>
+                                <h4 className="font-bold text-gray-300" style={{ fontSize: REST_NODE_UI.selectLabelFontSize, marginBottom: REST_NODE_UI.selectLabelMarginBottom }}>{restLabels[restMode]}</h4>
                                 {restFiltered.length === 0 ? (
-                                    <p className="text-gray-500 text-sm py-4 text-center">牌组没有可选的卡</p>
+                                    <p className="text-gray-500 text-center" style={{ fontSize: REST_NODE_UI.emptyFontSize, paddingTop: REST_NODE_UI.emptyPadY, paddingBottom: REST_NODE_UI.emptyPadY }}>牌组没有可选的卡</p>
                                 ) : (
                                     /* [2026-10-03 莉莉子 BUG修复] 同「事件删卡」：让开卡面右侧外挂的装备/武装图标 */
                                     <div className="flex flex-wrap justify-center" style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y }}>
