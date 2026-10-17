@@ -35,6 +35,196 @@ import { EventRewardShowcase } from './EventRewardShowcase';
 // [2026-10-10 程实测] 选项按钮用**游戏内图标**（数据金 / 生命特效图），不再是一律紫色
 import { CURRENCY_ICONS, EFFECT_IMAGES } from '../../../data/imageData';
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 悖论迷宫 · **事件节点**（`NodeEventModal` 的 `type === 'event'` 分支）· 视觉调参区
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 地图上踩到事件节点后盖满全屏的那一层：背景 CG → 顶部「类型 / 稀有度 / 事件名」
+//   → 中下方逐字打出的叙事 → 右侧平行四边形选项条（点两次确认）→ 结果阶段中央弹奖励。
+// 管：①顶部标题 ②叙事文案 ③右侧选项栏 ④选项按钮 ⑤离开按钮 ⑥深层回响
+//     ⑦删卡子步骤 ⑧开发者「事件列表」入口 ⑨删卡卡面按钮（`DeckPickCard`）
+// 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
+// 🔴 本调参区**只管事件分支**。同文件里还有 强化三选一 / 篝火休整 / 商店·宝箱占位 /
+//   开发者全量选择器 四种分支 —— 它们**一个旋钮都没有**（按程的口径：做到需要调参的地方再说）。
+// ⚠️ ⑨ 那组是 `DeckPickCard`，与「篝火休整」**共用** ⇒ 改它**两屏一起变**（有意如此）。
+// ⚠️ 两个 `max-w-*` 的陷阱（见 `panelMaxWidth` / `pickCardNameMaxWidth`）：原类被
+//   `index.css:56` 的 `[class*="max-w-"]{max-width:none!important}` 打死过 ⇒ 默认必须写 `'none'`
+//   把"改动前实际的样子"锁住；一旦填数字就会**突然真的生效、画面变窄**（`StyleSelector` 踩过同款）。
+// ⚠️ 几处 `%` 值（`storyLeft` / `panelRight` / `panelWidth`）是**相对父容器**的百分比 ⇒ 两端一致，
+//   不违反"禁用 vh/vw"那条铁律（铁律禁的是视口单位，不是 `%`）。
+// ══════════════════════════════════════════════════════════════════════
+export const EVENT_NODE_UI = {
+    // ══ ① 顶部：类型 / 稀有度徽章 + 事件名 ═════════════════════════════
+    /** 距顶 px（原 top-7 = 28） */
+    headerTop: 28,
+    /** 距左 px（原 left-10 = 40） */
+    headerLeft: 40,
+    /** 徽章行间距 px（原 gap-2 = 8） */
+    badgeRowGap: 8,
+    /** 徽章行与事件名之间 px（原 mb-2 = 8） */
+    badgeRowMarginBottom: 8,
+    /** 徽章字号 px（原 text-[11px] = 11） */
+    badgeFontSize: 11,
+    /** 徽章左右内边距 px（原 px-2.5 = 10） */
+    badgePadX: 10,
+    /** 徽章上下内边距 px（原 py-1 = 4） */
+    badgePadY: 4,
+    /** 事件名字号 px（原 text-4xl = 36） */
+    titleFontSize: 36,
+
+    // ══ ② 中下方：叙事文案 ═════════════════════════════════════════════
+    /** 距左（原 left-[6%]，相对父容器） */
+    storyLeft: '6%',
+    /** 宽（原 w-[54%]） */
+    storyWidth: '54%',
+    /** 距底（原 bottom-[9%]） */
+    storyBottom: '9%',
+    /** 正文字号 px（原 text-[19px] = 19）· ⚠️ 行高交给 `leading-[2.05]` 类，**不要写死** */
+    storyFontSize: 19,
+
+    // ══ ③ 右侧：选项栏容器 ═════════════════════════════════════════════
+    /** 距右（原 right-[4%]） */
+    panelRight: '4%',
+    /** 宽（原 w-[30%]） */
+    panelWidth: '30%',
+    /** 最小宽 px（原 min-w-[320px] = 320） */
+    panelMinWidth: 320,
+    /** 最大宽（原 max-w-[430px] —— **被 index.css:56 打死过**，故默认 'none' 锁住现状） */
+    panelMaxWidth: 'none',
+    /** 选项之间行距 px（原 gap-4 = 16） */
+    panelGap: 16,
+
+    // ══ ④ 选项按钮（长条平行四边形） ═══════════════════════════════════
+    /** 左右内边距 px（原 px-6 = 24） */
+    choicePadX: 24,
+    /** 上下内边距 px（原 py-4 = 16） */
+    choicePadY: 16,
+    /** 图标与文字块之间 px（原 gap-4 = 16） */
+    choiceInnerGap: 16,
+    /** 图标尺寸 px（原 `<Sword size={22} />` 等 lucide 图标 = 22） */
+    choiceIconSize: 22,
+    /** 图片图标尺寸 px（原 w-7 h-7 = 28，用于生命 / 数据金） */
+    choiceImgIconSize: 28,
+    /** 行为文案字号 px（原 text-lg = 18） */
+    choiceTitleFontSize: 18,
+    /** 代价/奖励小字字号 px（原 text-[11.5px]） */
+    choiceSubFontSize: 11.5,
+    /** 小字与文案之间 px（原 mt-1 = 4） */
+    choiceSubMarginTop: 4,
+
+    // ══ ⑤ 离开按钮 ═════════════════════════════════════════════════════
+    /** 结果阶段「离开」左右内边距 px（原 px-6 = 24） */
+    leaveResultPadX: 24,
+    /** 结果阶段「离开」上下内边距 px（原 py-4 = 16） */
+    leaveResultPadY: 16,
+    /** 结果阶段「离开」描边 px（原 border = 1） */
+    leaveResultBorderWidth: 1,
+    /** 选项阶段「离开」左右内边距 px（原 px-5 = 20） */
+    leaveChoicePadX: 20,
+    /** 选项阶段「离开」上下内边距 px（原 py-3 = 12） */
+    leaveChoicePadY: 12,
+    /** 选项阶段「离开」描边 px（原 border = 1） */
+    leaveChoiceBorderWidth: 1,
+
+    // ══ ⑥ 深层回响（只有带 `deepEcho` 的事件才进这一支） ════════════════
+    /** 整体行距 px（原 gap-4 = 16） */
+    deepGap: 16,
+    /** 顶部信息行间距 px（原 gap-3 = 12） */
+    deepHeadGap: 12,
+    /** 顶部信息行字号 px（原 text-sm = 14） */
+    deepHeadFontSize: 14,
+    /** 「回声 ×N」徽章左右内边距 px（原 px-2 = 8） */
+    deepChipPadX: 8,
+    /** 徽章上下内边距 px（原 py-0.5 = 2） */
+    deepChipPadY: 2,
+    /** 徽章圆角 px（原 rounded-md = 6） */
+    deepChipRadius: 6,
+    /** 失手提示字号 px（原 text-sm = 14） */
+    deepMsgFontSize: 14,
+    /** 回响按钮左右内边距 px（原 px-5 = 20） */
+    deepBtnPadX: 20,
+    /** 回响按钮上下内边距 px（原 py-3.5 = 14） */
+    deepBtnPadY: 14,
+    /** 回手按钮描边 px（原 border = 1） */
+    deepBtnBorderWidth: 1,
+
+    // ══ ⑦ 删卡子步骤（全屏覆盖层） ═════════════════════════════════════
+    /** 覆盖层左右内边距 px（原 px-12 = 48） */
+    removePadX: 48,
+    /** 覆盖层上下内边距 px（原 py-10 = 40） */
+    removePadY: 40,
+    /** 标题字号 px（原 text-lg = 18） */
+    removeTitleFontSize: 18,
+    /** 标题下方间距 px（原 mb-6 = 24） */
+    removeTitleMarginBottom: 24,
+    /** 空态字号 px（原 text-sm = 14） */
+    removeEmptyFontSize: 14,
+    /** 空态上下内边距 px（原 py-4 = 16） */
+    removeEmptyPadY: 16,
+    /** 卡面网格最大高 px（原 max-h-[651px] = 651 · `max-h` 不受那条 `!important` 影响，本来就是活的） */
+    removeGridMaxHeight: 651,
+    /** 底部按钮行间距 px（原 gap-3 = 12） */
+    removeFooterGap: 12,
+    /** 底部按钮行上方间距 px（原 mt-8 = 32） */
+    removeFooterMarginTop: 32,
+    /** 「返回」左右内边距 px（原 px-5 = 20） */
+    removeBackPadX: 20,
+    /** 「返回」上下内边距 px（原 py-2.5 = 10） */
+    removeBackPadY: 10,
+    /** 「返回」圆角 px（原 rounded-lg = 8） */
+    removeBackRadius: 8,
+    /** 「确认删除」左右内边距 px（原 px-6 = 24） */
+    removeConfirmPadX: 24,
+    /** 「确认删除」上下内边距 px（原 py-2.5 = 10） */
+    removeConfirmPadY: 10,
+    /** 「确认删除」圆角 px（原 rounded-lg = 8） */
+    removeConfirmRadius: 8,
+
+    // ══ ⑧ 开发者「事件列表」入口（只有开发者账号才渲染） ═══════════════
+    /** 距顶 px（原 top-6 = 24） */
+    devBtnTop: 24,
+    /** 距右 px（原 right-6 = 24） */
+    devBtnRight: 24,
+    /** 图标与文字间距 px（原 gap-1.5 = 6） */
+    devBtnGap: 6,
+    /** 左右内边距 px（原 px-3 = 12） */
+    devBtnPadX: 12,
+    /** 上下内边距 px（原 py-1.5 = 6） */
+    devBtnPadY: 6,
+    /** 字号 px（原 text-xs = 12） */
+    devBtnFontSize: 12,
+    /** 图标尺寸 px（原 `<ListChecks size={14} />` = 14） */
+    devBtnIconSize: 14,
+    /** 描边 px（原 border = 1） */
+    devBtnBorderWidth: 1,
+
+    // ══ ⑨ 删卡卡面按钮（`DeckPickCard` · **与篝火休整共用**，改它两屏一起变） ══
+    /** 卡面与卡名之间 px（原 gap-1.5 = 6） */
+    pickCardGap: 6,
+    /** 选中光晕外扩 px（原 -inset-1 = -4） */
+    pickCardHaloInset: -4,
+    /** 光晕圆角 px（原 rounded-xl = 12） */
+    pickCardHaloRadius: 12,
+    /** 光晕描边 px（原 border-2 = 2） */
+    pickCardHaloBorderWidth: 2,
+    /** 数量徽章上移 px（原 -top-1.5 = -6） */
+    pickCardBadgeTop: -6,
+    /** 数量徽章右移 px（原 -right-1.5 = -6） */
+    pickCardBadgeRight: -6,
+    /** 徽章左右内边距 px（原 px-1.5 = 6） */
+    pickCardBadgePadX: 6,
+    /** 徽章上下内边距 px（原 py-0.5 = 2） */
+    pickCardBadgePadY: 2,
+    /** 徽章描边 px（原 border = 1） */
+    pickCardBadgeBorderWidth: 1,
+    /** 徽章字号 px（原 text-xs = 12） */
+    pickCardBadgeFontSize: 12,
+    /** 卡名字号 px（原 text-[11px] = 11） */
+    pickCardNameFontSize: 11,
+    /** 卡名最大宽（原 max-w-[130px] —— **同样被 index.css:56 打死过**，默认 'none' 锁住现状） */
+    pickCardNameMaxWidth: 'none',
+} as const;
+
 interface NodeEventModalProps {
     type: Exclude<RogueNodeType, 'battle' | 'elite' | 'boss'>;
     hp: number;
@@ -107,25 +297,53 @@ const DeckPickCard: React.FC<{
         <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onClick?.(); }}
-            className={`group relative flex flex-col items-center gap-1.5 transition-all outline-none
+            className={`group relative flex flex-col items-center transition-all outline-none
                 ${isSelected ? 'scale-105' : 'hover:scale-[1.04] hover:-translate-y-1 cursor-pointer'}`}
+            style={{ gap: EVENT_NODE_UI.pickCardGap }}
         >
-            {/* 选中光晕 */}
+            {/* 选中光晕（尺寸见 🎛️ EVENT_NODE_UI.pickCardHalo*） */}
             {isSelected && (
-                <div className={`absolute -inset-1 rounded-xl border-2 ${selBorder} z-10 pointer-events-none`} />
+                <div
+                    className={`absolute ${selBorder} z-10 pointer-events-none`}
+                    style={{
+                        inset: EVENT_NODE_UI.pickCardHaloInset,
+                        borderRadius: EVENT_NODE_UI.pickCardHaloRadius,
+                        borderWidth: EVENT_NODE_UI.pickCardHaloBorderWidth,
+                        borderStyle: 'solid',
+                    }}
+                />
             )}
             {/* 完整卡面 */}
             <div className="relative z-0">
                 <Card data={full} location="hand" isFaceUp skinId={0} />
-                {/* 数量/右上徽章 */}
+                {/* 数量/右上徽章（尺寸见 🎛️ EVENT_NODE_UI.pickCardBadge*） */}
                 {badge && (
-                    <span className={`absolute -top-1.5 -right-1.5 z-20 px-1.5 py-0.5 rounded-full bg-slate-900 border font-black text-xs shadow ${accent === 'red' ? 'border-red-500/70 text-red-300' : 'border-yellow-400/70 text-yellow-300'}`}>
+                    <span
+                        className={`absolute z-20 rounded-full bg-slate-900 font-black shadow ${accent === 'red' ? 'border-red-500/70 text-red-300' : 'border-yellow-400/70 text-yellow-300'}`}
+                        style={{
+                            top: EVENT_NODE_UI.pickCardBadgeTop,
+                            right: EVENT_NODE_UI.pickCardBadgeRight,
+                            paddingLeft: EVENT_NODE_UI.pickCardBadgePadX,
+                            paddingRight: EVENT_NODE_UI.pickCardBadgePadX,
+                            paddingTop: EVENT_NODE_UI.pickCardBadgePadY,
+                            paddingBottom: EVENT_NODE_UI.pickCardBadgePadY,
+                            borderWidth: EVENT_NODE_UI.pickCardBadgeBorderWidth,
+                            borderStyle: 'solid',
+                            fontSize: EVENT_NODE_UI.pickCardBadgeFontSize,
+                        }}
+                    >
                         {badge}
                     </span>
                 )}
             </div>
-            {/* 卡名（选中高亮/默认白，鼠标悬停高亮） */}
-            <span className={`text-[11px] font-bold text-center max-w-[130px] truncate transition-colors ${isSelected ? selText : 'text-gray-300 group-hover:text-white'}`}>
+            {/* 卡名（选中高亮/默认白，鼠标悬停高亮）（尺寸见 🎛️ EVENT_NODE_UI.pickCardName*） */}
+            <span
+                className={`font-bold text-center truncate transition-colors ${isSelected ? selText : 'text-gray-300 group-hover:text-white'}`}
+                style={{
+                    fontSize: EVENT_NODE_UI.pickCardNameFontSize,
+                    maxWidth: EVENT_NODE_UI.pickCardNameMaxWidth,
+                }}
+            >
                 {full.name}
             </span>
         </button>
@@ -223,40 +441,42 @@ const CHOICE_SKIN: Record<ChoiceTone, { box: string; boxSel: string; sub: string
         box: 'border-red-400/45 bg-red-500/[0.12] hover:border-red-300/75 hover:bg-red-500/[0.22] hover:shadow-[0_0_28px_rgba(248,113,113,0.5)]',
         boxSel: 'border-red-300/90 bg-red-500/30 shadow-[0_0_42px_rgba(248,113,113,0.75)]',
         sub: 'text-red-100/75', subSel: 'text-red-50',
-        icon: <Sword size={22} className="text-red-300" />,
+        icon: <Sword size={EVENT_NODE_UI.choiceIconSize} className="text-red-300" />,
     },
     heal: {
         box: 'border-emerald-400/45 bg-emerald-500/[0.12] hover:border-emerald-300/75 hover:bg-emerald-500/[0.22] hover:shadow-[0_0_28px_rgba(52,211,153,0.5)]',
         boxSel: 'border-emerald-300/90 bg-emerald-500/30 shadow-[0_0_42px_rgba(52,211,153,0.75)]',
         sub: 'text-emerald-100/75', subSel: 'text-emerald-50',
-        icon: <img src={EFFECT_IMAGES.buffLife} alt="" className="w-7 h-7 object-contain" />,
+        icon: <img src={EFFECT_IMAGES.buffLife} alt="" className="object-contain"
+                                            style={{ width: EVENT_NODE_UI.choiceImgIconSize, height: EVENT_NODE_UI.choiceImgIconSize }} />,
     },
     gold: {
         box: 'border-amber-400/45 bg-amber-500/[0.12] hover:border-amber-300/75 hover:bg-amber-500/[0.22] hover:shadow-[0_0_28px_rgba(251,191,36,0.5)]',
         boxSel: 'border-amber-300/90 bg-amber-500/30 shadow-[0_0_42px_rgba(251,191,36,0.75)]',
         sub: 'text-amber-100/75', subSel: 'text-amber-50',
-        icon: <img src={CURRENCY_ICONS.dataGold} alt="" className="w-7 h-7 object-contain" />,
+        icon: <img src={CURRENCY_ICONS.dataGold} alt="" className="object-contain"
+                                            style={{ width: EVENT_NODE_UI.choiceImgIconSize, height: EVENT_NODE_UI.choiceImgIconSize }} />,
     },
     equip: {
         // [第 5 轮审查] 程说"其它节点图标以此类推"⇒ 装备类单独一档（青 + 盾），不再是清一色紫
         box: 'border-cyan-400/45 bg-cyan-500/[0.12] hover:border-cyan-300/75 hover:bg-cyan-500/[0.22] hover:shadow-[0_0_28px_rgba(34,211,238,0.5)]',
         boxSel: 'border-cyan-300/90 bg-cyan-500/30 shadow-[0_0_42px_rgba(34,211,238,0.75)]',
         sub: 'text-cyan-100/75', subSel: 'text-cyan-50',
-        icon: <Shield size={22} className="text-cyan-300" />,
+        icon: <Shield size={EVENT_NODE_UI.choiceIconSize} className="text-cyan-300" />,
     },
     purge: {
         // 删卡 / 交出装备 = 失去类 ⇒ 石色 + 垃圾桶
         box: 'border-slate-400/45 bg-slate-500/[0.12] hover:border-slate-300/75 hover:bg-slate-500/[0.22] hover:shadow-[0_0_28px_rgba(148,163,184,0.5)]',
         boxSel: 'border-slate-300/90 bg-slate-500/30 shadow-[0_0_42px_rgba(148,163,184,0.75)]',
         sub: 'text-slate-100/75', subSel: 'text-slate-50',
-        icon: <Trash2 size={22} className="text-slate-300" />,
+        icon: <Trash2 size={EVENT_NODE_UI.choiceIconSize} className="text-slate-300" />,
     },
     buff: {
         // 强化 / 改造 / 其余（保留原紫罗兰）
         box: 'border-white/20 bg-white/[0.07] hover:border-violet-300/60 hover:bg-white/[0.14] hover:shadow-[0_0_28px_rgba(167,139,250,0.45)]',
         boxSel: 'border-violet-300/80 bg-violet-500/25 shadow-[0_0_42px_rgba(167,139,250,0.7)]',
         sub: 'text-gray-300/90', subSel: 'text-violet-100',
-        icon: <Sparkles size={22} className="text-violet-300" />,
+        icon: <Sparkles size={EVENT_NODE_UI.choiceIconSize} className="text-violet-300" />,
     },
 };
 
@@ -717,38 +937,78 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                         initial={{ opacity: 0, y: -14 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.35, duration: 0.6 }}
-                        className="absolute top-7 left-10 z-20"
+                        className="absolute z-20"
+                        style={{ top: EVENT_NODE_UI.headerTop, left: EVENT_NODE_UI.headerLeft }}
                     >
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-[11px] px-2.5 py-1 rounded-full font-mono border border-violet-400/40 bg-violet-500/10 text-violet-300">
+                        <div className="flex items-center" style={{ gap: EVENT_NODE_UI.badgeRowGap, marginBottom: EVENT_NODE_UI.badgeRowMarginBottom }}>
+                            <span
+                                className="rounded-full font-mono border border-violet-400/40 bg-violet-500/10 text-violet-300"
+                                style={{
+                                    fontSize: EVENT_NODE_UI.badgeFontSize,
+                                    paddingLeft: EVENT_NODE_UI.badgePadX,
+                                    paddingRight: EVENT_NODE_UI.badgePadX,
+                                    paddingTop: EVENT_NODE_UI.badgePadY,
+                                    paddingBottom: EVENT_NODE_UI.badgePadY,
+                                }}
+                            >
                                 {ROGUE_EVENT_TYPE_LABELS[event.type]}事件
                             </span>
                             {/* [2026-10-05 莉莉子 · 方案 P2] 稀有度标签（由 weight 单一真源推导；普通档不显示以免噪音） */}
                             {ROGUE_EVENT_RARITY_LABELS[rarityOfEvent(event)] && (
-                                <span className={`text-[11px] px-2.5 py-1 rounded-full font-mono border ${
+                                <span className={`rounded-full font-mono border ${
                                     rarityOfEvent(event) === 'legend'
                                         ? 'border-amber-400/50 bg-amber-500/10 text-amber-300'
                                         : 'border-sky-400/40 bg-sky-500/10 text-sky-300'
-                                }`}>
+                                }`}
+                                    style={{
+                                        fontSize: EVENT_NODE_UI.badgeFontSize,
+                                        paddingLeft: EVENT_NODE_UI.badgePadX,
+                                        paddingRight: EVENT_NODE_UI.badgePadX,
+                                        paddingTop: EVENT_NODE_UI.badgePadY,
+                                        paddingBottom: EVENT_NODE_UI.badgePadY,
+                                    }}
+                                >
                                     {ROGUE_EVENT_RARITY_LABELS[rarityOfEvent(event)]}
                                 </span>
                             )}
                         </div>
-                        <h2 className="text-4xl font-black tracking-[0.12em] text-white drop-shadow-[0_3px_16px_rgba(0,0,0,0.95)]">{event.name}</h2>
+                        <h2
+                            className="font-black tracking-[0.12em] text-white drop-shadow-[0_3px_16px_rgba(0,0,0,0.95)]"
+                            style={{ fontSize: EVENT_NODE_UI.titleFontSize }}
+                        >{event.name}</h2>
                     </motion.div>
 
                     {/* ④ 中下方：叙事文案（**逐字打出**；选完换成"结果叙事"） */}
-                    <div className="absolute left-[6%] w-[54%] bottom-[9%] z-20">
-                        <p className={`text-[19px] leading-[2.05] whitespace-pre-line drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] ${
-                            eventStep === 'aftermath' ? 'text-amber-50' : 'text-gray-100'
-                        }`}>
+                    <div
+                        className="absolute z-20"
+                        style={{
+                            left: EVENT_NODE_UI.storyLeft,
+                            width: EVENT_NODE_UI.storyWidth,
+                            bottom: EVENT_NODE_UI.storyBottom,
+                        }}
+                    >
+                        <p
+                            className={`leading-[2.05] whitespace-pre-line drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] ${
+                                eventStep === 'aftermath' ? 'text-amber-50' : 'text-gray-100'
+                            }`}
+                            style={{ fontSize: EVENT_NODE_UI.storyFontSize }}
+                        >
                             {typedText}
                             {typing && <span className="inline-block w-[2px] h-[1.05em] align-[-0.15em] bg-white/75 ml-0.5 animate-pulse" />}
                         </p>
                     </div>
 
                     {/* ⑤ 右侧：选项（平行四边形长条按钮）/ 深层回响 / 离开 */}
-                    <div className="absolute right-[4%] top-1/2 -translate-y-1/2 z-20 w-[30%] min-w-[320px] max-w-[430px] flex flex-col gap-4">
+                    <div
+                        className="absolute top-1/2 -translate-y-1/2 z-20 flex flex-col"
+                        style={{
+                            right: EVENT_NODE_UI.panelRight,
+                            width: EVENT_NODE_UI.panelWidth,
+                            minWidth: EVENT_NODE_UI.panelMinWidth,
+                            maxWidth: EVENT_NODE_UI.panelMaxWidth,
+                            gap: EVENT_NODE_UI.panelGap,
+                        }}
+                    >
                         {eventStep === 'remove' ? null : eventStep === 'aftermath' ? (
                             /* ── 结果阶段：叙事已在下方逐字播出、奖励在中央弹出 ⇒ 这里只留「离开」 ──
                                （点过「收下」之后才浮出，对应程需求 4 的最后一步） */
@@ -763,12 +1023,20 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 >
                                     <button
                                         onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose?.(); }}
-                                        style={{ transform: 'skewX(-13deg)' }}
-                                        className={`w-full px-6 py-4 border font-black tracking-[0.2em] transition-all ${
+                                        className={`w-full font-black tracking-[0.2em] transition-all ${
                                             willFight
                                                 ? 'border-red-400/60 bg-gradient-to-r from-red-600/80 to-orange-500/80 hover:from-red-500 hover:to-orange-400 text-white'
                                                 : 'border-white/25 bg-white/10 hover:bg-white/20 text-gray-100'
                                         }`}
+                                        style={{
+                                            transform: 'skewX(-13deg)',
+                                            paddingLeft: EVENT_NODE_UI.leaveResultPadX,
+                                            paddingRight: EVENT_NODE_UI.leaveResultPadX,
+                                            paddingTop: EVENT_NODE_UI.leaveResultPadY,
+                                            paddingBottom: EVENT_NODE_UI.leaveResultPadY,
+                                            borderWidth: EVENT_NODE_UI.leaveResultBorderWidth,
+                                            borderStyle: 'solid',
+                                        }}
                                     >
                                         <span className="inline-block" style={{ transform: 'skewX(13deg)' }}>
                                             {/* [2026-10-10 程拍板 · 审查 P5] 补失败后果提示：
@@ -798,17 +1066,34 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 const settle = (layers: number, overrideStory?: string) =>
                                     enterAftermath(onEventDeep?.(event.id, layers) ?? [], overrideStory ?? event.choices[0]?.story);
                                 return (
-                                    <div className="flex flex-col gap-4">
-                                        <div className="flex items-center gap-3 text-sm">
-                                            <span className="px-2 py-0.5 rounded-md bg-violet-500/15 border border-violet-400/40 text-violet-200 font-black">回声 ×{deepLayer}</span>
+                                    <div className="flex flex-col" style={{ gap: EVENT_NODE_UI.deepGap }}>
+                                        <div className="flex items-center" style={{ gap: EVENT_NODE_UI.deepHeadGap, fontSize: EVENT_NODE_UI.deepHeadFontSize }}>
+                                            <span
+                                                className="rounded-md bg-violet-500/15 border border-violet-400/40 text-violet-200 font-black"
+                                                style={{
+                                                    paddingLeft: EVENT_NODE_UI.deepChipPadX,
+                                                    paddingRight: EVENT_NODE_UI.deepChipPadX,
+                                                    paddingTop: EVENT_NODE_UI.deepChipPadY,
+                                                    paddingBottom: EVENT_NODE_UI.deepChipPadY,
+                                                    borderRadius: EVENT_NODE_UI.deepChipRadius,
+                                                }}
+                                            >回声 ×{deepLayer}</span>
                                             {deepLayer > 0 && <span className="text-amber-200/80">已付出：生命上限 −{paidPct}%</span>}
                                         </div>
-                                        {deepMsg && <p className="text-sm text-amber-300 font-bold">{deepMsg}</p>}
+                                        {deepMsg && <p className="text-amber-300 font-bold" style={{ fontSize: EVENT_NODE_UI.deepMsgFontSize }}>{deepMsg}</p>}
                                         {hasNext ? (
                                             <>
                                                 <button
                                                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); settle(Math.max(1, deepLayer)); }}
-                                                    className="px-5 py-3.5 border border-white/25 bg-white/10 hover:bg-white/20 text-gray-100 font-black tracking-widest transition-all"
+                                                    className="border-white/25 bg-white/10 hover:bg-white/20 text-gray-100 font-black tracking-widest transition-all"
+                                                    style={{
+                                                        paddingLeft: EVENT_NODE_UI.deepBtnPadX,
+                                                        paddingRight: EVENT_NODE_UI.deepBtnPadX,
+                                                        paddingTop: EVENT_NODE_UI.deepBtnPadY,
+                                                        paddingBottom: EVENT_NODE_UI.deepBtnPadY,
+                                                        borderWidth: EVENT_NODE_UI.deepBtnBorderWidth,
+                                                        borderStyle: 'solid',
+                                                    }}
                                                 >
                                                     在此收手{deepLayer > 0 ? `（带走 ×${deepLayer}）` : ''}
                                                 </button>
@@ -827,8 +1112,8 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                                             settle(1, '回声断了——这一层的东西全都散在了下面。\n你只带回了最上面的那一层。');
                                                         }
                                                     }}
-                                                    className="px-5 py-3.5 font-black tracking-widest text-white transition-all hover:scale-[1.02]"
-                                                    style={{ background: 'linear-gradient(to right, #7c3aed, #a855f7)' }}
+                                                    className="font-black tracking-widest text-white transition-all hover:scale-[1.02]"
+                                                    style={{ background: 'linear-gradient(to right, #7c3aed, #a855f7)', paddingLeft: EVENT_NODE_UI.deepBtnPadX, paddingRight: EVENT_NODE_UI.deepBtnPadX, paddingTop: EVENT_NODE_UI.deepBtnPadY, paddingBottom: EVENT_NODE_UI.deepBtnPadY }}
                                                 >
                                                     再深入一层（成功 {Math.round(prob * 100)}% · 代价 −{costPct}% 生命）
                                                 </button>
@@ -836,8 +1121,8 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                         ) : (
                                             <button
                                                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); settle(deepLayer); }}
-                                                className="px-5 py-3.5 font-black tracking-widest text-white transition-all hover:scale-[1.02]"
-                                                style={{ background: 'linear-gradient(to right, #7c3aed, #a855f7)' }}
+                                                className="font-black tracking-widest text-white transition-all hover:scale-[1.02]"
+                                                style={{ background: 'linear-gradient(to right, #7c3aed, #a855f7)', paddingLeft: EVENT_NODE_UI.deepBtnPadX, paddingRight: EVENT_NODE_UI.deepBtnPadX, paddingTop: EVENT_NODE_UI.deepBtnPadY, paddingBottom: EVENT_NODE_UI.deepBtnPadY }}
                                             >
                                                 已到底——结算回声 ×{deepLayer}
                                             </button>
@@ -872,16 +1157,25 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                                     eventBus.emit(GameEvents.UI_CLICK); if (isSel) handleEventChoice(i); // 再点一次 ＝ 确认
                                                     else setSelectedChoice(i);        // 首点 ＝ 选中
                                                 }}
-                                                className="block w-full text-left px-6 py-4"
+                                                className="block w-full text-left"
+                                                style={{
+                                                    paddingLeft: EVENT_NODE_UI.choicePadX,
+                                                    paddingRight: EVENT_NODE_UI.choicePadX,
+                                                    paddingTop: EVENT_NODE_UI.choicePadY,
+                                                    paddingBottom: EVENT_NODE_UI.choicePadY,
+                                                }}
                                             >
                                                 {/* ⚠️ [第 4 轮审查修复] 矫直放在**内层普通 div** 上：framer-motion 会用
                                                     buildTransform 覆盖 motion 元素自身的 `style.transform`
                                                     ⇒ 原来文字仍保持 −13° 斜切（等于没矫直）。 */}
-                                                <div style={{ transform: 'skewX(13deg)' }} className="flex items-center gap-4">
+                                                <div style={{ transform: 'skewX(13deg)', gap: EVENT_NODE_UI.choiceInnerGap }} className="flex items-center">
                                                     <span className="shrink-0">{skin.icon}</span>
                                                     <div className="min-w-0">
-                                                        <div className="text-lg font-black text-white tracking-wide leading-tight">{ch.label}</div>
-                                                        <div className={`text-[11.5px] mt-1 leading-snug ${isSel ? skin.subSel : skin.sub}`}>
+                                                        <div className="font-black text-white tracking-wide leading-tight" style={{ fontSize: EVENT_NODE_UI.choiceTitleFontSize }}>{ch.label}</div>
+                                                        <div
+                                                            className={`leading-snug ${isSel ? skin.subSel : skin.sub}`}
+                                                            style={{ fontSize: EVENT_NODE_UI.choiceSubFontSize, marginTop: EVENT_NODE_UI.choiceSubMarginTop }}
+                                                        >
                                                             {/* [2026-10-10 程实测①] `hint` = **手写覆盖**（多奖励只需一句概括 /
                                                                 同事件不同选项难度分档）；没写才走注册表自动生成（与执行同源） */}
                                                             {ch.hint ?? effectHints(chEffects)}
@@ -895,8 +1189,16 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 {event.allowLeave !== false && (
                                     <button
                                         onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_BACK); onClose(); }}
-                                        style={{ transform: 'skewX(-13deg)' }}
-                                        className="px-5 py-3 border border-white/15 bg-white/5 hover:bg-white/15 text-gray-300 font-bold tracking-widest transition-all"
+                                        className="border-white/15 bg-white/5 hover:bg-white/15 text-gray-300 font-bold tracking-widest transition-all"
+                                        style={{
+                                            transform: 'skewX(-13deg)',
+                                            paddingLeft: EVENT_NODE_UI.leaveChoicePadX,
+                                            paddingRight: EVENT_NODE_UI.leaveChoicePadX,
+                                            paddingTop: EVENT_NODE_UI.leaveChoicePadY,
+                                            paddingBottom: EVENT_NODE_UI.leaveChoicePadY,
+                                            borderWidth: EVENT_NODE_UI.leaveChoiceBorderWidth,
+                                            borderStyle: 'solid',
+                                        }}
                                     >
                                         <span className="inline-block" style={{ transform: 'skewX(13deg)' }}>离开</span>
                                     </button>
@@ -907,14 +1209,31 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
 
                     {/* ⑥ 删卡子步骤：**全屏覆盖层**（卡面网格需要宽度，塞进右侧栏会挤成一团） */}
                     {eventStep === 'remove' && (
-                        <div className="absolute inset-0 z-40 bg-black/88 backdrop-blur-md flex flex-col items-center justify-center px-12 py-10">
-                            <h4 className="text-lg font-black text-red-300 mb-6 tracking-widest">选择要删除的卡牌（{removePicks.length}/{removeNeeded}）</h4>
+                        <div
+                            className="absolute inset-0 z-40 bg-black/88 backdrop-blur-md flex flex-col items-center justify-center"
+                            style={{
+                                paddingLeft: EVENT_NODE_UI.removePadX,
+                                paddingRight: EVENT_NODE_UI.removePadX,
+                                paddingTop: EVENT_NODE_UI.removePadY,
+                                paddingBottom: EVENT_NODE_UI.removePadY,
+                            }}
+                        >
+                            <h4
+                                className="font-black text-red-300 tracking-widest"
+                                style={{ fontSize: EVENT_NODE_UI.removeTitleFontSize, marginBottom: EVENT_NODE_UI.removeTitleMarginBottom }}
+                            >选择要删除的卡牌（{removePicks.length}/{removeNeeded}）</h4>
                             {removableDeck.length === 0 ? (
-                                <p className="text-gray-500 text-sm py-4 text-center">牌组没有可删的牌</p>
+                                <p
+                                    className="text-gray-500 text-center"
+                                    style={{ fontSize: EVENT_NODE_UI.removeEmptyFontSize, paddingTop: EVENT_NODE_UI.removeEmptyPadY, paddingBottom: EVENT_NODE_UI.removeEmptyPadY }}
+                                >牌组没有可删的牌</p>
                             ) : (
                                 /* [2026-10-03 莉莉子 BUG修复] 手牌卡右侧外挂的装备/武装图标是绝对定位（外扩 ~31px），
                                    原来是 gap-3(12px) ⇒ 图标被邻卡压住。间距改取 uiSpacing 口径 */
-                                <div className="flex flex-wrap justify-center overflow-y-auto max-h-[651px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y }}>
+                                <div
+                                    className="flex flex-wrap justify-center overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                                    style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y, maxHeight: EVENT_NODE_UI.removeGridMaxHeight }}
+                                >
                                     {removableDeck.map(key => {
                                         const isPick = removePicks.includes(key);
                                         return (
@@ -933,15 +1252,32 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                     })}
                                 </div>
                             )}
-                            <div className="flex gap-3 justify-end mt-8">
-                                <button onClick={() => { eventBus.emit(GameEvents.UI_BACK); setSelectedChoice(null); setEventStep('choices'); }} className="px-5 py-2.5 rounded-lg bg-white/5 hover:bg-white/15 font-bold text-gray-300 transition-all">返回</button>
+                            <div className="flex justify-end" style={{ gap: EVENT_NODE_UI.removeFooterGap, marginTop: EVENT_NODE_UI.removeFooterMarginTop }}>
+                                <button
+                                    onClick={() => { eventBus.emit(GameEvents.UI_BACK); setSelectedChoice(null); setEventStep('choices'); }}
+                                    className="bg-white/5 hover:bg-white/15 font-bold text-gray-300 transition-all"
+                                    style={{
+                                        paddingLeft: EVENT_NODE_UI.removeBackPadX,
+                                        paddingRight: EVENT_NODE_UI.removeBackPadX,
+                                        paddingTop: EVENT_NODE_UI.removeBackPadY,
+                                        paddingBottom: EVENT_NODE_UI.removeBackPadY,
+                                        borderRadius: EVENT_NODE_UI.removeBackRadius,
+                                    }}
+                                >返回</button>
                                 <button
                                     disabled={removePicks.length < removeNeeded}
                                     onClick={() => { eventBus.emit(GameEvents.UI_CLICK); // [2026-10-05 · 方案 P3] 删卡确认后同样进「结果」阶段
                                         const res = onEvent?.(event.id, pendingChoice, removePicks) ?? [];
                                         enterAftermath(res, event.choices[pendingChoice]?.story);
                                     }}
-                                    className={`px-6 py-2.5 rounded-lg font-black transition-all ${removePicks.length >= removeNeeded ? 'bg-red-600 hover:bg-red-500' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
+                                    className={`font-black transition-all ${removePicks.length >= removeNeeded ? 'bg-red-600 hover:bg-red-500' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
+                                    style={{
+                                        paddingLeft: EVENT_NODE_UI.removeConfirmPadX,
+                                        paddingRight: EVENT_NODE_UI.removeConfirmPadX,
+                                        paddingTop: EVENT_NODE_UI.removeConfirmPadY,
+                                        paddingBottom: EVENT_NODE_UI.removeConfirmPadY,
+                                        borderRadius: EVENT_NODE_UI.removeConfirmRadius,
+                                    }}
                                 >
                                     确认删除
                                 </button>
@@ -966,9 +1302,21 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                         <button
                             onClick={onOpenDevEventPicker}
                             title="开发者：打开事件审阅台，任意切换事件重新体验（整局状态回滚到进入本节点时）"
-                            className="absolute top-6 right-6 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 hover:bg-violet-600/70 backdrop-blur-sm border border-violet-300/40 hover:border-violet-200/70 text-violet-100 text-xs font-black tracking-wider transition-all"
+                            className="absolute z-50 flex items-center rounded-full bg-black/55 hover:bg-violet-600/70 backdrop-blur-sm border border-violet-300/40 hover:border-violet-200/70 text-violet-100 font-black tracking-wider transition-all"
+                            style={{
+                                top: EVENT_NODE_UI.devBtnTop,
+                                right: EVENT_NODE_UI.devBtnRight,
+                                gap: EVENT_NODE_UI.devBtnGap,
+                                paddingLeft: EVENT_NODE_UI.devBtnPadX,
+                                paddingRight: EVENT_NODE_UI.devBtnPadX,
+                                paddingTop: EVENT_NODE_UI.devBtnPadY,
+                                paddingBottom: EVENT_NODE_UI.devBtnPadY,
+                                fontSize: EVENT_NODE_UI.devBtnFontSize,
+                                borderWidth: EVENT_NODE_UI.devBtnBorderWidth,
+                                borderStyle: 'solid',
+                            }}
                         >
-                            <ListChecks size={14} />
+                            <ListChecks size={EVENT_NODE_UI.devBtnIconSize} />
                             事件列表
                         </button>
                     )}
