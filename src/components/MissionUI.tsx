@@ -47,9 +47,9 @@ import { RewardClaimPopup, buildRewardPopupData, getCardRewardImage, type Reward
 export const MISSION_UI = {
     // ══ ① 面板本体 ════════════════════════════════════════════════════
     /** 面板宽 px（原 w-[1000px]） */
-    panelWidth: 1000,
+    panelWidth: 1300,
     /** 面板高 px（原 h-[700px]） */
-    panelHeight: 700,
+    panelHeight: 900,
     /** 面板描边 px（原 border = 1） */
     panelBorderWidth: 1,
     /** 面板圆角 px（原 rounded-2xl = 16） */
@@ -59,7 +59,7 @@ export const MISSION_UI = {
 
     // ══ ② 左侧边栏（品牌 + 标签列表）═════════════════════════════════
     /** 边栏宽 px（原 w-64 = 256） */
-    sidebarWidth: 256,
+    sidebarWidth: 356,
     /** 右边线 px（原 border-r = 1） */
     sidebarBorderWidth: 1,
     /** 边栏四周内边距 px（原 p-6 = 24） */
@@ -77,9 +77,9 @@ export const MISSION_UI = {
     /** 品牌准星图标 px（原未设 size，走 lucide 默认 24） */
     brandIconSize: 24,
     /** 「战区军功」字号 px（原 text-xl = 20） */
-    titleFontSize: 20,
+    titleFontSize: 30,
     /** 「COMMAND CENTER」字号 px（原 text-[10px] = 10） */
-    subtitleFontSize: 10,
+    subtitleFontSize: 15,
     /** 四个标签之间的行距 px（原 gap-3 = 12） */
     tabListGap: 12,
 
@@ -93,9 +93,9 @@ export const MISSION_UI = {
     /** 按钮圆角 px（原 rounded-lg = 8） */
     tabRadius: 8,
     /** 按钮字号 px（原 text-sm = 14） */
-    tabFontSize: 14,
+    tabFontSize: 28,
     /** 「有可领奖励」黄点直径 px（原 w-2.5 h-2.5 = 10，内外两层共用） */
-    dotSize: 10,
+    dotSize: 15,
 
     // ══ ④ 右侧内容区（页标题 + 关闭）═════════════════════════════════
     /** 内容区四周内边距 px（原 p-8 = 32） */
@@ -107,9 +107,9 @@ export const MISSION_UI = {
     /** 关闭按钮内边距 px（原 p-2 = 8） */
     closePad: 8,
     /** ✕ 图标 px（原 size={24}） */
-    closeIconSize: 24,
+    closeIconSize: 48,
     /** 页标题（每日委派 (DAILY)…）字号 px（原 text-2xl = 24） */
-    pageTitleFontSize: 24,
+    pageTitleFontSize: 36,
     /** 页标题与下方的间距 px（原 mb-6 = 24） */
     pageTitleMarginBottom: 24,
     /** 页标题下划线 px（原 border-b = 1） */
@@ -133,9 +133,9 @@ export const MISSION_UI = {
     /** 左半区与右半区（奖励+按钮）的间隙 px（原 pr-8 = 32） */
     rowLeftPadRight: 32,
     /** 任务标题字号 px（原 text-lg = 18） */
-    rowTitleFontSize: 18,
+    rowTitleFontSize: 36,
     /** 任务描述字号 px（原 text-sm = 14） */
-    rowDescFontSize: 14,
+    rowDescFontSize: 28,
     /** 进度条与描述的上间距 px（原 mt-2 = 8） */
     progressMarginTop: 8,
     /**
@@ -216,9 +216,9 @@ export const MISSION_UI = {
     /** 下划线 px（原 border-b = 1） */
     countdownBorderWidth: 1,
     /** 时钟图标 px（原 size={14}） */
-    countdownIconSize: 14,
+    countdownIconSize: 28,
     /** 倒计时字号 px（原 text-xs = 12） */
-    countdownFontSize: 12,
+    countdownFontSize: 24,
 
     // ══ ⑨ 悬停预览大图（鼠标停在奖励 chip 上时，portal 到 body）═════════
     /** 大图宽 px（原 w-80 = 320） */

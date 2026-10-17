@@ -33,25 +33,25 @@ export const SETTINGS_UI = {
     /** 底部分割线 px（原 border-b = 1） */
     headerBorderWidth: 1,
     /** 「系统设置」字号 px（原 text-2xl = 24） */
-    titleFontSize: 24,
+    titleFontSize: 48,
     /** 标题左侧齿轮图标 px（原 SettingsIcon 的 size=24） */
-    titleIconSize: 24,
+    titleIconSize: 48,
     /** 齿轮与文字的间距 px（原 gap-3 = 12） */
     titleGap: 12,
     /** 右上关闭按钮内边距 px（原 p-2 = 8） */
     closePad: 8,
     /** 右上 ✕ 图标 px（原 ✕ 的 size=24） */
-    closeIconSize: 24,
+    closeIconSize: 48,
 
     // ══ ② 左侧标签栏 ══════════════════════════════════════════════════
     /** 标签栏宽 px（原 w-44 = 176） */
-    sidebarWidth: 176,
+    sidebarWidth: 250,
     /** 右分割线 px（原 border-r = 1） */
     sidebarBorderWidth: 1,
     /** 标签栏内边距 px（原 p-4 = 16） */
     sidebarPad: 16,
     /** 四个标签之间的行距 px（原 space-y-1 = 4） */
-    sidebarGap: 4,
+    sidebarGap: 8,
     /** 标签内：图标与文字的间距 px（原 gap-3 = 12） */
     tabGap: 12,
     /** 标签左右内边距 px（原 px-4 = 16） */
@@ -61,9 +61,9 @@ export const SETTINGS_UI = {
     /** 标签圆角 px（原 rounded-xl = 12） */
     tabRadius: 12,
     /** 标签字号 px（原 text-sm = 14） */
-    tabFontSize: 14,
+    tabFontSize: 28,
     /** 标签图标 px（原 size={18}） */
-    tabIconSize: 18,
+    tabIconSize: 36,
     /** 标签描边 px（原 border = 1） */
     tabBorderWidth: 1,
 
@@ -79,7 +79,7 @@ export const SETTINGS_UI = {
      */
     sectionGap: 16,
     /** 小节标题（AUDIO VOLUME / DISPLAY / GAMEPLAY …）字号 px（原 text-xs = 12） */
-    sectionTitleFontSize: 12,
+    sectionTitleFontSize: 24,
     /** 底部块的上内边距 px（原 pt-2 = 8） */
     sectionPadTop: 8,
 
@@ -95,17 +95,17 @@ export const SETTINGS_UI = {
     /** 左侧「图标 + 名称」组内间距 px（原 gap-4 = 16） */
     volLeftGap: 16,
     /** 左侧「图标 + 名称」组宽 px（原 w-32 = 128） */
-    volLabelWidth: 128,
+    volLabelWidth: 140,
     /** 静音按钮内边距 px（原 p-2 = 8） */
     volMutePad: 8,
     /** 静音/音量图标 px（原 size={20}） */
-    volMuteIconSize: 20,
+    volMuteIconSize: 40,
     /** 「音乐 / 音效 / 语音 / 过场」字号 px（原 text-sm = 14） */
-    volLabelFontSize: 14,
+    volLabelFontSize: 28,
     /** 滑轨高 px（原 h-2 = 8） */
     volTrackHeight: 8,
     /** 滑块圆点直径 px（原 w-4 h-4 = 16） */
-    volKnobSize: 16,
+    volKnobSize: 32,
     /** 右侧百分比数字区宽 px（原 w-12 = 48） */
     volValueWidth: 48,
 
@@ -117,9 +117,9 @@ export const SETTINGS_UI = {
     /** 行描边 px（原 border = 1） */
     toggleRowBorderWidth: 1,
     /** 标题字号 px（原 text-sm = 14） */
-    toggleTitleFontSize: 14,
+    toggleTitleFontSize: 28,
     /** 说明文字号 px（原 text-xs = 12） */
-    toggleDescFontSize: 12,
+    toggleDescFontSize: 24,
     /** 说明文字与标题的间距 px（原 mt-0.5 = 2） */
     toggleDescMarginTop: 2,
     /** 开关条宽 px（原 w-14 = 56） */
@@ -145,7 +145,7 @@ export const SETTINGS_UI = {
     /** 三档按钮上下内边距 px（原 py-2.5 = 10） */
     segItemPadY: 10,
     /** 三档按钮字号 px（原 text-sm = 14） */
-    segItemFontSize: 14,
+    segItemFontSize: 28,
     /** 三档按钮圆角 px（原 rounded-lg = 8） */
     segItemRadius: 8,
 
@@ -159,11 +159,11 @@ export const SETTINGS_UI = {
     /** 信息块描边 px（原 border = 1） */
     sysBoxBorderWidth: 1,
     /** 「当前版本」字号 px（原 text-sm = 14） */
-    sysTextFontSize: 14,
+    sysTextFontSize: 28,
     /** 版本号与「当前版本」的间距 px（原 ml-1 = 4） */
     sysVersionMarginLeft: 4,
     /** 底部提示语字号 px（原 text-xs = 12） */
-    sysHintFontSize: 12,
+    sysHintFontSize: 24,
     /** 「恢复默认设置」图标与文字间距 px（原 gap-2 = 8） */
     resetBtnGap: 8,
     /** 该按钮左右内边距 px（原 px-5 = 20） */
@@ -173,11 +173,11 @@ export const SETTINGS_UI = {
     /** 该按钮圆角 px（原 rounded-xl = 12） */
     resetBtnRadius: 12,
     /** 该按钮字号 px（原 text-sm = 14） */
-    resetBtnFontSize: 14,
+    resetBtnFontSize: 28,
     /** 该按钮描边 px（原 border = 1） */
     resetBtnBorderWidth: 1,
     /** 该按钮图标 px（原 size={16}） */
-    resetBtnIconSize: 16,
+    resetBtnIconSize: 32,
 
     // ══ ⑧ 底部功能区（重开对局 / 返回大厅）════════════════════════════
     /** 功能区左右内边距 px（原 px-6 = 24） */
@@ -195,11 +195,11 @@ export const SETTINGS_UI = {
     /** 按钮上下内边距 px（原 py-2 = 8） */
     footBtnPadY: 8,
     /** 按钮字号 px（原 text-sm = 14） */
-    footBtnFontSize: 14,
+    footBtnFontSize: 28,
     /** 按钮描边 px（原 border = 1） */
     footBtnBorderWidth: 1,
     /** 按钮图标 px（原 size={16}） */
-    footBtnIconSize: 16,
+    footBtnIconSize: 32,
 
     // ══ ⑨ QUIT GAME 与二次确认 ════════════════════════════════════════
     /** QUIT GAME 按钮：图标与文字间距 px（原 gap-2 = 8） */
@@ -209,11 +209,11 @@ export const SETTINGS_UI = {
     /** 该按钮上下内边距 px（原 py-2 = 8） */
     quitBtnPadY: 8,
     /** 该按钮字号 px（原 text-sm = 14） */
-    quitBtnFontSize: 14,
+    quitBtnFontSize: 26,
     /** 该按钮描边 px（原 border = 1） */
     quitBtnBorderWidth: 1,
     /** 该按钮电源图标 px（原 size={16}） */
-    quitBtnIconSize: 16,
+    quitBtnIconSize: 32,
     /** 确认条内间距 px（原 gap-2 = 8） */
     confirmGap: 8,
     /** 确认条左右内边距 px（原 px-3 = 12） */
