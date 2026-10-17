@@ -5,6 +5,86 @@ import { eventBus, GameEvents } from '../../utils/eventBus';
 import { EXAM_CATEGORIES } from '../../data/tutorialStages';
 import type { ExamCategoryId } from '../../data/tutorialStages';
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 战术考核 · **考核分类选择**（`TutorialModeSelect`）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 模式选择点「战术考核」进来那一屏：正中三张分类卡（基础 / 关键词 / 天启者）
+//   + 上方「战术考核」标题 + 右上角「返回大厅 / 返回模式选择」两个圆钮 + 底部一行提示。
+// 管：①右上角两个圆钮 ②标题与副标题 ③三张分类卡（宽 / 高 / 圆角 / 描边 / 顶条 / 大图标 /
+//   内容区 / 分类名 / 描述 / 关卡数 / 锁定遮罩）+ 卡片行间距 ④底部提示，共 **26 项**。
+// 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
+// ⚠️ 本屏**没有** `max-w-*` / `vh` / `vw`，天生合铁律（1680×1050 画布）。
+// ⚠️ 刻意**没搬**的类（都不是可调尺寸）：`w-full` / `h-full`（铺满）· `inset-0` ·
+//   `rounded-full`（圆钮恒 9999px）· `top-0` / `left-0`（= 0 的锚点）· `z-[999]` / `z-10` ·
+//   `group` · `transition-*` · `tracking-*` · `drop-shadow-*` · `opacity-*` / `grayscale` /
+//   `hover:scale-105`（状态反馈）· 全部 `bg-*` / `border-*` 配色 —— 三张卡的配色仍走
+//   `CATEGORY_THEMES`（它存的是**类名**，属配色不属尺寸）⇒ 本块只管尺寸，别把它并进来。
+// ⚠️ 口径：字号只搬 `fontSize`、**不配写死 `lineHeight`**（规范 §6）；因此这几处字号的行高由
+//   Tailwind `text-*` 的配套行高改为继承 1.5（项目既定口径，有意如此，别回改成成对行高）。
+// ══════════════════════════════════════════════════════════════════════
+export const TUTORIAL_MODE_UI = {
+    // ══ ① 右上角：返回大厅 / 返回模式选择 ═════════════════════════════
+    /** 整组距顶 px（原 top-8 = 32） */
+    cornerTop: 32,
+    /** 整组距右 px（原 right-8 = 32） */
+    cornerRight: 32,
+    /** 两个圆钮之间的间距 px（原 gap-3 = 12） */
+    cornerGap: 12,
+    /** 圆钮内边距 px（原 p-3 = 12） */
+    cornerBtnPad: 12,
+    /** 圆钮描边 px（原 border = 1） */
+    cornerBtnBorderWidth: 1,
+    /** 圆钮里的图标 px（原 <Home size={24} /> / <ArrowLeft size={24} /> = 24） */
+    cornerIconSize: 24,
+
+    // ══ ② 标题：战术考核 + 副标题 ═════════════════════════════════════
+    /** 标题块下距 px（原 mb-12 = 48） */
+    titleMarginBottom: 48,
+    /** 「战术考核」字号 px（原 text-4xl = 36） */
+    titleFontSize: 36,
+    /** 副标题字号 px（原 text-sm = 14） */
+    subtitleFontSize: 14,
+    /** 副标题上距 px（原 mt-2 = 8） */
+    subtitleMarginTop: 8,
+
+    // ══ ③ 三张分类卡（基础 / 关键词 / 天启者） ════════════════════════
+    /** 卡片行间距 px（原 gap-8 = 32） */
+    rowGap: 32,
+    /** 单卡宽 px（原 w-72 = 288） */
+    cardWidth: 288,
+    /** 单卡高 px（原 h-96 = 384） */
+    cardHeight: 384,
+    /** 单卡圆角 px（原 rounded-3xl = 24） */
+    cardRadius: 24,
+    /** 单卡描边 px（原 border = 1 · 颜色仍走 `CATEGORY_THEMES.border`） */
+    cardBorderWidth: 1,
+    /** 卡片顶部装饰条高 px（原 h-1.5 = 6） */
+    cardTopBarHeight: 6,
+    /** 卡片中央分类大图标 px（原 `CATEGORY_ICONS` 里 <Sword size={36} /> 等三个 = 36） */
+    cardIconSize: 36,
+    /** 卡片内容区内边距 px（原 p-8 = 32） */
+    cardPad: 32,
+    /** 卡片内容区行距 px（原 gap-6 = 24） */
+    cardGap: 24,
+    /** 分类名字号 px（原 text-2xl = 24） */
+    cardNameFontSize: 24,
+    /** 分类描述字号 px（原 text-sm = 14） */
+    cardDescFontSize: 14,
+    /** 「N 个考核关卡」距卡底 px（原 bottom-8 = 32） */
+    cardCountBottom: 32,
+    /** 「N 个考核关卡」字号 px（原 text-xs = 12） */
+    cardCountFontSize: 12,
+    /** 锁定遮罩「COMING SOON」字号 px（原 text-sm = 14） */
+    lockTextFontSize: 14,
+
+    // ══ ④ 底部提示 ═══════════════════════════════════════════════════
+    /** 距底 px（原 bottom-8 = 32） */
+    footerBottom: 32,
+    /** 字号 px（原 text-xs = 12） */
+    footerFontSize: 12,
+} as const;
+
 interface TutorialModeSelectProps {
     onSelectCategory: (categoryId: ExamCategoryId) => void;
     onBack: () => void;
@@ -13,9 +93,9 @@ interface TutorialModeSelectProps {
 
 /** 分类图标映射 */
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
-    basic: <Sword size={36} />,
-    keyword: <BookOpen size={36} />,
-    xx: <Lock size={36} />,
+    basic: <Sword size={TUTORIAL_MODE_UI.cardIconSize} />,
+    keyword: <BookOpen size={TUTORIAL_MODE_UI.cardIconSize} />,
+    xx: <Lock size={TUTORIAL_MODE_UI.cardIconSize} />,
 };
 
 /** 分类主题色 */
@@ -64,14 +144,15 @@ export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.08)_0%,transparent_70%)] pointer-events-none"></div>
 
             {/* 返回按钮 + 返回大厅（[2026-08-07] 返回模式选择旁补直达大厅） */}
-            <div className="absolute top-8 right-8 z-[999] flex items-center gap-3">
+            <div className="absolute z-[999] flex items-center" style={{ top: TUTORIAL_MODE_UI.cornerTop, right: TUTORIAL_MODE_UI.cornerRight, gap: TUTORIAL_MODE_UI.cornerGap }}>
                 {onBackToLobby && (
                     <button
                         onClick={() => { eventBus.emit(GameEvents.UI_BACK); onBackToLobby(); }}
-                        className="p-3 rounded-full bg-white/5 hover:bg-white/20 border border-white/10 hover:border-white/50 transition-all group"
+                        className="rounded-full bg-white/5 hover:bg-white/20 border-white/10 hover:border-white/50 transition-all group"
+                        style={{ padding: TUTORIAL_MODE_UI.cornerBtnPad, borderWidth: TUTORIAL_MODE_UI.cornerBtnBorderWidth, borderStyle: 'solid' }}
                         title="返回大厅"
                     >
-                        <Home size={24} className="text-gray-400 group-hover:text-white transition-colors" />
+                        <Home size={TUTORIAL_MODE_UI.cornerIconSize} className="text-gray-400 group-hover:text-white transition-colors" />
                     </button>
                 )}
                 <button
@@ -79,10 +160,11 @@ export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
                         eventBus.emit(GameEvents.UI_BACK);
                         onBack();
                     }}
-                    className="p-3 rounded-full bg-white/5 hover:bg-white/20 border border-white/10 hover:border-white/50 transition-all group"
+                    className="rounded-full bg-white/5 hover:bg-white/20 border-white/10 hover:border-white/50 transition-all group"
+                    style={{ padding: TUTORIAL_MODE_UI.cornerBtnPad, borderWidth: TUTORIAL_MODE_UI.cornerBtnBorderWidth, borderStyle: 'solid' }}
                     title="返回模式选择"
                 >
-                    <ArrowLeft size={24} className="text-gray-400 group-hover:text-white transition-colors" />
+                    <ArrowLeft size={TUTORIAL_MODE_UI.cornerIconSize} className="text-gray-400 group-hover:text-white transition-colors" />
                 </button>
             </div>
 
@@ -91,18 +173,19 @@ export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
-                className="mb-12 text-center"
+                className="text-center"
+                style={{ marginBottom: TUTORIAL_MODE_UI.titleMarginBottom }}
             >
-                <h2 className="text-4xl font-black tracking-tighter italic text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 drop-shadow-lg">
+                <h2 className="font-black tracking-tighter italic text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 drop-shadow-lg" style={{ fontSize: TUTORIAL_MODE_UI.titleFontSize }}>
                     战术考核
                 </h2>
-                <p className="text-sm text-gray-500 font-mono tracking-wider mt-2">
+                <p className="text-gray-500 font-mono tracking-wider" style={{ fontSize: TUTORIAL_MODE_UI.subtitleFontSize, marginTop: TUTORIAL_MODE_UI.subtitleMarginTop }}>
                     选择考核科目 · 开始实战训练
                 </p>
             </motion.div>
 
             {/* 三个考核大类按钮 */}
-            <div className="flex gap-8 items-center justify-center">
+            <div className="flex items-center justify-center" style={{ gap: TUTORIAL_MODE_UI.rowGap }}>
                 {EXAM_CATEGORIES.map((category, index) => {
                     const theme = CATEGORY_THEMES[category.id] || CATEGORY_THEMES.xx;
                     const isLocked = category.id === 'xx';
@@ -121,9 +204,9 @@ export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
                                     onSelectCategory(category.id as ExamCategoryId);
                                 }}
                                 className={`
-                                    relative w-72 h-96 rounded-3xl overflow-hidden cursor-pointer
+                                    relative overflow-hidden cursor-pointer
                                     bg-gradient-to-b ${theme.bg} ${theme.bgHover}
-                                    border ${theme.border} ${theme.borderHover}
+                                    ${theme.border} ${theme.borderHover}
                                     transition-all duration-300
                                     ${isLocked
                                         ? 'grayscale opacity-50 cursor-not-allowed'
@@ -131,29 +214,36 @@ export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
                                     }
                                     group
                                 `}
+                                style={{
+                                    width: TUTORIAL_MODE_UI.cardWidth,
+                                    height: TUTORIAL_MODE_UI.cardHeight,
+                                    borderRadius: TUTORIAL_MODE_UI.cardRadius,
+                                    borderWidth: TUTORIAL_MODE_UI.cardBorderWidth,
+                                    borderStyle: 'solid',
+                                }}
                             >
                                 {/* 装饰顶条 */}
-                                <div className={`absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-transparent via-current to-transparent opacity-50 ${theme.accent}`}></div>
+                                <div className={`absolute top-0 left-0 w-full bg-gradient-to-r from-transparent via-current to-transparent opacity-50 ${theme.accent}`} style={{ height: TUTORIAL_MODE_UI.cardTopBarHeight }}></div>
 
                                 {/* 内容区 */}
-                                <div className="w-full h-full flex flex-col items-center justify-center gap-6 p-8 relative z-10">
+                                <div className="w-full h-full flex flex-col items-center justify-center relative z-10" style={{ gap: TUTORIAL_MODE_UI.cardGap, padding: TUTORIAL_MODE_UI.cardPad }}>
                                     {/* 图标 */}
                                     <div className={`${theme.accent} transition-all duration-300 group-hover:scale-110`}>
                                         {CATEGORY_ICONS[category.id]}
                                     </div>
 
                                     {/* 名称 */}
-                                    <h3 className={`text-2xl font-black tracking-wider ${theme.accent}`}>
+                                    <h3 className={`font-black tracking-wider ${theme.accent}`} style={{ fontSize: TUTORIAL_MODE_UI.cardNameFontSize }}>
                                         {category.name}
                                     </h3>
 
                                     {/* 描述 */}
-                                    <p className="text-sm text-gray-400 text-center leading-relaxed">
+                                    <p className="text-gray-400 text-center leading-relaxed" style={{ fontSize: TUTORIAL_MODE_UI.cardDescFontSize }}>
                                         {category.description}
                                     </p>
 
                                     {/* 关卡数 */}
-                                    <div className="absolute bottom-8 text-xs font-mono text-gray-600">
+                                    <div className="absolute font-mono text-gray-600" style={{ bottom: TUTORIAL_MODE_UI.cardCountBottom, fontSize: TUTORIAL_MODE_UI.cardCountFontSize }}>
                                         {category.stageIds.length > 0
                                             ? `${category.stageIds.length} 个考核关卡`
                                             : '待开放'
@@ -164,7 +254,7 @@ export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
                                 {/* 锁定遮罩 */}
                                 {isLocked && (
                                     <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
-                                        <span className="text-sm font-mono font-bold text-white/80">COMING SOON</span>
+                                        <span className="font-mono font-bold text-white/80" style={{ fontSize: TUTORIAL_MODE_UI.lockTextFontSize }}>COMING SOON</span>
                                     </div>
                                 )}
 
@@ -181,7 +271,8 @@ export const TutorialModeSelect: React.FC<TutorialModeSelectProps> = ({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.8 }}
-                className="absolute bottom-8 text-xs text-gray-600 font-mono"
+                className="absolute text-gray-600 font-mono"
+                style={{ bottom: TUTORIAL_MODE_UI.footerBottom, fontSize: TUTORIAL_MODE_UI.footerFontSize }}
             >
                 选择考核科目开始你的战术训练
             </motion.div>
