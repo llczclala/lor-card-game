@@ -57,6 +57,12 @@ import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉�
 export const PACK_OPEN_UI = {
     // ══ ① 面板本体 ════════════════════════════════════════════════════
     /** 面板宽 px（原 w-[1180px]） */
+    /** 【主旋钮】面板整体缩放（1 = 原样）—— 它乘在**已有的 `gameScale` 补偿**上（不新增 DOM）·
+     *  ⚠️ 面板在 `flex items-center justify-center` 里是**居中的唯一 in-flow 子元素** ⇒ 缩放朝两侧对称长大，
+     *     **不需要补 margin**（同 `MODE_UI.stageScale` 的判据；对照 `HUB_UI.dioramaScale` 那个要补上下各一半）。
+     *  ⚠️ 与**定格详情弹窗**共用这一个旋钮（同一个界面的两态一起放大）；不想联动就说一声，删掉 689 行那处即可。
+     *  📐 面板逻辑宽 1180；`1180 × panelScale ≤ 1680`（画布宽）⇒ **实用上限约 1.4**（再大左右会被切）。 */
+    panelScale: 1,
     panelWidth: 1180,
     /** 面板圆角 px（原 rounded-3xl = 24） */
     panelRadius: 24,
@@ -517,7 +523,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                         onClick={() => { if (phase !== 'rolling') { eventBus.emit(GameEvents.UI_BACK); onClose(); } }}
                     />
                     {/* [2026-10-02 #4] 面板整体按 gameScale 缩放 —— 与详情弹窗、开匣弹窗统一 */}
-                    <div style={{ transform: `scale(${gameScale})` }}>
+                    <div style={{ transform: `scale(${gameScale * PACK_OPEN_UI.panelScale})` }}>
                         <motion.div
                             initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
                             transition={{ type: 'spring', stiffness: 260, damping: 22 }}
@@ -686,7 +692,7 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                             // [2026-10-02 #9] 点背景 = 收起详情（原来 stopPropagation 后什么都不做，像卡住了）
                             onClick={(e) => { e.stopPropagation(); setDetailOpen(false); }}
                         >
-                            <div style={{ transform: `scale(${gameScale})` }}>
+                            <div style={{ transform: `scale(${gameScale * PACK_OPEN_UI.panelScale})` }}>
                                 <motion.div
                                     initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
                                     transition={{ type: 'spring', stiffness: 260, damping: 22 }}
