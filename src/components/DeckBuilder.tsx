@@ -25,6 +25,406 @@ import { DIORAMA_SIZE } from './dioramaSpacing';
 
 
 // ══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 卡组编辑 / 备战构筑（`DeckBuilder` 的**兜底 EDITOR 分支**）· 视觉调参区
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 从大厅「战斗」进备战、或点「编辑卡组」后进来的那一屏：
+//   顶部筛选台（搜索 / 全部·英雄·法术·单位 / 随机皮肤·皮肤配置·高级筛选·清空）
+//   + 中间 6 列卡牌网格 + 右侧栏（卡组名 / 保存 / 排序 / 卡组容量 / 卡组列表 / 底部操作）。
+// 管：①右上返回 ②顶部筛选台 ③高级筛选下拉 ④卡牌网格 ⑤卡面装饰件
+//     ⑥右侧栏顶部 ⑦排序 ⑧统计 ⑨卡组列表 ⑩底部操作区
+// 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
+// 命名与用法**对齐 `TITLE_UI`**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
+// 🔴 本文件里有**三块调参区**，别改错块：
+//   `DECK_UI`（牌组选择网格屏）· `HUB_UI`（备战枢纽）· **本块 `EDITOR_UI`（卡组编辑屏）**
+// ⚠️ 卡片**本体**大小不在这里 —— 那是 `Card.tsx` 的 `location="deck-builder"` 档位。
+// ⚠️ 网格是 `grid-cols-6`（布局列数，不是 px）⇒ 刻意留在类名里，没提参。
+// ⚠️ 两处 `space-y-*` 换成了 flex 列 + gap（为了把行距提成一个数）：
+//   · 右侧栏顶部（非滚动区）→ 直接 `flex flex-col gap-*`
+//   · 卡组列表（**定高滚动区**）→ 子项必须带 `shrink-0`，否则行被压扁、反而滚不动
+// ══════════════════════════════════════════════════════════════════════
+export const EDITOR_UI = {
+    // ══ ① 右上返回 ═══════════════════════════════════════════════════
+    /** 距顶 px（原 top-6 = 24） */
+    backTop: 24,
+    /** 距右 px（原 right-8 = 32） */
+    backRight: 32,
+    /** 内边距 px（原 p-3 = 12） */
+    backPad: 12,
+    /** 描边 px（原 border = 1） */
+    backBorderWidth: 1,
+    /** 箭头图标 px（原 <ArrowLeft size={20} /> = 20） */
+    backIconSize: 20,
+    /** 悬停大图缩放（原 FloatingCardPreview 的 scale={1.25}） */
+    hoverPreviewScale: 1.25,
+
+    // ══ ② 顶部筛选台 ═════════════════════════════════════════════════
+    /** 整条筛选台内边距 px（原 p-4 = 16） */
+    toolbarPad: 16,
+    /** 左右两大组之间 px（原 gap-4 = 16） */
+    toolbarGap: 16,
+    /** 筛选台左右内边距 px（原 px-4 = 16） */
+    toolbarPadX: 16,
+    /** 左侧组内间距 px（原 gap-4 = 16） */
+    toolbarLeftGap: 16,
+    /** 右侧按钮组内间距 px（原 gap-2 = 8） */
+    toolbarRightGap: 8,
+    /** 搜索框宽 px（原 w-64 = 256） */
+    searchWidth: 256,
+    /** 搜索图标 px（原 <Search size={16} /> = 16） */
+    searchIconSize: 16,
+    /** 搜索图标距左 px（原 left-3 = 12） */
+    searchIconLeft: 12,
+    /** 搜索框圆角 px（原 rounded-md = 6） */
+    searchRadius: 6,
+    /** 搜索框上下内边距 px（原 py-2 = 8） */
+    searchPadY: 8,
+    /** 搜索框左内边距 px（原 pl-9 = 36 · 给图标让位） */
+    searchPadLeft: 36,
+    /** 搜索框右内边距 px（原 pr-3 = 12） */
+    searchPadRight: 12,
+    /** 搜索框字号 px（原 text-sm = 14） */
+    searchFontSize: 14,
+    /** 分类组外壳间距 px（原 gap-1 = 4） */
+    catWrapGap: 4,
+    /** 分类组外壳内边距 px（原 p-1 = 4） */
+    catWrapPad: 4,
+    /** 分类组外壳圆角 px（原 rounded-md = 6） */
+    catWrapRadius: 6,
+    /** 分类按钮上下内边距 px（原 p-1.5 = 6） */
+    catBtnPadY: 6,
+    /** 分类按钮左右内边距 px（原 px-3 = 12） */
+    catBtnPadX: 12,
+    /** 分类按钮圆角 px（原 rounded-sm = 2） */
+    catBtnRadius: 2,
+    /** 分类按钮字号 px（原 text-sm = 14） */
+    catBtnFontSize: 14,
+    /** 分类按钮图标与文字间距 px（原 gap-1 = 4） */
+    catBtnGap: 4,
+    /** 分类按钮图标 px（原 <User size={14} /> 等 = 14） */
+    catIconSize: 14,
+    /** 工具按钮（随机皮肤 / 皮肤配置）上下内边距 px（原 py-2 = 8） */
+    utilBtnPadY: 8,
+    /** 工具按钮左右内边距 px（原 px-3 = 12） */
+    utilBtnPadX: 12,
+    /** 工具按钮圆角 px（原 rounded-md = 6） */
+    utilBtnRadius: 6,
+    /** 工具按钮字号 px（原 text-xs = 12） */
+    utilBtnFontSize: 12,
+    /** 工具按钮图标与文字间距 px（原 gap-1.5 = 6） */
+    utilBtnGap: 6,
+    /** 工具按钮图标 px（原 <Shuffle size={16} /> / <Palette size={16} /> = 16） */
+    utilIconSize: 16,
+    /** 「高级筛选」上下内边距 px（原 py-2 = 8） */
+    advBtnPadY: 8,
+    /** 「高级筛选」左右内边距 px（原 px-4 = 16） */
+    advBtnPadX: 16,
+    /** 「高级筛选」图标与文字间距 px（原 gap-2 = 8） */
+    advBtnGap: 8,
+    /** 「高级筛选」字号 px（原 text-sm = 14） */
+    advBtnFontSize: 14,
+    /** 「高级筛选」圆角 px（原 rounded-md = 6） */
+    advBtnRadius: 6,
+    /** 「高级筛选」图标 px（原 <Filter size={16} /> = 16） */
+    advIconSize: 16,
+    /** 「清空筛选」内边距 px（原 p-2 = 8） */
+    resetPad: 8,
+    /** 「清空筛选」圆角 px（原 rounded-md = 6） */
+    resetRadius: 6,
+    /** 「清空筛选」图标 px（原 <X size={18} /> = 18） */
+    resetIconSize: 18,
+
+    // ══ ③ 高级筛选下拉 ═══════════════════════════════════════════════
+    /** 下拉外层左右内边距 px（原 px-4 = 16） */
+    filterWrapPadX: 16,
+    /** 下拉面板内边距 px（原 p-4 = 16） */
+    filterPanelPad: 16,
+    /** 下拉面板圆角 px（原 rounded-md = 6） */
+    filterPanelRadius: 6,
+    /** 下拉面板距上 px（原 mt-3 = 12） */
+    filterPanelMarginTop: 12,
+    /** 分组横向间距 px（原 gap-x-8 = 32） */
+    filterRowGapX: 32,
+    /** 分组纵向间距 px（原 gap-y-4 = 16） */
+    filterRowGapY: 16,
+    /** 分组标题字号 px（原 text-xs = 12） */
+    filterLabelFontSize: 12,
+    /** 分组标题下距 px（原 mb-2 = 8） */
+    filterLabelMarginBottom: 8,
+    /** 费用 chips 间距 px（原 gap-1.5 = 6） */
+    costChipGap: 6,
+    /** 费用 chip 边长 px（原 w-8 h-8 = 32） */
+    costChipSize: 32,
+    /** 费用 chip 字号 px（原 text-xs = 12） */
+    costChipFontSize: 12,
+    /** 阵营 chips 间距 px（原 gap-2 = 8） */
+    regionChipGap: 8,
+    /** 阵营 chip 左右内边距 px（原 px-3 = 12） */
+    regionChipPadX: 12,
+    /** 阵营 chip 上下内边距 px（原 py-1.5 = 6） */
+    regionChipPadY: 6,
+    /** 阵营 chip 圆角 px（原 rounded-md = 6） */
+    regionChipRadius: 6,
+    /** 阵营 chip 字号 px（原 text-xs = 12） */
+    regionChipFontSize: 12,
+    /** 法术速度 chips 间距 px（原 gap-2 = 8） */
+    speedChipGap: 8,
+    /** 速度 chip 边长 px（原 w-8 h-8 = 32） */
+    speedChipSize: 32,
+    /** 速度 chip 圆角 px（原 rounded = 4） */
+    speedChipRadius: 4,
+    /** 速度 chip 描边 px（原 border = 1） */
+    speedChipBorderWidth: 1,
+    /** 速度图标 px（原 <Zap size={16} /> / <Clock size={16} /> = 16） */
+    speedIconSize: 16,
+    /** 关键词区上距 px（原 mt-4 = 16） */
+    keywordMarginTop: 16,
+    /** 关键词区内上边距 px（原 pt-4 = 16） */
+    keywordPadTop: 16,
+    /** 关键词区上分割线 px（原 border-t = 1） */
+    keywordBorderWidth: 1,
+    /** 关键词 chips 间距 px（原 gap-1.5 = 6） */
+    keywordChipGap: 6,
+    /** 关键词 chip 边长 px（原 w-8 h-8 = 32） */
+    keywordChipSize: 32,
+    /** 关键词 chip 圆角 px（原 rounded = 4） */
+    keywordChipRadius: 4,
+    /** 关键词 chip 描边 px（原 border = 1） */
+    keywordChipBorderWidth: 1,
+    /** 关键词图标 px（原 w-5 h-5 = 20） */
+    keywordIconSize: 20,
+    /** 关键词首字兜底字号 px（原 text-[8px] = 8） */
+    keywordFallbackFontSize: 8,
+
+    // ══ ④ 卡牌网格 ═══════════════════════════════════════════════════
+    /** 网格区左右上下内边距 px（原 p-8 = 32） */
+    gridPad: 32,
+    /** 卡片之间间距 px（原 gap-6 = 24） */
+    gridGap: 24,
+    /** 网格底部留白 px（原 pb-32 = 128 · 让最后一行不被底部虚化压住） */
+    gridPadBottom: 128,
+    /** 顶部虚化遮罩高 px（原 h-8 = 32） */
+    gridFadeTopHeight: 32,
+    /** 底部虚化遮罩高 px（原 h-12 = 48） */
+    gridFadeBottomHeight: 48,
+
+    // ══ ⑤ 卡面装饰件（挂在每张卡上的小件） ════════════════════════════
+    /** 皮肤指示器行间距 px（原 gap-1 = 4） */
+    skinRowGap: 4,
+    /** 皮肤指示器距卡面上方 px（原 mt-1.5 = 6） */
+    skinRowMarginTop: 6,
+    /** 单个皮肤色块边长 px（原 w-5 h-5 = 20） */
+    skinChipSize: 20,
+    /** 皮肤色块圆角 px（原 rounded = 4） */
+    skinChipRadius: 4,
+    /** 皮肤色块字号 px（原 text-[9px] = 9） */
+    skinChipFontSize: 9,
+    /** 购买大按钮上移 px（原 -top-2 = -8） */
+    buyBtnTop: -8,
+    /** 购买大按钮左移 px（原 -left-2 = -8） */
+    buyBtnLeft: -8,
+    /** 购买按钮直径 px（原 w-10 h-10 = 40） */
+    buyBtnSize: 40,
+    /** 购买按钮描边 px（原 border-2 = 2） */
+    buyBtnBorderWidth: 2,
+    /** 购买按钮图标 px（原 <ShoppingCart size={18} /> = 18） */
+    buyIconSize: 18,
+    /** LOCKED 文字块左右内边距 px（原 px-3 = 12） */
+    lockedPadX: 12,
+    /** LOCKED 文字块上下内边距 px（原 py-1 = 4） */
+    lockedPadY: 4,
+    /** LOCKED 文字块圆角 px（原 rounded = 4） */
+    lockedRadius: 4,
+    /** LOCKED 字号 px（原 text-xs = 12） */
+    lockedFontSize: 12,
+    /** 数量角标上移 px（原 -top-3 = -12） */
+    countBadgeTop: -12,
+    /** 数量角标右移 px（原 -right-0 = 0） */
+    countBadgeRight: 0,
+    /** 数量角标直径 px（原 w-8 h-8 = 32） */
+    countBadgeSize: 32,
+    /** 数量角标描边 px（原 border-2 = 2） */
+    countBadgeBorderWidth: 2,
+    /** 快速添加按钮距右 px（原 right-4 = 16） */
+    quickBtnRight: 16,
+    /** 快速添加按钮直径 px（原 w-12 h-12 = 48） */
+    quickBtnSize: 48,
+    /** 快速添加按钮描边 px（原 border-2 = 2） */
+    quickBtnBorderWidth: 2,
+    /** 快速添加图标 px（原 <Zap size={24} /> = 24） */
+    quickIconSize: 24,
+
+    // ══ ⑥ 右侧栏 · 顶部（卡组名 / 保存） ══════════════════════════════
+    /** 右侧栏宽 px（原 w-80 = 320） */
+    sidebarWidth: 320,
+    /** 右侧栏左边线 px（原 border-l = 1） */
+    sidebarBorderWidth: 1,
+    /** 顶部块内边距 px（原 p-6 = 24） */
+    sideTopPad: 24,
+    /** 顶部块内行距 px（原 space-y-4 = 16） */
+    sideTopGap: 16,
+    /** 卡组名行间距 px（原 gap-2 = 8） */
+    nameRowGap: 8,
+    /** 卡组名行下距 px（原 mb-2 = 8） */
+    nameRowMarginBottom: 8,
+    /** 卡组名图标 px（原 <ListIcon size={20} /> = 20） */
+    nameIconSize: 20,
+    /** 卡组名字号 px（原 text-xl = 20） */
+    nameFontSize: 20,
+    /** 保存按钮上下内边距 px（原 py-2 = 8） */
+    savePadY: 8,
+    /** 保存按钮圆角 px（原 rounded = 4） */
+    saveRadius: 4,
+    /** 保存按钮图标与文字间距 px（原 gap-2 = 8） */
+    saveGap: 8,
+    /** 保存按钮字号 px（原 text-sm = 14） */
+    saveFontSize: 14,
+    /** 保存按钮图标 px（原 <Save size={16} /> = 16） */
+    saveIconSize: 16,
+
+    // ══ ⑦ 右侧栏 · 排序 ═══════════════════════════════════════════════
+    /** 排序区左右内边距 px（原 px-6 = 24） */
+    sortPadX: 24,
+    /** 排序区上下内边距 px（原 py-3 = 12） */
+    sortPadY: 12,
+    /** 「排序方式」字号 px（原 text-[10px] = 10） */
+    sortLabelFontSize: 10,
+    /** 「排序方式」下距 px（原 mb-2 = 8） */
+    sortLabelMarginBottom: 8,
+    /** 排序组外壳内边距 px（原 p-1 = 4） */
+    sortWrapPad: 4,
+    /** 排序组外壳圆角 px（原 rounded-lg = 8） */
+    sortWrapRadius: 8,
+    /** 排序组外壳间距 px（原 gap-1 = 4） */
+    sortWrapGap: 4,
+    /** 排序按钮上下内边距 px（原 py-1.5 = 6） */
+    sortBtnPadY: 6,
+    /** 排序按钮左右内边距 px（原 px-2 = 8） */
+    sortBtnPadX: 8,
+    /** 排序按钮圆角 px（原 rounded-md = 6） */
+    sortBtnRadius: 6,
+    /** 排序按钮字号 px（原 text-xs = 12） */
+    sortBtnFontSize: 12,
+
+    // ══ ⑧ 右侧栏 · 卡组容量统计 ═══════════════════════════════════════
+    /** 统计区左右内边距 px（原 px-6 = 24） */
+    statsPadX: 24,
+    /** 统计区上下内边距 px（原 py-4 = 16） */
+    statsPadY: 16,
+    /** 「卡组容量」行下距 px（原 mb-2 = 8） */
+    statsRowMarginBottom: 8,
+    /** 「卡组容量」字号 px（原 text-sm = 14） */
+    statsLabelFontSize: 14,
+    /** 进度条高 px（原 h-2 = 8） */
+    statsBarHeight: 8,
+    /** 进度条下距 px（原 mb-3 = 12） */
+    statsBarMarginBottom: 12,
+    /** HERO/SPELL/UNIT 明细字号 px（原 text-xs = 12） */
+    statsDetailFontSize: 12,
+    /** 明细块内边距 px（原 p-2 = 8） */
+    statsDetailPad: 8,
+    /** 明细块圆角 px（原 rounded-md = 6） */
+    statsDetailRadius: 6,
+    /** 明细块描边 px（原 border = 1） */
+    statsDetailBorderWidth: 1,
+
+    // ══ ⑨ 右侧栏 · 卡组列表 ═══════════════════════════════════════════
+    /** 列表滚动区内边距 px（原 p-4 = 16） */
+    deckListPad: 16,
+    /** 列表行间距 px（原 space-y-2 = 8 · 已改 flex 列 + gap，子项带 shrink-0） */
+    deckListGap: 8,
+    /** 列表顶部虚化高 px（原 h-6 = 24） */
+    deckListFadeTopHeight: 24,
+    /** 列表底部虚化高 px（原 h-10 = 40） */
+    deckListFadeBottomHeight: 40,
+    /** 单行高 px（原 h-12 = 48） */
+    deckRowHeight: 48,
+    /** 行内间距 px（原 gap-2 = 8） */
+    deckRowGap: 8,
+    /** 删除按钮宽 px（原 w-8 = 32） */
+    rowDelWidth: 32,
+    /** 删除按钮圆角 px（原 rounded-l-md = 6） */
+    rowDelRadius: 6,
+    /** 删除按钮描边 px（原 border-y / border-l = 1） */
+    rowDelBorderWidth: 1,
+    /** 删除图标 px（原 <Trash2 size={16} /> = 16） */
+    rowDelIconSize: 16,
+    /** 条目圆角 px（原 rounded-r-md = 6） */
+    rowBodyRadius: 6,
+    /** 条目描边 px（原 border = 1） */
+    rowBodyBorderWidth: 1,
+    /** 条目左右内边距 px（原 px-4 = 16） */
+    rowBodyPadX: 16,
+    /** 条目内左侧间距 px（原 gap-3 = 12） */
+    rowBodyGap: 12,
+    /** 费用圆直径 px（原 w-6 h-6 = 24） */
+    rowCostSize: 24,
+    /** 费用圆字号 px（原 text-xs = 12） */
+    rowCostFontSize: 12,
+    /** 费用圆描边 px（原 border = 1） */
+    rowCostBorderWidth: 1,
+    /** 卡名字号 px（原 text-sm = 14） */
+    rowNameFontSize: 14,
+    /** 卡名最大宽 px（原 w-32 = 128） */
+    rowNameWidth: 128,
+
+    // ══ ⑩ 右侧栏 · 底部操作区 ═════════════════════════════════════════
+    /** 底部区内边距 px（原 p-6 = 24） */
+    bottomAreaPad: 24,
+    /** 底部区内行距 px（原 space-y-3 = 12） */
+    bottomAreaGap: 12,
+    /** 按钮行间距 px（原 gap-2 = 8） */
+    actionRowGap: 8,
+    /** 方形小按钮内边距 px（原 p-3 = 12） */
+    iconBtnPad: 12,
+    /** 方形小按钮圆角 px（原 rounded-lg = 8） */
+    iconBtnRadius: 8,
+    /** 方形小按钮描边 px（原 border = 1） */
+    iconBtnBorderWidth: 1,
+    /** 方形小按钮图标 px（原 <Eraser size={18} /> 等 = 18） */
+    iconBtnIconSize: 18,
+    /** 「快速选择」上下内边距 px（原 py-3 = 12） */
+    quickSelPadY: 12,
+    /** 「快速选择」圆角 px（原 rounded-lg = 8） */
+    quickSelRadius: 8,
+    /** 「快速选择」图标与文字间距 px（原 gap-2 = 8） */
+    quickSelGap: 8,
+    /** 「快速选择」描边 px（原 border = 1） */
+    quickSelBorderWidth: 1,
+    /** 费用图面板距上 px（原 mb-2 = 8） */
+    chartOffset: 8,
+    /** 费用图面板圆角 px（原 rounded-xl = 12） */
+    chartRadius: 12,
+    /** 费用图面板内边距 px（原 p-4 = 16） */
+    chartPad: 16,
+    /** 费用图标题字号 px（原 text-xs = 12） */
+    chartTitleFontSize: 12,
+    /** 费用图标题下距 px（原 mb-3 = 12） */
+    chartTitleMarginBottom: 12,
+    /** 柱子区高 px（原 h-28 = 112） */
+    chartHeight: 112,
+    /** 柱子区左右内边距 px（原 px-1 = 4） */
+    chartPadX: 4,
+    /** 柱间距 px（原 gap-[2px] = 2） */
+    chartBarGap: 2,
+    /** 柱顶数值/柱脚标号字号 px（原 text-[9px] = 9） */
+    chartValueFontSize: 9,
+    /** 单柱圆角 px（原 rounded-sm = 2） */
+    chartBarRadius: 2,
+    /** 主按钮上下内边距 px（原 py-4 = 16） */
+    mainBtnPadY: 16,
+    /** 主按钮圆角 px（原 rounded-lg = 8） */
+    mainBtnRadius: 8,
+    /** 主按钮字号 px（原 text-lg = 18） */
+    mainBtnFontSize: 18,
+    /** 主按钮图标与文字间距 px（原 gap-2 = 8） */
+    mainBtnGap: 8,
+    /** 「完成构筑」图标 px（原 <Save size={20} /> = 20） */
+    saveMainIconSize: 20,
+    /** 「开始游戏」图标 px（lucide 默认 24，显式写死以保持一致） */
+    playMainIconSize: 24,
+} as const;
+
 // 🎛️ 牌组选择（备战枢纽网格屏）· 视觉调参区（**程微调就改这里**）
 // ──────────────────────────────────────────────────────────────────────
 // 这一屏 = 从大厅点「编队」进来、顶部写着「牌组选择」四个大字的那一屏
@@ -1705,17 +2105,18 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         handleGlobalBack(); // <--- 改为这个
                     }}
                     // [修复] 将 right-[340px] 改为 right-8，移至屏幕最右上角，彻底避开筛选栏
-                    className="absolute top-6 right-8 z-50 p-3 bg-[#1e293b] border border-gray-600 rounded-full hover:bg-slate-700 hover:border-white/50 transition-all shadow-lg group"
+                    className="absolute z-50 bg-[#1e293b] border-gray-600 rounded-full hover:bg-slate-700 hover:border-white/50 transition-all shadow-lg group"
+                    style={{ top: EDITOR_UI.backTop, right: EDITOR_UI.backRight, padding: EDITOR_UI.backPad, borderWidth: EDITOR_UI.backBorderWidth, borderStyle: 'solid' }}
                     title="返回"
                 >
-                    <ArrowLeft size={20} className="text-gray-400 group-hover:text-white" />
+                    <ArrowLeft size={EDITOR_UI.backIconSize} className="text-gray-400 group-hover:text-white" />
                 </button>
             )}
             {/* Left Sidebar - Filters & Stats */}
             <FloatingCardPreview
                 gazeTarget={gazeTarget}
                 mode="follow"
-                scale={1.25}
+                scale={EDITOR_UI.hoverPreviewScale}
                 interactive
                 skinId={userSystem.activeDeck?.skinOverrides?.[gazeTarget?.card.key || ''] || 0}
                 onMouseEnter={keepAlive}
@@ -1729,41 +2130,47 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
             <div className="flex-1 flex flex-col min-w-0 bg-[#0f172a] relative">
 
                 {/* 顶部现代复合筛选台 (移植自 ArtStudio) */}
-                <div className="p-4 border-b border-white/10 bg-slate-900 shadow-md z-10 shrink-0">
-                    <div className="flex items-center justify-between gap-4 px-4">
-                        <div className="flex items-center gap-4 flex-1">
+                <div className="border-b border-white/10 bg-slate-900 shadow-md z-10 shrink-0" style={{ padding: EDITOR_UI.toolbarPad }}>
+                    <div className="flex items-center justify-between" style={{ gap: EDITOR_UI.toolbarGap, paddingLeft: EDITOR_UI.toolbarPadX, paddingRight: EDITOR_UI.toolbarPadX }}>
+                        <div className="flex items-center flex-1" style={{ gap: EDITOR_UI.toolbarLeftGap }}>
                             {/* Search */}
-                            <div className="relative w-64">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                            <div className="relative" style={{ width: EDITOR_UI.searchWidth }}>
+                                <Search className="absolute top-1/2 -translate-y-1/2 text-gray-400" size={EDITOR_UI.searchIconSize} style={{ left: EDITOR_UI.searchIconLeft }} />
                                 <input
                                     type="text" placeholder="搜索卡牌..." value={searchTerm} onChange={(e)=>setSearchTerm(e.target.value)}
-                                    className="w-full bg-slate-800 rounded-md py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                                    className="w-full bg-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                                    style={{ borderRadius: EDITOR_UI.searchRadius, paddingTop: EDITOR_UI.searchPadY, paddingBottom: EDITOR_UI.searchPadY, paddingLeft: EDITOR_UI.searchPadLeft, paddingRight: EDITOR_UI.searchPadRight, fontSize: EDITOR_UI.searchFontSize }}
                                 />
                             </div>
                             {/* Category Buttons — 同步到 selectedTypes 多选 */}
-                            <div className="flex gap-1 bg-slate-800 p-1 rounded-md">
+                            <div className="flex bg-slate-800" style={{ gap: EDITOR_UI.catWrapGap, padding: EDITOR_UI.catWrapPad, borderRadius: EDITOR_UI.catWrapRadius }}>
                                 <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); setSelectedTypes(prev => prev.length === 3 ? [] : ['HERO','SPELL','UNIT']); }}
-                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.length === 0 ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-400 hover:bg-white/5'}`}>全部</button>
+                                        style={{ paddingTop: EDITOR_UI.catBtnPadY, paddingBottom: EDITOR_UI.catBtnPadY, paddingLeft: EDITOR_UI.catBtnPadX, paddingRight: EDITOR_UI.catBtnPadX, borderRadius: EDITOR_UI.catBtnRadius, fontSize: EDITOR_UI.catBtnFontSize, gap: EDITOR_UI.catBtnGap }}
+                                        className={`flex items-center ${selectedTypes.length === 0 ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-400 hover:bg-white/5'}`}>全部</button>
                                 <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, 'HERO'); }}
-                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.includes('HERO')?'bg-yellow-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><User size={14}/> 英雄</button>
+                                        style={{ paddingTop: EDITOR_UI.catBtnPadY, paddingBottom: EDITOR_UI.catBtnPadY, paddingLeft: EDITOR_UI.catBtnPadX, paddingRight: EDITOR_UI.catBtnPadX, borderRadius: EDITOR_UI.catBtnRadius, fontSize: EDITOR_UI.catBtnFontSize, gap: EDITOR_UI.catBtnGap }}
+                                        className={`flex items-center ${selectedTypes.includes('HERO')?'bg-yellow-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><User size={EDITOR_UI.catIconSize}/> 英雄</button>
                                 <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, 'SPELL'); }}
-                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.includes('SPELL')?'bg-blue-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Zap size={14}/> 法术</button>
+                                        style={{ paddingTop: EDITOR_UI.catBtnPadY, paddingBottom: EDITOR_UI.catBtnPadY, paddingLeft: EDITOR_UI.catBtnPadX, paddingRight: EDITOR_UI.catBtnPadX, borderRadius: EDITOR_UI.catBtnRadius, fontSize: EDITOR_UI.catBtnFontSize, gap: EDITOR_UI.catBtnGap }}
+                                        className={`flex items-center ${selectedTypes.includes('SPELL')?'bg-blue-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Zap size={EDITOR_UI.catIconSize}/> 法术</button>
                                 <button onClick={()=>{ eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedTypes, 'UNIT'); }}
-                                        className={`p-1.5 px-3 rounded-sm text-sm font-bold flex items-center gap-1 ${selectedTypes.includes('UNIT')?'bg-orange-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Box size={14}/> 单位</button>
+                                        style={{ paddingTop: EDITOR_UI.catBtnPadY, paddingBottom: EDITOR_UI.catBtnPadY, paddingLeft: EDITOR_UI.catBtnPadX, paddingRight: EDITOR_UI.catBtnPadX, borderRadius: EDITOR_UI.catBtnRadius, fontSize: EDITOR_UI.catBtnFontSize, gap: EDITOR_UI.catBtnGap }}
+                                        className={`flex items-center ${selectedTypes.includes('UNIT')?'bg-orange-600 text-white shadow-sm':'text-gray-400 hover:bg-white/5'}`}><Box size={EDITOR_UI.catIconSize}/> 单位</button>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center" style={{ gap: EDITOR_UI.toolbarRightGap }}>
                             {/* [皮肤检视] 随机皮肤按钮 */}
                             <button
                                 onClick={() => {
                                     eventBus.emit(GameEvents.UI_CLICK);
                                     handleRandomSkins();
                                 }}
-                                className="py-2 px-3 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all bg-slate-800 text-gray-300 hover:bg-emerald-700 hover:text-white border border-transparent hover:border-emerald-500/50"
+                                className="text-xs font-bold flex items-center transition-all bg-slate-800 text-gray-300 hover:bg-emerald-700 hover:text-white border border-transparent hover:border-emerald-500/50"
+                                style={{ paddingTop: EDITOR_UI.utilBtnPadY, paddingBottom: EDITOR_UI.utilBtnPadY, paddingLeft: EDITOR_UI.utilBtnPadX, paddingRight: EDITOR_UI.utilBtnPadX, borderRadius: EDITOR_UI.utilBtnRadius, fontSize: EDITOR_UI.utilBtnFontSize, gap: EDITOR_UI.utilBtnGap }}
                                 title="为所有有皮肤的卡牌随机配置已拥有的皮肤"
                             >
-                                <Shuffle size={16} />
+                                <Shuffle size={EDITOR_UI.utilIconSize} />
                                 随机皮肤
                             </button>
                             {/* [皮肤检视] 皮肤查看按钮 */}
@@ -1773,31 +2180,34 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     setShowSkinView(!showSkinView);
                                 }}
                                 className={`
-                                    py-2 px-3 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all
+                                    text-xs font-bold flex items-center transition-all
                                     ${showSkinView
                                         ? 'bg-purple-600 text-white shadow-[0_0_10px_rgba(147,51,234,0.4)] border border-purple-400/50'
                                         : 'bg-slate-800 text-gray-300 hover:bg-slate-700 border border-transparent'
                                     }
                                 `}
+                                style={{ paddingTop: EDITOR_UI.utilBtnPadY, paddingBottom: EDITOR_UI.utilBtnPadY, paddingLeft: EDITOR_UI.utilBtnPadX, paddingRight: EDITOR_UI.utilBtnPadX, borderRadius: EDITOR_UI.utilBtnRadius, fontSize: EDITOR_UI.utilBtnFontSize, gap: EDITOR_UI.utilBtnGap }}
                                 title="查看已拥有的皮肤"
                             >
-                                <Palette size={16} />
+                                <Palette size={EDITOR_UI.utilIconSize} />
                                 皮肤配置
                             </button>
                             {/* Advanced Filters */}
                             <button
                                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setIsFilterOpen(!isFilterOpen); }} // [新增] 音效
-                                className={`py-2 px-4 flex items-center justify-center gap-2 text-sm font-bold rounded-md transition-colors ${isFilterOpen ? 'bg-blue-600 text-white' : 'bg-slate-800 text-gray-300 hover:bg-slate-700'}`}
+                                className={`flex items-center justify-center font-bold transition-colors ${isFilterOpen ? 'bg-blue-600 text-white' : 'bg-slate-800 text-gray-300 hover:bg-slate-700'}`}
+                                style={{ paddingTop: EDITOR_UI.advBtnPadY, paddingBottom: EDITOR_UI.advBtnPadY, paddingLeft: EDITOR_UI.advBtnPadX, paddingRight: EDITOR_UI.advBtnPadX, gap: EDITOR_UI.advBtnGap, fontSize: EDITOR_UI.advBtnFontSize, borderRadius: EDITOR_UI.advBtnRadius }}
                             >
-                                <Filter size={16} /> 高级筛选
+                                <Filter size={EDITOR_UI.advIconSize} /> 高级筛选
                             </button>
                             {/* Reset */}
                             <button
                                 onClick={() => { eventBus.emit(GameEvents.UI_CLICK); resetFilters(); }} disabled={!isFilterActive} // [新增] 音效
-                                className={`p-2 rounded-md transition-colors ${isFilterActive ? 'bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
+                                className={`transition-colors ${isFilterActive ? 'bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white' : 'bg-slate-800 text-gray-600'}`}
+                                style={{ padding: EDITOR_UI.resetPad, borderRadius: EDITOR_UI.resetRadius }}
                                 title="清空筛选"
                             >
-                                <X size={18} />
+                                <X size={EDITOR_UI.resetIconSize} />
                             </button>
                         </div>
                     </div>
@@ -1805,16 +2215,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     {/* Advanced Filters Dropdown — 多选版 */}
                     <AnimatePresence>
                         {isFilterOpen && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden w-full px-4">
-                                <div className="p-4 bg-slate-800 rounded-md mt-3 border border-white/5 shadow-inner">
-                                    <div className="flex flex-wrap gap-x-8 gap-y-4">
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden w-full" style={{ paddingLeft: EDITOR_UI.filterWrapPadX, paddingRight: EDITOR_UI.filterWrapPadX }}>
+                                <div className="bg-slate-800 mt-3 border border-white/5 shadow-inner" style={{ padding: EDITOR_UI.filterPanelPad, borderRadius: EDITOR_UI.filterPanelRadius, marginTop: EDITOR_UI.filterPanelMarginTop }}>
+                                    <div className="flex flex-wrap" style={{ columnGap: EDITOR_UI.filterRowGapX, rowGap: EDITOR_UI.filterRowGapY }}>
                                         {/* 费用多选 */}
                                         <div>
-                                            <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">费用 (COST)</span>
-                                            <div className="flex flex-wrap gap-1.5">
+                                            <span className="text-gray-400 font-bold tracking-widest block" style={{ fontSize: EDITOR_UI.filterLabelFontSize, marginBottom: EDITOR_UI.filterLabelMarginBottom }}>费用 (COST)</span>
+                                            <div className="flex flex-wrap" style={{ gap: EDITOR_UI.costChipGap }}>
                                                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(c => (
                                                     <button key={c} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedCosts, c); }}
-                                                            className={`w-8 h-8 rounded-full text-xs font-mono font-bold flex items-center justify-center transition-all ${selectedCosts.includes(c) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                            style={{ width: EDITOR_UI.costChipSize, height: EDITOR_UI.costChipSize, fontSize: EDITOR_UI.costChipFontSize }}
+                                                            className={`rounded-full font-mono font-bold flex items-center justify-center transition-all ${selectedCosts.includes(c) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
                                                         {c}{c === 10 ? '+' : ''}
                                                     </button>
                                                 ))}
@@ -1822,8 +2233,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         </div>
                                         {/* 阵营多选 */}
                                         <div>
-                                            <span className="text-xs text-gray-400 font-bold tracking-widest block mb-2">阵营 (REGION)</span>
-                                            <div className="flex flex-wrap gap-2">
+                                            <span className="text-gray-400 font-bold tracking-widest block" style={{ fontSize: EDITOR_UI.filterLabelFontSize, marginBottom: EDITOR_UI.filterLabelMarginBottom }}>阵营 (REGION)</span>
+                                            <div className="flex flex-wrap" style={{ gap: EDITOR_UI.regionChipGap }}>
                                                 {[
                                                     { key: 'Lyfe', label: '里芙' },
                                                     { key: 'Fenny', label: '芬妮' },
@@ -1837,7 +2248,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                     { key: 'TEST', label: '测试' },
                                                 ].map(r => (
                                                     <button key={r.key} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedRegions, r.key); }}
-                                                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${selectedRegions.includes(r.key) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
+                                                            style={{ paddingLeft: EDITOR_UI.regionChipPadX, paddingRight: EDITOR_UI.regionChipPadX, paddingTop: EDITOR_UI.regionChipPadY, paddingBottom: EDITOR_UI.regionChipPadY, borderRadius: EDITOR_UI.regionChipRadius, fontSize: EDITOR_UI.regionChipFontSize }}
+                                                            className={`font-bold transition-all ${selectedRegions.includes(r.key) ? 'bg-blue-500 text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-slate-700 text-gray-400 hover:bg-slate-600'}`}>
                                                         {r.label}
                                                     </button>
                                                 ))}
@@ -1846,15 +2258,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         {/* 法术速度级联 */}
                                         {selectedTypes.includes('SPELL') && (
                                             <div>
-                                                <span className="text-xs text-purple-400 font-bold tracking-widest block mb-2">法术速度</span>
-                                                <div className="flex gap-2">
+                                                <span className="text-purple-400 font-bold tracking-widest block" style={{ fontSize: EDITOR_UI.filterLabelFontSize, marginBottom: EDITOR_UI.filterLabelMarginBottom }}>法术速度</span>
+                                                <div className="flex" style={{ gap: EDITOR_UI.speedChipGap }}>
                                                     {[
-                                                        { id: 'Burst', icon: <Zap size={16} className="text-yellow-400 fill-yellow-400" />, title: '极速' },
-                                                        { id: 'Fast', icon: <Zap size={16} className="text-white" />, title: '快速' },
-                                                        { id: 'Slow', icon: <Clock size={16} className="text-purple-300" />, title: '慢速' },
+                                                        { id: 'Burst', icon: <Zap size={EDITOR_UI.speedIconSize} className="text-yellow-400 fill-yellow-400" />, title: '极速' },
+                                                        { id: 'Fast', icon: <Zap size={EDITOR_UI.speedIconSize} className="text-white" />, title: '快速' },
+                                                        { id: 'Slow', icon: <Clock size={EDITOR_UI.speedIconSize} className="text-purple-300" />, title: '慢速' },
                                                     ].map(s => (
                                                         <button key={s.id} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedSpellSpeeds, s.id); }} title={s.title}
-                                                                className={`w-8 h-8 rounded flex items-center justify-center transition-all border ${selectedSpellSpeeds.includes(s.id) ? 'bg-purple-500/20 border-purple-400 shadow-[inset_0_0_10px_purple]' : 'bg-slate-700 border-transparent hover:bg-slate-600'}`}>
+                                                                style={{ width: EDITOR_UI.speedChipSize, height: EDITOR_UI.speedChipSize, borderRadius: EDITOR_UI.speedChipRadius, borderWidth: EDITOR_UI.speedChipBorderWidth, borderStyle: 'solid' }}
+                                                                className={`flex items-center justify-center transition-all ${selectedSpellSpeeds.includes(s.id) ? 'bg-purple-500/20 border-purple-400 shadow-[inset_0_0_10px_purple]' : 'bg-slate-700 border-transparent hover:bg-slate-600'}`}>
                                                             {s.icon}
                                                         </button>
                                                     ))}
@@ -1864,17 +2277,18 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     </div>
                                     {/* 关键词级联 */}
                                     {(selectedTypes.length === 0 || selectedTypes.includes('HERO') || selectedTypes.includes('UNIT')) && (
-                                        <div className="mt-4 pt-4 border-t border-white/10">
-                                            <span className="text-xs text-green-400 font-bold tracking-widest block mb-2">关键词筛选</span>
-                                            <div className="flex flex-wrap gap-1.5">
+                                        <div className="border-t border-white/10" style={{ marginTop: EDITOR_UI.keywordMarginTop, paddingTop: EDITOR_UI.keywordPadTop, borderTopWidth: EDITOR_UI.keywordBorderWidth, borderTopStyle: 'solid' }}>
+                                            <span className="text-green-400 font-bold tracking-widest block" style={{ fontSize: EDITOR_UI.filterLabelFontSize, marginBottom: EDITOR_UI.filterLabelMarginBottom }}>关键词筛选</span>
+                                            <div className="flex flex-wrap" style={{ gap: EDITOR_UI.keywordChipGap }}>
                                                 {Object.entries(KEYWORD_DB).map(([kw, config]) => (
                                                     <button key={kw} onClick={() => { eventBus.emit(GameEvents.UI_CLICK); toggleFilter(setSelectedKeywords, kw); }}
                                                             title={`${config.label}\n${config.description}`}
-                                                            className={`w-8 h-8 rounded flex justify-center items-center transition-all border ${selectedKeywords.includes(kw) ? 'bg-green-500/20 border-green-400 shadow-[inset_0_0_10px_rgba(74,222,128,0.5)]' : 'bg-slate-700 border-transparent hover:bg-slate-600 opacity-70 hover:opacity-100'}`}>
+                                                            style={{ width: EDITOR_UI.keywordChipSize, height: EDITOR_UI.keywordChipSize, borderRadius: EDITOR_UI.keywordChipRadius, borderWidth: EDITOR_UI.keywordChipBorderWidth, borderStyle: 'solid' }}
+                                                            className={`flex justify-center items-center transition-all ${selectedKeywords.includes(kw) ? 'bg-green-500/20 border-green-400 shadow-[inset_0_0_10px_rgba(74,222,128,0.5)]' : 'bg-slate-700 border-transparent hover:bg-slate-600 opacity-70 hover:opacity-100'}`}>
                                                         {config.icon ? (
-                                                            <img src={config.icon} alt={config.label} className="w-5 h-5 object-contain drop-shadow-md" />
+                                                            <img src={config.icon} alt={config.label} className="object-contain drop-shadow-md" style={{ width: EDITOR_UI.keywordIconSize, height: EDITOR_UI.keywordIconSize }} />
                                                         ) : (
-                                                            <span className="text-[8px] font-bold text-gray-300">{config.label.substring(0, 1)}</span>
+                                                            <span className="font-bold text-gray-300" style={{ fontSize: EDITOR_UI.keywordFallbackFontSize }}>{config.label.substring(0, 1)}</span>
                                                         )}
                                                     </button>
                                                 ))}
@@ -1890,11 +2304,11 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 {/* 卡牌网格区域 (引入沉浸式边缘虚化) */}
                 <div className="flex-1 relative overflow-hidden bg-[#0f172a]">
                     {/* 顶部边缘虚化遮罩 */}
-                    <div className="absolute top-0 left-0 w-full h-8 bg-gradient-to-b from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none"></div>
+                    <div className="absolute top-0 left-0 w-full bg-gradient-to-b from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none" style={{ height: EDITOR_UI.gridFadeTopHeight }}></div>
 
-                    <div className="h-full p-8 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                    <div className="h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" style={{ padding: EDITOR_UI.gridPad }}>
                         {/* 游戏始终在 1680×1050 坐标系内，固定 6 列由 ScaleWrapper 统一缩放 */}
-                    <div className="grid grid-cols-6 gap-6 pb-32">
+                    <div className="grid grid-cols-6" style={{ gap: EDITOR_UI.gridGap, paddingBottom: EDITOR_UI.gridPadBottom }}>
                     {visibleCards.map(card => {
                         const ownedCount = getOwnedCount(card.key);
                         const inDeckCount = localDeck[card.key] || 0;
@@ -1954,7 +2368,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     const ownedSkins = userSystem.collection?.ownedSkins;
                                     const currentSkin = userSystem.activeDeck?.skinOverrides?.[card.key] ?? 0;
                                     return (
-                                        <div className="flex gap-1 mt-1.5 justify-center flex-nowrap overflow-x-auto [&::-webkit-scrollbar]:hidden">
+                                        <div className="flex justify-center flex-nowrap overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ gap: EDITOR_UI.skinRowGap, marginTop: EDITOR_UI.skinRowMarginTop }}>
                                             {skinIds.map(id => {
                                                 const isOwned = isSkinOwned(ownedSkins, card.key, id);
                                                 const isSelected = currentSkin === id;
@@ -1974,7 +2388,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                             handleSkinSelect(card.key, id);
                                                         }}
                                                         className={`
-                                                            w-5 h-5 rounded text-[9px] font-black flex items-center justify-center shrink-0 transition-all duration-200 border cursor-pointer
+                                                            font-black flex items-center justify-center shrink-0 transition-all duration-200 border cursor-pointer
                                                             ${isSelected
                                                                 ? 'bg-orange-500 border-orange-400 text-white shadow-[0_0_8px_rgba(251,146,60,0.6)] scale-110'
                                                                 : isOwned
@@ -1983,6 +2397,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                             }
                                                             ${isHovered && !isSelected ? 'ring-2 ring-white/40' : ''}
                                                         `}
+                                                        style={{ width: EDITOR_UI.skinChipSize, height: EDITOR_UI.skinChipSize, borderRadius: EDITOR_UI.skinChipRadius, fontSize: EDITOR_UI.skinChipFontSize }}
                                                         title={`皮肤 ${id}${isSelected ? ' · 当前' : isOwned ? ' · 已拥有' : ' · 未拥有'}`}
                                                     >
                                                         {id}
@@ -2002,23 +2417,24 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                             eventBus.emit(GameEvents.UI_CLICK); handleViewCard(fullCard, 'grid'); // 点击购物车打开详情页(含购买逻辑)
                                         }}
                                         // 保持 z-10 防止遮挡右侧侧边栏
-                                        className="absolute -top-2 -left-2 z-10 w-10 h-10 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white shadow-lg border-2 border-white/20 transition-transform hover:scale-110"
+                                        className="absolute z-10 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white shadow-lg border-white/20 transition-transform hover:scale-110"
+                                        style={{ top: EDITOR_UI.buyBtnTop, left: EDITOR_UI.buyBtnLeft, width: EDITOR_UI.buyBtnSize, height: EDITOR_UI.buyBtnSize, borderWidth: EDITOR_UI.buyBtnBorderWidth, borderStyle: 'solid' }}
                                         title="购买卡牌"
                                     >
-                                        <ShoppingCart size={18} />
+                                        <ShoppingCart size={EDITOR_UI.buyIconSize} />
                                     </button>
                                 )}
 
                                 {/* LOCKED 遮罩文字 (仅在完全未解锁时显示) */}
                                 {isLocked && (
                                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                        <div className="bg-black/80 px-3 py-1 rounded text-xs font-bold text-gray-400">LOCKED</div>
+                                        <div className="bg-black/80 font-bold text-gray-400" style={{ paddingLeft: EDITOR_UI.lockedPadX, paddingRight: EDITOR_UI.lockedPadX, paddingTop: EDITOR_UI.lockedPadY, paddingBottom: EDITOR_UI.lockedPadY, borderRadius: EDITOR_UI.lockedRadius, fontSize: EDITOR_UI.lockedFontSize }}>LOCKED</div>
                                     </div>
                                 )}
 
                                 {/* 数量角标 */}
                                 {inDeckCount > 0 && (
-                                    <div className="absolute -top-3 -right-0 w-8 h-8 bg-yellow-600 rounded-full flex items-center justify-center font-bold shadow-lg border-2 border-white z-20">
+                                    <div className="absolute bg-yellow-600 rounded-full flex items-center justify-center font-bold shadow-lg border-white z-20" style={{ top: EDITOR_UI.countBadgeTop, right: EDITOR_UI.countBadgeRight, width: EDITOR_UI.countBadgeSize, height: EDITOR_UI.countBadgeSize, borderWidth: EDITOR_UI.countBadgeBorderWidth, borderStyle: 'solid' }}>
                                         {inDeckCount}
                                     </div>
                                 )}
@@ -2027,10 +2443,11 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 {!isLocked && !isMaxed && (
                                     <button
                                         onClick={(e) => { e.stopPropagation(); eventBus.emit(GameEvents.UI_CLICK); quickAdd(card.key); }}
-                                        className="absolute top-1/2 right-4 -translate-y-1/2 w-12 h-12 bg-blue-600/90 hover:bg-blue-500 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all shadow-xl border-2 border-white/50 z-10 hover:scale-110 backdrop-blur-sm"
+                                        className="absolute top-1/2 -translate-y-1/2 bg-blue-600/90 hover:bg-blue-500 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all shadow-xl border-white/50 z-10 hover:scale-110 backdrop-blur-sm"
+                                        style={{ right: EDITOR_UI.quickBtnRight, width: EDITOR_UI.quickBtnSize, height: EDITOR_UI.quickBtnSize, borderWidth: EDITOR_UI.quickBtnBorderWidth, borderStyle: 'solid' }}
                                         title="快速添加(最多3张)"
                                     >
-                                        <Zap size={24} fill="currentColor" />
+                                        <Zap size={EDITOR_UI.quickIconSize} fill="currentColor" />
                                     </button>
                                 )}
                             </div>
@@ -2040,26 +2457,27 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 </div>
 
                 {/* 底部边缘虚化遮罩 */}
-                <div className="absolute bottom-0 left-0 w-full h-12 bg-gradient-to-t from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-[#0f172a] via-[#0f172a]/80 to-transparent z-20 pointer-events-none" style={{ height: EDITOR_UI.gridFadeBottomHeight }}></div>
             </div>
             </div>
 
             {/* Right Sidebar - Current Deck & Customization */}
-            <div className="w-80 bg-[#1e293b] border-l border-gray-700 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.3)] relative">
+            <div className="bg-[#1e293b] border-gray-700 flex flex-col z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.3)] relative" style={{ width: EDITOR_UI.sidebarWidth, borderLeftWidth: EDITOR_UI.sidebarBorderWidth, borderLeftStyle: 'solid' }}>
 
                 {/* [修改] 卡组选择与管理区域 */}
                 {/* 彻底移除了 PersonalizationDrawer，并清除了多余的 mt-16 上边距 */}
-                <div className="p-6 border-b border-gray-700 space-y-4">
+                <div className="flex flex-col border-b border-gray-700" style={{ padding: EDITOR_UI.sideTopPad, gap: EDITOR_UI.sideTopGap }}>
 
                     {/* 卡组名称输入 + 切换按钮 */}
                     <div className="relative">
-                        <div className="flex items-center gap-2 mb-2">
-                            <ListIcon size={20} className="text-gray-400"/>
+                        <div className="flex items-center" style={{ gap: EDITOR_UI.nameRowGap, marginBottom: EDITOR_UI.nameRowMarginBottom }}>
+                            <ListIcon size={EDITOR_UI.nameIconSize} className="text-gray-400"/>
                             <input
                                 type="text"
                                 value={deckName}
                                 onChange={(e) => { setDeckName(e.target.value); setIsDirty(true); }}
-                                className="bg-transparent border-b border-gray-600 focus:border-blue-500 focus:outline-none text-xl font-bold w-full"
+                                className="bg-transparent border-b border-gray-600 focus:border-blue-500 focus:outline-none font-bold w-full"
+                                style={{ fontSize: EDITOR_UI.nameFontSize }}
                             />
                         </div>
                     </div>
@@ -2068,31 +2486,35 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     <button
                         onClick={handleSaveDeck}
                         disabled={!isDirty}
-                        className={`w-full py-2 rounded flex items-center justify-center gap-2 font-bold text-sm transition-colors ${isDirty ? 'bg-green-600 text-white hover:bg-green-500' : 'bg-gray-700 text-gray-500 cursor-default'}`}
+                        style={{ paddingTop: EDITOR_UI.savePadY, paddingBottom: EDITOR_UI.savePadY, borderRadius: EDITOR_UI.saveRadius, gap: EDITOR_UI.saveGap, fontSize: EDITOR_UI.saveFontSize }}
+                        className={`w-full flex items-center justify-center font-bold transition-colors ${isDirty ? 'bg-green-600 text-white hover:bg-green-500' : 'bg-gray-700 text-gray-500 cursor-default'}`}
                     >
-                        <Save size={16} /> {isDirty ? '保存修改' : '保存'}
+                        <Save size={EDITOR_UI.saveIconSize} /> {isDirty ? '保存修改' : '保存'}
                     </button>
                 </div>
 
                 {/* [新增] 排序按钮组 — 默认/稀有度/费用，互斥单选 */}
-                <div className="px-6 py-3 border-b border-gray-700">
-                    <span className="text-[10px] font-bold tracking-widest text-gray-500 block mb-2">排序方式</span>
-                    <div className="flex bg-slate-800 rounded-lg p-1 gap-1">
+                <div className="border-b border-gray-700" style={{ paddingLeft: EDITOR_UI.sortPadX, paddingRight: EDITOR_UI.sortPadX, paddingTop: EDITOR_UI.sortPadY, paddingBottom: EDITOR_UI.sortPadY }}>
+                    <span className="font-bold tracking-widest text-gray-500 block" style={{ fontSize: EDITOR_UI.sortLabelFontSize, marginBottom: EDITOR_UI.sortLabelMarginBottom }}>排序方式</span>
+                    <div className="flex bg-slate-800" style={{ borderRadius: EDITOR_UI.sortWrapRadius, padding: EDITOR_UI.sortWrapPad, gap: EDITOR_UI.sortWrapGap }}>
                         <button
                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSortMode('default'); }}
-                            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'default' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
+                            style={{ paddingTop: EDITOR_UI.sortBtnPadY, paddingBottom: EDITOR_UI.sortBtnPadY, paddingLeft: EDITOR_UI.sortBtnPadX, paddingRight: EDITOR_UI.sortBtnPadX, borderRadius: EDITOR_UI.sortBtnRadius, fontSize: EDITOR_UI.sortBtnFontSize }}
+                            className={`flex-1 font-bold transition-all ${sortMode === 'default' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
                         >
                             默认
                         </button>
                         <button
                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSortMode('rarity'); }}
-                            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'rarity' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
+                            style={{ paddingTop: EDITOR_UI.sortBtnPadY, paddingBottom: EDITOR_UI.sortBtnPadY, paddingLeft: EDITOR_UI.sortBtnPadX, paddingRight: EDITOR_UI.sortBtnPadX, borderRadius: EDITOR_UI.sortBtnRadius, fontSize: EDITOR_UI.sortBtnFontSize }}
+                            className={`flex-1 font-bold transition-all ${sortMode === 'rarity' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
                         >
                             稀有度
                         </button>
                         <button
                             onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setSortMode('cost'); }}
-                            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-bold transition-all ${sortMode === 'cost' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
+                            style={{ paddingTop: EDITOR_UI.sortBtnPadY, paddingBottom: EDITOR_UI.sortBtnPadY, paddingLeft: EDITOR_UI.sortBtnPadX, paddingRight: EDITOR_UI.sortBtnPadX, borderRadius: EDITOR_UI.sortBtnRadius, fontSize: EDITOR_UI.sortBtnFontSize }}
+                            className={`flex-1 font-bold transition-all ${sortMode === 'cost' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-slate-700'}`}
                         >
                             费用
                         </button>
@@ -2100,15 +2522,15 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 </div>
 
                 {/* [移植] 统计面板 (Stats UI) 移至右侧，并做了现代化视觉升级 */}
-                <div className="px-6 py-4 border-b border-gray-700 bg-slate-800/50">
-                    <div className="flex justify-between mb-2">
-                        <span className="text-gray-400 text-sm font-bold tracking-widest">卡组容量</span>
+                <div className="border-b border-gray-700 bg-slate-800/50" style={{ paddingLeft: EDITOR_UI.statsPadX, paddingRight: EDITOR_UI.statsPadX, paddingTop: EDITOR_UI.statsPadY, paddingBottom: EDITOR_UI.statsPadY }}>
+                    <div className="flex justify-between" style={{ marginBottom: EDITOR_UI.statsRowMarginBottom }}>
+                        <span className="text-gray-400 font-bold tracking-widest" style={{ fontSize: EDITOR_UI.statsLabelFontSize }}>卡组容量</span>
                         <span className={`font-black ${stats.total === 40 ? 'text-green-400' : 'text-white'}`}>{stats.total} / 40</span>
                     </div>
-                    <div className="w-full h-2 bg-gray-900 rounded-full overflow-hidden shadow-inner mb-3">
+                    <div className="w-full bg-gray-900 rounded-full overflow-hidden shadow-inner" style={{ height: EDITOR_UI.statsBarHeight, marginBottom: EDITOR_UI.statsBarMarginBottom }}>
                         <div className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 transition-all duration-300" style={{ width: `${(stats.total / 40) * 100}%` }}></div>
                     </div>
-                    <div className="flex justify-between text-xs font-mono font-bold text-gray-400 bg-black/30 p-2 rounded-md border border-white/5">
+                    <div className="flex justify-between font-mono font-bold text-gray-400 bg-black/30 border border-white/5" style={{ fontSize: EDITOR_UI.statsDetailFontSize, padding: EDITOR_UI.statsDetailPad, borderRadius: EDITOR_UI.statsDetailRadius, borderWidth: EDITOR_UI.statsDetailBorderWidth, borderStyle: 'solid' }}>
                         <span className={stats.champions > 6 ? 'text-red-400' : ''}>HERO: {stats.champions}/6</span>
                         <span>SPELL: {stats.spells}</span>
                         <span>UNIT: {stats.units}</span>
@@ -2118,10 +2540,11 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                 {/* 卡牌列表 (引入沉浸式边缘虚化) */}
                 <div className="flex-1 relative overflow-hidden bg-[#1e293b]">
                     {/* 顶部向下凸出虚化遮罩 */}
-                    <div className="absolute top-0 left-0 w-full h-6 bg-gradient-to-b from-[#1e293b] via-[#1e293b]/80 to-transparent z-20 pointer-events-none"></div>
+                    <div className="absolute top-0 left-0 w-full bg-gradient-to-b from-[#1e293b] via-[#1e293b]/80 to-transparent z-20 pointer-events-none" style={{ height: EDITOR_UI.deckListFadeTopHeight }}></div>
 
                     <div
-                        className="h-full overflow-y-auto p-4 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                        className="h-full overflow-y-auto flex flex-col [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                        style={{ padding: EDITOR_UI.deckListPad, gap: EDITOR_UI.deckListGap }}
                     >
                         {sortedDeckEntries.map(([key, count]) => {
                         const card = CARD_DB[key];
@@ -2133,21 +2556,24 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         return (
                             <div
                                 key={key}
-                                className="relative group flex items-center gap-2 h-12"
+                                className="relative group flex items-center shrink-0"
+                                style={{ gap: EDITOR_UI.deckRowGap, height: EDITOR_UI.deckRowHeight }}
                                 // [新增] 绑定悬停事件到整个容器
                             >
                                 {/* [新增] 快速删除按钮 (垃圾桶) */}
                                 <button
                                     onClick={(e) => { e.stopPropagation(); quickRemove(key); }}
-                                    className="w-8 h-full bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white rounded-l-md flex items-center justify-center transition-colors border-y border-l border-gray-700 hover:border-red-500 z-10"
+                                    className="h-full bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white flex items-center justify-center transition-colors border-gray-700 hover:border-red-500 z-10"
+                                    style={{ width: EDITOR_UI.rowDelWidth, borderTopLeftRadius: EDITOR_UI.rowDelRadius, borderBottomLeftRadius: EDITOR_UI.rowDelRadius, borderTopWidth: EDITOR_UI.rowDelBorderWidth, borderBottomWidth: EDITOR_UI.rowDelBorderWidth, borderLeftWidth: EDITOR_UI.rowDelBorderWidth, borderTopStyle: 'solid', borderBottomStyle: 'solid', borderLeftStyle: 'solid' }}
                                     title="移除全部"
                                 >
-                                    <Trash2 size={16} />
+                                    <Trash2 size={EDITOR_UI.rowDelIconSize} />
                                 </button>
 
                                 {/* 卡牌条目本体 (点击依然是减1) */}
                                 <div
-                                    className="flex-1 relative h-full bg-gray-800 rounded-r-md overflow-hidden border border-gray-700 hover:border-blue-500 transition-all cursor-pointer"
+                                    className="flex-1 relative h-full bg-gray-800 overflow-hidden border border-gray-700 hover:border-blue-500 transition-all cursor-pointer"
+                                    style={{ borderTopRightRadius: EDITOR_UI.rowBodyRadius, borderBottomRightRadius: EDITOR_UI.rowBodyRadius, borderWidth: EDITOR_UI.rowBodyBorderWidth, borderStyle: 'solid' }}
                                     onClick={() => removeFromDeck(key)}
                                     onContextMenu={(e) => {
                                         e.preventDefault();
@@ -2158,12 +2584,12 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     {/* [皮肤修复] 动态提取右侧正在编辑的卡组的皮肤图 */}
                                     <div className="absolute inset-0 opacity-40 bg-cover bg-center" style={{ backgroundImage: `url(${getSkinImage(key, userSystem.activeDeck?.skinOverrides?.[key] || 0) || card.imageUrl})` }}></div>
                                     <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/40 to-transparent"></div>
-                                    <div className="absolute inset-0 flex items-center justify-between px-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-6 h-6 rounded-full bg-blue-900/80 flex items-center justify-center text-xs font-bold border border-blue-500 text-blue-200">
+                                    <div className="absolute inset-0 flex items-center justify-between" style={{ paddingLeft: EDITOR_UI.rowBodyPadX, paddingRight: EDITOR_UI.rowBodyPadX }}>
+                                        <div className="flex items-center" style={{ gap: EDITOR_UI.rowBodyGap }}>
+                                            <div className="rounded-full bg-blue-900/80 flex items-center justify-center font-bold border border-blue-500 text-blue-200" style={{ width: EDITOR_UI.rowCostSize, height: EDITOR_UI.rowCostSize, fontSize: EDITOR_UI.rowCostFontSize, borderWidth: EDITOR_UI.rowCostBorderWidth, borderStyle: 'solid' }}>
                                                 {card.cost}
                                             </div>
-                                            <span className="font-bold text-sm text-shadow truncate w-32">{card.name}</span>
+                                            <span className="font-bold text-shadow truncate" style={{ fontSize: EDITOR_UI.rowNameFontSize, width: EDITOR_UI.rowNameWidth }}>{card.name}</span>
                                         </div>
                                         <div className="text-yellow-400 font-bold">x{count}</div>
                                     </div>
@@ -2174,32 +2600,35 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     </div>
 
                     {/* 底部向上凸出虚化遮罩 */}
-                    <div className="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-[#1e293b] via-[#1e293b]/80 to-transparent z-20 pointer-events-none"></div>
+                    <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-[#1e293b] via-[#1e293b]/80 to-transparent z-20 pointer-events-none" style={{ height: EDITOR_UI.deckListFadeBottomHeight }}></div>
                 </div>
 
                 {/* 底部操作区 */}
-                <div className="p-6 bg-[#0f172a] border-t border-gray-700 space-y-3">
-                    <div className="flex gap-2 relative">
+                <div className="flex flex-col bg-[#0f172a] border-t border-gray-700" style={{ padding: EDITOR_UI.bottomAreaPad, gap: EDITOR_UI.bottomAreaGap }}>
+                    <div className="flex relative" style={{ gap: EDITOR_UI.actionRowGap }}>
                         <button
                             onClick={clearDeck}
-                            className="p-3 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all flex items-center justify-center"
+                            className="border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all flex items-center justify-center"
+                            style={{ padding: EDITOR_UI.iconBtnPad, borderRadius: EDITOR_UI.iconBtnRadius, borderWidth: EDITOR_UI.iconBtnBorderWidth, borderStyle: 'solid' }}
                             title="清空牌库"
                         >
-                            <Eraser size={18} />
+                            <Eraser size={EDITOR_UI.iconBtnIconSize} />
                         </button>
                         <button
                             onClick={autoFillDeck}
-                            className="flex-1 py-3 rounded-lg border border-blue-500/30 text-blue-400 font-bold hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2"
+                            className="flex-1 border border-blue-500/30 text-blue-400 font-bold hover:bg-blue-500/10 transition-all flex items-center justify-center"
+                            style={{ paddingTop: EDITOR_UI.quickSelPadY, paddingBottom: EDITOR_UI.quickSelPadY, borderRadius: EDITOR_UI.quickSelRadius, gap: EDITOR_UI.quickSelGap, borderWidth: EDITOR_UI.quickSelBorderWidth, borderStyle: 'solid' }}
                         >
-                            <Wand2 size={18} /> 快速选择
+                            <Wand2 size={EDITOR_UI.iconBtnIconSize} /> 快速选择
                         </button>
                         <button
                             onMouseEnter={() => setIsCostChartHovered(true)}
                             onMouseLeave={() => setIsCostChartHovered(false)}
-                            className="p-3 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:bg-slate-700 transition-all flex items-center justify-center"
+                            className="border border-white/10 text-gray-400 hover:text-white hover:bg-slate-700 transition-all flex items-center justify-center"
+                            style={{ padding: EDITOR_UI.iconBtnPad, borderRadius: EDITOR_UI.iconBtnRadius, borderWidth: EDITOR_UI.iconBtnBorderWidth, borderStyle: 'solid' }}
                             title="费用分布"
                         >
-                            <BarChart3 size={18} />
+                            <BarChart3 size={EDITOR_UI.iconBtnIconSize} />
                         </button>
 
                         {/* [新增] 悬浮柱状统计图 — 费用分布 */}
@@ -2210,24 +2639,25 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     animate={{ opacity: 1, y: 0, scale: 1 }}
                                     exit={{ opacity: 0, y: 10, scale: 0.95 }}
                                     transition={{ duration: 0.15 }}
-                                    className="absolute bottom-full left-0 right-0 mb-2 bg-slate-900 border border-white/10 rounded-xl shadow-2xl z-50 p-4 overflow-hidden"
+                                    className="absolute bottom-full left-0 right-0 bg-slate-900 border border-white/10 shadow-2xl z-50 overflow-hidden"
+                                    style={{ marginBottom: EDITOR_UI.chartOffset, borderRadius: EDITOR_UI.chartRadius, padding: EDITOR_UI.chartPad }}
                                     onMouseEnter={() => setIsCostChartHovered(true)}
                                     onMouseLeave={() => setIsCostChartHovered(false)}
                                 >
-                                    <h4 className="text-xs font-bold tracking-widest text-gray-400 mb-3 text-center">费用分布</h4>
-                                    <div className="flex items-end gap-[2px] h-28 px-1">
+                                    <h4 className="font-bold tracking-widest text-gray-400 text-center" style={{ fontSize: EDITOR_UI.chartTitleFontSize, marginBottom: EDITOR_UI.chartTitleMarginBottom }}>费用分布</h4>
+                                    <div className="flex items-end" style={{ gap: EDITOR_UI.chartBarGap, height: EDITOR_UI.chartHeight, paddingLeft: EDITOR_UI.chartPadX, paddingRight: EDITOR_UI.chartPadX }}>
                                         {['0','1','2','3','4','5','6','7','8','9','10','10+'].map(cost => {
                                             const count = costDistribution[cost] || 0;
                                             const maxDist = Math.max(1, ...Object.values(costDistribution));
                                             const pct = (count / maxDist) * 100;
                                             return (
-                                                <div key={cost} className="flex-1 flex flex-col items-center justify-end h-full gap-[2px]">
-                                                    <span className="text-[9px] font-bold text-gray-400 leading-none">{count || ''}</span>
+                                                <div key={cost} className="flex-1 flex flex-col items-center justify-end h-full" style={{ gap: EDITOR_UI.chartBarGap }}>
+                                                    <span className="font-bold text-gray-400 leading-none" style={{ fontSize: EDITOR_UI.chartValueFontSize }}>{count || ''}</span>
                                                     <div
-                                                        className="w-full rounded-sm bg-gradient-to-t from-blue-600 to-cyan-400 transition-all"
-                                                        style={{ height: `${Math.max(pct, count > 0 ? 6 : 0)}%` }}
+                                                        className="w-full bg-gradient-to-t from-blue-600 to-cyan-400 transition-all"
+                                                        style={{ borderRadius: EDITOR_UI.chartBarRadius, height: `${Math.max(pct, count > 0 ? 6 : 0)}%` }}
                                                     />
-                                                    <span className="text-[9px] text-gray-500 leading-none">{cost}</span>
+                                                    <span className="text-gray-500 leading-none" style={{ fontSize: EDITOR_UI.chartValueFontSize }}>{cost}</span>
                                                 </div>
                                             );
                                         })}
@@ -2251,15 +2681,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 setViewMode('SELECTION'); // 返回
                             }}
                             disabled={stats.total !== 40} // [关键] 禁用条件
+                            style={{ paddingTop: EDITOR_UI.mainBtnPadY, paddingBottom: EDITOR_UI.mainBtnPadY, borderRadius: EDITOR_UI.mainBtnRadius, fontSize: EDITOR_UI.mainBtnFontSize, gap: EDITOR_UI.mainBtnGap }}
                             className={`
-                                w-full py-4 rounded-lg font-black text-lg tracking-widest flex items-center justify-center gap-2 shadow-lg transition-all
+                                w-full font-black tracking-widest flex items-center justify-center shadow-lg transition-all
                                 ${stats.total === 40
                                     ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/30 hover:scale-105'
                                     : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' // 禁用样式
                                 }
                             `}
                         >
-                            <Save fill="currentColor" size={20} />
+                            <Save fill="currentColor" size={EDITOR_UI.saveMainIconSize} />
                             {stats.total === 40 ? '完成构筑' : `还需 ${40 - stats.total} 张`}
                         </button>
                     ) : (
@@ -2274,14 +2705,15 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 }
                             }}
                             disabled={stats.total !== 40}
+                            style={{ paddingTop: EDITOR_UI.mainBtnPadY, paddingBottom: EDITOR_UI.mainBtnPadY, borderRadius: EDITOR_UI.mainBtnRadius, fontSize: EDITOR_UI.mainBtnFontSize, gap: EDITOR_UI.mainBtnGap }}
                             className={`
-                                w-full py-4 rounded-lg font-black text-lg tracking-widest flex items-center justify-center gap-2 shadow-lg transition-all
+                                w-full font-black tracking-widest flex items-center justify-center shadow-lg transition-all
                                 ${stats.total === 40
                                     ? 'bg-gradient-to-r from-blue-600 to-cyan-500 hover:scale-105 text-white shadow-blue-500/30'
                                     : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'}
                             `}
                         >
-                            <Play fill="currentColor" /> {stats.total === 40 ? '开始游戏' : '等待构建卡组'}
+                            <Play fill="currentColor" size={EDITOR_UI.playMainIconSize} /> {stats.total === 40 ? '开始游戏' : '等待构建卡组'}
                         </button>
                     )}
                 </div>
