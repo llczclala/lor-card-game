@@ -38,7 +38,13 @@ import { DIORAMA_SIZE } from './dioramaSpacing';
 // 🔴 本文件里有**三块调参区**，别改错块：
 //   `DECK_UI`（牌组选择网格屏）· `HUB_UI`（备战枢纽）· **本块 `EDITOR_UI`（卡组编辑屏）**
 // ⚠️ 卡片**本体**大小不在这里 —— 那是 `Card.tsx` 的 `location="deck-builder"` 档位。
-// ⚠️ 网格是 `grid-cols-6`（布局列数，不是 px）⇒ 刻意留在类名里，没提参。
+// ⚠️ 卡片**本体**尺寸不在这里 —— 那是 `Card.tsx:1037-1039` 的 `location === 'deck-builder'` 档位
+//   （写死 `w-[180px] h-[268px]` + `scale 0.6`）。⇒ 想让卡"看清"只能靠 `cardScale` 整体缩放，
+//   改 `gridColumns` 只会让格子变宽、卡片本身不会变大（多出来的是留白）。
+// 🔑 两个旋钮的分工：**`gridColumns` = 一行放几张**，**`cardScale` = 一张多大**。
+//   📐 单格宽 ≈ (1680 − sidebarWidth − 2×gridPad − (N−1)×gridGap) / N
+//      N=6 / gap24 / pad32 / sidebar320 ⇒ 约 196px；卡片本体 180
+//      ⇒ `180 × cardScale` 别超过单格宽，否则相邻卡会挤在一起（超了就把 gridColumns 调小）
 // ⚠️ 两处 `space-y-*` 换成了 flex 列 + gap（为了把行距提成一个数）：
 //   · 右侧栏顶部（非滚动区）→ 直接 `flex flex-col gap-*`
 //   · 卡组列表（**定高滚动区**）→ 子项必须带 `shrink-0`，否则行被压扁、反而滚不动
@@ -46,9 +52,9 @@ import { DIORAMA_SIZE } from './dioramaSpacing';
 export const EDITOR_UI = {
     // ══ ① 右上返回 ═══════════════════════════════════════════════════
     /** 距顶 px（原 top-6 = 24） */
-    backTop: 24,
+    backTop: 12,
     /** 距右 px（原 right-8 = 32） */
-    backRight: 32,
+    backRight: 12,
     /** 内边距 px（原 p-3 = 12） */
     backPad: 12,
     /** 描边 px（原 border = 1） */
@@ -56,7 +62,7 @@ export const EDITOR_UI = {
     /** 箭头图标 px（原 <ArrowLeft size={20} /> = 20） */
     backIconSize: 20,
     /** 悬停大图缩放（原 FloatingCardPreview 的 scale={1.25}） */
-    hoverPreviewScale: 1.25,
+    hoverPreviewScale: 1.5,
 
     // ══ ② 顶部筛选台 ═════════════════════════════════════════════════
     /** 整条筛选台内边距 px（原 p-4 = 16） */
@@ -203,6 +209,14 @@ export const EDITOR_UI = {
     gridGap: 24,
     /** 网格底部留白 px（原 pb-32 = 128 · 让最后一行不被底部虚化压住） */
     gridPadBottom: 128,
+    /** 【每行几张】网格列数（原 grid-cols-6 = 6）—— 直接决定一行能看到几张卡 */
+    gridColumns: 6,
+    /** 【主旋钮】卡面整体缩放（1 = 原样）—— 想让卡"看清"就拨它，不要靠改列数（见下方公式） */
+    cardScale: 1,
+    /** 卡片**布局**宽 px —— 来源：`Card.tsx:1039` 的 `location === 'deck-builder'` → `w-[180px]`（改那边要同步这里） */
+    cardBoxWidth: 180,
+    /** 卡片**布局**高 px —— 来源：同上 `h-[268px]`；开了「皮肤配置」时实际会多一行，必要时把这里调大 */
+    cardBoxHeight: 268,
     /** 顶部虚化遮罩高 px（原 h-8 = 32） */
     gridFadeTopHeight: 32,
     /** 底部虚化遮罩高 px（原 h-12 = 48） */
@@ -424,6 +438,15 @@ export const EDITOR_UI = {
     /** 「开始游戏」图标 px（lucide 默认 24，显式写死以保持一致） */
     playMainIconSize: 24,
 } as const;
+
+// ══════════════════════════════════════════════════════════════════════
+// 由 `EDITOR_UI` 推导的两个运行期量（**不用改**，改上面的调参区即可）
+// ⚠️ `EDITOR_UI` 是 `as const` ⇒ 哨兵比较前必须先 `Number()` 拓宽，否则程一把旋钮拨离 1 就报 TS2367
+// ══════════════════════════════════════════════════════════════════════
+/** 网格列数（非法/哨兵值兜底成 6，并夹在 1~12 之间） */
+const EDITOR_GRID_COLS = Math.min(12, Math.max(1, Math.round(Number(EDITOR_UI.gridColumns)) || 6));
+/** 卡面整体缩放（1 = 原样 ⇒ 一条内联样式都不加，零变化） */
+const EDITOR_CARD_SCALE = Number(EDITOR_UI.cardScale);
 
 // 🎛️ 牌组选择（备战枢纽网格屏）· 视觉调参区（**程微调就改这里**）
 // ──────────────────────────────────────────────────────────────────────
@@ -2308,7 +2331,11 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
 
                     <div className="h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" style={{ padding: EDITOR_UI.gridPad }}>
                         {/* 游戏始终在 1680×1050 坐标系内，固定 6 列由 ScaleWrapper 统一缩放 */}
-                    <div className="grid grid-cols-6" style={{ gap: EDITOR_UI.gridGap, paddingBottom: EDITOR_UI.gridPadBottom }}>
+                    {/* ⚠️ 列数由 `EDITOR_UI.gridColumns` 驱动（`repeat(N, minmax(0,1fr))` = 原 `grid-cols-6` 的展开式，N=6 时逐字节等价）
+                        📐 单格宽 ≈ (1680 − sidebarWidth − 2×gridPad − (N−1)×gridGap) / N
+                           N=6/gap24/pad32/sidebar320 ⇒ 约 196px；而卡片本体固定 180×268
+                           ⇒ **单靠加列数不会让卡变大**（多出来的是留白），要"看清"请拨 `EDITOR_UI.cardScale` */}
+                    <div className="grid" style={{ gridTemplateColumns: `repeat(${EDITOR_GRID_COLS}, minmax(0, 1fr))`, gap: EDITOR_UI.gridGap, paddingBottom: EDITOR_UI.gridPadBottom }}>
                     {visibleCards.map(card => {
                         const ownedCount = getOwnedCount(card.key);
                         const inDeckCount = localDeck[card.key] || 0;
@@ -2330,13 +2357,24 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         const isInteractive = !isLocked && !isMaxed;
 
                         return (
+                            /* 🎛️ 卡面整体缩放（`EDITOR_UI.cardScale`）：
+                               外层 = 占位（`transform` 不改布局 ⇒ 必须自己给宽高，否则 scale>1 时行间重叠）
+                               中层 = 原 `group`（保留 hover:scale-105 —— 内联 transform 会打死它，所以缩放放里层）
+                               内层 = 真正缩放（`transform-origin: top left`，含卡面与所有角标/按钮 ⇒ 一起等比）
+                               `cardScale === 1` 时两层都不加任何内联样式 ⇒ 与改动前逐字节等价 */
                             <div
                                 key={card.key}
+                                style={EDITOR_CARD_SCALE === 1 ? undefined : { width: EDITOR_UI.cardBoxWidth * EDITOR_CARD_SCALE, height: EDITOR_UI.cardBoxHeight * EDITOR_CARD_SCALE }}
+                            >
+                            <div
                                 className={`group relative transition-all duration-300 ${isInteractive ? 'hover:scale-105 hover:z-10' : ''}`}
                                 onContextMenu={(e) => {
                                     e.preventDefault();
                                     eventBus.emit(GameEvents.UI_CLICK); handleViewCard(fullCard, 'grid');
                                 }}
+                            >
+                            <div
+                                style={EDITOR_CARD_SCALE === 1 ? undefined : { width: EDITOR_UI.cardBoxWidth, height: EDITOR_UI.cardBoxHeight, transform: `scale(${EDITOR_CARD_SCALE})`, transformOrigin: 'top left' }}
                             >
                                 <div
                                     onClick={() => !isMaxed && addToDeck(card.key)}
@@ -2450,6 +2488,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         <Zap size={EDITOR_UI.quickIconSize} fill="currentColor" />
                                     </button>
                                 )}
+                            </div>
+                            </div>
                             </div>
                         );
                     })}
