@@ -83,9 +83,9 @@ export const BATTLE_SCORE_UI = {
     /** 左栏纵向行距 px（原 gap-4 = 16）；「战斗奖励条」另算，它自带 mt */
     leftColGap: 16,
     /** 「胜利 / 失败」字号 px（原 text-9xl = 128） */
-    resultFontSize: 128,
+    resultFontSize: 256,
     /** 「作战成功」字号 px（原 text-2xl = 24） */
-    subtitleFontSize: 24,
+    subtitleFontSize: 48,
 
     // ══ ③ 左侧：战斗奖励条（银币图标 + 数值）════════════════════════
     /** 与上方副标题的距离 px（原 mt-8 = 32） */
@@ -101,11 +101,11 @@ export const BATTLE_SCORE_UI = {
     /** 描边宽度 px（原 border = 1；颜色仍由 border-white/20 管） */
     rewardBorderWidth: 1,
     /** 银币图标边长 px（原 w-16 h-16 = 64） */
-    rewardCoinSize: 64,
+    rewardCoinSize: 128,
     /** 「战斗奖励」字号 px（原 text-sm = 14） */
-    rewardLabelFontSize: 14,
+    rewardLabelFontSize: 28,
     /** 「+930」数值字号 px（原 text-5xl = 48） */
-    rewardValueFontSize: 48,
+    rewardValueFontSize: 96,
 
     // ══ ④ 右侧：评分面板外框 + 表头行 ════════════════════════════════
     /** 面板内边距 px（原 p-8 = 32） */
@@ -119,7 +119,7 @@ export const BATTLE_SCORE_UI = {
     /** 面板内各行之间的纵向间距 px（原 gap-2 = 8） */
     panelGap: 8,
     /** 「作战评分 / 分数」表头字号 px（原 text-xl = 20） */
-    panelTitleFontSize: 20,
+    panelTitleFontSize: 40,
     /** 表头下方外边距 px（原 mb-4 = 16） */
     panelTitleMarginBottom: 16,
     /** 表头文字 ↔ 下划线 的距离 px（原 pb-2 = 8） */
@@ -129,11 +129,11 @@ export const BATTLE_SCORE_UI = {
 
     // ══ ⑤ 右侧：明细行 / 加成行 / 分割线 ═════════════════════════════
     /** 基础分明细行字号 px（原 text-sm = 14，如「水晶伤害 x3 90」） */
-    baseRowFontSize: 14,
+    baseRowFontSize: 28,
     /** 明细行里「名称 ↔ xN」的间距 px（原 gap-2 = 8） */
     baseRowGap: 8,
     /** 加成行字号 px（原 text-sm = 14，如「战斗胜利 +50%」） */
-    bonusRowFontSize: 14,
+    bonusRowFontSize: 28,
     /** 分割线粗细 px（原 h-px = 1） */
     dividerHeight: 1,
     /** 分割线上下外边距 px（原 my-4 = 16） */
@@ -145,9 +145,9 @@ export const BATTLE_SCORE_UI = {
     /** 总计行上边线粗细 px（原 border-t = 1；颜色仍由 border-white/20 管） */
     totalBorderTopWidth: 1,
     /** 「总计得分」字号 px（原 text-lg = 18） */
-    totalLabelFontSize: 18,
+    totalLabelFontSize: 36,
     /** 「186,000」数值字号 px（原 text-4xl = 36） */
-    totalValueFontSize: 36,
+    totalValueFontSize: 72,
 
     // ══ ⑦ 底部按钮栏（返回大厅 / 返回地图）═══════════════════════════
     /** 距屏幕底部 px（原 bottom-12 = 48） */
@@ -1231,7 +1231,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
 
                         {/* 左侧：标题与总分 */}
                         <div className="flex-1 flex flex-col items-start" style={{ gap: BATTLE_SCORE_UI.leftColGap }}>
-                            <div className={`font-black italic tracking-tighter ${result === 'victory' ? 'text-transparent bg-clip-text bg-gradient-to-br from-yellow-300 to-yellow-600' : 'text-red-600'}`} style={{ fontSize: BATTLE_SCORE_UI.resultFontSize }}>
+                            <div className={`font-black tracking-tighter ${result === 'victory' ? 'text-transparent bg-clip-text bg-gradient-to-br from-yellow-300 to-yellow-600' : 'text-red-600'}`} style={{ fontSize: BATTLE_SCORE_UI.resultFontSize }}>
                                 {result === 'victory' ? '胜利' : '失败'}
                             </div>
                             <div className="font-mono text-gray-400 tracking-widest" style={{ fontSize: BATTLE_SCORE_UI.subtitleFontSize }}>

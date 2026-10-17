@@ -78,7 +78,7 @@ export const EDITOR_UI = {
     /** 搜索框宽 px（原 w-64 = 256） */
     searchWidth: 256,
     /** 搜索图标 px（原 <Search size={16} /> = 16） */
-    searchIconSize: 16,
+    searchIconSize: 32,
     /** 搜索图标距左 px（原 left-3 = 12） */
     searchIconLeft: 12,
     /** 搜索框圆角 px（原 rounded-md = 6） */
@@ -90,7 +90,7 @@ export const EDITOR_UI = {
     /** 搜索框右内边距 px（原 pr-3 = 12） */
     searchPadRight: 12,
     /** 搜索框字号 px（原 text-sm = 14） */
-    searchFontSize: 14,
+    searchFontSize: 28,
     /** 分类组外壳间距 px（原 gap-1 = 4） */
     catWrapGap: 4,
     /** 分类组外壳内边距 px（原 p-1 = 4） */
@@ -104,11 +104,11 @@ export const EDITOR_UI = {
     /** 分类按钮圆角 px（原 rounded-sm = 2） */
     catBtnRadius: 2,
     /** 分类按钮字号 px（原 text-sm = 14） */
-    catBtnFontSize: 14,
+    catBtnFontSize:28,
     /** 分类按钮图标与文字间距 px（原 gap-1 = 4） */
     catBtnGap: 4,
     /** 分类按钮图标 px（原 <User size={14} /> 等 = 14） */
-    catIconSize: 14,
+    catIconSize: 28,
     /** 工具按钮（随机皮肤 / 皮肤配置）上下内边距 px（原 py-2 = 8） */
     utilBtnPadY: 8,
     /** 工具按钮左右内边距 px（原 px-3 = 12） */
@@ -116,11 +116,11 @@ export const EDITOR_UI = {
     /** 工具按钮圆角 px（原 rounded-md = 6） */
     utilBtnRadius: 6,
     /** 工具按钮字号 px（原 text-xs = 12） */
-    utilBtnFontSize: 12,
+    utilBtnFontSize: 24,
     /** 工具按钮图标与文字间距 px（原 gap-1.5 = 6） */
     utilBtnGap: 6,
     /** 工具按钮图标 px（原 <Shuffle size={16} /> / <Palette size={16} /> = 16） */
-    utilIconSize: 16,
+    utilIconSize: 32,
     /** 「高级筛选」上下内边距 px（原 py-2 = 8） */
     advBtnPadY: 8,
     /** 「高级筛选」左右内边距 px（原 px-4 = 16） */
@@ -128,17 +128,17 @@ export const EDITOR_UI = {
     /** 「高级筛选」图标与文字间距 px（原 gap-2 = 8） */
     advBtnGap: 8,
     /** 「高级筛选」字号 px（原 text-sm = 14） */
-    advBtnFontSize: 14,
+    advBtnFontSize: 24,
     /** 「高级筛选」圆角 px（原 rounded-md = 6） */
     advBtnRadius: 6,
     /** 「高级筛选」图标 px（原 <Filter size={16} /> = 16） */
-    advIconSize: 16,
+    advIconSize: 32,
     /** 「清空筛选」内边距 px（原 p-2 = 8） */
     resetPad: 8,
     /** 「清空筛选」圆角 px（原 rounded-md = 6） */
     resetRadius: 6,
     /** 「清空筛选」图标 px（原 <X size={18} /> = 18） */
-    resetIconSize: 18,
+    resetIconSize: 36,
 
     // ══ ③ 高级筛选下拉 ═══════════════════════════════════════════════
     /** 下拉外层左右内边距 px（原 px-4 = 16） */
@@ -154,15 +154,15 @@ export const EDITOR_UI = {
     /** 分组纵向间距 px（原 gap-y-4 = 16） */
     filterRowGapY: 16,
     /** 分组标题字号 px（原 text-xs = 12） */
-    filterLabelFontSize: 12,
+    filterLabelFontSize: 24,
     /** 分组标题下距 px（原 mb-2 = 8） */
     filterLabelMarginBottom: 8,
     /** 费用 chips 间距 px（原 gap-1.5 = 6） */
-    costChipGap: 6,
+    costChipGap: 9,
     /** 费用 chip 边长 px（原 w-8 h-8 = 32） */
-    costChipSize: 32,
+    costChipSize: 48,
     /** 费用 chip 字号 px（原 text-xs = 12） */
-    costChipFontSize: 12,
+    costChipFontSize: 24,
     /** 阵营 chips 间距 px（原 gap-2 = 8） */
     regionChipGap: 8,
     /** 阵营 chip 左右内边距 px（原 px-3 = 12） */
@@ -172,7 +172,7 @@ export const EDITOR_UI = {
     /** 阵营 chip 圆角 px（原 rounded-md = 6） */
     regionChipRadius: 6,
     /** 阵营 chip 字号 px（原 text-xs = 12） */
-    regionChipFontSize: 12,
+    regionChipFontSize:24,
     /** 法术速度 chips 间距 px（原 gap-2 = 8） */
     speedChipGap: 8,
     /** 速度 chip 边长 px（原 w-8 h-8 = 32） */
@@ -192,15 +192,15 @@ export const EDITOR_UI = {
     /** 关键词 chips 间距 px（原 gap-1.5 = 6） */
     keywordChipGap: 6,
     /** 关键词 chip 边长 px（原 w-8 h-8 = 32） */
-    keywordChipSize: 32,
+    keywordChipSize: 48,
     /** 关键词 chip 圆角 px（原 rounded = 4） */
     keywordChipRadius: 4,
     /** 关键词 chip 描边 px（原 border = 1） */
     keywordChipBorderWidth: 1,
     /** 关键词图标 px（原 w-5 h-5 = 20） */
-    keywordIconSize: 20,
+    keywordIconSize: 35,
     /** 关键词首字兜底字号 px（原 text-[8px] = 8） */
-    keywordFallbackFontSize: 8,
+    keywordFallbackFontSize: 16,
 
     // ══ ④ 卡牌网格 ═══════════════════════════════════════════════════
     /** 网格区左右上下内边距 px（原 p-8 = 32） */
@@ -210,9 +210,9 @@ export const EDITOR_UI = {
     /** 网格底部留白 px（原 pb-32 = 128 · 让最后一行不被底部虚化压住） */
     gridPadBottom: 128,
     /** 【每行几张】网格列数（原 grid-cols-6 = 6）—— 直接决定一行能看到几张卡 */
-    gridColumns: 6,
+    gridColumns: 4,
     /** 【主旋钮】卡面整体缩放（1 = 原样）—— 想让卡"看清"就拨它，不要靠改列数（见下方公式） */
-    cardScale: 1,
+    cardScale: 1.5,
     /** 卡片**布局**宽 px —— 来源：`Card.tsx:1039` 的 `location === 'deck-builder'` → `w-[180px]`（改那边要同步这里） */
     cardBoxWidth: 180,
     /** 卡片**布局**高 px —— 来源：同上 `h-[268px]`；开了「皮肤配置」时实际会多一行，必要时把这里调大 */

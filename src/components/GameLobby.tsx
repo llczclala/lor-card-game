@@ -94,11 +94,11 @@ export const PROFILE_UI = {
     /** MODIFY 条上下内边距 px（原 py-1 = 4） */
     modifyPadY: 4,
     /** MODIFY 条字号 px（原 text-xs = 12） */
-    modifyFontSize: 12,
+    modifyFontSize: 24,
     /** MODIFY 条图标与文字间距 px（原 gap-1 = 4） */
     modifyGap: 4,
     /** MODIFY 条图标 px（原 <Crop size={12} /> = 12） */
-    modifyIconSize: 12,
+    modifyIconSize: 24,
     /** 右列各行间距 px（原 gap-3 = 12） */
     nameColGap: 12,
     /** 名字行高 px（原 h-12 = 48） */
@@ -110,7 +110,7 @@ export const PROFILE_UI = {
     /** 名字行分割线 px（原 border-b = 1） */
     nameRowBorderWidth: 1,
     /** 名字编辑框字号 px（原 text-2xl = 24） */
-    nameInputFontSize: 24,
+    nameInputFontSize: 48,
     /** 名字编辑框左右内边距 px（原 px-2 = 8） */
     nameInputPadX: 8,
     /** 名字编辑框上下内边距 px（原 py-1 = 4） */
@@ -128,7 +128,7 @@ export const PROFILE_UI = {
     /** UID 行间距 px（原 gap-4 = 16） */
     uidRowGap: 16,
     /** UID 字号 px（原 text-sm = 14） */
-    uidFontSize: 14,
+    uidFontSize: 21,
     /** 复制图标 px（原 <Copy size={14} /> = 14） */
     copyIconSize: 14,
     /** 等级行间距 px（原 gap-3 = 12） */
@@ -148,7 +148,7 @@ export const PROFILE_UI = {
     /** EXP 进度条描边 px（原 border = 1） */
     expBarBorderWidth: 1,
     /** EXP 文字字号 px（原 text-xs = 12） */
-    expFontSize: 12,
+    expFontSize: 24,
 
     // ══ ③④ 两个三格区（战绩 / 收藏）共用的分区参数 ════════════════════
     /** 三格之间间距 px（原 gap-4 = 16） */
@@ -166,31 +166,31 @@ export const PROFILE_UI = {
 
     // ══ ③ 战绩三格 ═══════════════════════════════════════════════════
     /** 标签字号 px（原 text-xs = 12） */
-    statLabelFontSize: 12,
+    statLabelFontSize: 15,
     /** 标签下距 px（原 mb-1 = 4） */
     statLabelMarginBottom: 4,
     /** 主数值字号 px（原 text-2xl = 24） */
-    statValueFontSize: 24,
+    statValueFontSize: 36,
     /** 胜负里的「/ 负数」字号 px（原 text-base = 16） */
-    statSubFontSize: 16,
+    statSubFontSize: 36,
     /** 「代表英雄：」整行字号 px（原 text-xs = 12） */
-    heroLineFontSize: 12,
+    heroLineFontSize: 36,
 
     // ══ ④ 收藏三格 ═══════════════════════════════════════════════════
     /** 卡内行距 px（原 gap-1 = 4） */
     collectCardGap: 4,
     /** 标签字号 px（原 text-[10px] = 10） */
-    collectLabelFontSize: 10,
+    collectLabelFontSize: 20,
     /** 标签下距 px（原 mb-1 = 4） */
     collectLabelMarginBottom: 4,
     /** 主数值字号 px（原 text-xl = 20） */
-    collectValueFontSize: 20,
+    collectValueFontSize: 30,
     /** 斜杠后小字字号 px（原 text-xs = 12） */
-    collectSubFontSize: 12,
+    collectSubFontSize: 18,
     /** 进度条高 px（原 h-1 = 4） */
     collectBarHeight: 4,
     /** 「棋盘 N/M」小字字号 px（原 text-[10px] = 10） */
-    collectNoteFontSize: 10,
+    collectNoteFontSize: 20,
 
     // ══ ⑤ 底部关闭行 ═════════════════════════════════════════════════
     /** 关闭行上边距 px（原 mt-4 = 16） */

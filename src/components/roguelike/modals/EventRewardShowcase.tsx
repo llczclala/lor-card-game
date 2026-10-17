@@ -60,9 +60,9 @@ import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
 // ══════════════════════════════════════════════════════════════════════
 export const EVENT_REWARD_UI = {
     /** 【主旋钮】整层缩放（原 `SHOWCASE_SCALE` = 1.32 · 1 = 基准） */
-    showcaseScale: 1.32,
+    showcaseScale: 1.35,
     /** 卡面单独缩放（原 `CARD_SCALE` = 1.28 —— `Card` 基准比强化卡小，不放大会挤在一起） */
-    cardScale: 1.28,
+    cardScale: 1.4,
 
     // ══ ① 整体 ═══════════════════════════════════════════════════════
     /** 外层左右留白 px（原 px-8 = 32） */
@@ -72,9 +72,9 @@ export const EVENT_REWARD_UI = {
 
     // ══ ② 标题与空态 ═════════════════════════════════════════════════
     /** 标题字号 px（原 text-2xl = 24） */
-    titleFontSize: 24,
+    titleFontSize: 48,
     /** 「什么也没有发生。」字号 px（原 text-sm = 14） */
-    emptyFontSize: 14,
+    emptyFontSize: 28,
 
     // ══ ③ 奖励行（内容多时可滚轮滚动） ════════════════════════════════
     /** 奖励体之间间距 px（原 gap-8 = 32） */
@@ -84,9 +84,9 @@ export const EVENT_REWARD_UI = {
     /** 奖励行上下内边距 px（原 py-5 = 20） */
     rowPadY: 20,
     /** 奖励行上限：真实视口宽的百分之几（原 `88vw`）—— 改比例就改这个数 */
-    rowMaxWidthVw: 88,
+    rowMaxWidthVw: 100,
     /** 奖励行上限：真实视口高的百分之几（原 `62vh`）—— 改比例就改这个数 */
-    rowMaxHeightVh: 62,
+    rowMaxHeightVh: 100,
 
     // ══ ④ 数值 / 文字奖励方块 ════════════════════════════════════════
     /** 最小宽 px（原 min-w-[150px] = 150） */
@@ -104,15 +104,15 @@ export const EVENT_REWARD_UI = {
     /** 图片图标尺寸 px（原 w-10 h-10 = 40） */
     statIconSize: 40,
     /** lucide 图标尺寸 px（原 `<HeartCrack size={34} />` 等 = 34） */
-    statLucideSize: 34,
+    statLucideSize: 40,
     /** emoji 图标字号 px（原 text-3xl = 30） */
-    statEmojiFontSize: 30,
+    statEmojiFontSize: 45,
     /** 数值字号 px（原 text-2xl = 24） */
     statValueFontSize: 24,
     /** 数值注释字号 px（原 text-[11px] = 11） */
-    statLabelFontSize: 11,
+    statLabelFontSize: 22,
     /** 长文字字号 px（原 text-[13px] = 13） */
-    statTextFontSize: 13,
+    statTextFontSize: 16,
 
     // ══ ⑤ 装备卡面（A+B→C 里的「B」） ════════════════════════════════
     /** 装备卡宽 px（原 w-[168px] = 168） */
