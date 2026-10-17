@@ -52,6 +52,122 @@ export const FULLART_EQUIP_UI = {
     maxHeightPct: 92,
 };
 
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 作战评分（结算菜单 · RPG 评分表）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 这一屏 = 本文件最下方 `GameOverScreen` 进入 `menu` 阶段（或失败时立刻）盖满全屏的那一层：
+//   左「胜利 / 失败」大字 +「作战成功」+「战斗奖励 +N」银币条 ｜
+//   右「作战评分」明细表（基础分逐条 / 加成 +50% / 总计得分）｜ 底部「返回大厅 / 返回地图」按钮。
+// 管：左右两栏的间距与留白 / 大标题与副标题字号 / 奖励条的图标与内边距 /
+//     右侧评分面板的宽高与内边距 / 明细行与加成分行的字号行距 / 分割线 / 总计行 / 底部按钮。
+// 改完存盘即生效（HMR —— 雷电/电脑上 1~3 秒看到，不用出包）。
+// 命名与用法**对齐 TITLE_UI**：值是**绝对画布 px**、直接进 style；注释标注**原 Tailwind 类**。
+// ⚠️ 本文件里还有卡牌详情（FullArtOverlay / FULLART_EQUIP_UI）等**别的浮层** —— 别改错块。
+// ⚠️ 本块**刻意不给「整体缩放」主旋钮**：这一屏是「左右两栏 flex + 底部绝对定位按钮」的构图，
+//    按钮是 `absolute bottom-12`、不在被缩放的流里 ⇒ 一个 scale 会把按钮从屏幕底部拉走。
+//    想整体变大就逐项调（先动 panelHeight / resultFontSize / panelPad 最有效）。
+// ⚠️ rowMaxWidth 默认锁 'none'：原 max-w-6xl（1152）被 index.css:56 的
+//    [class*="max-w-"]{max-width:none!important} 打死过 ⇒ 搬成内联后**填数字会"突然真的生效"、整屏变窄**。
+// ⚠️ 字号项**只搬 fontSize、绝不配写死的 lineHeight**（作者会把字号成倍调大，写死行高会压行）。
+// ══════════════════════════════════════════════════════════════════════
+export const BATTLE_SCORE_UI = {
+    // ══ ① 左右两栏容器 ═══════════════════════════════════════════════
+    /** 左栏 ↔ 右栏 的横向间距 px（原 gap-16 = 64） */
+    rowGap: 64,
+    /** 整行最大宽（原 max-w-6xl = 1152，**已被 index.css:56 打死**）⇒ 默认 'none' 锁住改动前的样子 */
+    rowMaxWidth: 'none',
+    /** 整行左右内边距 px（原 px-12 = 48） */
+    rowPadX: 48,
+
+    // ══ ② 左侧：胜负大字 + 副标题 ════════════════════════════════════
+    /** 左栏纵向行距 px（原 gap-4 = 16）；「战斗奖励条」另算，它自带 mt */
+    leftColGap: 16,
+    /** 「胜利 / 失败」字号 px（原 text-9xl = 128） */
+    resultFontSize: 128,
+    /** 「作战成功」字号 px（原 text-2xl = 24） */
+    subtitleFontSize: 24,
+
+    // ══ ③ 左侧：战斗奖励条（银币图标 + 数值）════════════════════════
+    /** 与上方副标题的距离 px（原 mt-8 = 32） */
+    rewardMarginTop: 32,
+    /** 银币图标 ↔ 右侧文字 的间距 px（原 gap-6 = 24） */
+    rewardGap: 24,
+    /** 条内左右内边距 px（原 px-8 = 32） */
+    rewardPadX: 32,
+    /** 条内上下内边距 px（原 py-4 = 16） */
+    rewardPadY: 16,
+    /** 圆角 px（原 rounded-2xl = 16） */
+    rewardRadius: 16,
+    /** 描边宽度 px（原 border = 1；颜色仍由 border-white/20 管） */
+    rewardBorderWidth: 1,
+    /** 银币图标边长 px（原 w-16 h-16 = 64） */
+    rewardCoinSize: 64,
+    /** 「战斗奖励」字号 px（原 text-sm = 14） */
+    rewardLabelFontSize: 14,
+    /** 「+930」数值字号 px（原 text-5xl = 48） */
+    rewardValueFontSize: 48,
+
+    // ══ ④ 右侧：评分面板外框 + 表头行 ════════════════════════════════
+    /** 面板内边距 px（原 p-8 = 32） */
+    panelPad: 32,
+    /** 面板圆角 px（原 rounded-2xl = 16） */
+    panelRadius: 16,
+    /** 面板描边宽度 px（原 border = 1；颜色仍由 border-white/10 管） */
+    panelBorderWidth: 1,
+    /** 面板高度 px（原 h-[630px]）；装不下的明细在面板内滚动 —— 调大时留意别顶穿 1050 画布 */
+    panelHeight: 630,
+    /** 面板内各行之间的纵向间距 px（原 gap-2 = 8） */
+    panelGap: 8,
+    /** 「作战评分 / 分数」表头字号 px（原 text-xl = 20） */
+    panelTitleFontSize: 20,
+    /** 表头下方外边距 px（原 mb-4 = 16） */
+    panelTitleMarginBottom: 16,
+    /** 表头文字 ↔ 下划线 的距离 px（原 pb-2 = 8） */
+    panelTitlePadBottom: 8,
+    /** 表头下划线粗细 px（原 border-b = 1；颜色仍由 border-gray-700 管） */
+    panelTitleBorderWidth: 1,
+
+    // ══ ⑤ 右侧：明细行 / 加成行 / 分割线 ═════════════════════════════
+    /** 基础分明细行字号 px（原 text-sm = 14，如「水晶伤害 x3 90」） */
+    baseRowFontSize: 14,
+    /** 明细行里「名称 ↔ xN」的间距 px（原 gap-2 = 8） */
+    baseRowGap: 8,
+    /** 加成行字号 px（原 text-sm = 14，如「战斗胜利 +50%」） */
+    bonusRowFontSize: 14,
+    /** 分割线粗细 px（原 h-px = 1） */
+    dividerHeight: 1,
+    /** 分割线上下外边距 px（原 my-4 = 16） */
+    dividerMarginY: 16,
+
+    // ══ ⑥ 右侧：总计得分 ═════════════════════════════════════════════
+    /** 与上方内容的最小距离 px（原 pt-6 = 24；配合 mt-auto 把总计行顶到面板底部） */
+    totalPadTop: 24,
+    /** 总计行上边线粗细 px（原 border-t = 1；颜色仍由 border-white/20 管） */
+    totalBorderTopWidth: 1,
+    /** 「总计得分」字号 px（原 text-lg = 18） */
+    totalLabelFontSize: 18,
+    /** 「186,000」数值字号 px（原 text-4xl = 36） */
+    totalValueFontSize: 36,
+
+    // ══ ⑦ 底部按钮栏（返回大厅 / 返回地图）═══════════════════════════
+    /** 距屏幕底部 px（原 bottom-12 = 48） */
+    footerBottom: 48,
+    /** 按钮之间的间距 px（原 gap-6 = 24） */
+    footerGap: 24,
+    /** 按钮左右内边距 px（原 px-12 = 48） */
+    exitBtnPadX: 48,
+    /** 按钮上下内边距 px（原 py-4 = 16） */
+    exitBtnPadY: 16,
+    /** 胶囊圆角 px（原 rounded-full = 9999） */
+    exitBtnRadius: 9999,
+    /** 按钮描边宽度 px（原 border-2 = 2；颜色仍由 border-blue-500/50 管） */
+    exitBtnBorderWidth: 2,
+    /** 刷新图标 ↔ 文案 的间距 px（原 gap-4 = 16） */
+    exitBtnGap: 16,
+    /** 刷新图标边长 px（原 <RefreshCw size={20}> 的入参，非类名） */
+    exitBtnIconSize: 20,
+} as const;
+
 // [新增] 自定义购买确认弹窗组件
 const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: any) => (
     <div className="absolute inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in" onClick={e => e.stopPropagation()}>
@@ -1111,14 +1227,14 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
             {/* 4. [重构] 结算菜单层 (RPG 风格评分表) */}
             {(phase === 'menu' || result === 'defeat') && (
                 <div className="absolute inset-0 flex items-center justify-center z-[400] animate-fade-in bg-black/80 backdrop-blur-xl">
-                    <div className="flex gap-16 max-w-6xl w-full px-12 items-center">
+                    <div className="flex w-full items-center" style={{ gap: BATTLE_SCORE_UI.rowGap, maxWidth: BATTLE_SCORE_UI.rowMaxWidth, paddingLeft: BATTLE_SCORE_UI.rowPadX, paddingRight: BATTLE_SCORE_UI.rowPadX }}>
 
                         {/* 左侧：标题与总分 */}
-                        <div className="flex-1 flex flex-col items-start gap-4">
-                            <div className={`text-9xl font-black italic tracking-tighter ${result === 'victory' ? 'text-transparent bg-clip-text bg-gradient-to-br from-yellow-300 to-yellow-600' : 'text-red-600'}`}>
+                        <div className="flex-1 flex flex-col items-start" style={{ gap: BATTLE_SCORE_UI.leftColGap }}>
+                            <div className={`font-black italic tracking-tighter ${result === 'victory' ? 'text-transparent bg-clip-text bg-gradient-to-br from-yellow-300 to-yellow-600' : 'text-red-600'}`} style={{ fontSize: BATTLE_SCORE_UI.resultFontSize }}>
                                 {result === 'victory' ? '胜利' : '失败'}
                             </div>
-                            <div className="text-2xl font-mono text-gray-400 tracking-widest">
+                            <div className="font-mono text-gray-400 tracking-widest" style={{ fontSize: BATTLE_SCORE_UI.subtitleFontSize }}>
                                 作战成功
                             </div>
 
@@ -1127,12 +1243,12 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                                 initial={{ scale: 0, opacity: 0 }}
                                 animate={{ scale: 1, opacity: 1 }}
                                 transition={{ delay: 0.5, type: "spring" }}
-                                className="mt-8 flex items-center gap-6 bg-white/10 px-8 py-4 rounded-2xl border border-white/20"
+                                className="flex items-center bg-white/10 border-white/20" style={{ marginTop: BATTLE_SCORE_UI.rewardMarginTop, gap: BATTLE_SCORE_UI.rewardGap, paddingLeft: BATTLE_SCORE_UI.rewardPadX, paddingRight: BATTLE_SCORE_UI.rewardPadX, paddingTop: BATTLE_SCORE_UI.rewardPadY, paddingBottom: BATTLE_SCORE_UI.rewardPadY, borderRadius: BATTLE_SCORE_UI.rewardRadius, borderWidth: BATTLE_SCORE_UI.rewardBorderWidth, borderStyle: 'solid' }}
                             >
-                                <img src={CURRENCY_ICONS.silverCoin} className="w-16 h-16 drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]" alt="银币" />
+                                <img src={CURRENCY_ICONS.silverCoin} className="drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]" style={{ width: BATTLE_SCORE_UI.rewardCoinSize, height: BATTLE_SCORE_UI.rewardCoinSize }} alt="银币" />
                                 <div className="flex flex-col">
-                                    <span className="text-sm font-bold text-gray-400 tracking-widest uppercase">战斗奖励</span>
-                                    <span className="text-5xl font-black text-white font-mono">
+                                    <span className="font-bold text-gray-400 tracking-widest uppercase" style={{ fontSize: BATTLE_SCORE_UI.rewardLabelFontSize }}>战斗奖励</span>
+                                    <span className="font-black text-white font-mono" style={{ fontSize: BATTLE_SCORE_UI.rewardValueFontSize }}>
                                         +{scoreResult.silverEarned.toLocaleString()}
                                     </span>
                                 </div>
@@ -1140,8 +1256,8 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                         </div>
 
                         {/* 右侧：详细评分表 */}
-                        <div className="flex-1 bg-gray-900/80 p-8 rounded-2xl border border-white/10 h-[630px] overflow-y-auto custom-scrollbar flex flex-col gap-2 shadow-2xl">
-                            <h3 className="text-xl font-black text-gray-500 mb-4 border-b border-gray-700 pb-2 flex justify-between">
+                        <div className="flex-1 bg-gray-900/80 border-white/10 overflow-y-auto custom-scrollbar flex flex-col shadow-2xl" style={{ padding: BATTLE_SCORE_UI.panelPad, borderRadius: BATTLE_SCORE_UI.panelRadius, borderWidth: BATTLE_SCORE_UI.panelBorderWidth, borderStyle: 'solid', height: BATTLE_SCORE_UI.panelHeight, gap: BATTLE_SCORE_UI.panelGap }}>
+                            <h3 className="font-black text-gray-500 border-gray-700 flex justify-between" style={{ fontSize: BATTLE_SCORE_UI.panelTitleFontSize, marginBottom: BATTLE_SCORE_UI.panelTitleMarginBottom, paddingBottom: BATTLE_SCORE_UI.panelTitlePadBottom, borderBottomWidth: BATTLE_SCORE_UI.panelTitleBorderWidth, borderStyle: 'solid' }}>
                                 <span>作战评分</span>
                                 <span>分数</span>
                             </h3>
@@ -1153,9 +1269,9 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                                     initial={{ x: 50, opacity: 0 }}
                                     animate={{ x: 0, opacity: 1 }}
                                     transition={{ delay: index * 0.1 }} // 逐条显示
-                                    className="flex justify-between items-center text-sm"
+                                    className="flex justify-between items-center" style={{ fontSize: BATTLE_SCORE_UI.baseRowFontSize }}
                                 >
-                                    <div className="flex items-center gap-2 text-gray-300">
+                                    <div className="flex items-center text-gray-300" style={{ gap: BATTLE_SCORE_UI.baseRowGap }}>
                                         <span>{item.label}</span>
                                         <span className="text-gray-600 font-mono">x{item.count}</span>
                                     </div>
@@ -1163,7 +1279,7 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                                 </motion.div>
                             ))}
 
-                            <div className="h-px bg-gray-700 my-4"></div>
+                            <div className="bg-gray-700" style={{ height: BATTLE_SCORE_UI.dividerHeight, marginTop: BATTLE_SCORE_UI.dividerMarginY, marginBottom: BATTLE_SCORE_UI.dividerMarginY }}></div>
 
                             {/* 加成列表 */}
                             {scoreResult.achievements.map((ach, index) => (
@@ -1172,16 +1288,16 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                                     initial={{ x: 50, opacity: 0 }}
                                     animate={{ x: 0, opacity: 1 }}
                                     transition={{ delay: 0.5 + index * 0.1 }}
-                                    className="flex justify-between items-center text-yellow-400 font-bold text-sm"
+                                    className="flex justify-between items-center text-yellow-400 font-bold" style={{ fontSize: BATTLE_SCORE_UI.bonusRowFontSize }}
                                 >
                                     <span>{ach}</span>
                                     <span>+50%</span>
                                 </motion.div>
                             ))}
 
-                            <div className="mt-auto pt-6 border-t border-white/20 flex justify-between items-end">
-                                <div className="text-gray-400 font-bold text-lg">总计得分</div>
-                                <div className="text-4xl font-black text-white font-mono">
+                            <div className="mt-auto border-white/20 flex justify-between items-end" style={{ paddingTop: BATTLE_SCORE_UI.totalPadTop, borderTopWidth: BATTLE_SCORE_UI.totalBorderTopWidth, borderStyle: 'solid' }}>
+                                <div className="text-gray-400 font-bold" style={{ fontSize: BATTLE_SCORE_UI.totalLabelFontSize }}>总计得分</div>
+                                <div className="font-black text-white font-mono" style={{ fontSize: BATTLE_SCORE_UI.totalValueFontSize }}>
                                     {scoreResult.finalScore.toLocaleString()}
                                 </div>
                             </div>
@@ -1189,12 +1305,12 @@ export const GameOverScreen = ({ result, stats, onExit, onPlayMovie, onPrepareMo
                     </div>
 
                     {/* 底部按钮栏 */}
-                    <div className="absolute bottom-12 w-full flex justify-center gap-6">
+                    <div className="absolute w-full flex justify-center" style={{ bottom: BATTLE_SCORE_UI.footerBottom, gap: BATTLE_SCORE_UI.footerGap }}>
                         <button
                             onClick={() => { eventBus.emit(GameEvents.UI_BACK); onExit(); }}
-                            className="px-12 py-4 bg-blue-900 hover:bg-blue-800 text-white font-bold rounded-full border-2 border-blue-500/50 flex items-center gap-4 transition-all hover:scale-105 shadow-lg shadow-blue-900/50"
+                            className="bg-blue-900 hover:bg-blue-800 text-white font-bold border-blue-500/50 flex items-center transition-all hover:scale-105 shadow-lg shadow-blue-900/50" style={{ paddingLeft: BATTLE_SCORE_UI.exitBtnPadX, paddingRight: BATTLE_SCORE_UI.exitBtnPadX, paddingTop: BATTLE_SCORE_UI.exitBtnPadY, paddingBottom: BATTLE_SCORE_UI.exitBtnPadY, borderRadius: BATTLE_SCORE_UI.exitBtnRadius, borderWidth: BATTLE_SCORE_UI.exitBtnBorderWidth, borderStyle: 'solid', gap: BATTLE_SCORE_UI.exitBtnGap }}
                         >
-                            <RefreshCw size={20} />
+                            <RefreshCw size={BATTLE_SCORE_UI.exitBtnIconSize} />
                             {exitLabel ?? '返回大厅'}
                         </button>
                     </div>
