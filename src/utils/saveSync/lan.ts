@@ -66,6 +66,83 @@ export function isLanServerSupported(): boolean {
     return nodeRequire('http') !== null;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Windows 防火墙：让**程序自己**放行，而不是让玩家自己去点
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 为什么需要这一段（2026-10-21 实战）：
+//   PC 当服务端 ⇒ 必须有人放行入站。全新安装时 Windows 会弹「允许访问网络」，
+//   但玩家**点两次「取消」**就会永久留下两条 Block 规则 —— 之后连弹窗都不再出现，
+//   表现为"手机等 8 秒超时"，而且玩家完全看不出是防火墙。
+//   程的要求很明确：不能让玩家自己去处理防火墙。
+//
+// 分两条路：
+//   ① 装机时由安装器预置规则（`build/installer.nsh`）—— 覆盖全新安装，零感知；
+//   ② 这一节的「一键放行」—— 覆盖热补丁用户 / 老玩家 / 授权被清掉的情况。
+//
+// ⚠️ 加防火墙规则**必须管理员权限**，Windows 没有"免提权开入站"的合法通道
+//    （WFP 也要管理员）。所以这里的做法是：弹一次 UAC，玩家点「是」，我们代为执行。
+
+/** 防火墙规则的固定名字（安装器与运行时必须用同一个名字，否则会重复堆规则） */
+const FIREWALL_RULE_NAME = 'Snowbreak Rivals LAN Sync';
+
+/**
+ * 弹一次 UAC 并放行本程序的入站连接。
+ *
+ * @returns `started` = 是否已经把提权流程拉起来（不代表规则已加好 —— 玩家可能点「否」）；
+ *          `message` = 直接可以显示给玩家的一句话
+ */
+export function requestFirewallAllow(): { started: boolean; message: string } {
+    const cp = nodeRequire('child_process');
+    const fs = nodeRequire('fs');
+    const os = nodeRequire('os');
+    const path = nodeRequire('path');
+    const proc = nodeRequire('process');
+    if (!cp || !fs || !os || !path || !proc) {
+        return { started: false, message: '当前环境不支持自动放行（需要桌面端）' };
+    }
+
+    // 当前进程路径 = 真正在监听的 exe（开发时是 electron.exe，安装后是游戏本身）
+    const exe: string = proc.execPath;
+    const safeExe = exe.replace(/'/g, "''");
+    const netsh =
+        `netsh advfirewall firewall add rule name="${FIREWALL_RULE_NAME}" `
+        + `dir=in action=allow program='${safeExe}' enable=yes profile=private,public`;
+
+    const script = [
+        '$ErrorActionPreference = "Continue"',
+        `netsh advfirewall firewall delete rule name="${FIREWALL_RULE_NAME}" | Out-Null`,
+        `${netsh} | Out-Null`,
+        '',
+    ].join('\r\n');
+
+    const file = path.join(os.tmpdir(), `snowbreak-fw-${Date.now()}.ps1`);
+    try {
+        // 带 BOM，避免中文路径/注释在 Windows PowerShell 5 里被当成 GBK
+        fs.writeFileSync(file, '\ufeff' + script, 'utf8');
+    } catch (e) {
+        return { started: false, message: `写入临时脚本失败：${String(e)}` };
+    }
+
+    try {
+        const escapedFile = file.replace(/'/g, "''");
+        cp.spawn('powershell.exe', [
+            '-NoProfile', '-WindowStyle', 'Hidden', '-Command',
+            `Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden `
+            + `-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','${escapedFile}'`,
+        ], { detached: true, stdio: 'ignore' }).unref();
+        return {
+            started: true,
+            message: '已弹出管理员确认 —— 点「是」放行后，让手机再扫一次码即可（服务还在等）',
+        };
+    } catch (e) {
+        return {
+            started: false,
+            message: `无法自动提权（${String(e)}）。可手动执行：${netsh}`,
+        };
+    }
+}
+
 /** 私有 IPv4 网段判断（局域网互传只可能发生在这些网段里） */
 function isPrivateV4(ip: string): boolean {
     const parts = ip.split('.').map(Number);
@@ -362,15 +439,51 @@ export async function startLanServer(
                 send(400, { ok: false, error: msg });
             }
         });
-    }) as { listen: (...a: any[]) => void; close: () => void; on: (ev: string, cb: (e: any) => void) => void; address: () => { port: number } };
+    }) as {
+        listen: (...a: any[]) => void;
+        close: () => void;
+        on: (ev: string, cb: (e: any) => void) => void;
+        once: (ev: string, cb: (e: any) => void) => void;
+        removeListener: (ev: string, cb: (e: any) => void) => void;
+        address: () => { port: number };
+    };
 
-    await new Promise<void>((resolve, reject) => {
-        server.on('error', (err: { code?: string }) => {
-            reject(new Error(err?.code === 'EADDRINUSE' ? '端口被占用，请重试' : String(err)));
-        });
-        // 端口给 0 = 让系统挑一个空闲端口
-        server.listen({ host: '0.0.0.0', port: 0 }, () => resolve());
+    /**
+     * 端口策略：**优先固定端口**。
+     *
+     * 为什么不是 `port: 0` 随机：随机端口让防火墙规则、第三方安全软件（火绒/360）的放行
+     * 都变得不可靠 —— 它们常常按端口记忆。固定端口也让"放行哪一条"可写进说明。
+     * 占用时退回随机，保证不会因为端口冲突直接失败。
+     */
+    const PREFERRED_PORT = 48765;
+    const tryListen = (port: number) => new Promise<void>((resolve, reject) => {
+        const onError = (err: unknown) => {
+            server.removeListener('listening', onListening);
+            reject(err);
+        };
+        const onListening = () => {
+            server.removeListener('error', onError);
+            resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen({ host: '0.0.0.0', port });
     });
+
+    try {
+        await tryListen(PREFERRED_PORT);
+    } catch (e) {
+        if ((e as { code?: string })?.code === 'EADDRINUSE') {
+            onLog(`端口 ${PREFERRED_PORT} 被占用，改用系统分配的随机端口`);
+            try {
+                await tryListen(0);
+            } catch (e2) {
+                throw new Error(`监听失败：${e2 instanceof Error ? e2.message : String(e2)}`);
+            }
+        } else {
+            throw new Error(`监听失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
 
     const port = server.address().port;
     const timer = setTimeout(() => {

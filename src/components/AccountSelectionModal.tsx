@@ -12,7 +12,7 @@ import {
 import { isNative } from '../platform';
 // [2026-10-18 跨设备同步] 局域网传输层（PC 当服务端 / 手机当客户端）
 import {
-    startLanServer, stopLanServer, syncWithPeer, isLanServerSupported,
+    startLanServer, stopLanServer, syncWithPeer, isLanServerSupported, requestFirewallAllow,
     type LanSession,
 } from '../utils/saveSync/lan';
 // [2026-10-18 跨设备同步] 二维码（自己实现的最小编码器，见 qr.ts 头部说明）
@@ -105,6 +105,8 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
     /** 二维码渲染数据（只在会话建立时算一次，别每次 render 重算） */
     const [lanQr, setLanQr] = useState<{ path: string; size: number; payload: string } | null>(null);
     const [lanLog, setLanLog] = useState<string[]>([]);
+    /** [2026-10-21 防火墙] 一键放行的提示文案（只在 PC 侧出现） */
+    const [fwMsg, setFwMsg] = useState<string | null>(null);
     // [2026-10-18 改版] 三个折叠开关：扫码是全屏覆盖层；手输与文本互传退到"兜底"位置
     const [scannerOpen, setScannerOpen] = useState(false);
     const [manualOpen, setManualOpen] = useState(false);
@@ -169,7 +171,12 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
             }
             throw lastErr ?? new Error('所有备选地址都连不上');
         } catch (e) {
-            setSyncMsg({ ok: false, text: `连接失败：${e instanceof Error ? e.message : String(e)}` });
+            const msg = e instanceof Error ? e.message : String(e);
+            // 超时类失败最常见的原因是**电脑那边没放行入站**（防火墙/安全软件），给一句明确指引
+            const hint = /连不上对方|failed to connect|timeout|timed out|超时/i.test(msg)
+                ? '　👉 请在那台电脑上点「手机连不上？点这里自动放行防火墙」'
+                : '';
+            setSyncMsg({ ok: false, text: `连接失败：${msg}${hint}` });
         } finally {
             setLanBusy(false);
         }
@@ -221,6 +228,17 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
         pushLog('已取消等待');
     };
 
+    /**
+     * [2026-10-21 防火墙] 让**程序自己**放行入站，玩家不用去找防火墙设置。
+     * 场景：玩家（或本机历史上）点过「取消」，Windows 会留下永久 Block 规则，
+     * 之后连弹窗都不再出现 ⇒ 手机等 8 秒超时，且完全看不出原因。
+     */
+    const handleFirewallAllow = () => {
+        const r = requestFirewallAllow();
+        setFwMsg(r.message);
+        pushLog(r.started ? '已请求管理员权限放行局域网连接' : `自动放行未启动：${r.message}`);
+    };
+
     /** 手机侧：主动连 PC 并互传 */
     const handleConnect = async () => {
         setLanBusy(true);
@@ -233,7 +251,11 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                 text: `同步完成：对方 ${rep.receivedAccounts} 个账号 · 本机新增 ${rep.added.length} 个 · 跳过 ${rep.skipped} 个`,
             });
         } catch (e) {
-            setSyncMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+            const msg = e instanceof Error ? e.message : String(e);
+            const hint = /连不上对方|failed to connect|timeout|timed out|超时/i.test(msg)
+                ? '　👉 请在那台电脑上点「手机连不上？点这里自动放行防火墙」'
+                : '';
+            setSyncMsg({ ok: false, text: `${msg}${hint}` });
         } finally {
             setLanBusy(false);
         }
@@ -511,6 +533,16 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                                             <div className="text-xs text-gray-500 text-center font-mono break-all leading-relaxed">
                                                 扫不了？手输：{lanSession.url}<br />配对码 {lanSession.token}
                                             </div>
+                                            {/* [2026-10-21 防火墙] 连不上时的自助修复：程序自己提权放行，玩家不需要懂防火墙 */}
+                                            <button
+                                                onClick={handleFirewallAllow}
+                                                className="w-full py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-sm font-bold transition-colors"
+                                            >
+                                                手机连不上？点这里自动放行防火墙
+                                            </button>
+                                            {fwMsg && (
+                                                <div className="text-xs text-amber-400/90 leading-relaxed">{fwMsg}</div>
+                                            )}
                                             {/* 多网卡时把候选地址全列出来 —— 二维码里已经带了备选（手机会自动挨个试），
                                                 这里列出来是为了手输/排查时能一眼看到本机有哪些地址 */}
                                             {lanSession.candidates.length > 1 && (
