@@ -194,9 +194,11 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
             // 生成配对二维码：手机用**系统相机**扫它 ⇒ 系统用 snowbreak:// 把本 App 调起来
             //   （清单里已注册 intent-filter；这样手机端不需要相机插件、不需要相机权限）
             try {
-                // 备选地址：PC 上常有虚拟网卡 / VPN，第一个不一定通 ⇒ 都塞进码里让手机挨个试
+                // 备选地址：PC 上常有虚拟网卡 / VPN，第一个不一定通 ⇒ 都塞进码里让手机挨个试。
+                // 只放**真网卡**的私有网段地址 —— 虚拟网卡（VMware/VPN/隧道）手机必然到不了，
+                // 放进备选只会让手机白等 8 秒超时。
                 const alts = session.candidates
-                    .filter((c) => c.private && c.address !== session.ip)
+                    .filter((c) => c.private && !c.virtual && c.address !== session.ip)
                     .slice(0, 2)
                     .map((c) => c.address);
                 const payload = `snowbreak://pair?h=${session.ip}&p=${session.port}&t=${session.token}`
@@ -516,7 +518,7 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                                                     本机地址（手机连不上时换一个试试）：
                                                     {lanSession.candidates.map((c, i) => (
                                                         <div key={c.address} className={i === 0 ? 'text-emerald-400/80' : 'text-gray-500'}>
-                                                            · {c.address} <span className="text-gray-600">({c.iface}{c.private ? '' : ' · 非局域网'})</span>
+                                                            · {c.address} <span className="text-gray-600">({c.iface}{c.private ? '' : ' · 非局域网'}{c.virtual ? ' · 虚拟网卡' : ''})</span>
                                                         </div>
                                                     ))}
                                                 </div>

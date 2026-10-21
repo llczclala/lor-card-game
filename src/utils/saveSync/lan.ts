@@ -87,6 +87,8 @@ export interface LanAddress {
     iface: string;
     /** 是否私有网段 */
     private: boolean;
+    /** 是否虚拟网卡 / VPN / 隧道（这类地址手机基本到不了，别写进备选） */
+    virtual: boolean;
 }
 
 /**
@@ -115,12 +117,102 @@ export function getLanIpCandidates(): LanAddress[] {
                 if (ni.internal) continue;
                 // Node 18+ 返回 'IPv4'，老版本返回 4，两种都认
                 if (ni.family !== 'IPv4' && ni.family !== 4) continue;
-                out.push({ address: ni.address, iface: name, private: isPrivateV4(ni.address) });
+                out.push({
+                    address: ni.address,
+                    iface: name,
+                    private: isPrivateV4(ni.address),
+                    virtual: VIRTUAL_IFACE.test(name),
+                });
             }
         }
     } catch { /* 忽略 */ }
-    const rank = (c: LanAddress) => (c.private ? 0 : 2) + (VIRTUAL_IFACE.test(c.iface) ? 1 : 0);
+    const rank = (c: LanAddress) => (c.private ? 0 : 2)
+        + (c.virtual ? 1 : 0)
+        // 末位是 .1 的多半是网关 / 虚拟网络宿主（VMware VMnet1/8 就是 192.168.x.1）
+        // —— LocalSend 的排序也把 `.1` 结尾压在最低分，这里当成弱惩罚而不是排除
+        + (c.address.endsWith('.1') ? 1 : 0);
     return out.sort((a, b) => rank(a) - rank(b));
+}
+
+/**
+ * 让**操作系统自己**回答"到外网走哪个本机地址"。
+ *
+ * 原理：UDP socket 的 `connect` 只是在内核里记下对端地址，**不会发出任何数据包**；
+ * 此时 `address().address` 就是内核为这条路由挑选的**本机出口地址**。
+ *
+ * 为什么这比枚举网卡强：枚举只能靠"名字像不像虚拟网卡"来猜，而路由表是**事实**。
+ * 本机实测（2026-10-21）：
+ *   8.8.8.8 → 192.168.1.3  ✅（局域网）
+ *   Radmin VPN 26.232.62.96 / Tailscale 100.x / VMware 192.168.109.1 全被绕开
+ *
+ * 这也是 LocalSend「优先取真实 WiFi 网卡 IP」在 Node 里的等价实现
+ * （Dart 侧用 `network_info_plus.getWifiIP()`，Node 侧就是本函数；npm `address` 包同款手法）。
+ *
+ * @returns 首选局域网地址；问不到（无默认路由 / 无 dgram）时返回 null
+ */
+async function primaryOutboundIp(): Promise<string | null> {
+    const dgram = nodeRequire('dgram');
+    if (!dgram) return null;
+
+    const askOnce = (host: string): Promise<string | null> =>
+        new Promise((resolve) => {
+            let sock: any;
+            let settled = false;
+            const finish = (v: string | null) => {
+                if (settled) return;
+                settled = true;
+                try { sock?.close(); } catch { /* 忽略 */ }
+                resolve(v);
+            };
+            try {
+                sock = dgram.createSocket('udp4');
+            } catch {
+                resolve(null);
+                return;
+            }
+            const timer = setTimeout(() => finish(null), 800);
+            sock.once('error', () => { clearTimeout(timer); finish(null); });
+            try {
+                // connect 只是设默认对端，不发包；回调里读本机被选中的地址
+                sock.connect(53, host, () => {
+                    clearTimeout(timer);
+                    let addr: string | null = null;
+                    try { addr = sock.address()?.address ?? null; } catch { addr = null; }
+                    finish(addr);
+                });
+            } catch {
+                clearTimeout(timer);
+                finish(null);
+            }
+        });
+
+    // 多个目标兜底：国内网络打 8.8.8.8 未必通，但 connect 本来也不需要"通"，只是路由选择
+    for (const host of ['223.5.5.5', '8.8.8.8', '1.1.1.1']) {
+        const ip = await askOnce(host);
+        if (ip) return ip;
+    }
+    return null;
+}
+
+/**
+ * 本机可用的局域网地址，**系统首选路由排第一**（比枚举顺序靠谱得多）。
+ * 候选列表用于：二维码里的 `alt=` 备选、PC 界面展示、手输兜底。
+ */
+export async function resolveLanAddresses(): Promise<LanAddress[]> {
+    const preferred = await primaryOutboundIp();
+    const list = getLanIpCandidates();
+    if (!preferred) return list;
+
+    const hit = list.find((c) => c.address === preferred);
+    const rest = list.filter((c) => c.address !== preferred);
+    // 系统首选一般就在枚举结果里；不在的话（少见）也补一条，别把它丢了
+    const head: LanAddress = hit ?? {
+        address: preferred,
+        iface: '系统首选路由',
+        private: isPrivateV4(preferred),
+        virtual: false,
+    };
+    return [head, ...rest];
 }
 
 /** 本机最可能的局域网 IPv4（= 候选列表第一个），拿不到返回 null */
@@ -180,11 +272,13 @@ export async function startLanServer(
 
     const http = nodeRequire('http');
     if (!http) throw new Error('当前环境不支持（需要 Electron 桌面端）');
-    const candidates = getLanIpCandidates();
+    // 🔴 先问系统路由（最可靠），拿不到再退回"枚举 + 名字过滤"排序
+    const candidates = await resolveLanAddresses();
     const ip = candidates[0]?.address;
     if (!ip) throw new Error('没有检测到局域网 IP —— 请确认已连上 WiFi / 网线');
+    onLog(`本机地址 ${ip}（${candidates[0].iface}）${candidates.length > 1 ? ` · 另有 ${candidates.length - 1} 个备选` : ''}`);
     if (!candidates[0].private) {
-        onLog('⚠️ 没找到私有网段地址（192.168 / 10.x / 172.16-31）—— 手机大概率连不上，请确认电脑连的是同一个 WiFi');
+        onLog('⚠️ 首选地址不在私有网段（192.168 / 10.x / 172.16-31）—— 手机大概率连不上，请确认电脑连的是同一个 WiFi');
     }
 
     const token = makeToken();
