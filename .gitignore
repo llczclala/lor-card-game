@@ -25,3 +25,10 @@ dist-android/
 android/keystore/*.jks
 android/keystore/*.keystore
 android/keystore.properties
+
+# ---- 临时工作区（验证脚本 / 时间戳备份副本，不入库）----
+# _scratch：一次性自证脚本（卡牌 ID 审计、卡组码往返、局域网探测…），
+#           留在磁盘供复查，但不进版本库。
+# *.bak-*：出问题时的临时备份副本（如 xxx.tsx.bak-2026-10-21T02-22-42-492Z）。
+_scratch/
+*.bak-*
