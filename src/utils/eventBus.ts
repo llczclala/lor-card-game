@@ -56,6 +56,11 @@ export const GameEvents = {
     SFX_STRIKE_NEXUS: 'sfx_strike_nexus',         // 打击水晶
     SFX_QUICK_ATTACK: 'sfx_quick_attack',         // 快攻打击
     SFX_QUICK_BLOCK: 'sfx_quick_block',           // 格挡者反击快攻
+    // [2026-10-17 莉莉子 · 教程] 「这一场战斗**结算完毕**」的唯一广播点（`resolveCombatAnimation` 收尾发出）。
+    //   —— 为什么必须新增、不能复用 `ATTACK_DECLARE`（上方 :7）：那个事件只是"**点了进攻按钮**"，
+    //      教程任务挂在它上面会在"玩家还没派完单位 / 敌方还没来格挡 / 结算动画还没播完"时就判完成
+    //      （程实测：碾压关第 4 步台词在点完按钮那一刻就弹出来了）。
+    COMBAT_RESOLVED: 'combat_resolved',
 
     // [新增] 设置类事件 (解决 TS 报错的核心)
     SET_VOICE_VOLUME: 'set_voice_volume',
@@ -94,6 +99,22 @@ export const GameEvents = {
     // ── 约束：只在 GameSession 真正进出暂停时发一次；必须与 GAME_RESUME 成对
     GAME_PAUSE: 'game_pause',
     GAME_RESUME: 'game_resume',
+
+    // [2026-10-24 莉莉子 · ESC 归属权改造] 右上角「暂停」按钮 → GameSession
+    // ── 为什么走事件而不是 prop：暂停态是 GameSession 的**局部 state**，
+    //    而按钮画在 App 的全局悬浮层（要跨标准/教程/肉鸽三个 Wrapper 都生效）。
+    //    走 GAME_PAUSE/GAME_RESUME 同一套广播，按钮的图标也能靠这对事件同步，
+    //    不必再开第二条状态通道。
+    // ── 约束：接收方（GameSession）**必须**照抄 ESC 那套守卫
+    //    （已结算 / 设置面板开着时不响应），否则会出现"结算界面点暂停按钮没反应但按钮亮着"。
+    GAME_TOGGLE_PAUSE: 'game_toggle_pause',
+
+    // [2026-10-24 莉莉子 · ESC 归属权改造] 暂停入口是否可用（payload: boolean）
+    // ── 为什么需要它：结算时 `appState` 仍是 'game'/'rogue_game'，App 侧无法判断"这一局已经打完了"，
+    //    而 GameSession 的暂停守卫会在 `gameResult` 存在时直接 return。
+    //    ⇒ 只有 GameSession 知道"暂停入口已失效"，由它广播，右上角按钮跟着消失。
+    //    否则结算界面上会留一个点不动的死按钮（图标状态也可能与真实暂停态错位）。
+    GAME_PAUSE_AVAILABLE: 'game_pause_available',
 
     UNIT_DIE: 'unit_die',
     UNIT_KILL: 'unit_kill',
@@ -144,6 +165,11 @@ export const GameEvents = {
 
     // [2026-08-26 莉莉子] 法术目标全部选完、进入结算（教程判定"玩家已完成施法操作"用）
     TUTORIAL_SPELL_TARGETS_SELECTED: 'tutorial_spell_targets_selected',
+
+    // [2026-10-16 莉莉子] 多目标法术「选满其中一步、即将进入下一步」时广播。
+    //   病根背景：单挑需要先选友方、再选敌方两个目标，而"第一步选完"此前**不发任何事件**
+    //   ⇒ 教程引导步只能干等最后一步，无法在玩家选完芬妮时把箭头切到安蒂娜。
+    TUTORIAL_SPELL_TARGET_STEP_DONE: 'tutorial_spell_target_step_done',
 
     // [2026-08-26 莉莉子] 武装悬停大卡预览：跨组件广播（各武装图标 onMouseEnter/Leave 触发）
     ARMAMENT_GAZE_SHOW: 'armament_gaze_show',

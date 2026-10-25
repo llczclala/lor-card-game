@@ -7,9 +7,9 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 import { executeSpellEffect } from '../logic/spells';
 // [2026-10-03 莉莉子 · P0 收口] "等升级播完"的唯一实现（原先本文件与 useGameState 各一份）
 import { awaitLevelUpDrain as awaitLevelUpDrainCore } from '../utils/levelUpDrain';
-import { applyEchoOnPlay } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响
+import { applyEchoOnPlay, getPower } from '../logic/keywords'; // [2026-08-06 莉莉子] Echo 回响 // [2026-10-19 程] getPower 统一有效攻击力口径（含 roundBuffs）
 import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
-import { noteSpellCast, getSpellCastSnapshot } from '../utils/gameRules'; // [2026-10-08 第二波] 施法计数（条件减费判据）· [2026-10-12] + 施法前基准
+import { noteSpellCast, getSpellCastSnapshot, clearHandCostTax, bumpHoardStored } from '../utils/gameRules'; // [2026-10-08 第二波] 施法计数（条件减费判据）· [2026-10-12] + 施法前基准 · [2026-10-24] + 费用税清零 · [2026-10-23] + 囤积攒点
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { CARD_DB } from '../data/cards';
 import { calculateNewMana, getEffectiveSpellCost, getChoiceCardCost, CHOICE_FLYING_SWORD_DISCOUNT_KEYS, buffTopUnitInDeck, getLeveledUpCard, isLeveledUpForSide } from '../utils/gameRules'; // [2026-10-12] + 抉择算价唯一入口
@@ -96,7 +96,9 @@ function findAITargetsForEffect(
             if (type === 'ALLY_CHAMPION') {
                 candidates = candidates.filter(c => c.isChampion);
             }
-        } else if (type === 'ENEMY_UNIT') {
+        } else if (type === 'ENEMY_UNIT' || type === 'ENEMY_TARGET') {
+            // [2026-10-23 莉莉子 · 崩坏] ENEMY_TARGET（敌方单位/敌方水晶）的**单位侧候选**与 ENEMY_UNIT 完全相同；
+            //   水晶候选不在此枚举（AI 想打脸时由 handler 直接给 {type:'enemy_nexus'}）。
             candidates = [...hostileBench];
             state.combatField.forEach(f => {
                 if (f.owner !== owner && f.attacker) candidates.push(f.attacker);
@@ -219,6 +221,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         setGame, setPlayerBench, setEnemyBench, setCombatField,
         setPlayerHand, setEnemyHand, setPlayerDeck, setEnemyDeckState,
         setMessage, createFullCard, flushMicroQueue, judgeLifeAndDeath, wait, triggerShake, onComplete,
+        boardSnapshot: boardSnapshotParam,
         playerEquipments, enemyEquipments,
         onInvalidTarget
     } = params;
@@ -441,6 +444,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (targetCondition) return false; // 其他条件水晶不参与判定
             return (reqType === 'PLAYER_NEXUS' && owner === 'player') ||
                    (reqType === 'ENEMY_NEXUS' && owner === 'enemy') ||
+                   // [2026-10-23 莉莉子 · 崩坏] 敌方侧目标包含敌方水晶。
+                   //   口径与 `case 'ENEMY_UNIT'` 逐字一致：`owner` 是**目标所属侧**，
+                   //   玩家施法时敌方永远落在 'enemy' 这一侧（AI 施法走 findAITargetsForEffect，不经此处）。
+                   (reqType === 'ENEMY_TARGET' && owner === 'enemy') ||
                    reqType === 'ANY_TARGET';
         }
 
@@ -494,8 +501,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 if ((card.damageTaken || 0) <= 0) return false;
             }
             else if (targetCondition === 'power_less_than_3') {
-                // 计算当前真实攻击力
-                const currentPower = (card.power || 0) + (card.buffs?.power || 0);
+                // 计算当前真实攻击力（[2026-10-19 程] 改用 getPower，与卡面同口径，含 roundBuffs 临时加攻）
+                const currentPower = getPower(card);
                 if (currentPower >= 3) return false;
             }
             else if (targetCondition === 'in_combat') {
@@ -510,6 +517,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             case 'ENEMY_UNIT': return isEnemy;
             case 'ANY_UNIT': return true;
             case 'ANY_TARGET': return true; // 单位也是 Target
+            // [2026-10-23 莉莉子 · 崩坏] 敌方单位或敌方水晶 —— 单位侧只放行敌方（水晶侧见上方分支）
+            case 'ENEMY_TARGET': return isEnemy;
             case 'ALLY_CHAMPION': return isAlly && card.isChampion && (!filterKey || card.key === filterKey);
             // [2026-08-16 莉莉子] 删除 case 'HAND_CARD'：348 行已提前 return 拦截，此 case 不可达（TS2678 死代码）
             case 'SPELL_ON_STACK': {
@@ -647,7 +656,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 //   `Cannot read properties of undefined (reading 'current')` ⇒ 所有需要选目标的法术全部点不动。
                 //   返回 -1 表示「**无法枚举**」（≠ 0「确实没有可选目标」），用于与真正的空池区分。
                 //   数据源优先级：stateRef（useGameState 层）→ boardSnapshot（UI 层补传）
-                const board = stateRef ? stateRef.current : params.boardSnapshot?.();
+                const board = stateRef ? stateRef.current : boardSnapshotParam?.();
                 if (!board) return -1;
 
                 // =====================================
@@ -697,6 +706,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                         ...enemyPool.map(c => ({ card: c, side: 'enemy' as const })),
                     ];
                 } else {
+                    // [2026-10-23 莉莉子 · 崩坏] ⚠️ `ENEMY_TARGET` **故意**不纳入放宽：
+                    //   它的候选包含「敌方水晶」，而水晶永远可选 ⇒ `remainingSelectable` 恒 ≥ 1，
+                    //   若把它当成"单位池"来数，敌场空时会数出 0 ⇒ 被判定"本步已无可选" ⇒
+                    //   **直接收工、玩家永远点不到敌方水晶**。返回 -1（无法枚举 ⇒ 不放宽）才是对的。
                     return -1; // 其余类型（水晶 / 堆叠法术 / 手牌…）不放宽 ⇒ 维持原行为
                 }
 
@@ -722,6 +735,13 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
 
             setSelectedTargets(newTargets); // [核心修复 BUG 1] 先存状态以维持前台连线渲染，绝不提前销毁
 
+            // [2026-10-16 莉莉子] 多目标法术：本步已选满、且后面还有步骤 ⇒ 广播"该进下一步了"。
+            //   教程据此把引导文案/箭头从「选我方芬妮」切到「选敌方安蒂娜」。
+            //   （此前只有"全部选完"才发事件，中间步骤对教程完全静默。）
+            if (currentReqSatisfied && currentStepIndex + 1 < effect.targetRequirements.length) {
+                eventBus.emit(GameEvents.TUTORIAL_SPELL_TARGET_STEP_DONE, { card: castingCard, stepIndex: currentStepIndex });
+            }
+
             if (currentReqSatisfied) {
                 if (currentStepIndex + 1 >= effect.targetRequirements.length) {
                     // [2026-08-26 莉莉子] 法术目标全部选完：通知教程控制器（精确到施法操作完成）
@@ -744,7 +764,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             //   ⇒ 标准对局的可见通道只有 announce（useGameAnnouncer → <GameAnnouncement>），
             //     由调用方经 onInvalidTarget 接上。
             //
-            // ⚠️ 只对 ally_not_full 提示：其他法术卡的"非法点击静默"行为**不在本次范围**，一字不改。
+            // ⚠️ 只对 `ally_not_full` 提示：其他法术卡的"非法点击静默"行为**不在本次范围**，一字不改。
             const cond = effect.params?.targetCondition;
             console.log("Invalid target");
             if (cond === 'ally_not_full') {
@@ -1058,6 +1078,12 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     cleanSnapshot.enemyMana = Math.min(cleanSnapshot.enemyMaxMana, newMana);
                     cleanSnapshot.enemySpellMana = Math.min(3, newSpellMana);
                 }
+                // [2026-10-24 莉莉子 · 费用修饰器] 法术成功扣费 ⇒ 该侧费用税清零。
+                //   程口径："玩家打出一张卡牌后解除"；**必须卡在扣费之后** —— 提前清会让这一张自己白付税。
+                // [2026-10-24 莉莉子 · 独立审查修复] 记下**实扣量**，供取消/退款原额退回。
+                //   ⚠️ 退款若读裸 `card.cost`，含税那部分就白扣了 ⇒ 每次「打出→取消」净亏税点。
+                card.paidCost = effectiveCost;
+                clearHandCostTax(owner);
             }
 
             setGame(cleanSnapshot);
@@ -1221,6 +1247,12 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     cleanSnapshot.enemyMana = Math.min(cleanSnapshot.enemyMaxMana, newMana);
                     cleanSnapshot.enemySpellMana = Math.min(3, newSpellMana);
                 }
+                // [2026-10-24 莉莉子 · 费用修饰器] 法术成功扣费 ⇒ 该侧费用税清零。
+                //   程口径："玩家打出一张卡牌后解除"；**必须卡在扣费之后** —— 提前清会让这一张自己白付税。
+                // [2026-10-24 莉莉子 · 独立审查修复] 记下**实扣量**，供取消/退款原额退回。
+                //   ⚠️ 退款若读裸 `card.cost`，含税那部分就白扣了 ⇒ 每次「打出→取消」净亏税点。
+                card.paidCost = effectiveCost;
+                clearHandCostTax(owner);
             }
 
             cleanSnapshot.spellCasting = null;
@@ -1503,6 +1535,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // ⚠️ 同上（AI 抉择侧）
             if (stateRef) stateRef.current.game = { ...stateRef.current.game, enemyMana: nextMana, enemySpellMana: nextSpellMana };
         }
+        // [2026-10-24 莉莉子 · 费用修饰器] 抉择子卡实扣完成 ⇒ 该侧费用税清零（与上面两处同口径）
+        clearHandCostTax(choiceOwner);
 
         const effectId = transformed.effects && transformed.effects.length > 0 ? transformed.effects[0] : null;
         const effectDef = effectId ? EFFECT_DB[effectId] : null;
@@ -1589,6 +1623,14 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
 
     const confirmPendingSpell = () => {
         const isBlockDeclare = stateRef.current.game.phase === 'block_declare';
+        // ==========================================
+        // [2026-10-23 莉莉子 · 强化「囤积」重做] **有目标法术**的"打出"出口就在这里。
+        //   为什么挂"确认入栈"而不是 `startSpellCasting`：
+        //     后者之后还能 `cancelChoice`（退卡退费）⇒ 玩家能"开始施法 → 取消"反复刷点数。
+        //     确认入栈之后不能再撤，才是"法术真的打出去了"。
+        //   ⚠️ 若打出的就是「囤积」本身，它此刻已不在手牌 ⇒ bump 天然不会自我 +1。
+        // ==========================================
+        const playedSpell = stateRef.current.game.pendingSpell; // { card, owner, targets }
         setGame(prev => {
             if (!prev.pendingSpell) return prev;
             return {
@@ -1601,6 +1643,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 lastActionTimestamp: Date.now()
             };
         });
+        if (playedSpell && playedSpell.owner !== 'enemy') {
+            setPlayerHand(prev => bumpHoardStored(prev));
+        }
         setMessage(isBlockDeclare ? "法术入栈，继续部署防线" : "法术入栈，等待对方响应");
     };
 
@@ -1621,7 +1666,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             const activeCard = stateRef.current.game.activeCard;
             if (activeCard) {
                 setPlayerHand(prev => [...prev, activeCard]);
-                const costToRefund = activeCard.cost;
+                const costToRefund = activeCard.paidCost ?? activeCard.cost;
                 setGame(prev => {
                     let newMana = prev.playerMana + costToRefund;
                     let newSpellMana = prev.playerSpellMana;
@@ -1645,7 +1690,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (activeCard) {
                 setPlayerHand(prev => [...prev, activeCard]);
                 if (activeCard.type.includes('unit')) {
-                    const costToRefund = activeCard.cost || 0;
+                    const costToRefund = (activeCard.paidCost ?? activeCard.cost) || 0;
                     setGame(prev => {
                         let newMana = prev.playerMana + costToRefund;
                         let newSpellMana = prev.playerSpellMana;
@@ -1673,7 +1718,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         const cardToReturn = pending.card.parentCard || pending.card;
         setPlayerHand(prev => [...prev, cardToReturn]);
 
-        const costToRefund = pending.card.cost;
+        const costToRefund = pending.card.paidCost ?? pending.card.cost;
         setGame(prev => {
             let newMana = prev.playerMana + costToRefund;
             let newSpellMana = prev.playerSpellMana;
@@ -1689,6 +1734,55 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             };
         });
         setMessage("法术已取消打出");
+    };
+
+    /**
+     * [2026-10-16 莉莉子] 教程专用：敌方自动打出一张法术，并指定双方目标。
+     * ── 为什么需要：教程「施法的速度」要求"敌方打出「单挑」，玩家用暗箭抢先反制"。
+     *    ⚠️ 敌方在教程对局里**没有手牌**（初始 `enemyHand` 为空，本函数是"无中生有代打"），
+     *    因此不能走 `useGameState` 的手牌出牌门禁，必须由调用方合成卡牌并代打。
+     * ── 走的是 `commitSpell` 的**敌方非极速分支**（现有逻辑），于是天然获得：
+     *    ① 按 `owner='enemy'` 扣敌方法力（脚本已给 enemyMana；注意本函数**不是**唯一扣费点，
+     *       `commitSpell` 侧并没有 canAfford 门禁，`calculateNewMana` 会把不足钳到 0）；
+     *    ② 入 spellStack 并演出（敌方 1200ms 悬念 + 400ms 锁定）；
+     *    ③ 把 `turnOwner` 交给玩家响应 —— 玩家的极速法术随即可抢先。
+     */
+    const autoCastEnemySpell = async (
+        cardKey: string,
+        allyTargetKey: string,
+        enemyTargetKey: string,
+    ) => {
+        const spellCard = createFullCard(cardKey, 'enemy');
+        if (!spellCard) {
+            console.warn(`[autoCastEnemySpell] 找不到卡牌 key=${cardKey}`);
+            return;
+        }
+        const enemyBenchNow = boardSnapshotParam?.().enemyBench ?? stateRef.current.enemyBench ?? [];
+        const playerBenchNow = boardSnapshotParam?.().playerBench ?? stateRef.current.playerBench ?? [];
+        // 目标可能已进交战区（如格挡者被移出备战席），故战场也要扫
+        const combatNow = boardSnapshotParam?.().combatField ?? stateRef.current.combatField ?? [];
+        // ⚠️ 优先 `boardSnapshot`（= 最新 React state）：`stateRef` 只在个别出口手动同步，
+        //    战斗归位那段只同步了 combatField ⇒ 读它会拿到"战斗前"的备战席、找不到刚归位的单位。
+        const allUnits = [
+            ...enemyBenchNow,
+            ...playerBenchNow,
+            ...combatNow.flatMap(f => [f.attacker, f.blocker].filter(Boolean) as CardData[]),
+        ];
+        const findLive = (key: string) => allUnits.find(c =>
+            c && c.key === key && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying'
+        );
+        const allyTarget = findLive(allyTargetKey);
+        const enemyTarget = findLive(enemyTargetKey);
+        if (!allyTarget || !enemyTarget) {
+            console.warn(`[autoCastEnemySpell] 目标不在场: ally=${allyTargetKey}(${!!allyTarget}) enemy=${enemyTargetKey}(${!!enemyTarget})`);
+            return;
+        }
+        const targets = [
+            { ...allyTarget, type: 'ally' },
+            { ...enemyTarget, type: 'enemy' },
+        ];
+        console.log(`[autoCastEnemySpell] 🎬 敌方打出 ${spellCard.name} → 目标 ${allyTarget.name} vs ${enemyTarget.name}`);
+        await commitSpell(spellCard, 'enemy', targets, stateRef.current.game.phase);
     };
 
     const resolveStack = async () => {
@@ -1744,6 +1838,47 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 ...prev,
                 spellStack: prev.spellStack.map(s => s.card.id === spell.card.id ? { ...s, targets: [] } : s)
             }));
+
+            // [2026-10-16 莉莉子] 目标已阵亡 ⇒ 本法术"失去目标"落空、直接跳过结算。
+            //   ── 场景（教程「施法的速度」）：敌方「单挑」盯上里芙，玩家打出极速「暗箭」击杀焰心。
+            //      ⚠️ 极速法术**不入栈**（走本文件 burst 分支、立即结算），所以栈上只剩「单挑」；
+            //        轮到它结算时目标焰心已经死了 —— 这就是"极速抢先"的兑现点。
+            //   ── 为什么必须在这里判：单挑的结算（effectProcessor 的 STRIKE 分支）靠 `findUnit`
+            //      按 id 就地查单位；只要阵亡单位**尚未被清出列表**，它仍会被找到并继续结算
+            //      ⇒ 里芙照样挨那 4 点。而极速路径**不调 judgeLifeAndDeath**、清尸时机不确定，
+            //      不该让教学效果去赌那个时机 ⇒ 这里显式判死，行为确定。
+            //   ── 口径：只拦"法术带了具体单位目标、且其中任一已不在场/已死"的情形。
+            //      · 水晶目标（player_nexus/enemy_nexus）与堆叠法术目标（spell_on_stack）排除在外；
+            //      · 🔴 **手牌目标必须纳入判定池**：HAND_CARD 选择打的是 `{type:'ally'|'enemy', id}`
+            //        （见本文件 handleTargetClick 的目标构造），与场上单位**同形**，
+            //        若只查场上池会把「真实快照 / 弃牌」这类法术误判成"目标离场"而整个跳过
+            //        ⇒ 白扣费、卡被消耗却什么都没发生（独立审查抓到的回归）。
+            const unitTargetIds = (spell.targets || [])
+                .filter((t: any) => t && t.id && t.type !== 'player_nexus' && t.type !== 'enemy_nexus' && t.type !== 'spell_on_stack')
+                .map((t: any) => t.id);
+            if (unitTargetIds.length > 0) {
+                const livePool = [
+                    ...(stateRef.current.playerBench || []),
+                    ...(stateRef.current.enemyBench || []),
+                    ...(stateRef.current.combatField || []).flatMap(f => [f.attacker, f.blocker]),
+                    // 手牌（含敌方手牌）一并纳入：手牌目标与场上目标 id 同形，不查会误判
+                    ...(stateRef.current.playerHand || []),
+                    ...(stateRef.current.enemyHand || []),
+                ].filter(Boolean) as CardData[];
+                // ⚠️ 判据是"**全部**单位目标都还活着"（不是"任一"）——
+                //   因为单挑/互相打击类法术要求**双方都在场**才成立（effectProcessor 的
+                //   `if (attacker && defender)` 正是这个口径）。只要有一方已阵亡，
+                //   整条法术就该落空，而不是拿剩下那一方继续算伤害。
+                const allTargetsAlive = unitTargetIds.every(id => {
+                    const u = livePool.find(c => c && c.id === id);
+                    return !!u && !u.isDead && u.animState !== 'dying' && u.animState !== 'ephemeral_dying';
+                });
+                if (!allTargetsAlive) {
+                    setMessage(`${spell.card.name} 失去目标，未能生效`);
+                    console.log(`[resolveStack] ${spell.card.name} 的单位目标已离场 ⇒ 跳过结算`);
+                    continue;
+                }
+            }
 
             // [新增] 拦截猫汐尔大招——顷刻莲潮
             if (spell.card.key === 'mauxir_lotus_ultimate') {
@@ -1928,5 +2063,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         confirmPendingSpell,
         cancelPendingSpell,
         resolveStack,
+        // [2026-10-16 莉莉子] 教程专用：敌方自动施法（指定双方目标）
+        autoCastEnemySpell,
     };
 };

@@ -43,6 +43,13 @@ export const applyCantAttackZeroPower = (unit: CardData): CardData => {
             buffsPower: unit.buffs?.power || 0,
             roundBuffsPower: unit.roundBuffs?.power || 0,
         });
+        // [2026-10-23 莉莉子 · 临时诊断] 「回席后攻击力仍是 0」排查
+        console.log(`[CantAttack-DEBUG] ✏️ 记账 ${unit.name}(${unit.id}) → `
+            + `power=${unit.power || 0} buffs=${unit.buffs?.power || 0} roundBuffs=${unit.roundBuffs?.power || 0}`);
+    } else {
+        console.log(`[CantAttack-DEBUG] ✏️ 记账已存在(幂等保留，不覆盖) ${unit.name}(${unit.id}) `
+            + `账本=${JSON.stringify(cantAttackLedger.get(unit.id))} ｜ 本次看到 power=${unit.power || 0} `
+            + `buffs=${unit.buffs?.power || 0} roundBuffs=${unit.roundBuffs?.power || 0}`);
     }
 
     return {
@@ -57,10 +64,30 @@ export const applyCantAttackZeroPower = (unit: CardData): CardData => {
  * 回席：还原【无法攻击】单位进场前的真实攻击力（并销账）。
  * 没记过账 ⇒ 原样返回（幂等，绝不凭空造值）。
  */
+/** 取调用栈的前几帧（仅诊断用，定位"谁调了还原"） */
+const briefStack = (): string => {
+    const stack = (new Error().stack || '').split('\n').slice(2, 6).map(s => s.trim());
+    return stack.join(' ← ');
+};
+
 export const restoreCantAttackPower = (unit: CardData): CardData => {
     const orig = cantAttackLedger.get(unit.id);
-    if (!orig) return unit;
+    if (!orig) {
+        // [2026-10-23 莉莉子 · 临时诊断] 没账本 ⇒ 原样返回（power 保持归零后的值）——
+        //   若程复现时打出这一行，说明**账本丢了**（记账没发生，或已被别处提前销账）
+        console.log(`[CantAttack-DEBUG] 🔄 还原失败·无账本 ${unit.name}(${unit.id}) `
+            + `→ 原样返回 power=${unit.power || 0} buffs=${unit.buffs?.power || 0} `
+            + `｜ 当前账本条目数=${cantAttackLedger.size}\n    调用栈: ${briefStack()}`);
+        return unit;
+    }
     cantAttackLedger.delete(unit.id);
+    // [2026-10-23 莉莉子 · 临时诊断]
+    //   · 若打出 `power=0 buffs=0` 却记账时不为 0 ⇒ 记账时机错了（记的是已归零的值）
+    //   · 若打出正常值 ⇒ 账本没问题，是**还原之后又被谁覆盖了**（去看 game.state 写入顺序）
+    console.log(`[CantAttack-DEBUG] 🔄 还原 ${unit.name}(${unit.id}) ← 账本 `
+        + `power=${orig.power} buffs=${orig.buffsPower} roundBuffs=${orig.roundBuffsPower} `
+        + `｜ 还原前 power=${unit.power || 0} buffs=${unit.buffs?.power || 0} `
+        + `｜ 剩余账本=${cantAttackLedger.size}\n    调用栈: ${briefStack()}`);
 
     // ⚠️ 原实现写的是 `unit.buffs ? {…} : undefined` —— 一旦 `buffs` 对象本身丢了
     //    （沉默/净化类效果），那份真值就被静默丢弃。这里按账本兜底重建，只补不减。

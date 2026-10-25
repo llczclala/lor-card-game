@@ -152,7 +152,7 @@ export const KEYWORD_DB: Record<Keyword, KeywordConfig> = {
     },
     'Thorns': {
         label: '反伤',
-        description: '受到攻击伤害时，对攻击者造成 1 点伤害。',
+        description: '受到攻击伤害时，对攻击者造成 1 点伤害；被打或打过去挨反击都会触发。',
         color: 'lime',
         icon: icon23
     },

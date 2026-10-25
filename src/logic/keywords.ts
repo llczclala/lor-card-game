@@ -2,6 +2,8 @@ import type { CardData, GameState, Keyword } from '../types';
 import { createCard } from '../data/cards'; // [2026-08-06 莉莉子] Echo 回响：生成瞬逝复制品需要重建卡牌实例
 // [2026-10-08 莉莉子 · 法术专属装备 第二波 · Q5] 复制品**继承装备**（G1：跳过提供 Echo 的装备，防无限繁殖）
 import { attachEquipment, getEquipmentById } from '../data/equipment';
+// [2026-10-19 程] 充能上限不再写死 3，改用动态上限（共鸣涌流成长 / 囤积提额）
+import { spellManaCapOf } from './core';
 
 /**
  * 战斗交互结果接口
@@ -350,26 +352,41 @@ export const calculateCombatInteraction = (
             blockerRealPower = 0;
         }
 
-        // --- 1. Overwhelm (贯通/碾压) ---
-        // 效果：超出阻挡者生命值的伤害打击水晶
-        if (attacker.keywords.includes('Overwhelm')) {
-            // 计算溢出伤害
-            const overflow = Math.max(0, attackerRealPower - blockerRealHealth);
-            if (overflow > 0) {
-                nexusDamage = overflow;
-            }
-            // 注意：在大多数 TCG (如 LoR) 中，即使有贯通，阻挡者依然承受全额攻击力伤害
-            damageToBlocker = attackerRealPower;
-        }
-
         // 记录阻挡者受到的最终伤害
         blockerDamage = damageToBlocker;
+
+        // [2026-10-19 莉莉子 BUG修复] 【屏障】"是否还存在"必须排除 depletedKeywords
+        //   ── `combat.ts` 弹出屏障时只往 `depletedKeywords` 里追加 'Barrier'（:120-125），
+        //      而本函数此前只查 `keywords.includes('Barrier')` ⇒ **同一回合内被弹掉的屏障会再挡一次**。
+        //   ── 症状最明显的是【连击】：`combat.ts:163` 第一击**强制带先攻**打过去把屏障弹掉，
+        //      第二击再进来时 keywords 仍有 Barrier ⇒ 屏障替同一个单位挡两次，
+        //      连击对带屏障的单位**等于完全失效**（玩家看到的是"连击打了个寂寞"）。
+        //   ── 屏障的语义是「抵挡**一次**伤害」，无论"每回合一次"还是"整局一次"，
+        //      都不可能在同一回合里吸收两次。故三处判定统一走下面两个谓词。
+        const attackerBarrierActive = attacker.keywords.includes('Barrier')
+            && !(attacker.depletedKeywords || []).includes('Barrier');
+        const blockerBarrierActive = blocker.keywords.includes('Barrier')
+            && !(blocker.depletedKeywords || []).includes('Barrier');
 
         // --- 2. QuickAttack (先攻) ---
         // 效果：若攻击者有先攻且能击杀阻挡者，则不受反击伤害
         const hasQuickAttack = attacker.keywords.includes('QuickAttack');
-        // 预测阻挡者是否会在这次打击中死亡
-        const willBlockerDie = blockerRealHealth <= damageToBlocker;
+        // [2026-10-19 莉莉子 BUG修复] 致死判定必须用「真正会落到阻挡者身上的伤害」
+        //   此前用的是 damageToBlocker（**未扣任何减免**的原始值），而【坚韧】的 −1 要到
+        //   下方第 3 段「Tough」才执行 ⇒ 先攻打带【坚韧】的阻挡者时"打不死也判定击杀、还不吃反击"。
+        //   例：3 攻打 3 血带坚韧的阻挡者 → 实际只造成 2 点（打不死），旧逻辑却判定死亡 ⇒ 白免反击。
+        //   现在把**预测值**先过一遍减免：坚韧 −1、屏障归零（屏障生效后伤害为 0，同样打不死）。
+        //   ⚠️ 这里只算"预测"，真正的扣减仍由第 3/4 段执行，避免两处状态互相污染。
+        const blockerPredictedDamage = blockerBarrierActive
+            ? 0
+            : Math.max(0, damageToBlocker - (blocker.keywords.includes('Tough') ? 1 : 0));
+        // 预测阻挡者是否会在这次打击中死亡（用减免后的真实伤害判定）
+        const willBlockerDie = blockerRealHealth <= blockerPredictedDamage;
+        // [2026-10-19 程] 碾压溢出必须用"减免后的真实伤害"（含坚韧 −1、屏障归零）
+        //   与 blockerPredictedDamage 同源，避免两套减伤公式分叉（这正是本 bug 的成因）
+        if (attacker.keywords.includes('Overwhelm')) {
+            nexusDamage = Math.max(0, blockerPredictedDamage - blockerRealHealth);
+        }
         // [新增] 检查攻击者是否为幻象
         const isAttackerEphemeral = attacker.keywords.includes('Ephemeral');
 
@@ -401,9 +418,8 @@ export const calculateCombatInteraction = (
 
         // --- 4. Barrier (屏障) ---
         // 效果：抵挡一次伤害，生效后消失
-        const attackerBarrierActive = attacker.keywords.includes('Barrier');
-        const blockerBarrierActive = blocker && blocker.keywords.includes('Barrier');
-
+        //   ⚠️ 「是否还持有屏障」已在第 2 段之前统一判定为 attackerBarrierActive / blockerBarrierActive
+        //   （必须排除 depletedKeywords，否则同一回合内刚被弹掉的屏障会替同一个单位再挡一次）
         if (attackerBarrierActive && attackerDamage > 0) {
             attackerDamage = 0;
             attackerBarrierPopped = true;
@@ -418,9 +434,13 @@ export const calculateCombatInteraction = (
         // （扣除自身坚韧/屏障后仍 >0），对攻击者回敬固定 1 点伤害。
         // 放最末尾：反伤是独立固定伤害，不参与双方后续的坚韧/屏障减免
         // （数值固定）。天然克制快攻——先攻/连击打刺杀不掉这点反弹。
-        if (blocker.keywords.includes('Thorns') && blockerDamage > 0) {
-            attackerDamage += 1;
-        }
+        // [2026-10-19 程] 反伤双向：被打反、打过去挨反击也反
+        //   ⚠️ 快照必须在任何 +=1 之前取：否则"先攻击杀阻挡者"时 attackerDamage 本为 0，
+        //      会被阻挡者的反伤抬成 1 ⇒ 攻击者的反伤被自己的反伤骗触发，阻挡者凭空多掉 1 点
+        const attackerTookRealDamage = attackerDamage > 0;
+        const blockerTookRealDamage = blockerDamage > 0;
+        if (blocker.keywords.includes('Thorns') && blockerTookRealDamage) attackerDamage += 1;
+        if (attacker.keywords.includes('Thorns') && attackerTookRealDamage) blockerDamage += 1;
     }
 
     return { attackerDamage, blockerDamage, nexusDamage, attackerBarrierPopped, blockerBarrierPopped, quickAttackEphemeralDeath };
@@ -431,7 +451,9 @@ export const calculateCombatInteraction = (
 // ==========================================
 /**
  * 处理 Channel（充能）关键词：恢复 1 点法术法力，触发后追加 depletedKeywords
- * 上限为 3，超出部分不累积
+ * 玩家侧上限走 spellManaCapOf（基础 3 + 共鸣涌流成长 + 囤积提额），超出部分不累积；
+ * 敌方侧上限固定 3（spellManaCapOf 读的是玩家侧养成/强化，不能用于敌方）
+ * [2026-10-19 程] 此前写死 Math.min(3, ...)，强化提额后充能仍卡在 3（玩家侧）
  * @param card 被召唤的单位
  * @param owner 所属方
  * @param game 当前游戏状态
@@ -444,10 +466,12 @@ export const applyChannelOnSummon = (card: CardData, owner: 'player' | 'enemy', 
     const newGame = { ...game };
     if (owner === 'player') {
         const before = newGame.playerSpellMana;
-        newGame.playerSpellMana = Math.min(3, (newGame.playerSpellMana || 0) + 1);
+        newGame.playerSpellMana = Math.min(spellManaCapOf(newGame), (newGame.playerSpellMana || 0) + 1);
         console.log(`[Channel] ${card.name} 充能：法术法力 ${before} → ${newGame.playerSpellMana}`);
     } else {
         const before = newGame.enemySpellMana;
+        // [2026-10-19] 敌方充能上限**固定 3**：spellManaCapOf 读的是玩家侧养成/强化，
+        //   直接用会让玩家的法力上限强化泄漏给敌方。敌方口径与回合末结转保持一致（core.ts / useRoundLifecycle）。
         newGame.enemySpellMana = Math.min(3, (newGame.enemySpellMana || 0) + 1);
         console.log(`[Channel] ${card.name} 充能：法术法力 ${before} → ${newGame.enemySpellMana}`);
     }
