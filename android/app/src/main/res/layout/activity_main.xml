@@ -1,12 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- [2026-10-17 莉莉子 BUG修复 · 安卓「兜底黑边会露出白边」]
+     根布局与 WebView 都显式给黑底：窗口底色已在 styles.xml 压黑（根因），
+     这里再兜一层，保证"任何被露出来的像素"都是黑的，而不是主题继承来的浅色。
+     详见 values/styles.xml 顶部的完整留痕。 -->
 <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#FF000000"
     tools:context=".MainActivity">
 
     <WebView
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:background="#FF000000" />
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

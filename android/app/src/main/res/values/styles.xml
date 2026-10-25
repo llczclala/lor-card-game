@@ -1,18 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         [2026-10-17 莉莉子 BUG修复 · 安卓「兜底黑边会露出白边」]
+         ── 症状（粉丝真机 2832×1280）：游戏兜底黑边的**左侧**出现一条全高白边。
+         ── 量测（程给的截图逐点采样）：白条 x=0..~82/1920 全高、色 (250,250,250)；
+            右侧/上下都是纯黑；网页自己画的黑底紧接在白条之后。
+         ── 根因（✅ 两层证据）：
+            ① 网页层**是黑的** —— 我把雷电改成 2832×1280 后逐点采样整条黑边，全是纯黑；
+            ② 所以那条白在**网页之外 = 原生窗口底色**，而窗口底色是白的：
+               本主题原先只写 `android:background = @drawable/splash`，而 `splash.png`
+               采样 6000 点、**非纯白仅 0.67%**（基本是一张白底图）；三个主题**都没设
+               `android:windowBackground`** ⇒ 继承 Light/Light.DayNight 的浅色窗口底（#FAFAFA）。
+         ── 为什么只在左边：挖孔屏横屏后摄像头孔落在某一侧，安卓默认 display-cutout 策略
+            会给那一侧留 inset ⇒ 网页从 inset 之后才开始画 ⇒ 那一条露出窗口底色。
+            （雷电是方角无挖孔、WebView 严丝合缝 ⇒ 永远复现不出来，别在那儿验。）
+         ── 修法：把**窗口底色一律压成黑**。这样无论圆角 / 挖孔 / 亚像素缝隙，
+            露出来的都是黑 = 并进兜底黑边。⚠️ **千万别把白色 splash 改回去**，
+            否则同一个白边会立刻复发。
+         ══════════════════════════════════════════════════════════════════════════ -->
+
     <!-- Base application theme. -->
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
         <!-- Customize your theme here. -->
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
+        <!-- 👆 这个父主题是 Light 系 ⇒ 窗口底默认是浅色，必须显式压黑 -->
+        <item name="android:windowBackground">@android:color/black</item>
     </style>
 
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- DayNight 在浅色模式下窗口底同样是浅的 ⇒ 显式压黑（见文件顶部留痕） -->
+        <item name="android:windowBackground">@android:color/black</item>
         <!-- [沉浸式] 游戏画布是深色的 ⇒ 系统栏要【浅色图标】。
              Light 系主题默认给深色图标，压在透明底上等于看不见。 -->
         <item name="android:windowLightStatusBar">false</item>
@@ -20,8 +43,14 @@
     </style>
 
 
+    <!-- ⚠️ 这是 Activity **实际使用**的主题（见 AndroidManifest 的 android:theme）。
+         原先这里是 `@drawable/splash`（一张 99.3% 纯白的图）⇒ 窗口底色 = 白 ⇒ 挖孔侧露白边。
+         ⇒ 已改成黑色。若将来想要有品牌的启动画面，正解是用
+           `windowSplashScreenBackground`（黑）+ `windowSplashScreenAnimatedIcon`（logo），
+           **不要**再把整窗底色设成图片。 -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:background">@android:color/black</item>
+        <item name="android:windowBackground">@android:color/black</item>
         <!-- [沉浸式] Activity 实际用的是这个主题，图标颜色必须在这里也压一次 -->
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>

@@ -15,8 +15,15 @@
  *     · 保留「**手动更新**」按钮（自己选目录），老流程一条不少
  *
  * ── 一键更新做了什么 ──
- *   ① 自动定位游戏目录：注册表（按 DisplayName 全扫，兼容换过 id）→ 运行中的进程路径
- *      → 常见安装位置扫描 → 都找不到才退回手动选
+ *   ① 自动定位游戏目录（[2026-10-18 加严] 五道，按顺序，命中就用）：
+ *      ⓪ **桌面 / 公共桌面 / 开始菜单的 .lnk 快捷方式**（解析 TargetPath 反查）—— 最通用
+ *      ① 注册表 Uninstall 项（DisplayName 含 Snowbreak）：先 InstallLocation，再 UninstallString 反推
+ *      ② 运行中的进程路径（游戏开着时最准；但安装前会要求先关游戏）
+ *      ③ 常见安装位置扫描（Program Files / LocalAppData / 用户目录 / **桌面 / 下载** / 各盘根目录…）
+ *      → 都找不到才退回手动选
+ *   🔴 [2026-10-18] 本次加严的起因：程实测「游戏装在桌面」却自动定位失败 ——
+ *      旧版 ①②③ 的候选里**根本没有桌面**，也没有快捷方式解析。缺的不是"再加一个目录"，
+ *      而是"用快捷方式反查"这个通用手段（安装器默认会在桌面建快捷方式，装到哪都适用）。
  *   ② 目录校验：必须有 `Snowbreak Rivals.exe` **且** `resources\app.asar`
  *   ③ 游戏在运行 ⇒ **拒绝并提示先关闭**（否则文件占用 = 半损坏）
  *   ④ 从自身尾部提取内嵌补丁 zip（格式不变：[exe][zip][8 字节长度]）
@@ -392,6 +399,14 @@ class MainForm : Form
     {
         string p;
 
+        // ⓪ [2026-10-18 修复] 先看快捷方式 —— 最通用的一招：
+        //    安装器默认会建桌面快捷方式，而快捷方式里存的是**绝对路径**
+        //    ⇒ 不管玩家把游戏装在哪（桌面 / 下载 / 移动硬盘 / 自建目录）都能反查到。
+        //    🔴 这条是因为程实测"装在桌面却找不到"才补的：旧版只扫下方 ①②③，
+        //       而「桌面」原本**不在任何候选列表里**。
+        p = FindFromShortcuts();
+        if (p != null) return p;
+
         p = FindFromRegistry();
         if (p != null) return p;
 
@@ -401,6 +416,62 @@ class MainForm : Form
         p = FindFromCommonPaths();
         if (p != null) return p;
 
+        return null;
+    }
+
+    /// <summary>
+    /// ⓪ 解析「桌面 / 公共桌面 / 开始菜单」里的 .lnk 快捷方式，反查游戏主程序所在的目录。
+    /// 用 WScript.Shell COM 读取快捷方式目标（.NET 自身没有解析 .lnk 的 API）。
+    /// 桌面路径一律走 <see cref="Environment.SpecialFolder.DesktopDirectory"/> ——
+    /// 这样**被 OneDrive 重定向过的桌面**也能拿到正确位置。
+    /// </summary>
+    private static string FindFromShortcuts()
+    {
+        string[] dirs = new string[] {
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
+            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),
+        };
+
+        Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+        if (shellType == null) return null;
+        object shell = null;
+        try { shell = Activator.CreateInstance(shellType); }
+        catch { return null; }
+        if (shell == null) return null;
+
+        for (int d = 0; d < dirs.Length; d++)
+        {
+            string baseDir = dirs[d];
+            if (string.IsNullOrEmpty(baseDir) || !Directory.Exists(baseDir)) continue;
+
+            // 桌面看顶层就够；开始菜单里常有一层「应用名」文件夹 ⇒ 递归
+            bool deep = baseDir == dirs[2] || baseDir == dirs[3];
+            string[] lnks;
+            try
+            {
+                lnks = Directory.GetFiles(baseDir, "*.lnk",
+                    deep ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+            }
+            catch { continue; }
+
+            for (int i = 0; i < lnks.Length; i++)
+            {
+                try
+                {
+                    object sc = shellType.InvokeMember("CreateShortcut",
+                        System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { lnks[i] });
+                    string target = sc.GetType().InvokeMember("TargetPath",
+                        System.Reflection.BindingFlags.GetProperty, null, sc, null) as string;
+                    if (string.IsNullOrEmpty(target)) continue;
+                    if (!string.Equals(Path.GetFileName(target), GAME_EXE, StringComparison.OrdinalIgnoreCase)) continue;
+                    string dir = Path.GetDirectoryName(target);
+                    if (IsValidGameDir(dir)) return dir;
+                }
+                catch { }   // 解析单个快捷方式失败不影响其它
+            }
+        }
         return null;
     }
 
@@ -437,6 +508,11 @@ class MainForm : Form
                                 string loc = k.GetValue("InstallLocation") as string;
                                 if (!string.IsNullOrEmpty(loc) && IsValidGameDir(loc))
                                     return loc;
+                                // [2026-10-18 修复] 有些安装器**只写 UninstallString**（卸载器 exe 的绝对路径），
+                                // 没有 InstallLocation ⇒ 从卸载器路径反推安装目录（卸载器就装在游戏目录里）
+                                string uninstStr = k.GetValue("UninstallString") as string;
+                                string fromUninst = DirFromExePath(uninstStr);
+                                if (fromUninst != null) return fromUninst;
                             }
                         }
                     }
@@ -468,6 +544,34 @@ class MainForm : Form
         return null;
     }
 
+    /// <summary>
+    /// 从「带引号 / 带参数 / 裸路径」的 exe 路径字符串里取出目录（非法或目录不是游戏目录时返回 null）。
+    /// 例：`"C:\Users\x\Desktop\Snowbreak Rivals\Uninstall Snowbreak Rivals.exe"` → 桌面那个安装目录。
+    /// </summary>
+    private static string DirFromExePath(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return null;
+        string s = raw.Trim();
+        if (s.StartsWith("\""))
+        {
+            int end = s.IndexOf('"', 1);
+            if (end > 1) s = s.Substring(1, end - 1);
+        }
+        else
+        {
+            // 没引号：砍掉第一个空格之后的部分（可能是参数）
+            int sp = s.IndexOf(' ');
+            if (sp > 0) s = s.Substring(0, sp);
+        }
+        try
+        {
+            if (!File.Exists(s)) return null;
+            string dir = Path.GetDirectoryName(s);
+            return IsValidGameDir(dir) ? dir : null;
+        }
+        catch { return null; }
+    }
+
     /// <summary>③ 扫常见位置（含各盘根目录下的若干候选）</summary>
     private static string FindFromCommonPaths()
     {
@@ -485,6 +589,35 @@ class MainForm : Form
             candidates.Add(Path.Combine(roots[i], "Snowbreak Rivals"));
             candidates.Add(Path.Combine(Path.Combine(roots[i], "Programs"), "Snowbreak Rivals"));
             candidates.Add(Path.Combine(Path.Combine(roots[i], "Games"), "Snowbreak Rivals"));
+        }
+
+        // [2026-10-18 修复] 补上**桌面**与**下载** —— 实测发现大量玩家直接把游戏解压/安装到这两个地方，
+        // 而旧版候选列表里根本没有它们（程就装在桌面，因此自动定位失败）。
+        //   · DesktopDirectory 会自动跟随 OneDrive 重定向 ⇒ 云同步桌面也能命中
+        //   · Downloads 没有专用 SpecialFolder，用 UserProfile 拼
+        string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        string commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+        string[] extraRoots = new string[] {
+            desktop,
+            commonDesktop,
+            string.IsNullOrEmpty(userProfile) ? null : Path.Combine(userProfile, "Downloads"),
+        };
+        for (int i = 0; i < extraRoots.Length; i++)
+        {
+            if (string.IsNullOrEmpty(extraRoots[i])) continue;
+            candidates.Add(Path.Combine(extraRoots[i], "Snowbreak Rivals"));
+            candidates.Add(Path.Combine(Path.Combine(extraRoots[i], "Games"), "Snowbreak Rivals"));
+            // 下载目录里常见「解压出来带版本后缀」的文件夹，如 Snowbreak Rivals-win32-x64
+            try
+            {
+                if (Directory.Exists(extraRoots[i]))
+                {
+                    string[] subs = Directory.GetDirectories(extraRoots[i], "Snowbreak Rivals*");
+                    for (int s = 0; s < subs.Length; s++) candidates.Add(subs[s]);
+                }
+            }
+            catch { }
         }
 
         try

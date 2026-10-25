@@ -323,13 +323,22 @@ const outputPath = join(RELEASE_DIR, OUTPUT_NAME);
 const launcherExe = join(TOOLS_DIR, 'patch-launcher.exe');
 
 // 编译 C# 外壳
-if (!existsSync(launcherExe)) {
+// 🔴 [2026-10-18 莉莉子 BUG修复] 原判断是 `if (!existsSync(launcherExe))` —— **只要 exe 存在就永不重编**。
+//   事故：2026-10-10 重写的「一键更新」版 `patch-launcher.cs` **整整三周没被编进去**，
+//   期间出的每个补丁包嵌的都是 06-28 的**旧两步版**（要玩家自己翻文件夹选安装目录）——
+//   而 v1.0.19 的玩家公告（`announcements.ts:142`）**已经向玩家承诺「更新工具改回一键了」**。
+//   ⇒ 改为**按时间戳**判断：`.cs` 比 `.exe` 新就重编。**靠"记得手动删 exe"是不可靠的。**
+//   📌 可证伪的判据：编完后 `sha256(patch-v*.exe[0..exe长度))` 应当**不再等于**旧 exe 的哈希 —— 变了才算编上。
+const csSrc = join(TOOLS_DIR, 'patch-launcher.cs');
+const needsCompile = !existsSync(launcherExe)
+  || (existsSync(csSrc) && statSync(csSrc).mtimeMs > statSync(launcherExe).mtimeMs);
+if (needsCompile) {
   console.log('   ⚙️  编译 C# 安装器外壳...');
   const cscPath = 'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe';
-  const csSrc = join(TOOLS_DIR, 'patch-launcher.cs');
-  const refs = '/reference:System.Windows.Forms.dll /reference:System.IO.Compression.FileSystem.dll /reference:System.IO.Compression.dll';
+  // ⚠️ `System.Drawing.dll` 是 2026-10-10 那版新加的引用（`using System.Drawing;`），别删
+  const refs = '/reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.IO.Compression.FileSystem.dll /reference:System.IO.Compression.dll';
   try {
-    execSync(`"${cscPath}" /target:winexe /out:"${launcherExe}" ${refs} "${csSrc}"`,
+    execSync(`"${cscPath}" /nologo /target:winexe /out:"${launcherExe}" ${refs} "${csSrc}"`,
       { stdio: ['pipe', 'inherit', 'inherit'], timeout: 30000 });
   } catch (err) {
     console.error('❌ C# 编译失败:', err.message);

@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- [2026-10-18 莉莉子 · 跨设备同步] 局域网存档互传需要访问 http://192.168.x.x
+         ⚠️ 为什么必须显式开：本工程 targetSdk = 36（android/variables.gradle:4），
+            targetSdk ≥ 28 时 **明文 HTTP 默认被平台禁掉** —— 且这条限制是
+            NetworkSecurityPolicy 层面的，连 CapacitorHttp（走 OkHttp 原生请求）
+            也会被拦，不只是 WebView。不开这一条，手机连不上 PC 的服务端。
+         只影响本 App 自己的出站请求；本游戏是侧载分发，不涉及 Play 商店政策。 -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -9,6 +15,7 @@
         android:supportsRtl="true"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme">
 
         <activity
@@ -23,6 +30,18 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- [2026-10-18 莉莉子 · 跨设备同步] 二维码配对用的专属链接：
+                 让**系统相机**扫 PC 屏幕上的二维码后能直接把本 App 调起来
+                 （`snowbreak://pair?h=<IP>&p=<端口>&t=<配对码>`）。
+                 ⇒ 这样手机端**不需要装相机插件、不需要相机权限**。
+                 ⚠️ 这条要配合 `@capacitor/app` 的 `App.addListener('appUrlOpen', …)` 才有用。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="snowbreak" android:host="pair" />
             </intent-filter>
 
         </activity>
@@ -45,6 +64,13 @@
          它会先查 VIBRATE 权限，没有就**静默返回、什么都不震**。
          所以触屏反馈层的「点击短震 12ms / 长按达成 30ms」必须靠这条权限才生效。 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- [2026-10-18 莉莉子 · 跨设备同步] 实时扫码需要相机。
+         ⚠️ 声明了它，`getUserMedia` 才能在 WebView 里真正出画面 —— 因为
+         Capacitor 的 `BridgeWebChromeClient.onPermissionRequest`（@capacitor/android，
+         该文件 :102-120）会在 WebView 请求 VIDEO_CAPTURE 时**先弹原生授权**，
+         用户同意后才把权限 grant 给 WebView。少了这条声明，WebView 会直接 deny。 -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <uses-permission android:name="android.permission.INTERNET" />
 </manifest>
