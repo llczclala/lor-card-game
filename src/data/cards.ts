@@ -321,7 +321,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   mauxir_lotus_pedestal: {
     key: 'mauxir_lotus_pedestal', name: '臆莲基座', cost: 0, power: 0, maxPower: 10, health: 3, maxHealth: 3, maxPerSide: 3, buffRules: { power: { allowedTags: ['drone_power'] } },
     isChampion: false, level: 0, region: 'Mauxir',
-    description: '受伤时：若“猫汐尔 莲驱”在场，在手牌生成一张“梦莲无人机”。回合结束：对随机敌方单位造成X次1点伤害。【攻击力最多为10】',
+    description: '受伤时：若“猫汐尔 莲驱”在场，在手牌生成一张“梦莲无人机”。回合结束：对随机敌方单位造成X次1点伤害。【攻击力最多为10】【每方最多3个】',
     type: 'unit', keywords: ['CantAttack'], race: ['summon'],
     imageUrl: SPELL_IMAGES.mauxir_lotus_pedestal,
     effects: ['effect_mauxir_lotus_pedestal'],
@@ -835,8 +835,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     level: 0,
     type: 'unit',
     keywords: ['Channel','Regeneration'],
-    description: '进攻时：“飞剑”2并点亮充能。',
-    ability: { id: 'sacred_tree_margaret_sword', label: '飞剑突袭', description: '进攻时：飞剑2并点亮充能。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge' },
+    description: '进攻时：“飞剑”2，并重新点亮充能。',
+    ability: { id: 'sacred_tree_margaret_sword', label: '飞剑突袭', description: '进攻时：飞剑2，并重新点亮充能。', trigger: 'on_attack_declare', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.sacred_tree_margaret,
     effects: ['effect_sacred_tree_margaret'],
   },
@@ -1205,6 +1205,26 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     ai: { pattern: 'CHAMPION_BUFF', priority: 2, config: { targetCount: 3, power: 2, health: 2 } },
   },
 
+  // [2026-10-23 莉莉子] 新法术 · 分析员阵营：同行
+  // 稳定性工具：把牌库里最值钱的那张（天启者）掏出来；牌库已无天启者时退化为随机抽一张单位。
+  // 定价 4 费（程拍板）。对照组：能量补充（`energy_supplement`，2 费，需要场上有天启者才检索其英雄法术）。
+  analyst_fellowship: {
+    key: 'analyst_fellowship', gachaPool: GachaPoolEnum.Permanent,
+    name: '同行',
+    cost: 4,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Analyst',
+    description: '极速：从牌库中随机抽一张天启者。若牌库中没有天启者，则改为随机抽一张单位卡牌。',
+    type: 'spell-burst',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.analyst_fellowship,   // ⚠️ 占位卡图（abc.webp），等程出图后替换
+    effects: ['effect_analyst_fellowship'],
+    // [2026-10-23 莉莉子] AI：牌库里还有天启者才值 4 费，否则只值"一张随机单位"
+    ai: { pattern: 'DRAW', priority: 3, config: { drawFilter: 'champion', drawFallbackFilter: 'unit' } },
+  },
+
 
 
   // ==========================================
@@ -1289,7 +1309,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: SPELL_IMAGES.deliberate_infiltration,
     effects: ['effect_deliberate_infiltration'],
     ai: { pattern: 'DAMAGE', priority: 3, config: { targetType: 'nexus', lethalPriority: true, damageValue: 1 } },
-    isCollectible: true,
+    isCollectible: false,
+
   },
 
   // --- “鬼怪”小队 (Ghost Squad) 4星 ---
@@ -1375,7 +1396,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     cost: 7, power: 3, health: 5, maxHealth: 5,
     isChampion: false, level: 0, type: 'unit', keywords: ['Ability'],
     description: '回合开始时：复制上回合我方打出的前三张非[瞬逝]卡牌到手牌，并赋予[瞬逝]。',
-    ability: { id: 'poet_kelo_recycle', label: '时光回溯', description: '回合开始时：复制上回合我方打出的前三张非[瞬逝]卡牌到手牌，并赋予[瞬逝]。', trigger: 'round_start', maxCharges: -1, postTriggerState: 'recharge' },
+    ability: { id: 'poet_kelo_recycle', label: '收藏癖', description: '回合开始时：复制上回合我方打出的前三张非[瞬逝]卡牌到手牌，并赋予[瞬逝]。', trigger: 'round_start', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.kelo, effects: ['effect_poet_kelo_recycle']
   },
 
@@ -2066,6 +2087,48 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_bader_reagent_heal', 'effect_bader_reagent_buff'],
     ai: { pattern: 'BUFF', priority: 2, config: { targetType: 'ALL_ALLIES', health: 1, minAllies: 1 } }
   },
+
+  // [2026-10-23 莉莉子] 新法术 · 后勤阵营：回收
+  // 打空手牌之后的燃料补给站：弃光 → 抽 4 → 恢复 2 点法力值（封顶于上限 ⇒ 稳定少付 2 点）。
+  // 定价 6 费（程拍板）。它是一张"得会用"的牌：手牌 3 张以上时净损失，接近空手才是最优场景。
+  logistics_reclaim: {
+    key: 'logistics_reclaim', gachaPool: GachaPoolEnum.Permanent,
+    name: '回收',
+    cost: 6,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Logistics',
+    description: '慢速：弃置所有手牌，之后抽 4 张牌，并恢复 2 点法力值。',
+    type: 'spell-slow',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.logistics_reclaim,   // ⚠️ 占位卡图（abc.webp），等程出图后替换
+    effects: ['effect_logistics_reclaim'],
+    // [2026-10-23 莉莉子] AI：手牌越少越划算（弃全部是硬代价）——详见 evaluateDRAW 的 discardAll 段
+    ai: { pattern: 'DRAW', priority: 2, config: { discardAll: true, drawCount: 4, manaGain: 2 } },
+  },
+  // [2026-10-23 莉莉子 · 强化「囤积」重做] 衍生法术：囤积（存钱罐）
+  // 由迷宫强化「囤积」在回合开始生成（手牌里已有则不重复生成，见 GENERATE 的 skipIfInHand）。
+  // 攒法力的口径（程拍板）：**攒在卡自己身上**（`CardData.hoardStored`），不是全局累计 ——
+  //   它在手牌里时，我方每打出一张卡（不含它自己）就 +1；打出它时兑现全部（受法力上限钳制），
+  //   卡消失、数字归零，下回合强化重新发一张**空的**。⇒ 一局最多用两三次，不存在"每回合回满"。
+  spell_hoard: {
+    key: 'spell_hoard', gachaPool: GachaPoolEnum.Permanent,
+    name: '囤积',
+    cost: 0,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Logistics',
+    description: '获得{hoardStored}点法力值（每打出一张卡牌额外获得一点，受法力上限限制）。',
+    type: 'spell-burst',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.logistics_reclaim, // ⚠️ 占位卡图，等出图后替换
+    effects: ['effect_spell_hoard'],
+    isCollectible: false, // 衍生卡：不进构筑 / 不进卡池 / 不进图鉴的可获取列表
+    // 敌方拿不到这条强化（playerEligible 独有）⇒ AI 分支不需要，留一个中性配置防未定义
+    ai: { pattern: 'DRAW', priority: 1, config: { hoardWithdraw: true } },
+  },
   temp_spell_18: {
     key: 'temp_spell_18', name: '刻骨冰寒', cost: 4, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Logistics',
     description: '极速：冻结一个敌人。', type: 'spell-burst', keywords: [],
@@ -2084,7 +2147,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   titan_hybrid: {
     key: 'titan_hybrid', gachaPool: GachaPoolEnum.Permanent, name: '融合体', cost: 2, power: 0, health: 3, maxHealth: 3, isChampion: false, level: 0, region: 'Titan', race: ['titan'],
-    description: '被侵蚀的活体，受到攻击时会反伤敌人。', type: 'unit', keywords: ['Titan', 'Thorns'],
+    description: '被侵蚀的活体，被打或打过去挨反击时都会反伤敌人。', type: 'unit', keywords: ['Titan', 'Thorns'],
     imageUrl: TITAN_IMAGES.hybrid,
   },
   titan_type_b_mutant: {
@@ -2170,6 +2233,28 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: SPELL_IMAGES.destruction_ritual,
     effects: ['effect_destruction_ritual'],
     ai: { pattern: 'SACRIFICE', priority: 2, config: { damageValue: 3, requireKeyword: 'Titan', sacrificeMaxCost: 3 } },
+  },
+
+  // 3. 崩坏（[2026-10-23 莉莉子] 新法术 · 泰坦阵营）
+  // 把一只泰坦的**当前攻击力**引爆成一次对敌伤害；代价是它自己先吃等量伤害。
+  // 与同族的「毁灭仪式」（`:2159` 杀泰坦换 3 伤、且只能打单位）分工：
+  //   毁灭仪式吃 0 攻炮灰，崩坏吃被【泰坦】叠过攻的重型单位。
+  // 定价 7 费（程拍板）：快速 + 可打水晶 + 伤害随攻击力成长，故远高于毁灭仪式的 3 费。
+  titan_collapse: {
+    key: 'titan_collapse', gachaPool: GachaPoolEnum.Permanent,
+    name: '崩坏',
+    cost: 7,
+    power: 0, health: 0, maxHealth: 0,
+    isChampion: false,
+    level: 0,
+    region: 'Titan',
+    description: '快速：对我方一个泰坦单位造成等同于其攻击力的伤害，之后对一个敌方单位或敌方水晶造成等量伤害。',
+    type: 'spell-fast',
+    keywords: [],
+    imageUrl: SPELL_IMAGES.titan_collapse,   // ⚠️ 占位卡图（abc.webp），等程出图后替换
+    effects: ['effect_titan_collapse'],
+    // [2026-10-23 莉莉子] AI：按"能承受自伤 + 伤害换到什么"估值（POWER_BURST handler）
+    ai: { pattern: 'POWER_BURST', priority: 3, config: { raceFilter: 'titan' } },
   },
   temp_spell_12: {
     key: 'temp_spell_12', name: '泰坦降临', cost: 0, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Titan',
@@ -2351,7 +2436,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 23. Thorns (反伤) ---
   test_thorns: {
     key: 'test_thorns', name: '测试：反伤', cost: 1, power: 1, health: 5, maxHealth: 5, isChampion: false, level: 0, region: 'TEST',
-    description: '受击时对攻击者打1。', type: 'unit', keywords: ['Thorns'],
+    description: '受到攻击伤害时对攻击者打1，被打或挨反击都算。', type: 'unit', keywords: ['Thorns'],
     imageUrl: TEST_IMAGES.thorns,
     isCollectible: false
   },

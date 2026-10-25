@@ -550,7 +550,7 @@ function evaluateHEAL(
 
 function evaluateDRAW(
   spell: CardData,
-  _state: GameState,
+  state: GameState,
   _enemyBench: CardData[],
   playerBench: CardData[],
   config: Record<string, any>,
@@ -608,6 +608,59 @@ function evaluateDRAW(
     }
     // 无天启者在场则跳过（无法选取目标）
     return { shouldPlay: false, score: 0, debug: '无天启者在场，无法检索' };
+  }
+
+  // ——— 弃置全部手牌型（[2026-10-23 莉莉子] 回收）———
+  // 估值口径：弃光手牌是**硬代价**，所以只在"手牌越少越划算"时出手。
+  //   净收益 = 抽上来的张数 - 弃掉的张数 + 恢复法力折算（2 点 ≈ 1 张牌的价值）
+  if (config.discardAll) {
+    // [2026-10-23 莉莉子 · 独立审查] 排除**正在评估的这张牌自己**：
+    //   它此刻还在手牌里，但打出时已不在手上 —— 真正被弃掉的是"另外那些"。
+    //   不排除的话 `>= 4` 实际等于"另有 3 张就判净亏"，AI 会比设计预期更保守。
+    const handSize = (enemyHand ?? []).filter(c => c.id !== spell.id).length;
+    const manaGain = config.manaGain ?? 0;
+    // 手牌 ≥ 4 张时基本是净亏（弃 4 抽 4，还白付 6 费）⇒ 不打
+    if (handSize >= 4) {
+      return { shouldPlay: false, score: 0, debug: `手牌 ${handSize} 张，弃光抽 ${drawCount} 张是净亏` };
+    }
+    const net = drawCount - handSize;
+    const score = 4 + net * 4 + manaGain * 2;
+    if (score <= 6) {
+      return { shouldPlay: false, score: 0, debug: `弃 ${handSize} 抽 ${drawCount} 收益不足，评分 ${score}` };
+    }
+    return {
+      shouldPlay: true,
+      score,
+      debug: `弃光 ${handSize} 张 → 抽 ${drawCount} 张 + 恢复 ${manaGain} 法力，净增 ${net}，评分 ${score}`,
+    };
+  }
+
+  // ——— 过滤抽取型（[2026-10-23 莉莉子] 同行：只抽天启者）———
+  // 口径：牌库里还有天启者才值这个价；没有就只剩兜底的"一张随机单位"，价值大幅缩水。
+  // ⚠️ 防御：AI 这里只能拿到 `game.enemyDeck`，而真实牌库在 `stateRef.current.enemyDeck`。
+  //    ✅ 独立审查已确认：`GameState` 虽声明了 playerDeck/enemyDeck（types.ts:314-315），
+  //       但 `useGameState` 的 game 快照**全仓零赋值** ⇒ 这里的 `state.enemyDeck` **运行时恒为 undefined**，
+  //       所以本段当前实际走的是下面那条"中性 10 分放行"；精细估值（有天启者 20+ / 兜底 8）是**休眠代码**。
+  //    ── 为什么仍保留而不是删：接上真实牌库只差一处传参（`GameSession.tsx:815` 的 `useAI({...})`
+  //       再传一个 deck），但那是**红线文件**、需程授权 ⇒ 先按"不可读则中性放行"跑，不擅自改。
+  //    ── 为什么必须兜底：若"读不到"被当成"没有天启者"，同行会变成 AI 永远不打且**零报错**的死牌。
+  if (config.drawFilter) {
+    const ownDeckRaw = (state as any).enemyDeck as CardData[] | undefined;
+    if (!Array.isArray(ownDeckRaw)) {
+      return { shouldPlay: true, score: 10, debug: '牌库信息不可读，按中性价值放行（不判死）' };
+    }
+    const championPoolAmount = ownDeckRaw.filter(c => c.isChampion).length;
+    const unitPoolAmount = ownDeckRaw.filter(c => typeof c.type === 'string' && c.type.includes('unit')).length;
+
+    if (championPoolAmount > 0) {
+      const score = 20 + championPoolAmount * 2;   // 稳定捞出天启者 = 引擎/大怪上手
+      return { shouldPlay: true, score, debug: `牌库还剩 ${championPoolAmount} 张天启者，抽取值得，评分 ${score}` };
+    }
+    if (config.drawFallbackFilter === 'unit' && unitPoolAmount > 0) {
+      const score = 8;
+      return { shouldPlay: true, score, debug: `牌库无天启者，退化为抽单位（剩 ${unitPoolAmount} 张），评分 ${score}` };
+    }
+    return { shouldPlay: false, score: 0, debug: '牌库既无天启者也无可抽单位，空转' };
   }
 
   // ——— 纯抽牌型（无弃牌） ———
@@ -779,6 +832,99 @@ function evaluateSACRIFICE(
     ],
     score,
     debug: `牺牲${cheapest.name}(${sacrificeCost}费)→${bestEnemy.name} ${damageValue}伤，评分${score}`,
+  };
+}
+
+// ==========================================
+// Pattern: POWER_BURST — 攻击力引爆（[2026-10-23 莉莉子] 崩坏）
+// ==========================================
+// 配置参数:
+//   raceFilter?: string — 只允许该种族的友方单位当"引爆源"（缺省不限）
+//
+// 口径（与卡面「对我方一个泰坦单位造成等同于其攻击力的伤害」逐字对齐）：
+//   ① 引爆源 = 攻击力最高的友方（泰坦）单位；我方单位先吃**等量**伤害 ⇒
+//      会死的要按单位价值算进代价，活下来的只算掉血。
+//   ② 能斩杀对手水晶 ⇒ 无条件打脸（斩杀即赢，代价忽略）。
+//   ③ 否则挑"目标价值 × 2.2 − 自损代价"最高的敌方单位；打不死只伤血则价值对折。
+function evaluatePOWER_BURST(
+  _spell: CardData,
+  state: GameState,
+  enemyBench: CardData[],
+  playerBench: CardData[],
+  config: Record<string, any>,
+): AIEvaluation {
+  const raceFilter: string | undefined = config.raceFilter;
+  // ⚠️ 本 handler 的形参命名沿用旧约定：`playerBench` = **AI 自己的**友方席，
+  //    `enemyBench` = 对手（玩家）的单位（与 evaluateSACRIFICE 完全一致，勿被名字骗）
+  const own = filterAlive(playerBench).filter(u => !raceFilter || (u.race as string[] | undefined)?.includes(raceFilter));
+  const foes = filterAlive(enemyBench);
+
+  if (own.length === 0) {
+    return { shouldPlay: false, score: 0, debug: `场上没有可引爆的${raceFilter ?? ''}单位` };
+  }
+
+  // 0 攻单位（异化人 0/2 / 融合体 0/3 等）引爆 = 0 伤害 ⇒ 不能当源
+  const sources = own.filter(u => getPow(u) >= 1);
+  if (sources.length === 0) {
+    return { shouldPlay: false, score: 0, debug: '可用单位攻击力为 0，引爆打不出伤害' };
+  }
+
+  const nexusHp = state.playerNexus ?? 20;
+  let best: { score: number; src: CardData; foe: CardData; dmg: number; kills: boolean; foeHp: number } | null = null;
+
+  for (const src of sources) {
+    const dmg = getPow(src);
+    const srcHp = getHp(src);
+    // 自损代价：会死 ⇒ 按单位价值赔；活下来 ⇒ 掉血按 0.6/点折价
+    const sacCost = srcHp <= dmg ? (3 + src.cost) : dmg * 0.6;
+
+    // ① 斩杀线：能一发打穿对手水晶 ⇒ 直接打脸
+    //    ⚠️ 这里必须是 `player_nexus`（= **玩家**的水晶）。AI handler 的 nexus 坐标是
+    //    **绝对**的，与 effectProcessor 同口径：证据 `:121`（打人用 player_nexus）
+    //    与 `:531`（奶自己用 enemy_nexus）。写成 enemy_nexus 会变成"炸自己的水晶"。
+    if (nexusHp <= dmg) {
+      return {
+        shouldPlay: true,
+        targets: [
+          { type: 'ally', id: src.id },
+          { type: 'player_nexus', id: 'player_nexus' },
+        ],
+        score: 100,
+        debug: `斩杀线！引爆 ${src.name}(${dmg}攻) 直接打穿对手水晶(${nexusHp}血)`,
+      };
+    }
+
+    // ② 敌方单位
+    for (const foe of foes) {
+      const foeHp = getHp(foe);
+      const kills = dmg >= foeHp;
+      const foeValue = foe.cost + (foe.isChampion ? 15 : 0) + getPow(foe);
+      const score = kills
+        ? foeValue * 2.2 - sacCost
+        : Math.min(dmg, foeHp) * 1.2 + (foe.isChampion ? 6 : 0) - sacCost;
+      if (!best || score > best.score) {
+        best = { score, src, foe, dmg, kills, foeHp };
+      }
+    }
+  }
+
+  if (!best) return { shouldPlay: false, score: 0, debug: '无敌方单位可打，且水晶不在斩杀线' };
+  if (best.score <= 8) {
+    return {
+      shouldPlay: false,
+      score: 0,
+      debug: `引爆 ${best.src.name} 收益不足（${best.kills ? '击杀' : '削血'} ${best.foe.name}，评分 ${best.score.toFixed(0)}）`,
+    };
+  }
+
+  return {
+    shouldPlay: true,
+    targets: [
+      { type: 'ally', id: best.src.id },
+      { type: 'enemy', id: best.foe.id },
+    ],
+    score: best.score,
+    debug: `引爆 ${best.src.name}(${best.dmg}攻) → ${best.kills ? '击杀' : '削血'} ${best.foe.name}(HP${best.foeHp})，评分 ${best.score.toFixed(0)}`,
   };
 }
 
@@ -982,6 +1128,11 @@ function evaluateCHOICE(
       owner: 'enemy',
       turnOwner: state.turnOwner,
       stackLength: (state.spellStack || []).length,
+    }, {
+      // [2026-10-23 莉莉子] 棋盘上下文 —— 枷锁 5（千莲叠绽的召唤分支已达上限时，AI 也不该把它当成可选项）
+      playerBench: state.playerBench,
+      enemyBench: state.enemyBench,
+      combatField: state.combatField as any,
     });
     return canPlay;
   });
@@ -1455,6 +1606,8 @@ const HANDLERS: Record<string, (
   KEYWORD_TRANSFER: evaluateKEYWORD_TRANSFER,
   SUMMON: evaluateSUMMON,
   SACRIFICE: evaluateSACRIFICE,
+  // [2026-10-23 莉莉子] 崩坏：把友方攻击力引爆成对敌伤害（与 SACRIFICE 互补：那个吃炮灰，这个吃高攻）
+  POWER_BURST: evaluatePOWER_BURST,
   FROST: evaluateFROST,
   STRIKE: evaluateSTRIKE,
   RECALL_AND_REPLACE: evaluateRECALL_AND_REPLACE,

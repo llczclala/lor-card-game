@@ -3,7 +3,7 @@ import { EFFECT_DB } from '../data/effectRegistry';
 // [2026-10-03 莉莉子 · 进攻标识三层分离 ②] 「追加一次进攻权」的唯一出口
 import { grantExtraAttackTurn, spellManaCapOf } from './core'; // [2026-10-08] +spellManaCapOf（法术法力上限口径）
 import { createCard, CARD_DB } from '../data/cards';
-import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand, markLeveledUp, unmarkLeveledUp, assembleBeaconCard, withEquipKeywords, isNexusImmune, carryCostOverride } from '../utils/gameRules'; // [新增] 引入牌库BUFF · [2026-09-19] 引入信标落场装配器 · [2026-10-03] withEquipKeywords（退级时保留装备/武装授予的关键词）· [2026-10-06] carryCostOverride（转换链保留费用覆盖）
+import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand, markLeveledUp, unmarkLeveledUp, assembleBeaconCard, withEquipKeywords, isNexusImmune, carryCostOverride, sideOfLevelUpTicket } from '../utils/gameRules'; // [新增] 引入牌库BUFF · [2026-09-19] 引入信标落场装配器 · [2026-10-03] withEquipKeywords（退级时保留装备/武装授予的关键词）· [2026-10-06] carryCostOverride（转换链保留费用覆盖）
 // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔升级进度：交战区贴值（本层用局部数组回写，不走 setState）
 import { applyMauxirProgressToField } from '../utils/mauxirProgress';
 import { eventBus, GameEvents } from '../utils/eventBus';
@@ -100,6 +100,10 @@ export interface EffectContext {
 }
 
 export interface EffectParams {
+    // [2026-10-23 莉莉子 · 强化「囤积」重做] `true` ⇒ 兑现「**这张卡自己**攒下的点数」
+    //   （`CardData.hoardStored`，由"每打出一张卡"的钩子累加），而不是固定 `value`。
+    //   发放时仍走同一条封顶口径（不超过法力上限）。
+    fromHoardStored?: boolean;
     value?: number;
     power?: number;
     health?: number;
@@ -186,6 +190,16 @@ export interface EffectParams {
     useDiscardCount?: boolean;   // 亡语弃牌计数
     reduceCostIfDuplicate?: boolean; // 手牌重复减费
     nexusFallback?: boolean;     // 无合法目标时回退水晶
+    // =====================================
+    // [2026-10-23 莉莉子] 三张新法术所需开关
+    //   ⚠️ 与 effectRegistry.ts 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    valueFromAllyPower?: boolean;   // [崩坏] 伤害取第 1 目标的当前攻击力
+    drawFilter?: 'champion' | 'unit';          // [同行] 过滤抽取
+    drawFallbackFilter?: 'champion' | 'unit';  // [同行] 兜底抽取
+    discardAll?: boolean;           // [回收] 弃置全部手牌
+    drawAfterDiscard?: number;      // [回收] 弃置全部后抽 N 张
+    manaGainAfter?: number;         // [回收] 弃置全部后恢复 N 点法力值
 }
 
 /**
@@ -555,6 +569,133 @@ export const processEffect = (
                         if (newFight.blocker) newFight.blocker = dealDamage({ ...newFight.blocker });
                         return newFight;
                     });
+                }
+                break;
+            }
+
+            // =============================================
+            // A0.4 [2026-10-23 莉莉子 · 崩坏] 攻击力引爆模式
+            // ── 语义：对我方一个泰坦单位造成 = 其**当前攻击力** 的伤害，
+            //    之后对一个敌方单位 / 敌方水晶造成**等量**伤害。
+            // ── 为什么不并进下面的通用 `params.value` 分支（三条硬理由）：
+            //    ① 通用分支只打 `finalTargets[0]`（见本文件 :1034 `const target = finalTargets[0]`），
+            //       而本牌必须**两个目标各吃一次**；
+            //    ② 伤害值来自目标面板，不是静态 `params.value`；
+            //    ③ 刻意**不吃**「缇坦妮娅法术增伤 / 法术狂潮 / 卡级增伤」——
+            //       卡面写死「等同于其攻击力」，一加成就不是等量了；而且我方单位也会跟着吃加成伤害，
+            //       等于自伤被同一份加成翻倍。
+            // ── 与献祭模式（A0）同口径的部分：目标存活校验、Barrier / Tough / 剧毒 / 水晶坚韧 / 水晶免疫。
+            // =============================================
+            if (effect.params.valueFromAllyPower) {
+                const selfTarget = finalTargets[0];
+                const foeTarget = finalTargets[1];
+                if (!selfTarget || !foeTarget) break;
+
+                // finalTargets 是入栈快照 ⇒ 必须按 id 取**实时实例**（防"先被献祭/折返/击杀，仍照算"）
+                const findLiveUnit = (id: string): CardData | undefined => {
+                    const inBench = nextPlayerBench.find(c => c.id === id) || nextEnemyBench.find(c => c.id === id);
+                    if (inBench) return inBench;
+                    if (!nextCombatField) return undefined;
+                    for (const fight of nextCombatField) {
+                        if (fight.attacker && fight.attacker.id === id) return fight.attacker;
+                        if (fight.blocker && fight.blocker.id === id) return fight.blocker;
+                    }
+                    return undefined;
+                };
+
+                const liveSelf = findLiveUnit(selfTarget.id);
+                if (!liveSelf) break;   // 该单位已不在场 ⇒ 无攻击力可搬运，整张牌空转
+
+                // 伤害值 = 当前攻击力（含 buffs / roundBuffs / 装备，与卡面显示同口径）
+                const burstDmg = getPower(liveSelf);
+                console.log(`[崩坏] 引爆 ${liveSelf.name}（当前攻击力 ${burstDmg}）→ 自伤 ${burstDmg} + 对敌 ${burstDmg}`);
+                if (burstDmg <= 0) break;   // 0 攻泰坦（异化人 0/2 等）⇒ 0 伤害，不做无意义演出
+
+                // ① 我方单位先吃自己这一份（可被屏障抵挡 / 被坚韧减免 —— 属全局伤害口径）
+                const applySelfDamage = (c: CardData): CardData => {
+                    let nextCard = { ...c };
+                    let actual = burstDmg;
+                    if (nextCard.keywords.includes('Barrier') && actual > 0) {
+                        events.push({ type: 'sfx_shield_break', payload: null });
+                        nextCard.depletedKeywords = [...(nextCard.depletedKeywords || []), 'Barrier'];
+                        nextCard.animState = 'hit' as const;
+                        actual = 0;
+                    }
+                    if (nextCard.keywords.includes('Tough') && actual > 0) actual = Math.max(0, actual - 1);
+                    if (actual > 0) {
+                        events.push({ type: 'unit_damage', payload: { id: nextCard.id, amount: actual } });
+                        // [2026-10-23 莉莉子 · 独立审查] 补齐 `deadlyLethalInject`：
+                        //   它是按**受伤者**是否带【剧毒】判定"擦伤即解构"（keywords.ts:43），
+                        //   与敌方那份走同一口径。此前自伤这份漏了 ⇒ 同一张卡对自己人对敌人两套规则。
+                        nextCard.damageTaken = (nextCard.damageTaken || 0) + actual + deadlyLethalInject(nextCard, actual);
+                        nextCard.animState = 'hit' as const;
+                    }
+                    return nextCard;
+                };
+                nextPlayerBench = updateCardInList(nextPlayerBench, selfTarget.id, applySelfDamage);
+                nextEnemyBench = updateCardInList(nextEnemyBench, selfTarget.id, applySelfDamage);
+                if (nextCombatField) {
+                    nextCombatField = nextCombatField.map(fight => {
+                        const nf = { ...fight };
+                        if (nf.attacker && nf.attacker.id === selfTarget.id) nf.attacker = applySelfDamage(nf.attacker);
+                        if (nf.blocker && nf.blocker.id === selfTarget.id) nf.blocker = applySelfDamage(nf.blocker);
+                        return nf;
+                    });
+                }
+
+                // ② 敌方：单位 or 水晶，吃**同一份**伤害
+                //    ⚠️ 水晶判定用 `type` 的**绝对坐标**（与 A 分支 :1075 同口径）：
+                //       'enemy_nexus' → 永远指敌方阵营水晶；'player_nexus' → 永远指我方阵营水晶。
+                //    两条路径都要留：玩家施法时目标是 'enemy_nexus'；**AI 施法时它给的是 'player_nexus'**
+                //    （AI handler 的 nexus 坐标同样是绝对的，证据 `aiSpellStrategies.ts:121` / `:531`）。
+                //    ⇒ 若只认其中一条，另一方施法时这张牌会**静默不结算**。
+                const targetIsEnemyNexus = foeTarget.type === 'enemy_nexus' || foeTarget.type === 'nexus_enemy' || foeTarget.id === 'enemy_nexus';
+                const targetIsPlayerNexus = foeTarget.type === 'player_nexus' || foeTarget.type === 'nexus_player' || foeTarget.id === 'player_nexus';
+
+                if (targetIsEnemyNexus || targetIsPlayerNexus) {
+                    if (targetIsPlayerNexus) {
+                        // 打**我方**水晶：只有 AI 视角才会走到（对手的"敌方水晶"= 玩家的水晶）
+                        const finalDmg = nextGame.playerNexusTough ? Math.max(0, burstDmg - 1) : burstDmg;
+                        if (!isNexusImmune(nextGame, 'player')) {
+                            nextGame.playerNexus = Math.max(0, nextGame.playerNexus - finalDmg);
+                            events.push({ type: 'nexus_damage', payload: { target: 'player', amount: finalDmg } });
+                        }
+                    } else {
+                        const finalDmg = nextGame.enemyNexusTough ? Math.max(0, burstDmg - 1) : burstDmg;
+                        // 免疫（不死之身）：不扣血、不发事件（飘字/震屏/任务进度三条链一起跳过，与 :1089 同口径）
+                        if (!isNexusImmune(nextGame, 'enemy')) {
+                            nextGame.enemyNexus = Math.max(0, nextGame.enemyNexus - finalDmg);
+                            events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: finalDmg } });
+                        }
+                    }
+                } else if (foeTarget.id) {
+                    const applyFoeDamage = (c: CardData): CardData => {
+                        let nextCard = { ...c };
+                        let actual = burstDmg;
+                        if (nextCard.keywords.includes('Barrier') && actual > 0) {
+                            events.push({ type: 'sfx_shield_break', payload: null });
+                            nextCard.depletedKeywords = [...(nextCard.depletedKeywords || []), 'Barrier'];
+                            nextCard.animState = 'hit' as const;
+                            actual = 0;
+                        }
+                        if (nextCard.keywords.includes('Tough') && actual > 0) actual = Math.max(0, actual - 1);
+                        if (actual > 0) {
+                            events.push({ type: 'unit_damage', payload: { id: nextCard.id, amount: actual } });
+                            nextCard.damageTaken = (nextCard.damageTaken || 0) + actual + deadlyLethalInject(nextCard, actual);
+                            nextCard.animState = 'hit' as const;
+                        }
+                        return nextCard;
+                    };
+                    nextPlayerBench = updateCardInList(nextPlayerBench, foeTarget.id, applyFoeDamage);
+                    nextEnemyBench = updateCardInList(nextEnemyBench, foeTarget.id, applyFoeDamage);
+                    if (nextCombatField) {
+                        nextCombatField = nextCombatField.map(fight => {
+                            const nf = { ...fight };
+                            if (nf.attacker && nf.attacker.id === foeTarget.id) nf.attacker = applyFoeDamage(nf.attacker);
+                            if (nf.blocker && nf.blocker.id === foeTarget.id) nf.blocker = applyFoeDamage(nf.blocker);
+                            return nf;
+                        });
+                    }
                 }
                 break;
             }
@@ -1065,12 +1206,29 @@ export const processEffect = (
                 if (target.type === 'enemy_nexus') {
                     // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：法术/效果直伤打水晶同样减免 1（事件 amount 同步为实际伤害，飘字一致）
                     const finalNexusDmg = nextGame.enemyNexusTough ? Math.max(0, dmg - 1) : dmg;
-                    nextGame.enemyNexus -= finalNexusDmg;
-                    events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: finalNexusDmg } });
+                    // [2026-10-20 莉莉子 BUG修复 · 不死之身免疫一切来源] 补查**水晶免疫**（本处此前只查了【坚韧】）。
+                    // ── 程拍板口径：「不死之身**应该免疫一切来源的伤害**，芬妮的大招**不能豁免**。」
+                    //    本分支是 STRIKE 的 `params.value` **法术直伤打水晶**——暗箭 / 单刀直入 / 破坏 / 蓄意渗透 …
+                    //    所有 `params.value` 类法术共用它 ⇒ 同属"一切来源"，必须一起免疫。
+                    // ── 按**被打的那一方**取免疫：`'enemy_nexus'` ⇒ 查 `'enemy'`；`'player_nexus'` ⇒ 查 `'player'`。
+                    // ── 为什么免疫时**连 `nexus_damage` 事件都不发**（而不是发 0 或原值）：
+                    //    该事件是视觉 / 音效 / 任务三条链的共同输入 —— 飘字、震屏、水晶打击音、水晶震动，
+                    //    以及 `useMissionSystem.ts:224` 的任务进度统计都挂在它上面。
+                    //    发 0 或发原值 = 给玩家"打了却没掉血"的**假反馈**，还会把假伤害记进任务进度；
+                    //    免疫的语义是「**这笔伤害根本没发生**」⇒ 扣血、事件、记账三者一起跳过。
+                    // ── 与上一单（芬妮碾压 `:1321` 的 `finalExcess`）同口径，写法对照本文件 `:1001` 剑痕时空。
+                    if (!isNexusImmune(nextGame, 'enemy')) {
+                        nextGame.enemyNexus -= finalNexusDmg;
+                        events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: finalNexusDmg } });
+                    }
                 } else if (target.type === 'player_nexus') {
                     const finalNexusDmg = nextGame.playerNexusTough ? Math.max(0, dmg - 1) : dmg;
-                    nextGame.playerNexus -= finalNexusDmg;
-                    events.push({ type: 'nexus_damage', payload: { target: 'player', amount: finalNexusDmg } });
+                    // [2026-10-20 莉莉子 BUG修复 · 不死之身免疫一切来源] 同上：本支打的是**我方**水晶 ⇒ 查 `'player'`。
+                    //   免疫 ⇒ 不扣血、不发 `nexus_damage`（理由同上：飘字/震屏/音效/任务进度全部归零）。
+                    if (!isNexusImmune(nextGame, 'player')) {
+                        nextGame.playerNexus -= finalNexusDmg;
+                        events.push({ type: 'nexus_damage', payload: { target: 'player', amount: finalNexusDmg } });
+                    }
                 } else if (target.id) {
 
                     // =====================================
@@ -1201,6 +1359,55 @@ export const processEffect = (
                         const hpSnap = (c: CardData) => (c.health || 0) + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0);
                         console.log(`[单挑] 进攻方=${attacker.name}(攻${damageToDef}) | 防守方=${defender.name}(HP${hpSnap(defender)} 基础${defender.health} roundBuffs=${JSON.stringify(defender.roundBuffs)} 受伤${defender.damageTaken ?? 0})`);
 
+                        // ==========================================================
+                        // [2026-10-20 莉莉子 BUG修复 · 猫汐尔单挑不计进度]
+                        // ── 为什么"只登记、最后统一记账"，而不是就地 bump + 贴值？
+                        //    `applyDamage` 全程是被**整体赋值**调起来的：
+                        //      `nextPlayerBench = updateCardInList(nextPlayerBench, ...)`、
+                        //      `nextCombatField = nextCombatField.map(...)`。
+                        //    若在 applyDamage 内部就贴值，内层刚写好的新数组会被**外层这一次的返回值直接冲掉**：
+                        //    两名对决者都在交战区、备战席里没有时，applyDamage **只**在 `nextCombatField.map()` 内部
+                        //    被调用 ⇒ 贴值 100% 无效（ledger 记上了、卡面镜像没变，而升级判据读的正是卡面镜像
+                        //    `gameRules.ts:985`/`:1256` ⇒ 升级被推迟到下一次贴值点）。
+                        //    ⇒ 本函数只登记「该记多少、记给谁」，等全部落点定稿后再统一 bump + 贴值（见本分支末尾）。
+                        // ── 为什么按「挥击者」判召唤系：单挑的伤害是**场上单位拿自己的攻击力**打出来的，
+                        //    法术卡只是发起者。与埋点 A（`useRoundLifecycle.ts:288` 按开火者 race）、
+                        //    埋点 C-1/C-2（`useGameState.ts:3827-3830`/`:3818-3821` 按进攻者/格挡者 race）同一口径。
+                        const duelMauxirCredits: Array<{ side: 'player' | 'enemy'; amount: number }> = [];
+                        const creditMauxir = (striker: CardData, dmg: number) => {
+                            if (!isSummonerOrSummon(striker) || !(dmg > 0)) return;
+                            // ── ×2 口径：必须与 C-1/C-2/C-3（`useGameState.ts:3819`/`:3828`/`:4131`）一致 ——
+                            //    那三处都写 `key === 'Soline_Anubis' ? dmg * 2 : dmg`。漏掉这条，就会出现
+                            //    同一只阿努比斯「在交战区记 8 点、被单挑只记 4 点」的口径分裂。
+                            const amount = striker.key === 'Soline_Anubis' ? dmg * 2 : dmg;
+                            // ── 归属：attacker 属 `context.owner`，defender 属其对立方（与 C-1/C-2 一致，不串账）。
+                            const side: 'player' | 'enemy' = striker === attacker
+                                ? context.owner
+                                : (context.owner === 'player' ? 'enemy' : 'player');
+                            duelMauxirCredits.push({ side, amount });
+                        };
+
+                        // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] ⚠️ `mode` / `defenderDidStrike` / `isMutualStrike`
+                        //   **必须在这里提前声明**：它们要同时被下面的 `applyDamage`（碾压分支）和本分支后续全部逻辑使用。
+                        //   原先 `mode` 定义在 applyDamage **之后**，碾压块只能靠闭包"运气捕获"——以后一旦有人调整顺序，
+                        //   轻则读到 TDZ 抛错、重则被挪出作用域后静默变成 undefined ⇒ 碾压/反击判定静默失灵。提前声明即根治。
+                        const mode = effect.params.strikeMode || 'MUTUAL';
+                        // [新增] 判定防守方是否挥出了反击
+                        const defenderDidStrike = mode === 'MUTUAL';
+                        // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] 单挑（互击）vs 芬妮大招（单向）的判据。
+                        //   程拍板口径：「单挑不管发生什么、不管交战双方持有什么关键词，都只按字面执行『双方互相打击』」
+                        //   ⇒ 碾压穿透**只**属于单向打击（芬妮大招），单挑一律关掉。见下方碾压块。
+                        const isMutualStrike = mode === 'MUTUAL';
+
+                        // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] 反伤 / 吸血所需的"实际伤害"账本。
+                        //   ⚠️ 受击事实**必须**在任何 +=1 之前取快照 —— 这是 `keywords.ts:438-441` 记下的既有教训：
+                        //      「先攻击杀阻挡者」时 `attackerDamage` 本为 0，若先加了反伤再取快照，就会反伤被自己的反伤
+                        //      骗触发 ⇒ 对方凭空多掉 1 点。故这里只在 applyDamage 里记录"这一趟真受伤了"。
+                        let dmgDealtByAttacker = 0;   // attacker 实际打到 defender 身上的伤害（已过屏障/坚韧）
+                        let dmgDealtByDefender = 0;   // defender 反击实际打到 attacker 身上的伤害（已过屏障/坚韧）
+                        let attackerTookRealDamage = false;
+                        let defenderTookRealDamage = false;
+
                         const applyDamage = (c: CardData, dmg: number, didStrike: boolean) => {
                             let finalDmg = dmg;
 
@@ -1224,29 +1431,60 @@ export const processEffect = (
                                 // ==========================================
                                 // [新增] 埋点 B-2：猫汐尔经验收集 - 拦截法术单挑
                                 // ==========================================
-                                // 在单挑中，如果该法术的施法者(打出这张法术牌的人，通常是英雄本身或随从) 是召唤系，计入经验。
-                                // (注意：这里追踪的是法术的来源，而不是参与单挑的两个受害者的种族。这符合LOR等游戏的通用规则：谁打出的法术，谁就是伤害来源。)
-                                if (context.owner === 'player' && context.sourceCard && isSummonerOrSummon(context.sourceCard)) {
-                                    accumulateMauxirDamage(nextPlayerBench, nextCombatField || [], finalDmg, (newBench) => { nextPlayerBench = newBench; }, nextPlayerHand, (newHand) => { nextPlayerHand = newHand; }, nextPlayerDeck, (newDeck) => { if (newDeck) nextPlayerDeck = newDeck; });
-                                    // [2026-10-06 BUG-20261006-01] 交战区贴值（本层用局部数组回写）
-                                    nextCombatField = applyMauxirProgressToField(nextCombatField) ?? nextCombatField;
-                                }
+                                // [2026-10-20 莉莉子 BUG修复 · 猫汐尔单挑不计进度]
+                                //   病根在旧门 `context.owner === 'player' && isSummonerOrSummon(context.sourceCard)`：
+                                //   法术结算时 `sourceCard` 就是**法术卡实例本身**（`spells.ts:87` ←
+                                //   `useSpellSystem.ts:1161` / `:1912` 传的是 `card` / `spell.card`），
+                                //   而「单挑」卡定义**没有 `race`**（`data/cards.ts:62-71`）⇒ 该门恒 false ⇒ 死代码。
+                                //   改判「挥击者」后：挨打的是 defender ⇒ 出自 attacker；挨打的是 attacker ⇒ 出自 defender 的反击。
+                                //   ⚠️ 这里**只登记**，bump + 贴值统一延后到本分支末尾（必须延后，原因见 `creditMauxir` 上方注释）。
+                                //   ⚠️ 法术直接造伤（`params.value` 那类，如毁灭/陨石）不进本分支，本次未动。
+                                if (c.id === defenderId) creditMauxir(attacker, finalDmg);
+                                else if (c.id === attackerId) creditMauxir(defender, finalDmg);
+
+                                // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] 累计"实际打出的伤害"+ 记录受击事实，
+                                //   供下方【反伤 Thorns】与【吸血 Lifesteal】使用。
+                                //   放在这里即"已过屏障/坚韧结算后的最终值"，与物理交战 `keywords.ts:410-430` 的
+                                //   结算次序同义（反伤判据读的就是减免**之后**的伤害）。
+                                if (c.id === defenderId) { defenderTookRealDamage = true; dmgDealtByAttacker += finalDmg; }
+                                else if (c.id === attackerId) { attackerTookRealDamage = true; dmgDealtByDefender += finalDmg; }
                             }
 
                             // [新增核心] 法术附带碾压 (Overwhelm) 激光穿透判定
-                            if (attacker.keywords.includes('Overwhelm')) {
+                            // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] ⚠️ **碾压只给单向打击（芬妮大招）结算**。
+                            //   程拍板口径：「单挑不管发生什么、不管交战双方持有什么关键词，都只按字面执行
+                            //   『双方互相打击』这个逻辑」⇒ 单挑**不许**把穿透溢出打到水晶上。
+                            //   这段碾压逻辑本是照着【芬妮大招】（`effect_fenny_ultimate` = ONE_WAY）写的，
+                            //   单挑（MUTUAL）与它长得像才被一并套上 —— 属于搭便车。
+                            //   ⇒ 用 `isMutualStrike` 关掉。连带后果：单挑不再产生 `nexus_damage`，
+                            //     上一轮为"溢出记账"补的那笔猫汐尔登记已**整段删除**（单挑本就不该有溢出）。
+                            if (!isMutualStrike && attacker.keywords.includes('Overwhelm')) {
                                 const currentHealth = c.health + (c.buffs?.health || 0) + (c.roundBuffs?.health || 0) - (c.damageTaken || 0); // [2026-07-31] 碾压溢出计入本回合临时血
                                 if (finalDmg > currentHealth) {
                                     const rawExcess = finalDmg - currentHealth;
                                     // [2026-09-02 莉莉子 修复] 固若金汤水晶坚韧：碾压溢出打水晶同样减免 1（事件 amount 同步为实际伤害，飘字一致）
                                     const excess = (context.owner === 'player' ? nextGame.enemyNexusTough : nextGame.playerNexusTough)
                                         ? Math.max(0, rawExcess - 1) : rawExcess;
-                                    if (context.owner === 'player') {
-                                        nextGame.enemyNexus -= excess;
-                                        events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: excess } });
-                                    } else {
-                                        nextGame.playerNexus -= excess;
-                                        events.push({ type: 'nexus_damage', payload: { target: 'player', amount: excess } });
+                                    // [2026-10-20 莉莉子 BUG修复 · 不死之身免疫一切来源] 补查**水晶免疫**（本处此前完全没有）。
+                                    // ── 程拍板口径：「不死之身**应该免疫一切来源的伤害**，芬妮的大招**不能豁免**。」
+                                    //    本块是【芬妮大招】(ONE_WAY) 的碾压溢出，旧实现直接扣血 + 发事件 ⇒ 穿透了不死之身。
+                                    // ── 判据与写法对照既有两处，保持一致：本文件剑痕时空 `:999-1002`、
+                                    //    物理交战 `useGameState.ts:4112-4114`（combatNexusImmune）与 `:4129-4130`（nexusSource）。
+                                    // ── 为什么免疫时**连 `nexus_damage` 事件都不发**（而不是发 amount=0 或原值）：
+                                    //    该事件被视觉/音效层消费 —— 飘字、震屏、水晶打击音、水晶震动都挂在它上面。
+                                    //    发 0 或发原值都等于给玩家一个"打了却没掉血"的**假反馈**，与
+                                    //    `useGameState.ts:4112-4114`「免疫时飘字也归零、不留假数字」是同一条判据。
+                                    //    免疫的语义是「**这笔伤害根本没发生**」⇒ 扣血、事件、后续记账三者一起跳过。
+                                    const nexusSide: 'player' | 'enemy' = context.owner === 'player' ? 'enemy' : 'player';
+                                    const finalExcess = isNexusImmune(nextGame, nexusSide) ? 0 : excess;
+                                    if (finalExcess > 0) {
+                                        if (context.owner === 'player') {
+                                            nextGame.enemyNexus -= finalExcess;
+                                            events.push({ type: 'nexus_damage', payload: { target: 'enemy', amount: finalExcess } });
+                                        } else {
+                                            nextGame.playerNexus -= finalExcess;
+                                            events.push({ type: 'nexus_damage', payload: { target: 'player', amount: finalExcess } });
+                                        }
                                     }
                                 }
                             }
@@ -1271,9 +1509,8 @@ export const processEffect = (
 
                         // [致命 Bug 修复] 梳理打击逻辑，彻底移除复制粘贴导致的重复扣血！
 
-                        const mode = effect.params.strikeMode || 'MUTUAL';
-                        // [新增] 判定防守方是否挥出了反击
-                        const defenderDidStrike = mode === 'MUTUAL';
+                        // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] `mode` / `defenderDidStrike` / `isMutualStrike`
+                        //   已提前到 `applyDamage` 之前声明（原因见该处注释），此处不再重复声明。
 
                         // 1. 防御方承受伤害 (备战席)
                         nextPlayerBench = updateCardInList(nextPlayerBench, defenderId, c => applyDamage(c, damageToDef, defenderDidStrike));
@@ -1314,6 +1551,50 @@ export const processEffect = (
 
                                 return newFight;
                             });
+                        }
+
+                        // ==========================================================
+                        // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] 【反伤 Thorns】
+                        // ── 口径来源：`logic/keywords.ts:432-443`（物理交战实现的逐字对照）。
+                        //   · 反伤单位作为**被攻击方**、在实际受到 >0 伤害后，对挥击者回敬**固定 1 点**；
+                        //   · 这 1 点**不参与**坚韧/屏障减免（既有实现放在最末尾，注释明写"数值固定"）；
+                        //   · 受击快照必须早于任何 +=1 取（`keywords.ts:438-441`），上面 `attackerTookRealDamage` /
+                        //     `defenderTookRealDamage` 已在第一趟结算里取好 ⇒ 不会被自己的反伤骗触发。
+                        // ── 为什么**不**再调一次 `applyDamage` 来做这 1 点：
+                        //   那样会连带触发 幻象(Ephemeral) 击杀判定、strikeCount/roundStrikes 打击计数、
+                        //   猫汐尔记账、碾压判定，还可能二次进入本函数（递归）——而反伤只是"固定 1 点回敬"，
+                        //   以上全都不该发生。⇒ 这里做**一次性追加**：只改 damageTaken + 飘字，绝不走结算主路径。
+                        //   （剧毒解构沿用本文件其它伤害点的同一写法 `deadlyLethalInject(target, dmg)`。）
+                        const applyThorns = (targetId: string, amount: number) => {
+                            if (amount <= 0) return;
+                            const bump = (u: CardData) => ({
+                                ...u,
+                                damageTaken: (u.damageTaken || 0) + amount + deadlyLethalInject(u, amount),
+                                animState: 'hit' as const
+                            });
+                            events.push({ type: 'unit_damage', payload: { id: targetId, amount } });
+                            nextPlayerBench = updateCardInList(nextPlayerBench, targetId, bump);
+                            nextEnemyBench = updateCardInList(nextEnemyBench, targetId, bump);
+                            if (nextCombatField) {
+                                nextCombatField = nextCombatField.map(f => {
+                                    const nf = { ...f };
+                                    if (nf.attacker?.id === targetId) nf.attacker = bump(nf.attacker);
+                                    if (nf.blocker?.id === targetId) nf.blocker = bump(nf.blocker);
+                                    return nf;
+                                });
+                            }
+                        };
+                        // ① defender 带【反伤】且这一下真受伤 ⇒ attacker 额外挨 1 点，伤害来源 = defender
+                        if (defender.keywords.includes('Thorns') && defenderTookRealDamage) {
+                            applyThorns(attackerId, 1);
+                            dmgDealtByDefender += 1;   // 这 1 点算 defender 打出的伤害（供吸血、且与物理交战记账口径一致）
+                            creditMauxir(defender, 1); // 依据 `keywords.ts:442`：反伤并入 `attackerDamage`，而 C-2 记的正是它
+                        }
+                        // ② attacker 带【反伤】且这一下真受伤 ⇒ defender 额外挨 1 点，伤害来源 = attacker
+                        if (attacker.keywords.includes('Thorns') && attackerTookRealDamage) {
+                            applyThorns(defenderId, 1);
+                            dmgDealtByAttacker += 1;
+                            creditMauxir(attacker, 1); // 依据 `keywords.ts:443`：反伤并入 `blockerDamage`，而 C-1 记的正是它
                         }
 
                         events.push({ type: 'sfx_strike', payload: null });
@@ -1374,6 +1655,57 @@ export const processEffect = (
                                 });
                             }
                         }
+
+                        // ==========================================================
+                        // [2026-10-20 莉莉子 BUG修复 · 单挑按字面执行] 【吸血 Lifesteal】
+                        // ── 口径来源：`useGameState.ts:4137-4171`（物理交战的既有写法，逐条对齐）。
+                        //   · 造成伤害的单位，按其**实际造成的伤害**给**自己那方水晶**回血（`:4166-4171`）；
+                        //   · 用 `playerNexusMax` / `enemyNexusMax` 封顶（`:4157`），已满/溢出则不写入（`:4160`）；
+                        //   · 复用既有 `NEXUS_HEALED` 事件（`:4163` / `utils/eventBus.ts:48`），不新造一套。
+                        //   · 物理交战的 `atkDealt` 还含"打水晶"那一项（`:4150-4151`）；单挑已按新口径关掉碾压穿透
+                        //     ⇒ 本处**没有**水晶伤害项，`dmgDealtByAttacker` / `dmgDealtByDefender` 即等价结果。
+                        //   · 反伤势在 `keywords.ts:442-443` 里并入 attackerDamage/blockerDamage，物理交战的吸血因此
+                        //     也算上它 ⇒ 上面已把反伤那 1 点计入对应方向的 `dmgDealt*`，口径一致。
+                        //   ⚠️ 吸血本身**不产生伤害** ⇒ 不参与猫汐尔记账（与 C 系列埋点一致：它们只读伤害字段）。
+                        const healNexusFromLifesteal = (side: 'player' | 'enemy', amount: number) => {
+                            if (amount <= 0) return;
+                            const max = side === 'player' ? (nextGame.playerNexusMax ?? 20) : (nextGame.enemyNexusMax ?? 20);
+                            const cur = side === 'player' ? nextGame.playerNexus : nextGame.enemyNexus;
+                            const nextVal = Math.min(max, cur + amount);
+                            if (nextVal <= cur) return; // 已满或溢出 → 不写入
+                            if (side === 'player') nextGame.playerNexus = nextVal;
+                            else nextGame.enemyNexus = nextVal;
+                            eventBus.emit(GameEvents.NEXUS_HEALED, { target: side, amount });
+                        };
+                        const lifestealAtkSide = context.owner;
+                        const lifestealDefSide: 'player' | 'enemy' = context.owner === 'player' ? 'enemy' : 'player';
+                        if (dmgDealtByAttacker > 0 && attacker.keywords.includes('Lifesteal')) {
+                            healNexusFromLifesteal(lifestealAtkSide, dmgDealtByAttacker);
+                        }
+                        if (dmgDealtByDefender > 0 && defender.keywords.includes('Lifesteal')) {
+                            healNexusFromLifesteal(lifestealDefSide, dmgDealtByDefender);
+                        }
+
+                        // ==========================================================
+                        // [2026-10-20 莉莉子 BUG修复 · 猫汐尔单挑不计进度]
+                        // ── 为什么记账 + 贴值必须落在**这里**（本分支所有落点都定稿之后）：
+                        //    上面每一处伤害都走 `updateCardInList(...)` / `nextCombatField.map(...)` 的**整体赋值**，
+                        //    在 `applyDamage` 内部写入的新数组会被外层这一趟的返回值冲掉 —— 备战席与交战区
+                        //    **两条路径都中招**（两对决者都在交战区时 applyDamage 只在 map 内部被调用，
+                        //    贴值 100% 无效）。放到这里之后，本分支不再对 bench / combatField 做整体赋值
+                        //    ⇒ `accumulateMauxirDamage` 内部的 `setBench(贴值后的数组)` 才真正生效；
+                        //    我方 / 敌方两个账本也在同一处贴值，卡面镜像与 ledger 不会再脱节。
+                        duelMauxirCredits.forEach(({ side, amount }) => {
+                            if (side === 'player') {
+                                accumulateMauxirDamage(nextPlayerBench, nextCombatField || [], amount, (nb) => { nextPlayerBench = nb; }, nextPlayerHand, (nh) => { nextPlayerHand = nh; }, nextPlayerDeck, (nd) => { if (nd) nextPlayerDeck = nd; }, 'player');
+                            } else {
+                                accumulateMauxirDamage(nextEnemyBench, nextCombatField || [], amount, (nb) => { nextEnemyBench = nb; }, nextEnemyHand, (nh) => { nextEnemyHand = nh; }, nextEnemyDeck, (nd) => { if (nd) nextEnemyDeck = nd; }, 'enemy');
+                            }
+                        });
+                        // 交战区那份由本函数按各自归属方贴值（幂等：无改动返回原数组）
+                        if (duelMauxirCredits.length > 0) {
+                            nextCombatField = applyMauxirProgressToField(nextCombatField) ?? nextCombatField;
+                        }
                     }
                 }
             }
@@ -1404,8 +1736,37 @@ export const processEffect = (
                     targetBench[acaciaIdx] = { ...leveled, id: targetBench[acaciaIdx].id } as any;
                     events.push({ type: 'sfx_levelup', payload: targetBench[acaciaIdx] });
                     // [2026-07-30] 加入升级队列，触发升级动画
-                    nextGame.pendingLevelUps = [...(nextGame.pendingLevelUps || []), targetBench[acaciaIdx]];
-                    console.log(`[朔望之期] 安卡希雅升级 → Lv2`);
+                    // ══════════════════════════════════════════════════════════════
+                    // [2026-10-18 莉莉子 BUG修复 · 独立审查第 1 条：**第 4 个入队口补去重**]
+                    //   ── 本处此前是**唯一一个完全没有去重的入队口**（另三处见 `useGameState`：
+                    //      全场扫描派单 / 微队列结算派单 / `queueLevelUp`）。
+                    //   ── 病根：打出一次朔望之期就 push 一张票；**手牌里有两张朔望之期**时
+                    //      （或同侧两只 Lv1 安卡先后登场）⇒ 队列里两张同侧同名票 ⇒ 升级影片播两遍。
+                    //   ── 口径与另三处**完全一致**：``侧别|key`` 已在队 **或正在播** ⇒ 不重复派单；
+                    //      归属查不到（`null`）⇒ **不去重**（宁可不合并，也绝不误吞敌方那一份）。
+                    //   ⚠️ 只拦"**派单**"，**不拦法术本体** —— 下面的 ①升级她本人 / ②手牌法术升级交换 /
+                    //      ④回满费用 都属效果本体，命中重复票时**照常执行**。
+                    // ══════════════════════════════════════════════════════════════
+                    const myTicket = `${context.owner}|acacia_chrono_echo`;
+                    const ticketSide = (c: { id: string; key: string }): string | null => {
+                        const s = sideOfLevelUpTicket(c.id, {
+                            playerBench: nextPlayerBench, enemyBench: nextEnemyBench,
+                            playerHand: nextPlayerHand, enemyHand: nextEnemyHand,
+                            playerDeck: nextPlayerDeck, enemyDeck: nextEnemyDeck,
+                            combatField: nextCombatField || [],
+                            playerGraveyard: nextGame.playerGraveyard,
+                            enemyGraveyard: nextGame.enemyGraveyard,
+                        });
+                        return s ? `${s}|${c.key}` : null;
+                    };
+                    const alreadyQueued = (nextGame.pendingLevelUps || []).some(p => ticketSide(p) === myTicket);
+                    const alreadyPlaying = nextGame.levelUpCard ? ticketSide(nextGame.levelUpCard) === myTicket : false;
+                    if (alreadyQueued || alreadyPlaying) {
+                        console.log(`[朔望之期] 同侧同名已有升级票（${myTicket}）⇒ 不重复派单，避免升级影片重复播放。`);
+                    } else {
+                        nextGame.pendingLevelUps = [...(nextGame.pendingLevelUps || []), targetBench[acaciaIdx]];
+                        console.log(`[朔望之期] 安卡希雅升级 → Lv2`);
+                    }
 
                     // ② 手牌升级交换：剑舞→重锋, 扩散/集束→月镰剑势（统一走 upgradeAcaciaHand）
                     const upgradeHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
@@ -2543,6 +2904,32 @@ export const processEffect = (
         // 安卡希雅 Lv2 在场时：所有飞剑自动替换为大飞剑
         // =====================================
         case 'FLYING_SWORD': {
+            // =====================================
+            // [2026-10-20 程] 玛格丽特「飞剑突袭」必须**只在她本人进攻时**生效。
+            //   派发点（useGameState.ts:2092-2138）遍历的是交战区**全部** fight
+            //   （`const initialFighters = [...tempCombatField]`，:2090 / :2092），
+            //   其中包含 rally 时**第一批仍滞留在交战区**的进攻者 ⇒ 只要她还在交战区，
+            //   **别人进攻时也会重新派发她的 ON_ATTACK_DECLARE** ⇒ 不加闸门就会
+            //   "别人进攻、她放 2 把剑 + 计数 + 扣对面信标血"。
+            //   程拍板：本能力**只能由她本人进攻触发**。
+            //   正确锚点：派发点已写入 `sourceCard: fight.attacker`（useGameState.ts:2112）
+            //   = "当前正在派发这一条效果的那一个攻击者"。
+            // ⚠️ 闸门位置：必须放在**造剑之前**。
+            //   此前它只包住分支末尾的"点亮充能"（本文件 :3009），
+            //   导致 ①造剑主循环 ②信标引爆倒计时 ③飞剑计数/减费 三段仍在闸门外 ⇒
+            //   别人进攻时三段照跑。现在提前到 case 开头，`break` 直接跳出整个 case
+            //   （与 :2921 那段 `if (!anySwordSummoned) break;` 同一机制），**整段效果都不执行**。
+            //   末尾那段 `if (effect.id === 'effect_sacred_tree_margaret')` 闸门**保留**
+            //   （它做的是"按 id 认实例、只点亮那一只"，与本闸门不冲突，双保险）。
+            // =====================================
+            if (effect.id === 'effect_sacred_tree_margaret') {
+                const gateSrc: any = context.sourceCard;
+                if (!gateSrc || gateSrc.key !== 'Sacred_Tree_Squad_Margaret') {
+                    console.log(`[玛格丽特] 飞剑突袭：跳过 —— 派发源不是她本人（sourceCard=${gateSrc ? `${gateSrc.key}#${gateSrc.id}` : 'undefined'}），本能力只在「她自己进攻」时生效`);
+                    break;   // ← 整段效果都不执行（造剑 / 信标 / 计数减费 / 点亮充能）
+                }
+            }
+
             const fsParams = effect.params as EffectParams;
             let fsCount = fsParams.summonCount || 1;
 
@@ -2756,29 +3143,85 @@ export const processEffect = (
                 }
             }
 
-            // [玛格丽特] 进攻时额外点亮 Channel 充能：重置黯淡 + 获得 1 法术法力
+            // [玛格丽特] 进攻时「点亮充能」：只负责把 Channel 从黯淡里**重新点亮**。
+            //   [2026-10-10 程拍板] 本效果**不再自己发法力**、也**不立刻再写回黯淡** ——
+            //   点亮之后交由正常充能路径兑现（下一次召唤 / 下回合开始自动 +1 法力，
+            //   见 keywords.ts 的 applyChannelOnSummon / applyChannelOnRoundStart）。
             if (effect.id === 'effect_sacred_tree_margaret') {
-                const margBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
-                const margIdx = margBench.findIndex((c: any) => c.key === 'Sacred_Tree_Squad_Margaret');
-                if (margIdx >= 0) {
-                    const marg = margBench[margIdx];
-                    const oldDepleted = marg.depletedKeywords || [];
-                    // 从 depletedKeywords 移除 Channel（重新点亮）
-                    const newDepleted = oldDepleted.filter((k: string) => k !== 'Channel');
-                    // 获得 1 法术法力
-                    if (context.owner === 'player') {
-                        nextGame.playerSpellMana = Math.min(3, (nextGame.playerSpellMana || 0) + 1);
+                // [2026-10-19 程] 目标必须是「正在进攻的那一个玛格丽特」——
+                //   ⚠️ 她宣告进攻时**已经被移出备战席**（玩家侧 useGameState.ts:5789 setPlayerBench filter、
+                //      敌方侧 useAI.ts:760-767 remainingBench），所以**在备战席里永远找不到她**：
+                //      旧实现 `margBench.findIndex(...)` 在正常路径上恒为 -1 ⇒ 整段从未执行，
+                //      而且旧日志只写在命中分支里 ⇒ 线上静默失败、没有任何痕迹。
+                //   ⚠️ 也不能只改 `context.sourceCard`：`flashAttackAbility`（useGameState.ts:2073-2087）
+                //      以及 STAT_BALANCE 等分支会 `{ ...fight, attacker }` **重建 attacker 对象**，
+                //      引用可能已与 `nextCombatField` 里那一个脱钩 ⇒ 只改引用 = "改了副本、
+                //      真正的交战区对象没变"。所以必须**通过 `nextCombatField` 重建**。
+                // ────────────────────────────────────────────────────────────────
+                // [2026-10-20 莉莉子 闸门修复] **只在她自己进攻时才触发**
+                //   派发点（useGameState.ts:2092-2138）遍历的是交战区**全部** fight
+                //   （`const initialFighters = [...tempCombatField]`，:2090 / :2092），
+                //   其中包含**之前回合就已经上场**的单位 ⇒ 只要玛格丽特还留在交战区，
+                //   **别人进攻时也会重新派发她的 ON_ATTACK_DECLARE**，于是"顺手把她点亮"。
+                //   程拍板：本能力**只能由她本人进攻触发**。
+                //   正确锚点：派发点已写入 `sourceCard: fight.attacker`（useGameState.ts:2112）
+                //   = "当前正在派发这一条效果的那一个攻击者" ⇒ 闸门就钉在它身上。
+                // ────────────────────────────────────────────────────────────────
+                const src = context.sourceCard as any;
+                const srcIsMargaret = !!src && src.key === 'Sacred_Tree_Squad_Margaret';
+                // ★ 实例判等一律用 `id`，不用 `key`、更不用对象引用：
+                //   ① `id` 是**实例唯一**：`createCard` 每次调用都 `Math.random()` 新生成（cards.ts:2460-2467）；
+                //   ② 项目内"跨副本定位同一个实例"的习惯口径就是 `.id ===`（useGameState.ts:2080 / 2165 / 5560）；
+                //   ③ 不能用 `key`：同侧可能同时有本体 + 克隆体，`CLONE_AND_SUMMON`（本文件 :3051）从
+                //      `createCard` 造出的模板展开 ⇒ 克隆体 **key 相同、id 不同**，按 key 判等会点亮错的那一只；
+                //   ④ 不能比对象引用：`flashAttackAbility`（useGameState.ts:2073-2087）会
+                //      `{ ...fight, attacker }` **造新对象**，`context.sourceCard` 与交战区里的 attacker 引用已脱钩。
+                const srcId: string = srcIsMargaret ? String(src.id || '') : '';
+                const isOwnerPlayer = context.owner === 'player';
+                if (!srcIsMargaret) {
+                    // 闸门 ①：派发源不是玛格丽特本人（效果被别的单位 / 克隆体 / 外挂触发）⇒ 整段跳过
+                    // [2026-10-20 莉莉子] ⚠️ 此分支现已由**case 开头那道闸门**保证不可达
+                    //   （`effect.id === 'effect_sacred_tree_margaret'` 且 sourceCard 不是她本人时，
+                    //   开头闸门已 `break` 掉整个 case）⇒ 此处**保留双保险**，不作删除。
+                    console.log(`[玛格丽特] 进攻充能：跳过 —— 派发源不是玛格丽特本人（sourceCard=${src ? `${src.key}#${src.id}` : 'undefined'}），本能力只在「她自己进攻」时生效`);
+                } else if (nextCombatField) {
+                    let margSeen = 0; // 交战区里同侧、正在进攻的玛格丽特数量（含克隆体，仅供日志）
+                    let gateHit = 0;  // 通过闸门②（attacker 就是派发源那一只实例）的 fight 数，正常恒为 1
+                    let margLit = 0;  // 本次真正被点亮（Channel 从黯淡恢复）的数量
+                    nextCombatField = nextCombatField.map((f: any) => {
+                        const atk = f?.attacker;
+                        if (!atk || atk.key !== 'Sacred_Tree_Squad_Margaret') return f;
+                        // 只处理发起攻击的那一方，避免点亮对手的玛格丽特
+                        if ((f.owner === 'player') !== isOwnerPlayer) return f;
+                        margSeen++;
+                        // ── 闸门 ②：只认「本条 fight 的 attacker 就是派发这一条效果的**同一个实例**」──
+                        //   同一侧的另一只玛格丽特（克隆体）、以及"她没动、别人在进攻"的那些 fight，
+                        //   一律原样放回（此处必须比字段，不可写 `atk.key === src.key`）。
+                        if (atk.id !== srcId) return f;
+                        gateHit++;
+                        const oldDepleted = atk.depletedKeywords || [];
+                        if (!oldDepleted.includes('Channel')) return f; // 已经是点亮状态，无需再动
+                        margLit++;
+                        return {
+                            ...f,
+                            attacker: {
+                                ...atk,
+                                // 重新点亮：从 depletedKeywords 移除 Channel（不动 keywords 本体、不发法力）
+                                depletedKeywords: oldDepleted.filter((k: string) => k !== 'Channel'),
+                                animState: 'channel_pulse', // 演出保留：玩家要看得见"被点亮了"
+                            },
+                        };
+                    });
+                    // 日志：命中**和**未命中都记（旧实现只在命中时打 ⇒ 从未生效也无人察觉）
+                    if (margLit > 0) {
+                        console.log(`[玛格丽特] 进攻充能：本人进攻 → 交战区 Channel 已重新点亮 ×${margLit}（法力留给后续正常充能触发兑现）`);
+                    } else if (gateHit === 0) {
+                        console.log(`[玛格丽特] 进攻充能：未点亮 —— 派发源 #${srcId} 未出现在交战区 attacker 上（已脱战/已阵亡？owner=${context.owner}，同侧进攻玛格丽特 ${margSeen} 只）`);
                     } else {
-                        nextGame.enemySpellMana = Math.min(3, (nextGame.enemySpellMana || 0) + 1);
+                        console.log(`[玛格丽特] 进攻充能：未点亮 —— 本人进攻已命中闸门，但 Channel 已是点亮状态，无需重复点亮（owner=${context.owner}）`);
                     }
-                    // 触发后立即黯淡
-                    newDepleted.push('Channel');
-                    margBench[margIdx] = {
-                        ...marg,
-                        depletedKeywords: newDepleted,
-                        animState: 'channel_pulse',
-                    };
-                    console.log(`[玛格丽特] 进攻充能：法术法力 +1，Channel 已重置并黯淡`);
+                } else {
+                    console.log('[玛格丽特] 进攻充能：跳过 —— 调用方未传 combatField，无法定位交战区里正在进攻的玛格丽特');
                 }
             }
 
@@ -3638,6 +4081,73 @@ export const processEffect = (
         // [2026-06-27 暗箱操作] 从手牌移除选中卡牌
         // =====================================
         case 'DISCARD': {
+            // =====================================
+            // [2026-10-23 莉莉子 · 回收] 弃置全部手牌 → 抽 N 张 → 恢复 M 点法力值
+            // ── 为什么这三件事必须写在**同一个效果**里：
+            //    本文件的 DISCARD 采用「延迟移除」——卡留在手牌数组里播原位碎裂动画，
+            //    要等 `onHandAnimComplete` 回调才 filter 掉。若拆成 3 个效果，
+            //    紧随其后的 DRAW 会把**尚未移除的旧手牌**算进 10 张上限 ⇒ 抽到的牌当场爆掉。
+            // ── 取舍：本分支按「待弃置 = 已弃置」计算手牌容量，因此动画窗口内
+            //    渲染层会短暂看到「旧卡(碎裂中) + 新卡(飞入中)」同框，动画播完即回落到真实张数。
+            //    （待实测确认观感 —— 已记入日记待办）
+            // =====================================
+            if (effect.params.discardAll) {
+                const hand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+                const pendingIds = new Set<string>();
+
+                // ① 全部标记弃置（逐个发动画事件，卡留在原位播碎裂）
+                hand.forEach(card => {
+                    pendingIds.add(card.id);
+                    events.push({ type: 'sfx_discard', payload: { id: card.id } });
+                    eventBus.emit('hand_spell_discard', { card, owner: context.owner });
+                });
+                console.log(`[Reclaim] 弃置全部手牌 ${hand.length} 张：${hand.map(c => c.name).join(' / ') || '（空手牌）'}`);
+
+                // ② 抽牌：容量按「弃完之后」算（pendingIds 不计入手牌数，但它们仍在数组里播动画）
+                const drawCount = effect.params.drawAfterDiscard || 0;
+                const deck = context.owner === 'player' ? nextPlayerDeck : nextEnemyDeck;
+                const HAND_MAX = 10;
+                if (drawCount > 0) {
+                    if (!deck) {
+                        console.warn('[Reclaim] 无牌库引用，跳过抽牌');
+                    } else {
+                        for (let i = 0; i < drawCount; i++) {
+                            if (deck.length === 0) {
+                                events.push({ type: 'sfx_draw_fatigue', payload: null });
+                                break;
+                            }
+                            const liveCount = hand.filter(c => !pendingIds.has(c.id)).length;
+                            if (liveCount >= HAND_MAX) {
+                                const burned = deck.shift()!;
+                                console.log(`[Reclaim] 手牌已满 ${HAND_MAX} 张，${burned.name} 被爆牌销毁`);
+                                events.push({ type: 'sfx_draw_burn', payload: burned });
+                                eventBus.emit(GameEvents.DRAW_BURN, { card: burned, owner: context.owner });
+                                continue;
+                            }
+                            const drawnCard = deck.shift()!;
+                            hand.push(drawnCard);   // ⚠️ 新抽的牌**不进** pendingIds（它不该被移除）
+                            events.push({ type: 'sfx_draw', payload: drawnCard });
+                        }
+                    }
+                }
+
+                // ③ 恢复法力值：与 GRANT_MANA 同口径（封顶于法力上限）
+                //    ⇒ 因为本牌自身费用 ≥ 2，付款后必然低于上限，这 M 点**稳定到账**，
+                //      等价于「实际少付 M 点费用」而不是"可能溢出浪费"。
+                const manaGain = effect.params.manaGainAfter || 0;
+                if (manaGain > 0) {
+                    if (context.owner === 'player') {
+                        nextGame.playerMana = Math.min(nextGame.playerMaxMana, (nextGame.playerMana || 0) + manaGain);
+                        console.log(`[Reclaim] 恢复 ${manaGain} 点法力值（当前 ${nextGame.playerMana}/${nextGame.playerMaxMana}）`);
+                    } else {
+                        nextGame.enemyMana = Math.min(nextGame.enemyMaxMana, (nextGame.enemyMana || 0) + manaGain);
+                        console.log(`[Reclaim] 恢复 ${manaGain} 点法力值（当前 ${nextGame.enemyMana}/${nextGame.enemyMaxMana}）`);
+                    }
+                    events.push({ type: 'sfx_generate', payload: null });
+                }
+                break;
+            }
+
             if (finalTargets.length > 0) {
                 const discardId = finalTargets[0].id;
                 // [BUGFIX 2026-07-03] finalTargets[0] 是 { type, id } 而非 CardData！
@@ -3778,20 +4288,55 @@ export const processEffect = (
 
             const ownerHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
 
+            // =====================================
+            // [2026-10-23 莉莉子 · 同行] 过滤抽取
+            // ── 语义：只抽牌库中满足筛选条件的牌，且是**随机位置**（卡面写的是「从牌库中随机抽」，
+            //    不是「抽牌库顶那张」）。
+            // ── 主筛选（drawFilter）找不到时，按 drawFallbackFilter 再抽一张兜底；
+            //    两者都找不到 ⇒ 本效果空转（一张都不抽，也不爆牌）。
+            // =====================================
+            const matchesDrawFilter = (card: CardData, filter: 'champion' | 'unit'): boolean => {
+                if (filter === 'champion') return card.isChampion === true;
+                return typeof card.type === 'string' && card.type.includes('unit');
+            };
+            const poolIndicesOf = (filter: 'champion' | 'unit'): number[] =>
+                deck.reduce<number[]>((acc, c, idx) => { if (matchesDrawFilter(c, filter)) acc.push(idx); return acc; }, []);
+
             for (let i = 0; i < drawCount; i++) {
                 if (deck.length === 0) {
                     console.log(`[Draw] 牌库已空，无法继续抽牌`);
                     events.push({ type: 'sfx_draw_fatigue', payload: null });
                     break;
                 }
+
+                // 缺省抽牌库顶（下标 0）；过滤模式则随机命中一张符合条件的
+                let pickIdx = 0;
+                if (effect.params.drawFilter) {
+                    const primary = effect.params.drawFilter;
+                    const fallback = effect.params.drawFallbackFilter;
+                    let pool = poolIndicesOf(primary);
+                    let hitFilter: 'champion' | 'unit' = primary;
+                    if (pool.length === 0 && fallback) {
+                        pool = poolIndicesOf(fallback);
+                        hitFilter = fallback;
+                    }
+                    if (pool.length === 0) {
+                        console.log(`[Draw] 牌库中没有符合条件的牌（${primary}${fallback ? ` / 兜底 ${fallback}` : ''}），本效果空转`);
+                        break;
+                    }
+                    pickIdx = pool[Math.floor(Math.random() * pool.length)];
+                    console.log(`[Draw] 过滤抽取命中 ${hitFilter}（牌库第 ${pickIdx} 张：${deck[pickIdx].name}）`);
+                }
+
                 if (ownerHand.length >= HAND_MAX) {
-                    const burnedCard = deck.shift()!;
+                    // 爆牌：被**选中那张**照样销毁（与顶部抽牌同口径，而不是永远烧牌库顶）
+                    const burnedCard = deck.splice(pickIdx, 1)[0];
                     console.log(`[Draw] 手牌已满 ${HAND_MAX} 张，${burnedCard.name} 被爆牌销毁`);
                     events.push({ type: 'sfx_draw_burn', payload: burnedCard });
                     eventBus.emit(GameEvents.DRAW_BURN, { card: burnedCard, owner: context.owner });
                     continue;
                 }
-                const drawnCard = deck.shift()!;
+                const drawnCard = deck.splice(pickIdx, 1)[0];
                 ownerHand.push(drawnCard);
                 events.push({ type: 'sfx_draw', payload: drawnCard });
                 console.log(`[Draw] 抽到 ${drawnCard.name}`);
@@ -4161,7 +4706,16 @@ export const processEffect = (
         // grantMaxMana=false/无 → 本回合额外法力（默认）
         // =============================================
         case 'GRANT_MANA': {
-            const bonusMana = effect.params.value || 1;
+            // [2026-10-23 莉莉子 · 强化「囤积」重做] `fromHoardStored` ⇒ 兑现的是**这张卡自己**攒的点数
+            //   （`CardData.hoardStored`，由"每打出一张卡"的钩子累加），而不是固定 value。
+            //   仍然走同一条封顶口径（`Math.min(上限, 当前 + N)`）。
+            const fromHoard = effect.params.fromHoardStored === true;
+            const hoardAmount = Math.max(0, Math.floor(context.sourceCard?.hoardStored ?? 0));
+            const bonusMana = fromHoard ? hoardAmount : (effect.params.value || 1);
+            if (fromHoard && bonusMana <= 0) {
+                // 攒了 0 点（例如开局刚发就打出去）⇒ 不刷音效、不写日志噪音
+                break;
+            }
             const owner = context.owner;
             const grantMax = effect.params.grantMaxMana as boolean | undefined;
             if (owner === 'player') {

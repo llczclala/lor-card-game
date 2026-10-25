@@ -75,6 +75,12 @@ export type TargetType =
     | 'PLAYER_NEXUS'    // 我方水晶
     | 'ENEMY_NEXUS'     // 敌方水晶
     | 'ANY_TARGET'      // 任意可被指定的单位或水晶
+    // [2026-10-23 莉莉子 · 崩坏] 敌方侧目标：**敌方单位 或 敌方水晶**（不含我方）。
+    //   ── 为什么不复用 ANY_TARGET：它是两侧全放行（`useSpellSystem.ts:513 return true`）
+    //      ⇒「崩坏」的第二目标能选到**自己人**，搬运伤害就砸回我方，语义直接跑偏。
+    //   ── 为什么不用 targetCondition 过滤：`params.targetCondition` 是**效果级**参数，
+    //      对**所有** targetRequirements 一起生效 ⇒ 会把第 1 步的「我方泰坦单位」一起挡掉。
+    | 'ENEMY_TARGET'    // 敌方单位或敌方水晶（仅敌方侧）
     | 'ALLY_CHAMPION'   // 我方特定英雄
     | 'HAND_CARD'       // [2026-06-27] 手牌中的卡牌（用于弃牌、检索等）
     | 'ALL_ALLIES'
@@ -212,6 +218,19 @@ export interface EffectParams {
     reduceCostIfDuplicate?: boolean; // 手牌重复减费
     freezeAllEnemies?: boolean;  // 冻结全体敌方
     selfDamage?: number;         // 反噬契约：效果执行后对施法者自身造成 N 点伤害
+
+    // =====================================
+    // [2026-10-23 莉莉子] 三张新法术所需的三个开关
+    //   ⚠️ 本文件与 effectProcessor.ts 各有一份 EffectParams，
+    //      新增字段必须【两边同步补】（见本文件上文 I01 备注）
+    // =====================================
+    valueFromAllyPower?: boolean;   // [崩坏] 伤害值取「第 1 目标的当前攻击力」，对第 1、2 目标各打一次等量伤害
+    drawFilter?: 'champion' | 'unit';        // [同行] 过滤抽取：只抽牌库中满足该筛选项的牌（随机位置）
+    drawFallbackFilter?: 'champion' | 'unit'; // [同行] 过滤抽取找不到时，退化为按该筛选项再抽一张
+    discardAll?: boolean;           // [回收] 弃置全部手牌（本参数与 drawAfterDiscard / manaGainAfter 同属一个效果）
+    drawAfterDiscard?: number;      // [回收] 弃置全部之后抽 N 张（在同一效果内完成，避开跨效果的手牌容量竞态）
+    manaGainAfter?: number;         // [回收] 弃置全部之后恢复 N 点法力值（走 GRANT_MANA 同口径：不超上限）
+    fromHoardStored?: boolean;      // [囤积] 兑现「这张卡自己」攒下的点数（CardData.hoardStored），不取固定 value
 }
 
 export interface EffectDefinition {
@@ -786,7 +805,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_mauxir_lotus_pedestal': {
         id: 'effect_mauxir_lotus_pedestal',
         name: '臆莲基座',
-        description: '受伤时生成“梦莲无人机”，回合结束造成X次1点伤害。',
+        description: '受伤时生成“梦莲无人机”，回合结束造成X次1点伤害。【攻击力最多为10】【每方最多3个】',
         class: 'BUFF', // TODO: 替换为受伤触发+回合结束触发
         timing: 'ON_PLAY',
         speed: 'BURST',
@@ -1240,11 +1259,11 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         animationDuration: 200,
     },
 
-    // --- 科洛：回合开始时，复制上回合前三张非易逝牌到手牌 ---
+    // --- 科洛：回合开始时，复制上回合前三张非瞬逝牌到手牌 ---
     'effect_poet_kelo_recycle': {
         id: 'effect_poet_kelo_recycle',
         name: '收藏癖',
-        description: '回合开始时：复制上回合我方打出的前三张非易逝卡牌到手牌，并赋予[瞬逝]。',
+        description: '回合开始时：复制上回合我方打出的前三张非瞬逝卡牌到手牌，并赋予[瞬逝]。',
         class: 'GENERATE',
         timing: 'ROUND_START',
         speed: 'BURST',
@@ -1879,7 +1898,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_sacred_tree_margaret': {
         id: 'effect_sacred_tree_margaret',
         name: '飞剑突袭',
-        description: '进攻时：飞剑2并点亮充能。',
+        description: '进攻时：飞剑2，并重新点亮充能。',
         class: 'FLYING_SWORD',
         timing: 'ON_ATTACK_DECLARE',
         speed: 'BURST',
@@ -2188,7 +2207,21 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         targetRequirements: [
             { type: 'ANY_UNIT', count: 1, label: '选择任意一个单位' }
         ],
-        params: { isVolatile: true }
+        params: {
+            isVolatile: true,
+            // =====================================
+            // [2026-10-23 程拍板 · 回调] 此处**不加** `targetCondition: 'not_at_side_limit'`。
+            // ── 原因（程的原话口径）：忆影拓印的效果是「复制卡牌**到手里**」，不是复制到场上
+            //    ⇒ 在**选目标阶段**就拦「场上有 3 个基座」是**拦得太早**：
+            //    复制出来的牌进手牌本身没有任何问题，它能不能落地是**打出那一刻**才该判的事。
+            // ── 更要紧的是扩展性：若在这里逐卡放行/拦截，
+            //    **以后每出一张「复制类」法术都要补一次**，而它们其实都不该在这里判。
+            // ── 现在的分工：
+            //    ① 「场上已达上限还从手牌打出第 N+1 个」→ 拦在**手牌点击**（`GameSession`，通用判据，按卡的 `maxPerSide`）。
+            //    ② 「真的把基座召唤到场上」的法术（猫汐尔小技能「千莲叠绽」）→ 拦在
+            //       `gameRules.getSpellPlayBlockReason`（唯一"打出受阻"口径，高亮与点击天然同源）。
+            // =====================================
+        }
     },
 
     // --- 3. 藕断丝长：召唤衍生物 +1/+1 并附加亡语抽3 ---
@@ -2596,6 +2629,93 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         speed: 'SLOW',
         targetRequirements: [],   // 全场全计，无需选目标（validateTargets 对 count=0 直接放行）
         params: {},
+    },
+
+    // ==========================================
+    // [2026-10-23 莉莉子] 三张新法术（程拍板定价：崩坏 7 / 同行 4 / 回收 6）
+    // ==========================================
+
+    // --- 泰坦阵营：崩坏 ---
+    // 设计口径：把一只泰坦的**当前攻击力**引爆成一次对敌伤害，代价是它自己吃等量伤害。
+    //   与「毁灭仪式」（`effect_destruction_ritual`：杀泰坦换 3 伤，且**只能打单位**）是同一族，
+    //   但伤害随攻击力浮动、且可打水晶 ⇒ 程拍板走 7 费 + 限【泰坦】单位。
+    'effect_titan_collapse': {
+        id: 'effect_titan_collapse',
+        name: '崩坏',
+        description: '对我方一个泰坦单位造成等同于其攻击力的伤害，之后对一个敌方单位或敌方水晶造成等量伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'FAST',
+        targetRequirements: [
+            // 第 1 步：我方泰坦（raceFilter 是目标校验层的硬闸，见 useSpellSystem.isValidTarget）
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个我方泰坦单位', raceFilter: ['titan'] },
+            // 第 2 步：敌方单位或敌方水晶（ENEMY_TARGET = 仅敌方侧）
+            { type: 'ENEMY_TARGET', count: 1, label: '选择一个敌方单位或敌方水晶' },
+        ],
+        params: {
+            valueFromAllyPower: true,
+        },
+        // [2026-10-23 莉莉子 · 独立审查] 只留 summary：`trackTargets` 全仓无消费方（死字段），
+        //   实际的目标变化追踪走 useSpellSystem 的 computeChangesFromMap 通用快照 ⇒ 不重复声明意图。
+        record: { summary: '引爆单位攻击力造成等量伤害' },
+    },
+
+    // --- 分析员阵营：同行 ---
+    // 设计口径：从牌库里**随机**捞一张天启者；牌库无天启者时退化为随机捞一张单位卡。
+    'effect_analyst_fellowship': {
+        id: 'effect_analyst_fellowship',
+        name: '同行',
+        description: '从牌库中随机抽一张天启者。若牌库中没有天启者，则改为随机抽一张单位卡牌。',
+        class: 'DRAW',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 1,                 // 抽 1 张
+            drawFilter: 'champion',   // 只认 isChampion
+            drawFallbackFilter: 'unit', // 兜底：牌库无天启者 ⇒ 随机抽一张单位
+        },
+        // [2026-10-23 莉莉子 · 独立审查] 不写 `record`：`useSpellSystem` 只在
+        //   `class === 'STRIKE' || class === 'HEAL'` 时读取 `record.summary`
+        //   （`useSpellSystem.ts:1198` / `:1969`）⇒ DRAW/DISCARD 写在这是**永不生效的死数据**。
+    },
+
+    // --- 后勤阵营：回收 ---
+    // 设计口径：弃光手牌 → 抽 4 → 恢复 2 点法力值。
+    //   ⚠️ 三件事**必须写在同一个效果里**：DISCARD 分支采用「延迟移除」（卡留在手牌播碎裂动画，
+    //      由 onHandAnimComplete 移除）——若拆成三个效果，紧随其后的 DRAW 会把尚未移除的旧手牌
+    //      一起算进 10 张上限 ⇒ 抽到的牌当场爆掉。
+    'effect_logistics_reclaim': {
+        id: 'effect_logistics_reclaim',
+        name: '回收',
+        description: '弃置所有手牌，之后抽 4 张牌，并恢复 2 点法力值。',
+        class: 'DISCARD',        // 载体类：真正逻辑在 DISCARD 分支按 discardAll 特判
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: {
+            discardAll: true,
+            drawAfterDiscard: 4,
+            manaGainAfter: 2,
+        },
+        // [2026-10-23 莉莉子 · 独立审查] 同「同行」：DISCARD 类不消费 `record`，故不声明。
+    },
+
+    // ==========================================
+    // [2026-10-23 莉莉子 · 强化「囤积」重做] 衍生法术：囤积（存钱罐）
+    //   兑现的是**这张卡自己**攒下的点数（`CardData.hoardStored`），不是固定 params.value
+    //   ⇒ 走 GRANT_MANA 的 `fromHoardStored` 分支，仍然封顶于法力上限。
+    //   攒点数的钩子在「每打出一张卡」的两个出口（`useGameState.playCard` / `useSpellSystem.commitSpell`）。
+    // ==========================================
+    'effect_spell_hoard': {
+        id: 'effect_spell_hoard',
+        name: '囤积',
+        description: '获得{hoardStored}点法力值（每打出一张卡牌额外获得一点，受法力上限限制）。',
+        class: 'GRANT_MANA',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { fromHoardStored: true },
     },
 };
 

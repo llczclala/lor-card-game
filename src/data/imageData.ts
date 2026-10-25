@@ -1,4 +1,4 @@
-const loadingImagesModules = import.meta.glob('../image/loading/*.webp', { eager: true });
+﻿const loadingImagesModules = import.meta.glob('../image/loading/*.webp', { eager: true });
 
 // 转换为图片路径数组
 export const LOADING_SCREEN_IMAGES = Object.values(loadingImagesModules).map((mod: any) => mod.default);
@@ -680,6 +680,12 @@ export const SPELL_IMAGES = {
     temp_spell_18: spell_37, // 急冻令（冻结单体）
     temp_spell_19: spell_42, // 破军（单体3伤+飞剑减费）
     temp_spell_20: spell_43, // 剑鸣回响（回响+飞剑2）
+
+    // [2026-10-23 莉莉子] 三张新法术 —— **先用占位卡图占位**（程：卡图后续再出）
+    //   ⚠️ 出图后只改这里的映射即可，`cards.ts` 与效果层无需改动。
+    titan_collapse: abc_spell,        // 崩坏（泰坦 · 快速 · 7 费）
+    analyst_fellowship: abc_spell,    // 同行（分析员 · 极速 · 4 费）
+    logistics_reclaim: abc_spell,     // 回收（后勤 · 慢速 · 6 费）
 };
 
 // [新增] 导出占位图（飞剑等暂无专图的衍生物用）
