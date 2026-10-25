@@ -21,6 +21,7 @@ import { ChevronRight, Play, User, Copy, Edit3, Crop, Wrench, Camera, Megaphone 
 import { Studio } from './Studio/Studio';
 // [新增] 引入全新的全息科技图鉴舱
 import { GalleryCodex } from './GalleryCodex';
+import { pickTuning } from '../platform/tuning';
 // [核心重构] 背景配置 —— 增加角色分组支持
 export type BgType = 'movie' | 'pic';
 export interface BgConfig {
@@ -69,7 +70,10 @@ interface GameLobbyProps {
 //   它的尺寸由那个组件自己决定 ⇒ **不在本块**，本块只暴露外层的上边距。
 // ⚠️ 头像画廊 / 头像裁剪是另两条独立分支（`isGalleryOpen` / `isCropperOpen`）⇒ 本块只管档案面板。
 // ══════════════════════════════════════════════════════════════════════
-export const PROFILE_UI = {
+// 🖥️📱 【双平台】本文件有**两块**调参区，**每块都是两份值**：
+//   `XXX_UI_MOBILE`（手机端，程在雷电里调）+ `XXX_UI_PC_DIFF`（PC 端差异项，见各块下方）。
+//   判定收在 `src/platform/tuning.ts`；电脑浏览器 = PC 版，雷电 = 手机版。
+const PROFILE_UI_MOBILE = {
     // ══ ① 面板外壳 ═══════════════════════════════════════════════════
     /** 面板宽 px（原 w-[600px] = 600） */
     panelWidth: 600,
@@ -195,9 +199,45 @@ export const PROFILE_UI = {
     // ══ ⑤ 底部关闭行 ═════════════════════════════════════════════════
     /** 关闭行上边距 px（原 mt-4 = 16） */
     footerMarginTop: 16,
-} as const;
+};
 
-export const LOBBY_UI = {
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `PROFILE_UI` PC 端差异项 —— 只列「与手机端不同」的项
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`chore(tuning)` 提交 `89d1c154` 的**真实 diff**。
+// 🔴 **不要以该提交的信息为准** —— 信息只列了 5 项，diff 实际改了 **13 项**
+//    （漏报「战绩三格 + 收藏三格」的 8 个字号）。
+// ══════════════════════════════════════════════════════════════════════
+const PROFILE_UI_PC_DIFF = {
+    // ══ ② 头像 + 名字 / UID / 等级 / EXP ══════════════════════════════
+    modifyFontSize: 12,       // 原 text-xs
+    modifyIconSize: 12,       // 原 <Crop size={12} />
+    nameInputFontSize: 24,    // 原 text-2xl
+    uidFontSize: 14,          // 原 text-sm
+    expFontSize: 12,          // 原 text-xs
+
+    // ══ ③ 战绩三格 ═══════════════════════════════════════════════════
+    statLabelFontSize: 12,    // 原 text-xs（提交信息未提）
+    statValueFontSize: 24,    // 原 text-2xl（提交信息未提）
+    statSubFontSize: 16,      // 原 text-base（提交信息未提）
+    heroLineFontSize: 12,     // 原 text-xs（提交信息未提）
+
+    // ══ ④ 收藏三格 ═══════════════════════════════════════════════════
+    collectLabelFontSize: 10, // 原 text-[10px]（提交信息未提）
+    collectValueFontSize: 20, // 原 text-xl（提交信息未提）
+    collectSubFontSize: 12,   // 原 text-xs（提交信息未提）
+    collectNoteFontSize: 10,  // 原 text-[10px]（提交信息未提）
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const PROFILE_UI_PC = { ...PROFILE_UI_MOBILE, ...PROFILE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const PROFILE_UI = pickTuning(PROFILE_UI_PC, PROFILE_UI_MOBILE);
+
+// 🖥️📱 【双平台】本块的**基础值两端完全相同**，被调的只有两个主旋钮：
+//   手机端 1.25× ／ PC 端 1× —— 拨回 1 就能让 39 个被 `B()`/`F()` 包住的字段自动回原值。
+const LOBBY_UI_MOBILE = {
     /** 【主旋钮】所有按钮 / 图标的尺寸倍率（1 = 原样） */
     btnScale: 1.25,
     /** 【次旋钮】所有文字的字号倍率（1 = 原样） */
@@ -276,7 +316,26 @@ export const LOBBY_UI = {
 
     // ══ ⑨ GM 开发者入口（左下）═════════════════════════════════════════
     gmArea: { bottom: 48, left: 40 },
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `LOBBY_UI` PC 端差异 —— **只有两个主旋钮**（1 = 原样）
+// ──────────────────────────────────────────────────────────────────────
+// 基础值经父提交 `1f3a4766` 逐条核对，**全部等于原 Tailwind 值** ⇒ 旋钮回 1 即整屏回原。
+// ⚠️ 另有 24 个字段没被 `B()`/`F()` 包（`res.margin` / `player.top` / 四个区域值等）
+//    ⇒ 它们两端本来就一样，**不受旋钮影响**，也没必要分叉。
+// ⚠️ `btn.bgThumb` 是**死旋钮**（全文件引用 0 次）—— 已存在，先留着不动。
+// ══════════════════════════════════════════════════════════════════════
+const LOBBY_UI_PC_DIFF = {
+    btnScale: 1,
+    fontScale: 1,
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const LOBBY_UI_PC = { ...LOBBY_UI_MOBILE, ...LOBBY_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const LOBBY_UI = pickTuning(LOBBY_UI_PC, LOBBY_UI_MOBILE);
 
 /** 尺寸换算：基础值 × 主旋钮（取整，避免半像素模糊） */
 const B = (v: number) => Math.round(v * LOBBY_UI.btnScale);

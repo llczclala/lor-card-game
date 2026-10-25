@@ -21,9 +21,10 @@ import { reloadArmamentCache } from './useArmamentConfig'; // [2026-09-07] 切�
 import { reloadDivinityCache, peekShardWallet, peekHeroMaxed } from './useHeroDivinity'; // [2026-09-28 神格神经] 切号后重载节点解锁 · [2026-10-04] + 只读快照（开匣按**真源**算溢出，令界面与入账同源）
 import { computeAnalystLevels, ANALYST_FIXED_REWARD_MAX, getAnalystReward, type AnalystLevelupReward } from '../data/roguelike/analystProgression'; // [2026-08-29 通行证] 分析员升级 · [2026-10-04] 奖励取值收口到唯一出口 getAnalystReward
 import { computeAccountLevels, ACCOUNT_LEVEL_REWARD_DATA_GOLD, createAnalystPass, createEmptyBattleRecord } from '../data/accountProgression'; // [2026-09-04 账号等级]
-import { getArmamentDefs } from '../data/equipment'; // [2026-08-29 通行证] 卡包随机武装
+import { getArmamentDefs, getEquipmentById, type EquipmentRarity } from '../data/equipment'; // [2026-08-29 通行证] 卡包随机武装 · [2026-10-20] + getEquipmentById（重复判定要按品质发券）· EquipmentRarity
 import { pickArmamentFromChest } from '../logic/armamentChestPool'; // [2026-10-04] 带库存判定的武装抽取（溢出 → 数据金）；预览侧仍走 getArmamentChestPool
-import { readArmStock, addArmStock, consumeArmStock, getArmamentOverflowDataGold, type ArmStockMap } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存 · [2026-10-04] + 溢出折算数据金
+import { readArmStock, addArmStock, consumeArmStock, hasArmamentRoom, type ArmStockMap } from '../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存 · [2026-10-20] 溢出不再折数据金（改发匣券）⇒ 移除了 getArmamentOverflowDataGold
+import { voucherYieldOf, voucherExchangeCostOf, readVoucher, readVoucherFirstUsed, type VoucherExchangeResult } from '../data/roguelike/armamentVoucher'; // [2026-10-20 程拍板] 匣券：重复武装 → 券 → 兑换更高档武装匣
 import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-09-29] 万能碎片广播（解耦 useHeroDivinity）
 // [2026-09-29 程拍板] 奖励匣体系（开包 → 抽匣子 → 开匣子得道具）
 import {
@@ -67,6 +68,26 @@ export const useUserSystem = () => {
     //   React 18 对 click 这类离散事件是同步 flush（第二次点击前已重渲染、水位已推进 ⇒ 会早退），
     //   但"不依赖时序"才稳 —— 故加同步 ref；`finally` 释放，保证后续正常领取。
     const postCapClaimingRef = useRef(false);
+
+    // [2026-10-20 莉莉子 · 匣券] 券余额的**同步镜像** —— 同 `pendingPacksRef` 那条教训：「**锁必须是同步的**」。
+    //   病根：`exchangeVoucherChest` 若只读**渲染快照** `settings`，同一渲染内连点两次会
+    //   各按**旧余额**各扣一次、各发一个匣子 ⇒ 券只够买一个，匣子却到手两个（**玩家白赚**）。
+    //   ⇒ 扣减前先读写本 ref（同步），state 只负责持久化 + UI 刷新。
+    const voucherRef = useRef<number>(readVoucher(settings));
+    useEffect(() => { voucherRef.current = readVoucher(settings); }, [settings?.armamentVoucher]);
+
+    // [2026-10-20 匣券] "已用首兑档位"的**同步镜像**（同上一条教训）。
+    //   只镜像余额还不够：余额充足时连点两次，第二次仍按**旧 settings** 判定 `isFirst=true`
+    //   ⇒ 两次都吃首兑优惠（本应第二次恢复原价）。实测的复现路径就是"快速双击同一个兑换按钮"。
+    const voucherFirstUsedRef = useRef<EquipmentRarity[]>(readVoucherFirstUsed(settings));
+    useEffect(() => { voucherFirstUsedRef.current = readVoucherFirstUsed(settings); }, [settings?.voucherFirstUsed]);
+
+    // [2026-10-20 莉莉子 · 匣券] 待打开匣子队列的**同步镜像**（「锁必须是同步的」第三条）。
+    //   病根：`openAllChests` 原读 `settings.pendingChests`，若同一渲染内被调两次（连点"全部开启"），
+    //   两次都会各自把**同一批匣子**再结算一遍 ⇒ 重复发放。
+    //   现在由它判定"队列是否为空"，并在入队/取件/清空三处同步 —— 不再依赖 UI 层的守卫。
+    const pendingChestsRef = useRef<ChestInstance[]>(settings?.pendingChests ?? []);
+    useEffect(() => { pendingChestsRef.current = settings?.pendingChests ?? []; }, [settings?.pendingChests]);
 
     // [新增] 用户列表状态
     const [userList, setUserList] = useState<UserSummary[]>([]);
@@ -313,6 +334,11 @@ export const useUserSystem = () => {
         }
     };
 
+    // [2026-10-18 跨设备同步] 导入存档后刷新账户列表。
+    //   为什么必须有它：`userList` 是 React state，而导入是直接写 localStorage 的
+    //   ⇒ 不刷这一下，玩家导进来新账号却在列表里看不见（以为没成功）。
+    const refreshUserList = () => setUserList(StorageUtils.getUserIndex());
+
     // [新增] 切换用户 (仅逻辑，不刷新页面)
     const switchUser = (targetUid: string) => {
         const list = StorageUtils.getUserIndex();
@@ -430,6 +456,10 @@ export const useUserSystem = () => {
         const keepClaimRecords: Partial<UserSettings> = {};
         if (settings?.passClaimedRewards?.length) keepClaimRecords.passClaimedRewards = settings.passClaimedRewards;
         if (settings?.passClaimedUpTo !== undefined) keepClaimRecords.passClaimedUpTo = settings.passClaimedUpTo;
+        // 🔴 [2026-10-20 匣券] 券与"已用首兑档位"同属**玩家资产/进度** —— 被"恢复默认"清零等于吞掉资产。
+        //   照 `passClaimedRewards` 的先例原样保留（实现审查把这条列为必做项）。
+        if (settings?.armamentVoucher !== undefined) keepClaimRecords.armamentVoucher = settings.armamentVoucher;
+        if (settings?.voucherFirstUsed?.length) keepClaimRecords.voucherFirstUsed = settings.voucherFirstUsed;
         const next: UserSettings = { ...DEFAULT_SETTINGS, ...keepClaimRecords };
         setSettings(next);
         StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, next);
@@ -481,6 +511,54 @@ export const useUserSystem = () => {
 
         return true;
     };
+
+    /**
+     * [2026-10-24 莉莉子 · 卡组码] 批量购买多张卡 —— **一次 `setCollection` 提交**。
+     *
+     * 🔴 为什么不能循环调 `purchaseCard`（这是必须记住的）：
+     *   它每次调用都会 `setCollection` **并落盘一次**（见上面那个实现）。
+     *   卡组码"一键补齐"一次要补十几种卡 ⇒ 十几次独立写盘，
+     *   中途一次失败就会留下"扣了钱但只拿到一半卡"的半套状态，而且无法回滚。
+     *   本函数把整笔扣款 + 所有发卡压进**同一个 updater**，要么全成、要么全不成。
+     *
+     * ⚠️ 与 `purchaseCard` 的另一个差别：**余额不足时静默返回 false，不弹 alert**。
+     *    调用方（缺卡弹窗）已经按实时余额把按钮置灰了，
+     *    这里再弹原生 alert 只会在极端并发下打断玩家。
+     *
+     * @param items 要买的卡（key + 张数），张数 ≤ 0 的条目会被忽略
+     * @param totalCost 数据银总价（**由调用方用 `analyzeDeckGap` 算好**，这里只做二次校验）
+     */
+    const purchaseCardsBatch = (
+        items: Array<{ key: string; count: number }>,
+        totalCost: number,
+    ): boolean => {
+        if (!collection) return false;
+        if (!items.some(i => i.count > 0)) return false;
+        // 预检：让 UI 能立刻拿到"买不起"的结果，不必等 setState 落地
+        if (collection.resources.silverCoin < totalCost) return false;
+
+        setCollection(prev => {
+            if (!prev) return null;
+            // 二次校验：预检和真正落地之间可能插入别的扣款（比如抽卡）
+            if (prev.resources.silverCoin < totalCost) return prev;
+
+            const newOwned = { ...prev.ownedCards };
+            for (const { key, count } of items) {
+                if (count > 0) newOwned[key] = (newOwned[key] || 0) + count;
+            }
+
+            const newCollection = {
+                ...prev,
+                resources: { ...prev.resources, silverCoin: prev.resources.silverCoin - totalCost },
+                ownedCards: newOwned,
+            };
+            StorageUtils.save(`${STORAGE_KEYS.USER_ASSETS}_${userId}`, newCollection);
+            return newCollection;
+        });
+
+        return true;
+    };
+
     // --- [核心新增] 比特金购买逻辑 (涵盖英雄、皮肤、饰品) ---
     const purchaseBitGoldItem = useCallback((
         type: 'hero' | 'skin' | 'cardBack' | 'desk',
@@ -659,7 +737,7 @@ export const useUserSystem = () => {
     // 支持新皮肤解锁、重复皮肤自动转为 1 比特金、卡背解锁
     // ==========================================
     /** [2026-08-29 评估嘉勉] 解锁一个武装（加入已拥有集合，武装库按此过滤） */
-    // [2026-09-07 真数量库存] 发放/消耗统一维护 armamentStock（普通封顶3/消耗品不限）；ownedArmaments 同步为种类名（stock>0）
+    // [2026-09-07 真数量库存] 发放/消耗统一维护 armamentStock（普通封顶 MAX_ARMAMENT_STOCK=1/消耗品不限）；ownedArmaments 同步为种类名（stock>0）
     const applyArmStock = useCallback((prev: UserSettings, id: string, fn: (s: ArmStockMap) => ArmStockMap | null): UserSettings | null => {
         if (!id) return null;
         const stock = readArmStock(prev);
@@ -668,18 +746,6 @@ export const useUserSystem = () => {
         const kinds = Object.keys(nextStock).filter(k => (nextStock[k] ?? 0) > 0);
         return { ...prev, armamentStock: nextStock, ownedArmaments: kinds };
     }, []);
-
-    /** [2026-08-29 评估嘉勉] 发放武装库存（amount 份；普通武装单种上限 3，消耗品不限） */
-    const grantArmament = useCallback((armamentId: string, amount = 1) => {
-        if (!armamentId) return;
-        setSettings(prev => {
-            if (!prev) return prev;
-            const updated = applyArmStock(prev, armamentId, s => addArmStock(s, armamentId, amount));
-            if (!updated) return prev;
-            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, updated);
-            return updated;
-        });
-    }, [applyArmStock, userId]);
 
     /** [2026-09-07 消耗品武装] 用掉 amount 份（归零自动移除）；库存不足则不扣（防越界） */
     const removeOwnedArmament = useCallback((armamentId: string, amount = 1) => {
@@ -716,6 +782,53 @@ export const useUserSystem = () => {
             return newCollection;
         });
     }, [userId]);
+
+    /**
+     * [2026-10-20 程拍板 · 匣券] 增加匣券余额（函数式累加 + 立即落盘）。
+     *
+     * ⚠️ **必须用函数式 updater**：本仓库多次踩过"值形式 `setSettings({...settings})`"的坑 ——
+     *   同一个 tick 里若有别的更新（例如 `openAllChests` 正在 `pendingChests: []` 清空队列），
+     *   值形式会把那次清空**覆盖回去** ⇒ **匣子复活、可无限刷**（实现审查点名的高危点）。
+     */
+    const grantArmamentVoucher = useCallback((amount: number) => {
+        const gain = Math.floor(amount);
+        if (!Number.isFinite(gain) || gain <= 0) return;
+        setSettings(prev => {
+            if (!prev) return prev;
+            const nextValue = readVoucher(prev) + gain;
+            voucherRef.current = nextValue; // 同步镜像（updater 幂等 ⇒ StrictMode 双调用结果一致）
+            const next = { ...prev, armamentVoucher: nextValue };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, next);
+            return next;
+        });
+    }, [userId]);
+
+    /**
+     * [2026-08-29 评估嘉勉] 发放武装库存（amount 份；普通武装单种上限 1，消耗品不限）
+     *
+     * 🔴 [2026-10-20 匣券] 满库存时**改发匣券**（原为折算数据金）。
+     *   两条理由：① 数据金买不到武装（商店只卖局内装备）⇒ 对收集党是死钱；
+     *             ② 券能攒出高级匣，把"白开"变成"进度"。
+     *   ⚠️ 消耗品上限无限 ⇒ `hasArmamentRoom` 恒 true ⇒ **永不发券**（"领 6 用 6"口径不变）。
+     *   📌 位置在 `grantArmamentVoucher` **之后**是刻意的（避免 `const` 定义顺序/TDZ 问题）。
+     */
+    const grantArmament = useCallback((armamentId: string, amount = 1) => {
+        if (!armamentId) return;
+        const def = getEquipmentById(armamentId);
+        if (!hasArmamentRoom(readArmStock(settings), armamentId)) {
+            const gain = voucherYieldOf(def?.rarity) * Math.max(1, Math.floor(amount));
+            grantArmamentVoucher(gain);
+            console.log(`[武装发放] 「${def?.name ?? armamentId}」已拥有 ⇒ 匣券 +${gain}`);
+            return;
+        }
+        setSettings(prev => {
+            if (!prev) return prev;
+            const updated = applyArmStock(prev, armamentId, s => addArmStock(s, armamentId, amount));
+            if (!updated) return prev;
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, updated);
+            return updated;
+        });
+    }, [applyArmStock, userId, settings, grantArmamentVoucher]);
 
     // ==========================================
     // [2026-09-04 账号等级系统] 账号经验 / 持久战绩
@@ -788,7 +901,9 @@ export const useUserSystem = () => {
         const chest = kind ? rollChest(kind) : rollRewardChest();
         setSettings(prev => {
             if (!prev) return prev;
-            const newSettings = { ...prev, pendingChests: [...(prev.pendingChests ?? []), chest] };
+            const next = [...(prev.pendingChests ?? []), chest];
+            pendingChestsRef.current = next; // 同步镜像
+            const newSettings = { ...prev, pendingChests: next };
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
             return newSettings;
         });
@@ -799,11 +914,57 @@ export const useUserSystem = () => {
         if (!chests.length) return;
         setSettings(prev => {
             if (!prev) return prev;
-            const newSettings = { ...prev, pendingChests: [...(prev.pendingChests ?? []), ...chests] };
+            const next = [...(prev.pendingChests ?? []), ...chests];
+            pendingChestsRef.current = next; // 同步镜像（兑换匣子也走这里）
+            const newSettings = { ...prev, pendingChests: next };
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
             return newSettings;
         });
     }, [userId]);
+
+    /**
+     * [2026-10-20 程拍板 · 匣券] **用匣券兑换一个武装匣**（进 `pendingChests`，玩家随后自己开）。
+     *
+     * 口径：
+     * · 券是**通用**的 —— 任意档的重复都能攒出任意档的匣（"按品质隔离"已被数据否决：会让碎片永远落后一档）
+     * · **每档首次兑换有优惠**（`min(半价, 80)`），用过的档记进 `voucherFirstUsed`，之后恢复原价
+     * · 兑换发的是**匣子**而不是武装 —— 走 `grantPendingChests`，与通行证卡包同一条链路
+     * · 失败不扣券（`insufficient` / `no-chest` 直接返回）
+     * 📌 位置必须在 `grantPendingChests` **之后**（否则 TDZ：Block-scoped variable used before declaration）
+     */
+    const exchangeVoucherChest = useCallback((rarity: EquipmentRarity): VoucherExchangeResult => {
+        if (!settings) return { ok: false, reason: 'invalid' };
+        // ⚠️ 余额读**同步镜像**而非 `settings`：settings 是渲染快照，同一渲染内连点两次会各按旧余额扣款
+        //    ⇒ 券扣一次、匣子发两个（白赚）。ref 在扣减瞬间即更新，第二次点击必然看到新余额。
+        const balance = voucherRef.current;
+        const used = voucherFirstUsedRef.current;   // ← 同样读同步镜像：否则连点两次会各吃一次首兑优惠
+        const isFirst = !used.includes(rarity);
+        const cost = voucherExchangeCostOf(rarity, isFirst);
+        if (cost === null) return { ok: false, reason: 'no-chest', rarity, balance };
+        if (balance < cost) return { ok: false, reason: 'insufficient', rarity, spent: cost, balance };
+
+        const nextBalance = balance - cost;
+        voucherRef.current = nextBalance; // ← 先同步写，抢在 setSettings 生效之前
+        const nextUsed = isFirst ? [...used, rarity] : used;
+        voucherFirstUsedRef.current = nextUsed; // ← 同上，先同步
+        setSettings(prev => {
+            if (!prev) return prev;
+            // 🔴 [2026-10-20 审查 A] 上一行算出的 `nextBalance` 来自 **ref**，是"绝对量"。
+            //   若将来某条路径把 ref 顶高（例如某处用值形式 `setSettings({...settings})` 覆盖），
+            //   绝对量写法会**凭空多给券**。用真实 state 兜一道：余额只允许**变小**，绝不允许被写大。
+            const real = readVoucher(prev);
+            const safeBalance = Math.min(nextBalance, real);
+            const next = { ...prev, armamentVoucher: safeBalance, voucherFirstUsed: nextUsed };
+            StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, next);
+            return next;
+        });
+        // 匣子入队走**现成的批量发放**（它自己落盘 + 追加，不会覆盖上面这次扣款）
+        //   注：不加 `as ChestInstance` —— 让类型系统真正校验（`EnhancementRarity` 与 `EquipmentRarity`
+        //   目前是逐字相同的联合；将来若分叉，断言会把这个错误吞掉）
+        grantPendingChests([{ kind: 'armament', rarity }]);
+        console.log(`[匣券] 兑换 ${rarity} 武装匣：花 ${cost} 券（${isFirst ? '首次优惠' : '原价'}），余 ${nextBalance}`);
+        return { ok: true, rarity, spent: cost, usedFirstDiscount: isFirst, balance: nextBalance };
+    }, [settings, userId, grantPendingChests]);
 
     /**
      * 打开第 index 个待打开匣子（默认第一个）：
@@ -815,13 +976,16 @@ export const useUserSystem = () => {
         kind: ChestKind;
         rarity: ChestInstance['rarity'];
         armamentId?: string;
-        /** [2026-10-04 ②] 武装全部满库存时的折算数据金（有值 = 本次没发武装，发的是钱） */
+        /** [2026-10-20 匣券] 该档已全部拥有时发的**匣券数量**（有值 = 本次没发武装，发的是券） */
+        voucherGained?: number;
+        /** @deprecated [2026-10-20] 重复已改发匣券，本字段不再产生；保留以兼容旧读取方 */
         overflowDataGold?: number;
         shardAmount?: number;
         shardDetail?: ShardDropDetail[];
         wallet?: ShardWallet;
     } | null => {
-        const list = settings?.pendingChests ?? [];
+        // [2026-10-20 匣券] 读**同步镜像**取件：多弹窗同开时按"最新队列"取，而不是渲染快照里的陈旧列表
+        const list = pendingChestsRef.current;
         const chest = list[index];
         if (!chest) return null;
 
@@ -841,6 +1005,7 @@ export const useUserSystem = () => {
             const cur = prev.pendingChests ?? [];
             if (cur.length <= index) return prev;
             const next = [...cur.slice(0, index), ...cur.slice(index + 1)];
+            pendingChestsRef.current = next; // 同步镜像
             const newSettings = { ...prev, pendingChests: next };
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
             return newSettings;
@@ -852,15 +1017,16 @@ export const useUserSystem = () => {
             //   与「开匣详情预览」同一份逻辑，杜绝 UI 承诺 ≠ 实际产出。
             // [2026-10-04 程拍板 ②] 改走 `pickArmamentFromChest`（多一维：**库存**）：
             //   · 优先抽"还有余量"的 ⇒ 不会抽到已满的（否则开匣 = **空包**）
-            //   · 该品质**全部满库存** ⇒ 折算成**数据金**发给玩家，并回报 `overflowDataGold` 供 UI 说明
+            //   · [2026-10-20 匣券] 该品质**已全部拥有** ⇒ 改为发**匣券**（原为折算数据金），并回报 `voucherGained` 供 UI 说明
             const stock = readArmStock(settings);
             const { def, overflow } = pickArmamentFromChest(chest.rarity, stock);
             if (!def) return { kind: chest.kind, rarity: chest.rarity };
             if (overflow) {
-                const gold = getArmamentOverflowDataGold(def.rarity);
-                grantDataGold(gold);
-                console.log(`[开匣] 武装「${def.name}」库存已满 ⇒ 折算数据金 +${gold}`);
-                return { kind: chest.kind, rarity: chest.rarity, overflowDataGold: gold };
+                // [2026-10-20 程拍板 · 匣券] 该档武装**已全部拥有** ⇒ 不再折数据金（买不到武装=死钱），改发匣券
+                const gain = voucherYieldOf(def.rarity);
+                grantArmamentVoucher(gain);
+                console.log(`[开匣] 武装「${def.name}」已全部拥有 ⇒ 匣券 +${gain}`);
+                return { kind: chest.kind, rarity: chest.rarity, voucherGained: gain };
             }
             grantArmament(def.id);
             return { kind: chest.kind, rarity: chest.rarity, armamentId: def.id };
@@ -879,20 +1045,32 @@ export const useUserSystem = () => {
             shardDetail: drop.details,
             wallet: drop.wallet,
         };
-    }, [settings, grantArmament, grantDataGold, userId]);
+    }, [settings, grantArmament, grantArmamentVoucher, userId]);
 
     /**
-     * [2026-10-04 程拍板] **一键全开所有匣子**：一次性结算完 `pendingChests` 并清空队列。
+     * ⚡ **一键全开所有匣子**：一次性结算完 `pendingChests` 并清空队列。
+     *   现在只有「⏭ 跳过」这一条路还在用它（把剩余的匣子一次性结算，最快，不用逐发演出）。
      *
-     * ⚠️ 为什么不能像卡包那样"循环调 `openChest(0)`"：
-     *   `openChest` 用**闭包里的 `settings`** 取 `list[index]`（807 行的函数式更新只负责**移除**），
-     *   而 React state 在本次渲染内不会变 ⇒ 连调会**反复开同一个匣子**（重复发道具）。
-     *   ⇒ 批量必须走本函数：**读一次全部 → 逐个结算 → 一次清空**。
-     *   结算口径与 `openChest` **完全一致**（武装走 `getArmamentChestPool`、碎片走 `dropShards`）。
+     * 🔄 [2026-10-21 订正一条**会误导人**的旧注释]
+     *   原文写着：「⚠️ 为什么不能像卡包那样"循环调 `openChest(0)`"：`openChest` 用闭包里的
+     *   `settings` 取 `list[index]` ⇒ 连调会反复开同一个匣子」。
+     *
+     *   **这条理由已经不成立**：2026-10-20 加同步镜像后，`openChest` 取件已改为读
+     *   `pendingChestsRef.current`，并在移除时同步回写该 ref（见 `openChest` 函数头）。
+     *   ⇒ **逐个异步调 `openChest(0)` 是安全的**；`ChestOpenModal` 的「边播边开」正是这么实现的
+     *     （若谁按旧注释把它改回"一次性预开"，「⏹ 停止」会立刻退化回假中止 —— 包早被消耗光）。
+     *
+     *   ⚠️ 仍然成立的那一半限制：**取件**安全，但**结算**仍读闭包 `settings`
+     *   （`readArmStock(settings)`）⇒ **同一 tick 内同步连调**会让第二个武装匣的"该档是否已集满"算错。
+     *   所以批量要么"逐发异步"，要么像本函数这样自己维护 `rollingStock` / `rollingShardWallet` 滚动真源。
      */
     const openAllChests = useCallback((): NonNullable<ReturnType<typeof openChest>>[] => {
-        const list = settings?.pendingChests ?? [];
+        // [2026-10-20 匣券] 读**同步镜像**，并在结算前**立刻清空它**：
+        //   同一渲染内连点两次"全部开启"时，第二次会看到空队列而早退 ⇒ 不会把同一批匣子再结算一遍。
+        //   （原先靠 UI 的 phaseRef 守卫；store 层自己也要有一道，免得别的调用方绕过 UI。）
+        const list = pendingChestsRef.current;
         if (list.length === 0) return [];
+        pendingChestsRef.current = [];
 
         // ① 一次性清空队列（含落盘）
         setSettings(prev => {
@@ -913,9 +1091,10 @@ export const useUserSystem = () => {
                 const { def, overflow } = pickArmamentFromChest(chest.rarity, rollingStock);
                 if (!def) return { kind: chest.kind, rarity: chest.rarity };
                 if (overflow) {
-                    const gold = getArmamentOverflowDataGold(def.rarity);
-                    grantDataGold(gold);
-                    return { kind: chest.kind, rarity: chest.rarity, overflowDataGold: gold };
+                    // [2026-10-20 匣券] 批量开匣同口径：已全部拥有 ⇒ 发券（券只累加，不参与抽取判定，无需滚动）
+                    const gain = voucherYieldOf(def.rarity);
+                    grantArmamentVoucher(gain);
+                    return { kind: chest.kind, rarity: chest.rarity, voucherGained: gain };
                 }
                 grantArmament(def.id);
                 rollingStock = addArmStock(rollingStock, def.id, 1);
@@ -943,7 +1122,7 @@ export const useUserSystem = () => {
         );
         eventBus.emit(batchHasRare ? GameEvents.GACHA_REVEAL_RARE : GameEvents.GACHA_REVEAL_COMMON);
         return results;
-    }, [settings, grantArmament, grantDataGold, userId]);
+    }, [settings, grantArmament, grantArmamentVoucher, userId]);
 
     /** [2026-08-29 通行证] 获得一个待打开卡包（打开时才随机武装） */
     const grantPendingPack = useCallback(() => {
@@ -1203,12 +1382,14 @@ export const useUserSystem = () => {
         updateProfile, // [新增] 暴露更新名片的方法
 
         purchaseCard,
+        purchaseCardsBatch, // [2026-10-24 莉莉子 · 卡组码] 批量补齐（一次提交，见实现处注释）
         purchaseBitGoldItem, // [核心新增] 导出高级货币购买接口
         switchUserMode, // [新增] 导出切换函数
         createNewUser,
         deleteUser,
         switchUser,
         debugSwitchUser,
+        refreshUserList, // [2026-10-18 跨设备同步] 导入存档后刷新账户列表
 
         // Gacha Actions
         performGacha,   // [新增]
@@ -1236,6 +1417,10 @@ export const useUserSystem = () => {
         openChest,               // 打开一个匣子（返回武装 id 或碎片分配结果）
         grantPassEnhancement,    // 解锁迷宫强化（强化池可遇）
         grantDataGold,           // 发放局外数据金
+
+        // [2026-10-20 程拍板] 匣券（重复武装的补偿 → 兑换更高档武装匣）
+        grantArmamentVoucher,    // 增加匣券（内部：开匣/发放武装重复时调用）
+        exchangeVoucherChest,    // 用券兑换一个武装匣（含每档首次优惠；返回 VoucherExchangeResult）
 
         // [2026-09-04 账号等级系统]
         grantAccountExp,         // 账号等级经验（逐级发 320 数据金）

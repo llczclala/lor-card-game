@@ -15,12 +15,17 @@ import { FullArtOverlay } from './Overlays';
 // [移除] 彻底废弃 PersonalizationDrawer 的引入
 import { StyleSelector } from './StyleSelector'; // [核心新增] 直接复用原生的全屏选择器
 import type { useUserSystem } from '../hooks/useUserSystem';
-import { ArrowLeft, Home } from 'lucide-react'; // [新增]
+import { ArrowLeft, Home, Download, Share2, Check } from 'lucide-react'; // [新增] · [2026-10-24 卡组码] + Download(导入) / Share2(导出) / Check(复制成功提示)
 // [新增] 悬停预览统一方案
 import { useCardGaze } from '../hooks/useCardGaze';
 import { FloatingCardPreview } from './FloatingCardPreview';
 // [2026-10-15 莉莉子] 牌组「立体盒子」尺寸改为**共享常量**（原先三处各一份，改一处不生效另两处）
 import { DIORAMA_SIZE } from './dioramaSpacing';
+import { pickTuning } from '../platform/tuning';
+// [2026-10-24 莉莉子 · 卡组码] 导入 / 导出 / 缺卡提示 三合一弹窗
+import { DeckCodeModal, type DeckCodeModalMode } from './DeckCodeModal';
+import type { DeckCodeInput } from '../utils/deckCode';
+import { isDeckPlayable } from '../utils/deckCodeImport';
 
 
 
@@ -49,7 +54,10 @@ import { DIORAMA_SIZE } from './dioramaSpacing';
 //   · 右侧栏顶部（非滚动区）→ 直接 `flex flex-col gap-*`
 //   · 卡组列表（**定高滚动区**）→ 子项必须带 `shrink-0`，否则行被压扁、反而滚不动
 // ══════════════════════════════════════════════════════════════════════
-export const EDITOR_UI = {
+// 🖥️📱 【双平台】本文件有三块调参区，**每块都是两份值**：
+//   `XXX_UI_MOBILE`（手机端，程在雷电里调）+ `XXX_UI_PC_DIFF`（PC 端差异项，见各块下方）。
+//   判定收在 `src/platform/tuning.ts`；电脑浏览器 = PC 版，雷电 = 手机版。
+const EDITOR_UI_MOBILE = {
     // ══ ① 右上返回 ═══════════════════════════════════════════════════
     /** 距顶 px（原 top-6 = 24） */
     backTop: 12,
@@ -437,11 +445,60 @@ export const EDITOR_UI = {
     saveMainIconSize: 20,
     /** 「开始游戏」图标 px（lucide 默认 24，显式写死以保持一致） */
     playMainIconSize: 24,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `EDITOR_UI` PC 端差异项 —— 只列「与手机端不同」的项（**22 项**）
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g1-deckbuilder.md` §3.1 的逐项表
+//       （git 改动提交 × 注释「原 xxx」双源，22/22 一致）
+// 模式：绝大多数是手机端的 **×2 字号 / 图标**（14→28 · 12→24 · 16→32 · 18→36 · 8→16）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const EDITOR_UI_PC_DIFF = {
+    // ══ ① 右上返回 ═══════════════════════════════════════════════════
+    backTop: 24,            // 原 top-6 = 24
+    backRight: 32,          // 原 right-8 = 32
+
+    // ══ 悬停卡牌跟手大图 ═════════════════════════════════════════════
+    hoverPreviewScale: 1.25, // 原 FloatingCardPreview 的 scale={1.25}
+
+    // ══ ② 顶部筛选台 ═════════════════════════════════════════════════
+    searchIconSize: 16,     // 原 <Search size={16} />
+    searchFontSize: 14,     // 原 text-sm = 14
+    catBtnFontSize: 14,     // 原 text-sm = 14
+    catIconSize: 14,        // 原 <User size={14} />
+    utilBtnFontSize: 12,    // 原 text-xs = 12
+    utilIconSize: 16,       // 原 size={16}
+    advBtnFontSize: 14,     // 原 text-sm = 14
+    advIconSize: 16,        // 原 size={16}
+    resetIconSize: 18,      // 原 <X size={18} />
+
+    // ══ ③ 高级筛选下拉 ═══════════════════════════════════════════════
+    filterLabelFontSize: 12,      // 原 text-xs = 12
+    costChipGap: 6,               // 原 gap-1.5 = 6
+    costChipSize: 32,             // 原 w-8 h-8 = 32
+    costChipFontSize: 12,         // 原 text-xs = 12
+    regionChipFontSize: 12,       // 原 text-xs = 12
+    keywordChipSize: 32,          // 原 w-8 h-8 = 32
+    keywordIconSize: 20,          // 原 w-5 h-5 = 20（手机端 35 是手感值，非整数倍）
+    keywordFallbackFontSize: 8,   // 原 text-[8px] = 8
+
+    // ══ ④ 卡牌网格两个旋钮 ═══════════════════════════════════════════
+    gridColumns: 6,   // 原 grid-cols-6 = 6
+    cardScale: 1,     // 哨兵「1 = 原样」
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const EDITOR_UI_PC = { ...EDITOR_UI_MOBILE, ...EDITOR_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const EDITOR_UI = pickTuning(EDITOR_UI_PC, EDITOR_UI_MOBILE);
 
 // ══════════════════════════════════════════════════════════════════════
 // 由 `EDITOR_UI` 推导的两个运行期量（**不用改**，改上面的调参区即可）
-// ⚠️ `EDITOR_UI` 是 `as const` ⇒ 哨兵比较前必须先 `Number()` 拓宽，否则程一把旋钮拨离 1 就报 TS2367
+// ⚠️ `EDITOR_UI` 现在由 `pickTuning()` 合并产出，字段类型已拓宽为 `number`
+//    （不再是 `as const` 的字面量）⇒ 这里的 `Number()` 保留着当防御，**不是**必需的了
 // ══════════════════════════════════════════════════════════════════════
 /** 网格列数（非法/哨兵值兜底成 6，并夹在 1~12 之间） */
 const EDITOR_GRID_COLS = Math.min(12, Math.max(1, Math.round(Number(EDITOR_UI.gridColumns)) || 6));
@@ -457,7 +514,8 @@ const EDITOR_CARD_SCALE = Number(EDITOR_UI.cardScale);
 // 命名与用法**对齐 `TITLE_UI`**：值是**绝对 px**、直接进 style；注释标注**原来的 Tailwind 类**。
 // ⚠️ 唯一有联动的一对：`contentPadTop` 应 ≥ `headerHeight`，否则卡片会被顶部横栏压住。
 // ══════════════════════════════════════════════════════════════════════
-export const DECK_UI = {
+// 🖥️📱 【双平台】`DECK_UI_MOBILE`（手机端）+ `DECK_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const DECK_UI_MOBILE = {
     // ══ ① 顶部横栏（「牌组选择」所在的那条黑底栏）═════════════════════
     /** 【主旋钮】横栏高度 px（原 h-28 = 112）—— 改它标题与内容区一起动 */
     headerHeight: 112,
@@ -544,7 +602,29 @@ export const DECK_UI = {
      *    换设备若觉得"划不动"，**先回来调这个数**，不要去调别的。
      */
     swipeThreshold: 50,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `DECK_UI` PC 端差异项 —— 只列「与手机端不同」的项（**4 项**）
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g1-deckbuilder.md` §3.2
+// ⚠️ 本块**建块时（c449215e）16 项全部等价于原值** ⇒ 分叉全是后续手调产生的。
+//     其中 `titleFontSize` / `switchIconSize` 两项是**夹在 refactor 提交 `a590ad3c`
+//     里**改掉的（提交信息只写"DIORAMA_SIZE 三处合一"，不是零渲染变化）——
+//     **这正是"不能按提交标题筛手调值"的又一例**。
+// ══════════════════════════════════════════════════════════════════════
+const DECK_UI_PC_DIFF = {
+    titleFontSize: 36,   // 原 text-4xl = 36
+    switchIconSize: 18,  // 原 size={18}
+    backIconSize: 24,    // 原 size={24}
+    deckScale: 1,        // 哨兵「1 = 原样」
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const DECK_UI_PC = { ...DECK_UI_MOBILE, ...DECK_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const DECK_UI = pickTuning(DECK_UI_PC, DECK_UI_MOBILE);
 
 
 // ══════════════════════════════════════════════════════════════════════
@@ -568,7 +648,8 @@ export const DECK_UI = {
 //    这里显式写成 16 是**等价替换**：全项目（css / tailwind 配置 / index.html）
 //    **没有任何 `font-size` 声明** ⇒ 基准就是浏览器默认的 16px。
 // ══════════════════════════════════════════════════════════════════════
-export const HUB_UI = {
+// 🖥️📱 【双平台】`HUB_UI_MOBILE`（手机端）+ `HUB_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const HUB_UI_MOBILE = {
     // ══ ① 右上角关闭按钮（独立于三栏布局）═════════════════════════════
     closeTop: 8,            // 距顶 px（原 top-8 = 32）
     closeRight: 8,          // 距右 px（原 right-8 = 32）
@@ -658,7 +739,78 @@ export const HUB_UI = {
 
     // ══ ⑥ 悬停卡牌时跟随指针的大图（`FloatingCardPreview`）═════════════
     gazeScale: 1.25,         // 悬停预览缩放（原写死的 scale={1.25}）
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `HUB_UI` PC 端差异项 —— 只列「与手机端不同」的项（**35 项**）
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g1-deckbuilder.md` §3.3 / §3.4
+// 模式：改动最集中的是提交 `81273256`（10-16）**一个提交夹带 26 处**：
+//       面板 320→400 × 620→930（+50%）、缩略图 128×192→256×384（**整 2 倍**）、字号一律 ×2。
+// 🔴 **最后 5 项注释里没有原值**（`dioramaScale` 的说明注释被 `6fad14a1` 整段删除，
+//    4 个悬停大图百分比只有说明、没写原值）⇒ **原值取自 git，不是按旁边的数字猜比例**。
+// ══════════════════════════════════════════════════════════════════════
+const HUB_UI_PC_DIFF = {
+    // ══ ① 右上角关闭按钮 ═════════════════════════════════════════════
+    closeTop: 32,        // 原 top-8 = 32
+    closeRight: 32,      // 原 right-8 = 32
+    closeIconSize: 24,   // 原 size={24}
+
+    // ══ ③ 左翼「卡组预览」面板 ═══════════════════════════════════════
+    leftPanelWidth: 320,      // 原 w-80 = 320
+    leftPanelHeight: 620,     // 原 h-[620px]
+    panelTitleFontSize: 16,   // 原**没有** text-* 类 ⇒ 继承基准 16
+    cardRowHeight: 48,        // 原 h-12 = 48
+    costBadgeSize: 24,        // 原 w-6 h-6 = 24
+    costFontSize: 12,         // 原 text-xs = 12
+    nameWidth: 128,           // 原 w-32 = 128
+    nameFontSize: 14,         // 原 text-sm = 14
+    countFontSize: 14,        // 原 text-sm = 14
+    delBtnIconSize: 20,       // 原 size={20}
+
+    // ══ ④ 正中「发车」区 ═════════════════════════════════════════════
+    editBtnFontSize: 16,          // 原**没有** text-* 类 ⇒ 继承基准 16
+    diffLabelFontSize: 12,        // 原 text-xs = 12
+    diffLabelMarginRight: 4,      // 原 mr-1 = 4
+    diffBtnFontSize: 14,          // 原 text-sm = 14
+    startBtnFontSize: 24,         // 原 text-2xl = 24
+    startBtnIconSize: 24,         // 原 size={24}
+
+    // ══ ⑤ 右翼「定制」面板 ═══════════════════════════════════════════
+    rightPanelWidth: 288,         // 原 w-72 = 288
+    itemLabelFontSize: 12,        // 原 text-xs = 12
+    cardBackW: 128,               // 原 w-32 = 128
+    cardBackH: 192,               // 原 h-48 = 192
+    deskW: 192,                   // 原 w-48 = 192
+    deskH: 112,                   // 原 h-28 = 112
+
+    // ══ ⑤b 悬停弹出的大图 ════════════════════════════════════════════
+    hoverPreviewCardBackW: 240,   // 原 w-[240px]
+    hoverPreviewCardBackH: 360,   // 原 h-[360px]
+    hoverPreviewDeskW: 400,       // 原 w-[400px]
+    hoverPreviewDeskH: 225,       // 原 h-[225px]
+    previewLabelFontSize: 12,     // 原 text-xs = 12
+
+    // ══ ⑥ 主旋钮「立体盒子整体缩放」 ═════════════════════════════════
+    // 🔴 原值**只能靠 git**：说明注释被 `6fad14a1` 删掉了。
+    //    哨兵语义「1 = 不加任何内联样式 = 原样」；`81273256` 新建即 1，`96535b55` 改成 1.5。
+    dioramaScale: 1,
+
+    // ══ ⑦ 悬停大图四向偏移 ═══════════════════════════════════════════
+    // 🔴 这 4 项**注释里都没有原值**，原值取自 git（`53586c87` 建块时的值）：
+    //    · 横向两个建块时都是 `'105%'`（= 当时原代码的 `left-[105%]`），`81273256` 才改成 -135%
+    //    · 纵向两个建块/新建时就是 `'50%'`（= 垂直居中），`8e77c8ee` 才调成 20% / 80%
+    hoverPreviewCardBackLeft: '105%',
+    hoverPreviewDeskLeft: '105%',
+    hoverPreviewCardBackTop: '50%',
+    hoverPreviewDeskTop: '50%',
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const HUB_UI_PC = { ...HUB_UI_MOBILE, ...HUB_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const HUB_UI = pickTuning(HUB_UI_PC, HUB_UI_MOBILE);
 
 
 interface DeckBuilderProps {
@@ -675,6 +827,8 @@ interface DeckBuilderProps {
     onBackToLobby?: () => void;
     // [2026-08-13] 个性化编辑：外部指定初始编辑牌组（进入即编辑，开发者专用）
     initialEditDeckId?: string | null;
+    // [2026-10-24 莉莉子 · 卡组码] 「去抽卡」：走大厅那条「加载界面 → 共鸣抽卡」入口
+    onGoGacha?: () => void;
 }
 
 // 转全量卡牌数据
@@ -686,6 +840,37 @@ const toFullCardData = (staticData: any): CardData => ({
     damageTaken: 0,
     buffs: { power: 0, health: 0 }
 });
+
+/**
+ * [2026-10-24 莉莉子 · 卡组码] 把卡组裁成「玩家真正拥有的部分」。
+ *
+ * ── 为什么要有它 ────────────────────────────────────────────────
+ *   卡组码导入的卡组可能含玩家没有的卡（40 张里缺 22 张）。
+ *   程的口径：点「我自己补」进编辑器时，**画板里只留他有的那 18 张**，
+ *   缺的直接不出现，他从 18 张开始往上补。
+ *
+ * ── 为什么是模块级纯函数 ────────────────────────────────────────
+ *   它同时被「同步 effect」和「导入回调」调用；若做成 hook 回调，
+ *   依赖 `ownedCards` 会把 effect 的依赖数组拖脏（每渲染新数组 ⇒ 反复覆盖画板）。
+ *   纯函数传参最干净。
+ *
+ * ── 对普通卡组的副作用：**零** ──────────────────────────────────
+ *   玩家自己的卡组本来就只含拥有的卡（卡池 UI 的 `isLocked` 早就拦住了），
+ *   所以裁剪结果与输入相等。**只有导入来的卡组会真的变短。**
+ *
+ * ⚠️ 张数也会被拥有量截断：卡组要 3 张、你只有 2 张 ⇒ 留 2 张。
+ */
+const trimCardsToOwned = (
+    cards: Record<string, number>,
+    owned: Record<string, number>,
+): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const [key, count] of Object.entries(cards)) {
+        const have = owned[key] ?? 0;
+        if (have > 0) out[key] = Math.min(count, have);
+    }
+    return out;
+};
 
 // --- [重构] 封面计算工具函数 (获取优先级最高的3张卡) ---
 // [皮肤修复] 新增 skinOverrides 参数，让大厅封面也能穿上皮肤
@@ -844,7 +1029,8 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     onGachaNav, // [2026-08-02] 解构
     onDifficultyChange, // [2026-08-06] 解构
     onBackToLobby, // [2026-08-07] 解构
-    initialEditDeckId // [2026-08-13] 解构
+    initialEditDeckId, // [2026-08-13] 解构
+    onGoGacha, // [2026-10-24 莉莉子 · 卡组码] 「去抽卡」
 }) => {
 
     const [localDeck, setLocalDeck] = useState<Record<string, number>>({});
@@ -852,6 +1038,26 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     const [isDirty, setIsDirty] = useState(false); // 标记是否有未保存的修改
     // [2026-08-06] 标准对战 AI 难度选择（三选一互斥）
     const [localDifficulty, setLocalDifficulty] = useState<'easy' | 'normal' | 'hard'>('normal');
+
+    // ── [2026-10-24 莉莉子 · 卡组码] 弹窗状态 ──────────────────────
+    //   `codeMode === null` 表示关着；导出时用 `codeSourceDeck` 指定导出哪套
+    const [codeMode, setCodeMode] = useState<DeckCodeModalMode | null>(null);
+    const [codeSourceDeck, setCodeSourceDeck] = useState<{
+        hero: string;
+        cards: Record<string, number>;
+        cardBackIndex?: number;
+        boardIndex?: number;
+        name: string;
+    } | null>(null);
+
+    // [2026-10-24 莉莉子] 卡组码复制成功的顶部提示。
+    //   用**递增计数**而不是布尔：连续复制两次时，第二次也要重新计时（布尔置 true 不会重跑 effect）。
+    const [deckCodeToast, setDeckCodeToast] = useState(0);
+    useEffect(() => {
+        if (deckCodeToast === 0) return;
+        const timer = setTimeout(() => setDeckCodeToast(0), 2200);
+        return () => clearTimeout(timer);
+    }, [deckCodeToast]);
 
     const [viewCard, setViewCard] = useState<CardData | null>(null);
     // [卡牌导航] 标记当前查看的卡牌来自左侧牌库还是右侧牌组列表
@@ -1002,6 +1208,63 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         setViewMode('EDITOR');
     };
 
+    // ── [2026-10-24 莉莉子 · 卡组码] 导入 / 补齐 回调 ──────────────────────
+
+    /**
+     * 导入入库：存成一套新卡组，并**返回它的 id**。
+     * ⚠️ 必须返回 id —— 缺卡弹窗的「我自己补」要定位到这套刚导入的卡组，
+     *    如果那边再存一次就会凭空多出一套重复卡组（程明确要求卡组在导入时就落地）。
+     */
+    const handleCommitImport = (payload: DeckCodeInput): string => {
+        const id = `deck_import_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const heroName = CARD_DB[payload.hero]?.name;
+        userSystem.saveDeck({
+            id,
+            name: heroName ? `来自 ${heroName} 的卡组` : '导入的卡组',
+            hero: payload.hero,
+            cards: payload.cards,
+            skinOverrides: {},
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            cardBackIndex: payload.cardBackIndex,
+            boardIndex: payload.boardIndex,
+        });
+        return id;
+    };
+
+    /**
+     * 「我自己补」→ 直接进编辑器改这套卡组。
+     * ⚠️ `saveDeck` 是 setState，落地是异步的 ⇒ 必须等一拍再 `selectDeck`，
+     *    否则 `handleEnterDeck` 读到的是**旧**的卡组列表，进去会是空的。
+     *    （同一个坑 `handleCreateAndEdit` 里也用 `setTimeout(..., 0)` 绕过）
+     */
+    /**
+     * 「我自己补」→ 直接进编辑器改这套卡组。
+     *
+     * 🔴 [2026-10-24 莉莉子 BUG修复] 不能只调 `handleEnterDeck` 然后指望 `activeDeckId`
+     *    的副作用链把画板填好 —— 那条链在"卡组刚入库、decks 还没更新"的瞬间会
+     *    `decks.find(id) || decks[0]` 兜底成**第一个卡组**（满 40 张的那套），
+     *    现象就是"点我自己补，进去却看到别人的卡组、还是满卡的"。
+     *    这里把导入的数据**直接灌进画板**，不经过任何兜底。
+     *
+     * ⚠️ [2026-10-24 追加] 灌进去之前要过 `trimCardsToOwned`：
+     *    程要的是「40 张里缺 22 张 ⇒ 进编辑器只看到那 18 张」，
+     *    缺的卡**直接不出现**，玩家从 18 张开始自己补。
+     *    （与同步 effect 用的是同一口径，所以 decks 落地后 effect 重跑也不会把 40 张又塞回来）
+     */
+    const handleEditImported = (payload: DeckCodeInput, deckId?: string) => {
+        if (!deckId) return;
+        eventBus.emit(GameEvents.UI_CLICK);
+        const heroName = CARD_DB[payload.hero]?.name;
+        setLocalDeck(
+            trimCardsToOwned(payload.cards, userSystem.collection?.ownedCards ?? {}),
+        );
+        setDeckName(heroName ? `来自 ${heroName} 的卡组` : '导入的卡组');
+        setIsDirty(false);          // 与磁盘上的内容一致，不是草稿
+        userSystem.selectDeck(deckId);
+        setViewMode('EDITOR');
+    };
+
     // [修复] 智能新建逻辑
     const handleCreateAndEdit = () => {
         eventBus.emit(GameEvents.UI_CLICK);
@@ -1090,9 +1353,16 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     };
 
     // [新增] 监听 activeDeck 变化，同步到本地编辑器
+    // ⚠️ 同步时一律过 `trimCardsToOwned`：桌面上的画板语义统一为"只含我拥有的卡"。
+    //    对玩家自己的卡组是恒等变换（零影响），只有导入来的缺卡卡组会真的变短。
     useEffect(() => {
         if (userSystem.activeDeck) {
-            setLocalDeck(userSystem.activeDeck.cards);
+            setLocalDeck(
+                trimCardsToOwned(
+                    userSystem.activeDeck.cards,
+                    userSystem.collection?.ownedCards ?? {},
+                ),
+            );
             setDeckName(userSystem.activeDeck.name);
             setIsDirty(false);
         } else {
@@ -1101,7 +1371,13 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
             setDeckName("New Deck");
             setIsDirty(false);
         }
-    }, [userSystem.activeDeckId]); // 依赖 ID 变化
+        // ⚠️ [2026-10-24 莉莉子 BUG修复] 依赖里**必须**带上 `decks`，不能只看 ID：
+        //   `activeDeck` 的兜底是 `decks.find(id) || decks[0]`（`useUserSystem.ts:1372`）——
+        //   一旦 `activeDeckId` 先变化、而 `decks` 里还没落地这套卡组（**刚导入 / 刚新建**），
+        //   `find` 失败就会**静默回退成第一个卡组** ⇒ 画板里灌进去的是别人的卡组
+        //   （现象：从卡组码导入后点「我自己补」，右侧看到的是一套 40/40 的满卡卡组）。
+        //   只依赖 `activeDeckId` 时，decks 之后更新也不会纠正 —— 错误状态会一直留着。
+    }, [userSystem.activeDeckId, userSystem.decks]);
 
     // 2. 统计数据
     const stats = useMemo(() => {
@@ -1645,10 +1921,21 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         );
     })();
 
+    // ── [2026-10-24 莉莉子 · 卡组码] 当前编辑中的卡组是否"卡齐" ────────────
+    //   ⚠️ **每次渲染实时算，绝不缓存**：玩家可能刚抽到缺的那张卡，
+    //      缓存会让卡组一直停在"不能开局"，玩家会认为卡组坏了。
+    //   （这套判据同时用于"导入后缺卡的卡组"和"玩家自己的卡组" —— 后者天然恒为 true）
+    const deckPlayable = isDeckPlayable(localDeck, userSystem.collection?.ownedCards ?? {});
+
     if (viewMode === 'SELECTION') {
         const hubDeck = userSystem.decks.find((d: any) => d.id === hubDeckId);
         const hubCardCount = hubDeck ? Object.values(hubDeck.cards).reduce((a: any, b: any) => a + b, 0) : 0;
         const isFull = hubCardCount === 40;
+        // [2026-10-24 莉莉子 · 卡组码] 枢纽里这套卡组"卡是否齐" —— 缺卡的导入卡组不许开局
+        //   ⚠️ 与 `deckPlayable` 一样**实时算**，抽到卡后立刻恢复可玩
+        const hubPlayable = !hubDeck
+            ? true
+            : isDeckPlayable(hubDeck.cards, userSystem.collection?.ownedCards ?? {});
 
         return (
             <div className="w-full h-full bg-[#0f172a] text-white flex flex-col relative overflow-hidden font-sans">
@@ -1656,6 +1943,63 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     ⚠️ 2026-10-16 修正：它原来只在 EDITOR 分支里渲染 ⇒ 在备战枢纽点「📖 详情」
                        什么都不弹，切进「编辑卡组」界面才"迟到地"冒出来。 */}
                 {cardDetailOverlay}
+
+                {/* [2026-10-24 莉莉子 · 卡组码] 导入 / 导出 / 缺卡提示（三合一）
+                    🔴 **必须渲染在 SELECTION 分支**：导入按钮（header）与「分享卡组码」（备战枢纽）
+                      两个触发点都在本分支里。曾经错放进 EDITOR 分支的 return ⇒
+                      点按钮时 `codeMode` 状态变了、但这里没有组件去消费它 ⇒
+                      **无弹窗、无报错、无任何反馈**（状态改了没人渲染，最隐蔽的一类 bug）。
+                    ── `ownedCards` / `silverCoin` 每次从 userSystem 现读：「一键补齐」成功后
+                       collection 更新 ⇒ 弹窗重渲染 ⇒ 缺口自动重算（**不缓存**）
+                    ── `onPurchaseMissing` 走 `purchaseCardsBatch`（一次提交），不是循环 `purchaseCard` */}
+                <DeckCodeModal
+                    isOpen={codeMode !== null}
+                    mode={codeMode ?? 'export'}
+                    onClose={() => { setCodeMode(null); setCodeSourceDeck(null); }}
+                    deck={codeSourceDeck
+                        ? {
+                            hero: codeSourceDeck.hero,
+                            cards: codeSourceDeck.cards,
+                            cardBackIndex: codeSourceDeck.cardBackIndex,
+                            boardIndex: codeSourceDeck.boardIndex,
+                        }
+                        : undefined}
+                    deckName={codeSourceDeck?.name}
+                    onCommitImport={handleCommitImport}
+                    onEditImported={handleEditImported}
+                    onGoGacha={onGoGacha}
+                    ownedCards={userSystem.collection?.ownedCards ?? {}}
+                    silverCoin={userSystem.collection?.resources.silverCoin ?? 0}
+                    onPurchaseMissing={(items, cost) => userSystem.purchaseCardsBatch(items, cost)}
+                    // [2026-10-24 莉莉子] 复制成功 → 关窗 + 顶部提示（程要的"复制完自动关闭"）
+                    onCopySuccess={() => {
+                        setCodeMode(null);
+                        setCodeSourceDeck(null);
+                        setDeckCodeToast(v => v + 1);
+                    }}
+                />
+
+                {/* [2026-10-24 莉莉子] 卡组码复制成功的顶部提示
+                    ── 外层 div 只负责水平居中（`-translate-x-1/2`），内层 motion 只做 y/opacity 动画。
+                       两者别写在同一个元素上：framer 会接管 `transform`，把居中位移冲掉。 */}
+                <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[2000] pointer-events-none">
+                    <AnimatePresence>
+                        {deckCodeToast > 0 && (
+                            <motion.div
+                                key={deckCodeToast}
+                                initial={{ y: -28, opacity: 0, scale: 0.96 }}
+                                animate={{ y: 0, opacity: 1, scale: 1 }}
+                                exit={{ y: -14, opacity: 0 }}
+                                transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-emerald-500/95 text-white text-sm font-black tracking-wider shadow-[0_10px_30px_rgba(16,185,129,0.45)] border border-emerald-300/40 backdrop-blur-md"
+                            >
+                                <Check size={16} strokeWidth={3} />
+                                卡组码复制成功
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
+
                 {/* 1. 大厅基础视效 */}
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none z-0"></div>
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(30,58,138,0.5)_0%,rgba(15,23,42,1)_60%)] z-0 pointer-events-none"></div>
@@ -1686,6 +2030,17 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                     {onBackToLobby && (
                         <button onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onBackToLobby(); }} className="rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" style={{ padding: DECK_UI.backBtnPad }} title="返回大厅"><Home size={DECK_UI.backIconSize} className="text-gray-400 group-hover:text-white" /></button>
                     )}
+                    {/* [2026-10-24 莉莉子 · 卡组码] 导入入口 —— 放在返回按钮组里：
+                        导入 = "新增一套卡组"，属于列表级操作，和导航同级最自然；
+                        不做成卡片悬浮按钮（那个位置已有删除，触屏还得长按出环，会更难用）。 */}
+                    <button
+                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); setCodeMode('import'); }}
+                        className="rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group"
+                        style={{ padding: DECK_UI.backBtnPad }}
+                        title="导入卡组码"
+                    >
+                        <Download size={DECK_UI.backIconSize} className="text-gray-400 group-hover:text-white" />
+                    </button>
                     <button onClick={handleGlobalBack} className="rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all group" style={{ padding: DECK_UI.backBtnPad }} title="返回"><ArrowLeft size={DECK_UI.backIconSize} className="text-gray-400 group-hover:text-white" /></button>
                 </div>
 
@@ -1925,11 +2280,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                 </div>
 
                                 {/* [修正] 根据来源区分发车/完成构筑按钮（尺寸来自 🎛️ HUB_UI.startBtn*）*/}
+                                {/* [2026-10-24 莉莉子 · 卡组码] 「开始游戏」多一道**卡齐**校验：
+                                    导入的卡组可能缺卡（程的口径：缺卡就不许开局）。
+                                    这道闸门只对"含未拥有卡"的卡组生效，玩家自己的卡组恒为 true、零影响。 */}
                                 {fromSource === 'mode_select' ? (
                                     <button
                                         onClick={() => {
                                             eventBus.emit(GameEvents.UI_CLICK);
-                                            if (isFull) {
+                                            if (isFull && hubPlayable) {
                                                 // [2026-08-06] 上报当前选择的 AI 难度
                                                 onDifficultyChange?.(localDifficulty);
                                                 // [核心修复] 在发车前，强行将 activeDeckId 同步为当前正在浏览的枢纽卡组 ID
@@ -1937,20 +2295,48 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                 onStartGame(Object.entries(hubDeck.cards).flatMap(([k, c]: any) => Array(c).fill(k)));
                                             }
                                         }}
-                                        disabled={!isFull}
-                                        className={`rounded-2xl font-black tracking-[0.2em] flex items-center justify-center transition-all ${isFull ? 'bg-gradient-to-r from-blue-600 to-cyan-400 text-white hover:scale-110 shadow-[0_10px_40px_rgba(59,130,246,0.6)] border border-cyan-300/20' : 'bg-gray-900/80 text-red-500 cursor-not-allowed border border-red-900/50 backdrop-blur-md'}`}
+                                        disabled={!isFull || !hubPlayable}
+                                        className={`rounded-2xl font-black tracking-[0.2em] flex items-center justify-center transition-all ${(isFull && hubPlayable) ? 'bg-gradient-to-r from-blue-600 to-cyan-400 text-white hover:scale-110 shadow-[0_10px_40px_rgba(59,130,246,0.6)] border border-cyan-300/20' : 'bg-gray-900/80 text-red-500 cursor-not-allowed border border-red-900/50 backdrop-blur-md'}`}
                                         style={{ width: HUB_UI.startBtnWidth, paddingTop: HUB_UI.startBtnPadY, paddingBottom: HUB_UI.startBtnPadY, fontSize: HUB_UI.startBtnFontSize, gap: HUB_UI.startBtnGap }}
                                     >
-                                        <Play fill="currentColor" size={HUB_UI.startBtnIconSize} /> {isFull ? '开始游戏' : '卡组未满'}
+                                        <Play fill="currentColor" size={HUB_UI.startBtnIconSize} /> {!isFull ? '卡组未满' : (!hubPlayable ? '卡牌不全' : '开始游戏')}
                                     </button>
                                 ) : (
                                     <button
-                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); if (isFull) { handleSaveDeck(); handleGlobalBack(); } }}
+                                        /* 🔴 [2026-10-24 莉莉子 BUG防御] 原来这里是 `handleSaveDeck(); handleGlobalBack();`
+                                           —— 而 `handleSaveDeck` 存的是 **`localDeck`（编辑器画板）**，不是 `hubDeck`（眼前这套）。
+                                           正常流程里两者总同步所以没暴露；但**卡组码导入的卡组不在 activeDeck 上**
+                                           ⇒ 在枢纽点「完成构筑」会拿"别的卡组的画板内容"覆盖眼前这套（甚至新建出空卡组）。
+                                           枢纽里本来就没有编辑动作、没有需要保存的东西
+                                           （编辑器的保存由 `handleGlobalBack` 的 `isDirty` 分支负责），
+                                           所以这里只返回、不保存。 */
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); if (isFull) { handleGlobalBack(); } }}
                                         disabled={!isFull}
                                         className={`rounded-2xl font-black tracking-[0.2em] flex items-center justify-center transition-all ${isFull ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-orange-500/30 hover:scale-105' : 'bg-gray-900/80 text-gray-500 cursor-not-allowed border border-gray-700 backdrop-blur-md'}`}
                                         style={{ width: HUB_UI.startBtnWidth, paddingTop: HUB_UI.startBtnPadY, paddingBottom: HUB_UI.startBtnPadY, fontSize: HUB_UI.startBtnFontSize, gap: HUB_UI.startBtnGap }}
                                     >
                                         <Save fill="currentColor" size={HUB_UI.startBtnIconSize} /> {isFull ? '完成构筑' : '卡组未满'}
+                                    </button>
+                                )}
+                                {/* [2026-10-24 莉莉子 · 卡组码] 分享这套卡组
+                                    ⚠️ 只在满 40 张时给 —— 否则导出的码会被对方的规则校验
+                                       （`validateDeckShape` 要求正好 40 张）当场拒掉，白让作者尴尬。 */}
+                                {isFull && !(hubDeck as unknown as { isNew?: boolean }).isNew && (
+                                    <button
+                                        onClick={() => {
+                                            eventBus.emit(GameEvents.UI_CLICK);
+                                            setCodeSourceDeck({
+                                                hero: hubDeck.hero,
+                                                cards: hubDeck.cards,
+                                                cardBackIndex: hubDeck.cardBackIndex,
+                                                boardIndex: hubDeck.boardIndex,
+                                                name: hubDeck.name,
+                                            });
+                                            setCodeMode('export');
+                                        }}
+                                        className="mt-1 text-xs font-bold tracking-widest text-gray-400 hover:text-white transition-colors flex items-center justify-center gap-1.5"
+                                    >
+                                        <Share2 size={14} /> 分享卡组码
                                     </button>
                                 )}
                             </div>
@@ -2738,22 +3124,23 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         // 逻辑：必须满编 -> 开始游戏
                         <button
                             onClick={() => {
-                                if (stats.total === 40) {
+                                // [2026-10-24 莉莉子 · 卡组码] 缺卡同样不许开局 —— 与备战枢纽同一道闸
+                                if (stats.total === 40 && deckPlayable) {
                                     eventBus.emit(GameEvents.LOBBY_START_BATTLE);
                                     // [核心增强] 确保无论是在草稿状态还是保存状态，发车时都安全移管
                                     handleStart();
                                 }
                             }}
-                            disabled={stats.total !== 40}
+                            disabled={stats.total !== 40 || !deckPlayable}
                             style={{ paddingTop: EDITOR_UI.mainBtnPadY, paddingBottom: EDITOR_UI.mainBtnPadY, borderRadius: EDITOR_UI.mainBtnRadius, fontSize: EDITOR_UI.mainBtnFontSize, gap: EDITOR_UI.mainBtnGap }}
                             className={`
                                 w-full font-black tracking-widest flex items-center justify-center shadow-lg transition-all
-                                ${stats.total === 40
+                                ${(stats.total === 40 && deckPlayable)
                                     ? 'bg-gradient-to-r from-blue-600 to-cyan-500 hover:scale-105 text-white shadow-blue-500/30'
                                     : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'}
                             `}
                         >
-                            <Play fill="currentColor" size={EDITOR_UI.playMainIconSize} /> {stats.total === 40 ? '开始游戏' : '等待构建卡组'}
+                            <Play fill="currentColor" size={EDITOR_UI.playMainIconSize} /> {stats.total !== 40 ? '等待构建卡组' : (!deckPlayable ? '卡牌不全' : '开始游戏')}
                         </button>
                     )}
                 </div>
