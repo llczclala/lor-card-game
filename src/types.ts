@@ -83,6 +83,13 @@ export interface CardData {
   //     ② `getEffectiveSpellCost` 的**查询时判定**（覆盖战斗中**新生成**的法术）
   //   两条路共用本标记 ⇒ 查询时只补"还没减过的差额"（`N - spellCostDown`），**天然幂等、不会双减**。
   spellCostDown?: number;
+  // [2026-10-23 程拍板 · 强化「囤积」重做] **这张「囤积」卡自己攒下的法力点数**。
+  //   ── 语义（程的口径）：攒在**卡自己身上**，不是全局累计 ——
+  //      · 它在手牌里时，我方每打出一张卡（不含它自己）就 +1；
+  //      · 打出它时，把这里攒的全部兑现成法力（受法力上限钳制），卡消失、数字归零；
+  //      · 下一回合强化会重新发一张**空的**（从 0 开始攒）。
+  //   ⇒ 所以一局最多用两三次、每次拿的是"上次用掉之后攒的这几张"，不存在每回合回满。
+  hoardStored?: number;
   // [2026-10-06 程拍板 ②] **本实例费用被强制覆盖为 N**（迷宫强化生成时的 `costOverride`，
   //   如「剑舞长空」的 0 费「灵轨月轮·扩散」）。
   //   ── 为什么要这个标记：覆盖只写在 `card.cost` 上，而下面这些链条会**整卡重建**同一张牌 ——
@@ -161,7 +168,10 @@ export type AIPattern = 'DAMAGE' | 'BUFF' | 'RALLY' | 'DUEL' | 'HEAL' | 'DRAW' |
   | 'EXPOSE_DEBUFF'    // 以饵引狼：暴露我方单位换敌方本回合 -4/-0
   | 'EXPOSE_CASHOUT'   // 静默行动：消除全场【暴露】，每个换我方全体永久 +1/+1
   | 'FLYING_SWORD'     // 飞剑补给：召唤 N 柄飞剑（剑鸣回响）
-  | 'CHAMPION_BUFF';   // 天启者群体增益：指定 N 个天启者加身材（神格共鸣）
+  | 'CHAMPION_BUFF'    // 天启者群体增益：指定 N 个天启者加身材（神格共鸣）
+  // [2026-10-23 莉莉子] 崩坏：把友方（泰坦）的攻击力引爆成一次对敌伤害
+  //   与 SACRIFICE 的分工：SACRIFICE 挑**最便宜**的祭品，POWER_BURST 挑**攻击力最高**的源
+  | 'POWER_BURST';
 
 export interface AIConfig {
   pattern: AIPattern
@@ -566,7 +576,9 @@ export interface UserSettings {
   unlockedRogueEnhancements?: string[]; // [2026-08-26 逻辑研习] 肉鸽图鉴已解锁强化 id（获得过才解锁；开发者账号全解锁）
   unlockedRogueEquipments?: string[];   // [2026-08-26 逻辑研习] 肉鸽图鉴已解锁装备 id（获得过才解锁；开发者账号全解锁）
   ownedArmaments?: string[]; // [2026-08-29 评估嘉勉] 已拥有武装 id 的种类名（stock>0 的 id 集合；旧读取兼容，权威请用 armamentStock）
-  armamentStock?: Record<string, number>; // [2026-09-07 真数量库存] 每件武装库存数量（普通上限3/消耗品不限；装备占用、消耗品发挥后-1）
+  armamentStock?: Record<string, number>; // [2026-09-07 真数量库存] 每件武装库存数量（普通上限 1【2026-10-20 由 3 改 1】/消耗品不限；占用按天启者独立、消耗品发挥后-1）
+  armamentVoucher?: number; // [2026-10-20 匣券] 重复武装换来的匣券余额（通用，可兑换任意档武装匣；唯一真源 data/roguelike/armamentVoucher.ts）
+  voucherFirstUsed?: string[]; // [2026-10-20 匣券] 已用过「首次兑换优惠」的档位（每档只优惠一次）
   passUnlockedEnhancements?: string[]; // [2026-08-29 评估嘉勉·通行证] 已解锁的通行证专属迷宫强化 id（达到等级解锁后才在强化池可遇到）
   pendingPacks?: number; // [2026-08-29 评估嘉勉·通行证] 待打开的卡包数（打开 → 抽到一个奖励匣）
   // [2026-09-29 程拍板] 奖励匣体系：开包改为「先抽到匣子 → 再打开匣子得到道具」
@@ -587,6 +599,22 @@ export interface UserSettings {
   heroDynamic?: boolean;               // [2026-08-16] 天启者动态卡面（开启=对局内手牌/场上英雄卡用动态视频）
   cardBackDynamic?: boolean;           // [2026-08-23] 动态卡背（开启=对局内/选择预览/牌组预览用动态视频卡背）
   spellDynamic?: boolean;              // [2026-09-26] 动态法术/单位卡面（开启=对局内手牌/场上法术卡、单位卡用动态视频）
+  // ── [2026-10-20 莉莉子 · 触屏震动开关] 四个震动通道的开关（仅手机端设置界面可见）
+  //    ⚠️ 这四个都是 `?: boolean` 且**缺省按 `utils/haptics.ts` 的 `HAPTICS_DEFAULT` 取值**：
+  //       老存档里没有这些字段 ⇒ `undefined` 不能直接当 false/true 用。
+  //       判定统一走 `setHapticsSwitches()`（内部有 pickBool 归一）。
+  hapticsTap?: boolean;                // 点按震动（默认关 —— 程反馈「震得太频繁太吵」）
+  hapticsLongPress?: boolean;          // 长按达成震动（默认开）
+  hapticsNexusIn?: boolean;            // 敌方打击我方水晶（默认开）
+  hapticsNexusOut?: boolean;           // 我方打击敌方水晶（默认开）
+
+  // ── [2026-10-24 莉莉子 · ESC 归属权 / 右上角控制条] ─────────────────────
+  //    口径：**默认按新方案走，老习惯给开关**（程的原话：「我们最好不要教玩家做事」）
+  //    ⚠️ 三个都是 `?: boolean` 且缺省值写在 `data/initialUserData.ts`，
+  //       老存档里没有这些字段 ⇒ 判定统一用 `=== true` / `?? 默认值`，别直接当 false 用。
+  showFullscreenButton?: boolean;      // 右上角显示「全屏」悬浮按钮（默认开）
+  showPauseButton?: boolean;           // 右上角显示「暂停」悬浮按钮（默认开，仅对局中可见）
+  escExitFullscreenFirst?: boolean;    // 全屏下按 ESC 是否**优先退出全屏**（默认关 = 方案 A：ESC 一律归游戏）
 }
 
 export interface UserResources {

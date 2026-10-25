@@ -1,41 +1,20 @@
 // ==========================================
 // 悖论迷宫 · 武装库存（数量模型）
 // [2026-09-07 程拍板] 武装从「拥有集合(0/1)」升级为「真数量库存」：
-//   普通武装同种最多囤 MAX_ARMAMENT_STOCK(3) 份；消耗品武装（碳原子板/重修申请）不设上限（送6就能用6次）。
+//   普通武装同种最多囤 MAX_ARMAMENT_STOCK 份（初版为 3，**2026-10-19 已收窄为 1**，见下）；消耗品武装（碳原子板/重修申请）不设上限（送6就能用6次）。
 //   装备占用库存，消耗品发挥后库存 -1。
 //   存档字段：settings.armamentStock（权威）；旧 settings.ownedArmaments 保留为种类名 legacy，readArmStock 兼容合并。
 // [2026-09-25 莉莉子 武装不叠加] 上限 3 份的语义收窄为「可跨天启者各带 1 份」：
 //   同一天启者内已不允许重复武装（3 槽同名只有 1 份生效），多装纯属浪费库存 → UI 层 stockOf 直接置 0 拦截。
+// 🔴 [2026-10-19 程拍板 · 独立武装库] 上限 3 → **1**：
+//   ① 每件普通武装只需持有 **1 份**，不再囤份；抽到重复件改发**匣券**（2026-10-20 起，见 `armamentVoucher.ts`），不会白开；
+//   ② 占用口径改为**按天启者独立** —— 每位天启者各能装 1 件同一武装，互不挤占
+//      （落点：`RogueHeroInfoModal.tsx` 的 `stockOf`，原先统计「全英雄已占槽数」的写法已移除）；
+//   ③ ⚠️ 消耗品武装（碳原子板 / 重修申请）**不设上限、按次消耗** 的口径**不变**。
 // ==========================================
-import { getEquipmentById, type EquipmentRarity } from '../equipment';
+import { getEquipmentById } from '../equipment'; // [2026-10-20] 移除 EquipmentRarity：溢出折算表已删除（改由 armamentVoucher 发匣券）
 
-export const MAX_ARMAMENT_STOCK = 3; // 普通武装同种库存上限（可同时装进 3 个槽）；消耗品不限
-
-// ==========================================
-// [2026-10-04 程拍板 ②] **武装溢出 → 数据金**
-//
-// 病根：本文件原先只做 `Math.min(cap, ...)` 封顶，**既不报错也不转化**
-//   ⇒ 库存已满时开武装匣 = **包白开**（玩家什么也拿不到）。
-//   一旦通行证 31+ 每 5 级一个卡包长期产包，这个"空包"迟早出现。
-//
-// 额度锚定：**直接取装备市场价六档**（`shop.ts` `getEquipmentPrice`：50/80/120/180/250/330）。
-//   [2026-10-04 程拍板] 初版曾按"市场价 × 2"（100~660），程认为"多了一点，砍半" ⇒ 现值 = **市场价本身**。
-//   ⇒ 口径因此更好解释：**「这件在迷宫里值多少，折算就给你多少数据金」**。
-// ⚠️ **可调常量**（手册速查表有登记）；调了只需改这一处。
-// ⚠️ 只在**抽到已满**时使用；消耗品武装不封顶 ⇒ 永不溢出。
-// ==========================================
-export const ARMAMENT_OVERFLOW_DATA_GOLD: Record<EquipmentRarity, number> = {
-    common: 50,
-    uncommon: 80,
-    rare: 120,
-    epic: 180,
-    legendary: 250,
-    mythic: 330,
-};
-
-/** 该品质武装溢出时折算的数据金（未知品质按白档兜底） */
-export const getArmamentOverflowDataGold = (rarity?: EquipmentRarity): number =>
-    ARMAMENT_OVERFLOW_DATA_GOLD[rarity ?? 'common'] ?? ARMAMENT_OVERFLOW_DATA_GOLD.common;
+export const MAX_ARMAMENT_STOCK = 1; // 普通武装同种库存上限（1 份即可被每位天启者各装 1 次）；消耗品不限
 
 export type ArmStockMap = Record<string, number>;
 
@@ -46,7 +25,7 @@ export const hasArmamentRoom = (stock: ArmStockMap, id: string): boolean =>
 /** [2026-09-07] 是否消耗品武装 */
 export const isConsumableArmament = (id: string): boolean => !!getEquipmentById(id)?.consumable;
 
-/** [2026-09-07] 该武装单种库存上限（普通 3 / 消耗品不限） */
+/** [2026-09-07] 该武装单种库存上限（普通 1 / 消耗品不限） */
 export const stockLimitOf = (id: string): number => (isConsumableArmament(id) ? Number.POSITIVE_INFINITY : MAX_ARMAMENT_STOCK);
 
 /** 合并读取库存：优先 armamentStock；兼容旧 ownedArmaments（去重集合，每 id=1） */
@@ -56,6 +35,10 @@ export const readArmStock = (s?: { ownedArmaments?: string[]; armamentStock?: Ar
     for (const [id, n] of Object.entries(s?.armamentStock ?? {})) {
         if ((n ?? 0) > 0) out[id] = Math.max(out[id] ?? 0, n);
     }
+    // [2026-10-19 独立武装库] 读取即按**当前上限**收口（普通 1 份）：
+    //   旧存档里囤的 2~3 份在新口径下已无意义（每件只需 1 份、各英雄独立），
+    //   继续显示 ×3 只会让玩家以为还能多装 ⇒ 读取时统一裁剪（消耗品上限无限，不受影响）。
+    for (const id of Object.keys(out)) out[id] = Math.min(out[id], stockLimitOf(id));
     return out;
 };
 

@@ -27,6 +27,15 @@ export interface UserSummary {
     avatarId: string;
     lastLoginAt: number;
     type: 'starter' | 'full'; // 标记账户类型
+    /**
+     * [2026-10-18 跨设备同步] **账号来源标记**：`undefined` = 本机原生账号；
+     * `'pc'` / `'mobile'` = 从对面那台设备同步过来的（账户选择界面据此打角标）。
+     *
+     * 🔴 **它是独立字段，不是 `type` 的扩展** —— 原因：`type` 同时是**加载语义开关**，
+     *    `useUserSystem.ts:159-188` 里 `mode === 'full'` 会**强制把收藏覆盖成满卡**。
+     *    往 `'starter' | 'full'` 里塞第三个值 ⇒ 同步来的号可能被误判满卡 ⇒ **收藏被覆盖**。
+     */
+    origin?: 'pc' | 'mobile';
 }
 
 const generateUUID = (): string => {

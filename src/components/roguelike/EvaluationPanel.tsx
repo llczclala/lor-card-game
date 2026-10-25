@@ -7,10 +7,14 @@
 // ==========================================
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Coins, Package, Lock, Gem, Sparkles } from 'lucide-react';
+import { X, Coins, Package, Lock, Gem, Sparkles, Ticket } from 'lucide-react';
 import { ANALYST_MAX_LEVEL, ANALYST_FIXED_REWARD_MAX, ANALYST_POST_CAP_EXP, getAnalystReward, getNextAnalystMilestone, getAnalystExpToNext } from '../../data/roguelike/analystProgression';
-import { getEquipmentById } from '../../data/equipment';
+import { getEquipmentById, type EquipmentRarity } from '../../data/equipment';
 import { readArmStock } from '../../data/roguelike/armamentStock'; // [2026-09-07] 武装数量库存
+import {
+    readVoucher, readVoucherFirstUsed, voucherExchangeCostOf, voucherChestCostOf,
+    VOUCHER_RARITY_LABEL, EXCHANGEABLE_RARITIES,
+} from '../../data/roguelike/armamentVoucher'; // [2026-10-20 程拍板] 匣券：重复武装 → 兑换更高品质武装匣
 import { getBuffById, type MazeBuff } from '../../data/roguelike/buffs';
 import { PackOpenModal } from './PackOpenModal'; // [2026-08-29] 卡包 → 抽到匣子
 import { ChestOpenModal, type ChestOpenResult } from './ChestOpenModal'; // [2026-09-29 程拍板] 打开匣子 → 得道具
@@ -19,6 +23,15 @@ import { RARITY_META } from './RarityIcon'; // [2026-09-04] 武装品质元数�
 import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 面板关闭/开包 音效
 import { bindArmamentGaze } from './ArmamentPreview'; // [2026-09-04] 悬停大图检视
 import { EnhancementPreview, type EnhancementPreviewHover } from './EnhancementPreview'; // [2026-09-04] 强化悬停大图
+// [2026-10-20 莉莉子 🎨 视觉层优化] 匣子插画唯一真源（UI 侧不出现裸图片路径）
+import { getChestArt, getChestArtName, VOUCHER_ART } from '../../data/roguelike/chestArt';
+
+/**
+ * [2026-10-20 莉莉子 🎨] 插画兜底：图加载失败 ⇒ 隐藏 img（本文件两处都是"图 + 文字"，隐藏后文字仍在、不白板）
+ */
+const hideBrokenChestArt = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    e.currentTarget.style.visibility = 'hidden';
+};
 
 // [2026-09-04] 品质六边形小图标（武装 / 强化解锁通用）：外层品质色环 + 内层深底卡面
 const ARM_HEX = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
@@ -59,6 +72,24 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
     const ownedArmaments = Object.keys(armStockMap).filter(id => (armStockMap[id] ?? 0) > 0);
     const pendingPacks = userSystem?.settings?.pendingPacks as number | undefined;
     const pendingChests = (userSystem?.settings?.pendingChests ?? []) as ChestInstance[]; // [2026-09-29] 待打开匣子
+
+    // [2026-10-20 程拍板 · 匣券] 余额 / 已用首兑档位 / 兑换动作
+    //   为什么兑换入口放在本面板：它是全仓唯一同时握着「奖励入口 + pendingChests 队列 + ChestOpenModal」的地方
+    //   ⇒ 兑换出来的匣子**当场**就能在下面打开，闭环最短（实现审查的选型结论）。
+    const voucherBalance = readVoucher(userSystem?.settings);
+    const voucherUsed = readVoucherFirstUsed(userSystem?.settings);
+    const handleExchangeVoucher = (rarity: EquipmentRarity) => {
+        const res = userSystem?.exchangeVoucherChest?.(rarity);
+        if (!res) return;
+        if (res.ok) {
+            eventBus.emit(GameEvents.GACHA_CONVERT); // 复用成交音
+            setToast(`已兑换 ${VOUCHER_RARITY_LABEL[rarity]}武装匣（消耗 ${res.spent} 匣券）—— 去下面「待打开匣子」开启`);
+        } else if (res.reason === 'insufficient') {
+            setToast(`匣券不足：需要 ${res.spent}，当前 ${res.balance}`);
+        } else if (res.reason === 'no-chest') {
+            setToast('该品质暂不开放兑换');
+        }
+    };
 
     // ESC 关闭（capture + stopImmediatePropagation 拦截全局 ESC）
     // [2026-10-02 莉莉子 BUG修复 #16] ①分层：开箱弹窗开着时，ESC 只关**最内层**（先详情、再开箱），
@@ -358,6 +389,79 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                             </div>
                         )}
 
+                        {/* ══════════════════════════════════════════════════════════
+                            [2026-10-20 程拍板 · 匣券] 重复武装 → 匣券 → 兑换更高档武装匣
+                              · 抽到"该档已全部拥有"时自动发券（六档含红，通用可换任意档）
+                              · 每档**首次兑换**有优惠 = min(半价, 80)：低档减半、红档只减 80
+                                （红档一刀切减半会让首个红匣跌破"不贬值"线，见 技术手册/05-方案汇总 §12）
+                              · 兑换出来的是**匣子**（进 pendingChests），玩家自己去开 —— 不是直接发武装
+                            ══════════════════════════════════════════════════════════ */}
+                        <div className="mt-5 rounded-xl border border-cyan-400/25 bg-cyan-950/20 px-4 py-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="text-[10px] text-cyan-300 font-bold tracking-widest uppercase flex items-center gap-1">
+                                    <Ticket size={12} /> 匣券兑换
+                                </div>
+                                {/* [2026-10-20 莉莉子 🎨] 券小图 + 持有数（22px：16px 在 512 源图下缩放糊边，22px 才看得清券面纹样） */}
+                                <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                                    <img
+                                        src={VOUCHER_ART}
+                                        alt="武装匣兑换券"
+                                        title="武装匣兑换券"
+                                        className="object-contain shrink-0"
+                                        style={{ width: 22, height: 22 }}
+                                        draggable={false}
+                                        onError={hideBrokenChestArt}
+                                    />
+                                    持有 <span className="text-cyan-200 font-black text-sm">{voucherBalance}</span> 张
+                                </div>
+                            </div>
+                            <div className="text-[10px] text-gray-500 mt-0.5">
+                                抽到已拥有的武装会变成匣券 · 攒够可换任意品质武装匣 · 每档首次兑换更便宜
+                            </div>
+                            <div className="mt-2.5 grid grid-cols-5 gap-2">
+                                {EXCHANGEABLE_RARITIES.map(r => {
+                                    const isFirst = !voucherUsed.includes(r);
+                                    const cost = voucherExchangeCostOf(r, isFirst) ?? 0;
+                                    const fullCost = voucherChestCostOf(r) ?? 0;
+                                    const afford = voucherBalance >= cost;
+                                    const color = RARITY_META[r]?.color ?? '#e5e7eb';
+                                    return (
+                                        <button
+                                            key={r}
+                                            disabled={!afford}
+                                            onClick={() => handleExchangeVoucher(r)}
+                                            title={isFirst ? `首次兑换优惠：原价 ${fullCost}，本次只需 ${cost}` : `原价 ${fullCost} 匣券`}
+                                            className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border transition-all ${afford
+                                                ? 'bg-white/5 hover:bg-white/10 hover:scale-[1.03] cursor-pointer'
+                                                : 'bg-black/20 opacity-45 cursor-not-allowed'}`}
+                                            style={{ borderColor: afford ? `${color}66` : '#ffffff14' }}
+                                        >
+                                            {/* [2026-10-20 莉莉子 🎨] 每张兑换卡加对应品质的武装匣插画（40px，整图显示不裁切） */}
+                                            <img
+                                                src={getChestArt('armament', r)}
+                                                alt={getChestArtName('armament', r)}
+                                                title={getChestArtName('armament', r)}
+                                                className="object-contain shrink-0"
+                                                // [2026-10-20 莉莉子 🎨] 品质色外发光（色取 RARITY_META[r].color）
+                                                style={{ width: 40, height: 40, filter: `drop-shadow(0 0 6px ${color}88)` }}
+                                                draggable={false}
+                                                onError={hideBrokenChestArt}
+                                            />
+                                            <span className="text-[11px] font-black" style={{ color }}>{VOUCHER_RARITY_LABEL[r]}匣</span>
+                                            <span className="text-[11px] font-mono text-white">
+                                                {isFirst
+                                                    ? <><span className="text-gray-500 line-through mr-1">{fullCost}</span>{cost}</>
+                                                    : cost}
+                                            </span>
+                                            <span className={`text-[9px] font-bold ${isFirst ? 'text-cyan-300' : 'text-gray-600'}`}>
+                                                {isFirst ? '首次优惠' : '匣券'}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
                         {/* 已收集武装陈列 */}
                         <div className="mt-5 text-[10px] text-purple-300 font-bold tracking-widest uppercase flex items-center gap-1">
                             <Gem size={12} /> 已收集武装（{ownedArmaments?.length ?? 0}）
@@ -406,6 +510,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({ isOpen, onClos
                 onOpenPack={() => userSystem?.openPack?.() ?? null}
                 onClose={() => setPackOpen(false)}
                 onOpenChest={() => setChestOpen(true)}
+                armamentStock={armStockMap} // [2026-10-21 莉莉子] 档案卡浮窗按库存判"可能产出 / 已集齐转券"
             />
 
             {/* [2026-09-29 程拍板] 奖励匣开箱（匣子 → 武装 / 神格碎片） */}
