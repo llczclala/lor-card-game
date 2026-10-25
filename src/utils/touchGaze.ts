@@ -29,6 +29,14 @@ export const TOUCH_TUNE = {
     longPressMs: 400,
     /** 抬手后浮层滞留时长（ms）—— 期间可点浮层上的「详情」按钮 */
     lingerMs: 1800,
+    /**
+     * 「这次 tap 已经触发过动作」⇒ 吃掉浏览器随后补发的那次 click 的时间窗（ms）。
+     * 一次手势只能激活一次：安卓上 `pointerup` 出牌之后，浏览器还会补发一发 click，
+     * 它的落点是**当时手指下的元素**（可能已经是刚挂载的抉择层背景 / 正后方的备战席单位）
+     * ⇒ 造成「打出瞬间被撤回」「选目标误选备战席」。见 `markTapActionHandled()`。
+     * ⚠️ 与长按那条共用同一个窗口值（原来是硬编码 700 写死在监听器里）。
+     */
+    tapClickSuppressMs: 700,
     /** 手指移动超过这个距离 ⇒ 判定为拖拽，取消长按并撤掉涟漪 */
     moveCancelPx: 8,
 
@@ -68,6 +76,16 @@ export const TOUCH_TUNE = {
     /** 涟漪：存活时长 / 结束时放大倍数 */
     rippleMs: 380,
     rippleScale: 7.5,
+
+    /**
+     * 触屏的「法术瞄准预览线」怎么处理（施法选目标时从法术卡指向指针的那条白箭头）：
+     *   true  = **跟随手指**：按下点亮、手指滑到哪指到哪、抬手熄灭 —— 方案 A
+     *   false = 触屏干脆**不画**这条线，靠卡上的「可选目标」高亮来选 —— 方案 B
+     * ⚠️ 只管**非鼠标**指针；鼠标永远跟随 ⇒ PC 行为不变。
+     * 为什么需要它：原先那条线只跟 `mousemove`，安卓没有真鼠标 ⇒ 终点永远定格在
+     * "点牌那一下"的位置（手牌处），白色箭头就一直指着玩家的手。
+     */
+    aimFollowFinger: true,
 
     // ── 滞留操作条（📖 详情 / ✕ 关闭）─────────────────────────────
     // [2026-10-15 莉莉子] 程真机实测：「详情按钮和关闭按钮对我方备战席的卡牌不太好用，
@@ -216,4 +234,45 @@ export function registerTouchGazeCloser(fn: (() => void) | null): void {
 /** 立刻关闭悬停预览（浮层上的「详情 / 关闭」按钮点完就调它） */
 export function closeTouchGaze(): void {
     if (closeHandler) closeHandler();
+}
+
+// ─────────────────────────────────────────────────────────────
+// [2026-10-17 莉莉子 BUG修复 · 安卓「抉择法术点不出去 / 选目标误选备战席」]
+//   「这次 tap 已经触发过动作了」—— 申请吃掉浏览器**补发的那一次 click**。
+//
+//   ── 病根（✅ 程真机证实：抉择界面一闪而过 + 听到「撤回法术」音效）：
+//      手牌"点击打出"走的是 `pointerup`（`CardAnimations.tsx` 的 onPointerUp），
+//      而 `pointerup` **先于**浏览器补发的 `click`。那发 click 在 touchend 当下**重新命中测试**，
+//      于是落到"出牌后才出现的东西"上：
+//        · 抉择法术 ⇒ 落到**全屏抉择层的背景**，而它的 onClick 就是"取消抉择"
+//          （`GameSession.tsx:2775-2781` 的 `CANCEL_SPELL` + `cancelChoice()`）⇒ 卡当场退回手牌；
+//        · 需选目标的法术 ⇒ 穿过 `pointer-events-none` 的手牌区，落到**正后方的备战席单位**
+//          （`GameSession.tsx:3328`）⇒ `isCasting` 下直接 `handleTargetClick` 选成目标。
+//      PC 不受影响（程实测）：鼠标 click 的 target 是 mousedown/mouseup 的**最近公共祖先**，
+//      而出牌那张卡此时已被卸载 ⇒ React 根监听器收不到这一发。**这正是"安卓坏、PC 好"的成因。**
+//
+//   ── 修法：出牌成功那一刻"申请"一次抑制，由 `TouchFeedbackLayer` 在 **window capture 阶段**
+//      吃掉紧接着的那一发 click。那套机制本来就是为"长按抬手补发 click"写的
+//      （`TouchFeedbackLayer.tsx:328-344`），这里只是把它**开放给第二个来源** ⇒ 不新增范式。
+//
+//   ── 一次性语义：被消费即作废；**新手势一开始也作废**（同层的 onDown）⇒
+//      "申请了但浏览器没补发"永远不会误伤玩家的下一次点击。
+// ─────────────────────────────────────────────────────────────
+let tapActionHandledAt = 0;
+
+/** 由"已经真正触发了动作"的地方调用（目前只有手牌点击出牌这一处）。 */
+export function markTapActionHandled(): void {
+    tapActionHandledAt = performance.now();
+}
+
+/** 取出并作废（一次性）。给 `TouchFeedbackLayer` 的 capture 监听读。 */
+export function consumeTapActionClickSuppression(): number {
+    const at = tapActionHandledAt;
+    tapActionHandledAt = 0;
+    return at;
+}
+
+/** 作废（新手势开始时调用，避免过期申请吃掉一次无关点击）。 */
+export function clearTapActionClickSuppression(): void {
+    tapActionHandledAt = 0;
 }
