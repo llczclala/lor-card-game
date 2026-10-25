@@ -25,8 +25,8 @@ export const getArmamentChestPool = (rarity: EquipmentRarity): EquipmentDef[] =>
  *
  * 语义（相对 `getArmamentChestPool` 增加"库存"这一维）：
  *   · **优先在"还有库存余量"的候选里抽** ⇒ 不会抽到已满的（否则开匣 = 空包）
- *   · 该品质**全部满库存** ⇒ 返回 `overflow: true` + 一件用于定价的样本，
- *     由调用方（useUserSystem）**折算成数据金**发给玩家（`getArmamentOverflowDataGold`）
+ *   · 该品质**全部已拥有** ⇒ 返回 `overflow: true` + 一件用于定价的样本，
+ *     由调用方（useUserSystem）改成发**匣券**发给玩家（2026-10-20 起；原为折算数据金 `getArmamentOverflowDataGold`）
  *   · 消耗品不封顶 ⇒ `hasArmamentRoom` 恒 true ⇒ 永远走正常路径
  *
  * ⚠️ 预览与实际必须都调它，否则又是"UI 承诺 ≠ 实际产出"。

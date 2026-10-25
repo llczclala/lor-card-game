@@ -37,6 +37,35 @@ import eq_hiki_book from '../image/equipment/equipment18.webp';           // 鸦
 import eq_valerie_kit from '../image/equipment/equipment19.webp';         // 布里吉·瓦莱莉 —— 随身工具箱（PNG 原格式）
 import eq_feier_camera from '../image/equipment/equipment20.webp';        // 布里吉·菲儿 —— 胸口挂着的相机（PNG 原格式）
 import eq_chinchilla_glasses from '../image/equipment/equipment21.webp';  // 布里吉·金吉拉 —— 戴着的眼镜（PNG 原格式）
+// ── [2026-10-23 第二批后勤干员图标] 27 位后勤干员身上的物件（取自各自立绘）──
+//    排列规律：图片按 src/image/units 目录顺序给图，每人一张，跳过未实装小队（星朗、明夷）。
+import eq_mulin_case from '../image/equipment/equipment22.webp';  // 鸦眼·穆林 —— 棕色手提箱
+import eq_banshee_butterfly from '../image/equipment/equipment23.webp';  // 达努·班西 —— 白色蝶饰
+import eq_silverarm_drill from '../image/equipment/equipment24.webp';  // 达努·银臂 —— 电钻
+import eq_wendy_tank from '../image/equipment/equipment25.webp';  // 达努·温蒂 —— 培养罐
+import eq_haifa_goggle from '../image/equipment/equipment26.webp';  // 守梦人·海法 —— 护目镜
+import eq_martina_ankh from '../image/equipment/equipment27.webp';  // 守梦人·玛蒂娜 —— Ankh 挂饰
+import eq_saikui_monitor from '../image/equipment/equipment28.webp';  // 守梦人·赛奎特 —— 监护装置
+import eq_lucia_datacard from '../image/equipment/equipment29.webp';  // 梵灵·露茜娅 —— 数据卡
+import eq_nafu_hood from '../image/equipment/equipment30.webp';  // 梵灵·纳芙 —— 兜帽披风
+import eq_wasi_robe from '../image/equipment/equipment31.webp';  // 梵灵·瓦茜 —— 白紫长衣
+import eq_antina_suit from '../image/equipment/equipment32.webp';  // 鬼怪·安提娜 —— 宇航风衣
+import eq_valen_cannon from '../image/equipment/equipment33.webp';  // 鬼怪·瓦莲 —— 黑橙重炮
+import eq_vez_crate from '../image/equipment/equipment34.webp';  // 鬼怪·薇兹 —— 军用箱
+import eq_eva_kit from '../image/equipment/equipment35.webp';  // 绿灵·艾娃 —— 医疗试剂箱
+import eq_glanz_drone from '../image/equipment/equipment36.webp';  // 绿灵·格伦茨 —— 四旋翼无人机
+import eq_grace_samplebox from '../image/equipment/equipment37.webp';  // 绿灵·格蕾丝 —— 样本箱
+import eq_kuranas_gown from '../image/equipment/equipment38.webp';  // 图征·库兰娅丝 —— 礼服
+import eq_soline_terminal from '../image/equipment/equipment39.webp';  // 图征·索莉妮 —— 数据终端
+import eq_swali_horn from '../image/equipment/equipment40.webp';  // 图征·斯瓦莉 —— 犄角
+import eq_ahhua_staff from '../image/equipment/equipment41.webp';  // 信使·阿花 —— 长杖
+import eq_gena_ringblade from '../image/equipment/equipment42.webp';  // 信使·格娜 —— 环轨刃
+import eq_walle_toolbox from '../image/equipment/equipment43.webp';  // 信使·瓦力 —— 橙黄工具箱
+import eq_caitlin_board from '../image/equipment/equipment44.webp';  // 诗人·凯特琳 —— 滑板
+import eq_kelo_beanie from '../image/equipment/equipment45.webp';  // 诗人·科洛 —— 针织帽
+import eq_oisin_camera from '../image/equipment/equipment46.webp';  // 诗人·奥伊辛 —— 相机云台
+import eq_angelica_cane from '../image/equipment/equipment47.webp';  // 梵音·欧白芷 —— 拐杖刃
+import eq_loka_epaulet from '../image/equipment/equipment48.webp';  // 梵音·洛迦 —— 肩章
 
 // [2026-08-27 莉莉子] 六档品质：白 common / 绿 uncommon / 蓝 rare / 紫 epic / 金 legendary / 红 mythic
 export type EquipmentRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic';
@@ -102,6 +131,10 @@ export interface EquipmentDef {
     onPlay?: EquipmentOnPlay; // [打出时效果] 声明式执行（装备3）
     onRoundStart?: EquipmentRoundStart; // [2026-08-14 武装] 回合开始效果（武装C）
     onTrigger?: EquipmentTrigger; // [2026-08-20 成长型装备] 触发式成长（事件+目标+数值）
+    /** [2026-10-19 程] 经济/元效果件：**不产生战斗战力** ⇒ 不进「局内战力发放池」（品质保持不变）。
+     *  碳原子板（通关经验翻倍）/ 重修申请（品质上限+1）/ 凯旋之匣（每场金币）/ 遗嘱（死亡转移装备）。
+     *  ⚠️ 武装仍在局外武装配置里可选（那是它们唯一的获取途径），本标记只挡"当作战力随机发放"。 */
+    nonCombat?: boolean;
     runBonus?: { doubleRunExp?: boolean; retrainUpgrade?: boolean }; // [2026-08-29] 局外带入的整局性效果标记（碳原子板：通关经验翻倍）；[2026-09-07] 重修申请：通关后所在武装槽位品质上限 +1 级
     // ── [2026-09-25 莉莉子 三线任务化框架 v3] 任务型装备 / 武装 ──
     //   与 onTrigger 的区别：onTrigger 是「每次事件都 +N」（无终点）；quest 是「跨过阈值兑一次质变」（有终点、有记忆点）
@@ -173,13 +206,15 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         name: '菲儿的取景框',
         description: '使卡牌获得【挑战者】。',
         rarity: 'rare', icon: eq_feier_camera, // [2026-09-11] 布里吉·菲儿的相机（取景框锁定目标 → 强拉对手应战）· 原名「挑战装置」
+        powerMod: 1,
         keywords: ['Challenger'],
     },
     {
         id: 'equip_tough',
-        name: '坚韧镀层',
+        name: '科洛的御寒针织帽',
         description: '使卡牌获得【坚韧】。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'rare', icon: eq_kelo_beanie, // [2026-10-23 第二批] 诗人·科洛的针织帽（御寒坚韧）· 原名「坚韧镀层」
+        powerMod: 1,
         keywords: ['Tough'],
     },
     {
@@ -187,13 +222,14 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         name: '金吉拉的礼仪镜',
         description: '使卡牌获得【凶恶】。',
         rarity: 'rare', icon: eq_chinchilla_glasses, // [2026-09-11] 布里吉·金吉拉的眼镜（说教令人无法反驳 → 对手退避）· 原名「威吓压制」
+        powerMod: 1,
         keywords: ['Fearsome'],
     },
     {
         id: 'equip_lifesteal',
         name: '吸血之刃',
         description: '使卡牌获得【吸血】。',
-        rarity: 'epic', icon: abc_spell,
+        rarity: 'rare', icon: abc_spell,
         keywords: ['Lifesteal'],
     },
     {
@@ -223,9 +259,10 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'equip_trade_light',
-        name: '轻量化改造',
+        name: '索莉妮的轻量扫描仪',
         description: '使卡牌费用 -1，攻击力 -2。',
-        rarity: 'epic', icon: abc_spell, // [2026-08-26] 降低费用品质提升两档 common→epic
+        rarity: 'epic', icon: eq_soline_terminal, // [2026-10-23 第二批] 图征·索莉妮的数据终端（轻量化）· 原名「轻量化改造」
+        // [2026-08-26] 降低费用品质提升两档 common→epic
         costMod: -1, powerMod: -2,
     },
     // 纯属性分档（[2026-08-27] 六档锚点：白1/绿2/蓝4/紫7/金11/红16，偏科主+副）：
@@ -246,9 +283,10 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'equip_stat_02',
-        name: '护体装甲',
+        name: '格蕾丝的封存样本箱',
         description: '使卡牌获得 +0/+2。',
-        rarity: 'uncommon', icon: abc_spell, // [2026-08-27] 原 common→uncommon（六档平移）
+        rarity: 'uncommon', icon: eq_grace_samplebox, // [2026-10-23 第二批] 绿灵·格蕾丝的样本箱（封存护体）· 原名「护体装甲」
+        // [2026-08-27] 原 common→uncommon（六档平移）
         healthMod: 2,
     },
     {
@@ -288,9 +326,10 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'equip_stat_04',
-        name: '玄龟护甲',
+        name: '瓦茜的紫晶重氅',
         description: '使卡牌获得 +1/+6。',
-        rarity: 'epic', icon: abc_spell, // [2026-08-27] 紫锚点 7 点：血型
+        rarity: 'epic', icon: eq_wasi_robe, // [2026-10-23 第二批] 梵灵·瓦茜的白紫长衣（血型重防）· 原名「玄龟护甲」
+        // [2026-08-27] 紫锚点 7 点：血型
         powerMod: 1, healthMod: 6,
     },
     {
@@ -324,33 +363,36 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'equip_stat_88',
-        name: '泰坦之核',
-        description: '使卡牌获得 +8/+8。',
-        rarity: 'mythic', icon: abc_spell, // 红锚点 16 点：均衡
-        powerMod: 8, healthMod: 8,
+        name: '瓦莲的泰坦重炮',
+        description: '使卡牌获得 +7/+8。',
+        rarity: 'mythic', icon: eq_valen_cannon, // [2026-10-23 第二批] 鬼怪·瓦莲的黑橙重炮（神话属性）· 原名「泰坦残核」
+        // 红锚点 16 点：均衡
+        powerMod: 7, healthMod: 8,
     },
     {
         id: 'equip_stat_124',
         name: '灼的失真安可',
-        description: '使卡牌获得 +12/+4。',
+        description: '使卡牌获得 +11/+4。',
         rarity: 'mythic', icon: eq_scorching_guitar, // [2026-09-11] 御守·灼的吉他盒（失真＝摇滚音色，安可＝燃尽后返场）· 原名「灭世灾刃」
-        powerMod: 12, healthMod: 4,
+        powerMod: 11, healthMod: 4,
     },
     {
         id: 'equip_stat_412',
-        name: '不朽神躯',
-        description: '使卡牌获得 +4/+12。',
-        rarity: 'mythic', icon: abc_spell, // 红锚点 16 点：血型
-        powerMod: 4, healthMod: 12,
+        name: '玛蒂娜的不朽信符',
+        description: '使卡牌获得 +4/+11。',
+        rarity: 'mythic', icon: eq_martina_ankh, // [2026-10-23 第二批] 守梦人·玛蒂娜的Ankh 挂饰（不朽）· 原名「不朽神躯」
+        // 红锚点 16 点：血型
+        powerMod: 4, healthMod: 11,
     },
     // ── [2026-08-27 莉莉子] 白色代价装备（common 白品：缺陷数值 / 关键词白板 / 高阶效果带 DEBUFF）──
     // 设计思路（程）：白装不是纯垃圾而是「代价装备」——牺牲数值/引入负面，换取关键词或更高效果。
     //   减血 DEBUFF 有保护：生命最低降到 1（attachEquipment 里 clamp），1 血单位忽略减血。
     {
         id: 'equip_flaw_blade',
-        name: '双刃之锋',
+        name: '银臂的穿甲钻头',
         description: '使卡牌获得 +2/-1。',
-        rarity: 'common', icon: abc_spell, // 缺陷数值：攻特化但脆弱（血最低 1 保护）
+        rarity: 'common', icon: eq_silverarm_drill, // [2026-10-23 第二批] 达努·银臂的电钻（高攻脆身）· 原名「双刃之锋」
+        // 缺陷数值：攻特化但脆弱（血最低 1 保护）
         powerMod: 2, healthMod: -1,
     },
     {
@@ -376,16 +418,18 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'equip_keyw_taunt',
-        name: '挑衅面具',
+        name: '纳芙的巡礼兜帽',
         description: '使卡牌获得 -1/+0 与【挑战者】。',
-        rarity: 'common', icon: abc_spell, // 关键词白板：减攻换挑战者
+        rarity: 'uncommon', icon: eq_nafu_hood, // [2026-10-23 第二批] 梵灵·纳芙的兜帽披风（挑衅现身）· 原名「挑衅面具」
+        // 关键词白板：减攻换挑战者
         powerMod: -1, keywords: ['Challenger'],
     },
     {
         id: 'equip_contract_blood',
-        name: '猩红契约',
+        name: '艾娃的猩红试剂',
         description: '使卡牌获得【吸血】，攻击力 -1。',
-        rarity: 'common', icon: abc_spell, // 高阶效果带 DEBUFF：吸血（epic 级）换减攻
+        rarity: 'uncommon', icon: eq_eva_kit, // [2026-10-23 第二批] 绿灵·艾娃的医疗试剂箱（吸血）· 原名「猩红契约」
+        // 高阶效果带 DEBUFF：吸血（epic 级）换减攻
         powerMod: -1, keywords: ['Lifesteal'],
     },
     {
@@ -408,14 +452,14 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'equip_grow_spell_ally',
         name: '乐手的疗愈独奏',
         description: '我方施放一个法术后，随机一个我方单位获得 +1/+1。',
-        rarity: 'epic', icon: eq_musician_case, // [2026-09-11] 阿尔戈·乐手的小提琴（心理诊疗，"一听那些音乐问题便迎刃而解" → 惠及我方单位）· 原名「灵气传导」
+        rarity: 'rare', icon: eq_musician_case, // [2026-09-11] 阿尔戈·乐手的小提琴（心理诊疗，"一听那些音乐问题便迎刃而解" → 惠及我方单位）· 原名「灵气传导」
         onTrigger: { event: 'player_cast_spell', target: 'random_ally', power: 1, health: 1 },
     },
     {
         id: 'equip_grow_attack',
-        name: '磨砺之锋',
+        name: '班西的破茧之翼',
         description: '此卡打击后，获得 +1/+1。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'rare', icon: eq_banshee_butterfly, // [2026-10-23 第二批] 达努·班西的白色蝶饰（破茧成长）· 原名「磨砺之锋」
         onTrigger: { event: 'after_attack', target: 'self', power: 1, health: 1 },
     },
     {
@@ -429,17 +473,17 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     //   任务型 = 跨过阈值兑一次质变（对照上方成长型：每次事件都 +1/+1、没有终点）
     {
         id: 'equip_calibration',
-        name: '校准刻度',
+        name: '海法的校射镜',
         description: '本场战斗中，此卡攻击 2 次后，永久获得 +2/+1。',
-        rarity: 'common', icon: abc_spell,
+        rarity: 'common', icon: eq_haifa_goggle, // [2026-10-23 第二批] 守梦人·海法的护目镜（校准）· 原名「校准刻度」
         quest: { event: 'unit_attack', threshold: 2, scope: 'battle' },
         questReward: { class: 'STATS', power: 2, health: 1 },
     },
     {
         id: 'equip_oath_shield',
-        name: '誓约之盾',
+        name: '赛奎特的守约监护',
         description: '本场战斗中，此卡格挡 2 次进攻后，永久获得 +0/+4 与【坚韧】。',
-        rarity: 'uncommon', icon: abc_spell,
+        rarity: 'rare', icon: eq_saikui_monitor, // [2026-10-23 第二批] 守梦人·赛奎特的监护装置（守约格挡）· 原名「誓约之盾」
         quest: { event: 'card_block', threshold: 2, scope: 'battle' },
         questReward: [{ class: 'STATS', health: 4 }, { class: 'KEYWORDS', keywords: ['Tough'] }],
     },
@@ -447,32 +491,32 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'equip_gate_key',
         name: '闸门之钥',
         description: '本场战斗中，此卡击杀 2 个单位后，攻击力翻倍。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'uncommon', icon: abc_spell,
         quest: { event: 'unit_kill', threshold: 2, scope: 'battle' },
         questReward: { class: 'DOUBLE_POWER' },
     },
     {
         id: 'equip_crown_weight',
-        name: '王冠之重',
+        name: '库兰娅丝的加冕礼服',
         description: '本场战斗中，此卡击杀 4 个单位后，永久获得 +5/+5 与【吸血】。',
-        rarity: 'legendary', icon: abc_spell,
+        rarity: 'legendary', icon: eq_kuranas_gown, // [2026-10-23 第二批] 图征·库兰娅丝的礼服（加冕）· 原名「王冠之重」
         quest: { event: 'unit_kill', threshold: 4, scope: 'battle' },
         questReward: [{ class: 'STATS', power: 5, health: 5 }, { class: 'KEYWORDS', keywords: ['Lifesteal'] }],
     },
     {
         id: 'equip_desperate_blade',
-        name: '背水之刃',
+        name: '安提娜的绝境风衣',
         description: '我方水晶跌至三成以下的瞬间，此卡永久获得 +2/+2。',
-        rarity: 'common', icon: abc_spell,
+        rarity: 'uncommon', icon: eq_antina_suit, // [2026-10-23 第二批] 鬼怪·安提娜的宇航风衣（绝境爆发）· 原名「背水之刃」
         // 苛刻型：不计数，条件满足的那一次水晶受击即达成（threshold 1）
         quest: { event: 'nexus_damaged', threshold: 1, scope: 'battle', when: { nexusPctLte: 30 } },
         questReward: { class: 'STATS', power: 2, health: 2 },
     },
     {
         id: 'equip_resonance_circuit',
-        name: '共鸣回路',
+        name: '温蒂的共生培养槽',
         description: '本场战斗中，我方施放 3 个法术后，此卡永久获得 +2/+2 与【充能】。',
-        rarity: 'uncommon', icon: abc_spell,
+        rarity: 'uncommon', icon: eq_wendy_tank, // [2026-10-23 第二批] 达努·温蒂的培养罐（法术滋养）· 原名「共鸣回路」
         quest: { event: 'cast_spell', threshold: 3, scope: 'battle' },
         questReward: [{ class: 'STATS', power: 2, health: 2 }, { class: 'KEYWORDS', keywords: ['Channel'] }],
     },
@@ -495,18 +539,19 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'equip_will',
-        name: '遗嘱',
+        name: '穆林的遗物交接',
         description: '此卡阵亡时，将其身上的其他装备全部转移给随机一个存活的我方单位。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'rare', icon: eq_mulin_case, // [2026-10-23 第二批] 鸦眼·穆林的棕色手提箱（遗物交接）· 原名「遗嘱」
+        nonCombat: true,
         // 新机制：没有任务也没有数值，纯粹"死得有价值"（装备传承）
         onOwnerDie: { class: 'TRANSFER_EQUIPMENT' },
     },
     {
         id: 'equip_final_contract',
-        name: '终焉契约',
-        description: '使卡牌获得 +6/+6 与【先攻】【碾压】；代价：此卡无法被治疗。',
-        rarity: 'mythic', icon: abc_spell,
-        powerMod: 6, healthMod: 6, keywords: ['QuickAttack', 'Overwhelm'],
+        name: '格娜的终焉环刃',
+        description: '使卡牌获得 +5/+5 与【先攻】【碾压】；代价：此卡无法被治疗。',
+        rarity: 'mythic', icon: eq_gena_ringblade, // [2026-10-23 第二批] 信使·格娜的环轨刃（终焉）· 原名「终焉契约」
+        powerMod: 5, healthMod: 5, keywords: ['QuickAttack', 'Overwhelm'],
         pactNoHeal: true, // Pact 常驻代价：放弃续航换爆发
     },
     // ── [2026-09-28 莉莉子 法术专属装备 · 第一波] 仅法术卡可挂（spellOnly）。
@@ -519,15 +564,15 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'equip_spell_pact_scratch',
         name: '速记草稿',
         description: '使该卡费用 -1；代价：获得【瞬逝】（回合结束未打出即弃置）。',
-        rarity: 'common', icon: abc_spell, // TODO 专属图（暂用 abc 占位）
+        rarity: 'uncommon', icon: abc_spell, // TODO 专属图（暂用 abc 占位）
         spellOnly: true,
         costMod: -1, keywords: ['Volatile'], // Pact 代价型：前期最缺费，代价真实（不打就烂手里）
     },
     {
         id: 'equip_spell_echo_copy',
-        name: '誊抄副本',
+        name: '露茜娅的复写刻录',
         description: '使该卡获得【回响】（打出后在手牌生成一张该卡的瞬逝复制品）。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'rare', icon: eq_lucia_datacard, // [2026-10-23 第二批] 梵灵·露茜娅的数据卡（复写回响）· 原名「誊抄副本」
         spellOnly: true,
         keywords: ['Echo'], // 一张变两张 —— 法术流的连锁引擎（对已带回响的法术由适用性过滤自动排除）
     },
@@ -563,7 +608,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'equip_spell_extra_ammo',
         name: '增补弹药',
         description: '使该卡造成的伤害 +2。',
-        rarity: 'legendary', icon: abc_spell,
+        rarity: 'rare', icon: abc_spell,
         spellOnly: true,
         spellResolve: { damageAdd: 2 },
     },
@@ -571,7 +616,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'equip_spell_overload_transcript',
         name: '过载誊本',
         description: '使该卡造成的伤害翻倍；代价：该卡费用 +2。',
-        rarity: 'mythic', icon: abc_spell,
+        rarity: 'rare', icon: abc_spell,
         spellOnly: true,
         costMod: 2, // Pact 代价：翻倍不是白给的
         spellResolve: { damageMult: 2 },
@@ -591,7 +636,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'equip_spell_page_slip',
         name: '页码夹层',
         description: '该卡打出后，抽 1 张牌。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'uncommon', icon: abc_spell,
         spellOnly: true,
         spellResolve: { grantEffects: ['effect_equip_page_slip_draw1'] },
     },
@@ -626,26 +671,26 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     //   武装的任务是【整局作用域】（跨战斗累积）；完成后由 grantBattleEffectId 指向的战斗内效果持续生效
     {
         id: 'arm_echo_box',
-        name: '余响之匣',
+        name: '薇兹的战备补给',
         description: '本局累计用天启者打击 2 次后：此后每场战斗开局，额外抽 2 张牌。',
-        rarity: 'common', icon: abc_spell,
+        rarity: 'uncommon', icon: eq_vez_crate, // [2026-10-23 第二批] 鬼怪·薇兹的军用箱（补给抽牌）· 原名「余响之匣」
         isArmament: true,
         quest: { event: 'hero_attack', threshold: 2, scope: 'run' },
         grantBattleEffectIds: ['armfx_echo_box'],
     },
     {
         id: 'arm_heavy_bracer',
-        name: '负重护腕',
+        name: '斯瓦莉的负重犄角',
         description: '天启者费用 +1，但获得 +2/+3。',
-        rarity: 'common', icon: abc_spell,
+        rarity: 'uncommon', icon: eq_swali_horn, // [2026-10-23 第二批] 图征·斯瓦莉的犄角（负重换属性）· 原名「负重护腕」
         isArmament: true,
         costMod: 1, powerMod: 2, healthMod: 3, // Pact 代价型：以费换身材（最直白的一种，玩家一眼能算账）
     },
     {
         id: 'arm_hunter_horn',
-        name: '猎手的号角',
+        name: '奥伊辛的追猎取景器',
         description: '天启者费用 +1，但获得【挑战者】与 +2/+2。',
-        rarity: 'uncommon', icon: abc_spell,
+        rarity: 'rare', icon: eq_oisin_camera, // [2026-10-23 第二批] 诗人·奥伊辛的相机云台（追猎点名）· 原名「猎手的号角」
         isArmament: true,
         costMod: 1, powerMod: 2, healthMod: 2, keywords: ['Challenger'],
     },
@@ -653,7 +698,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'arm_devour_box',
         name: '噬牌之匣',
         description: '每回合开始时，弃掉你手牌中费用最低的一张，天启者永久 +1/+1。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'uncommon', icon: abc_spell,
         isArmament: true,
         // Novel 新机制：没有任务也没有静态数值 —— 把"废牌"变成英雄成长，手牌管理成为资源
         grantBattleEffectIds: ['armfx_devour_box'],
@@ -662,7 +707,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'arm_royal_warrant',
         name: '王权之证',
         description: '天启者获得 +2/+2，且必定出现在你的起手牌中；代价：每场战斗开始时我方水晶 -3。',
-        rarity: 'mythic', icon: abc_spell,
+        rarity: 'rare', icon: abc_spell,
         isArmament: true,
         powerMod: 2, healthMod: 2,
         grantBattleEffectIds: ['armfx_royal_warrant'],
@@ -672,7 +717,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'arm_break_dawn',
         name: '破晓号令',
         description: '本局累计用天启者打击敌方水晶 2 次后：此后每场战斗，敌方手牌中随机 3 张单位卡费用 +2（每场一次）。',
-        rarity: 'uncommon', icon: abc_spell,
+        rarity: 'rare', icon: abc_spell,
         isArmament: true,
         quest: { event: 'hero_hit_nexus', threshold: 2, scope: 'run' },
         grantBattleEffectIds: ['armfx_break_dawn'],
@@ -684,7 +729,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'arm_attune_crystal',
         name: '共鸣水晶',
         description: '本局累计用天启者打击 3 次后：随机赋予天启者一个关键词，此后其关键词同时赋予在场我方单位。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'epic', icon: abc_spell,
         isArmament: true,
         quest: { event: 'hero_attack', threshold: 3, scope: 'run' },
         grantBattleEffectIds: ['armfx_attune_crystal'],
@@ -700,18 +745,19 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'arm_triumph_box',
-        name: '凯旋之匣',
+        name: '格伦茨的凯旋巡航机',
         description: '战斗胜利后，若天启者仍然存活，获得 30 金币。',
-        rarity: 'epic', icon: abc_spell,
+        rarity: 'epic', icon: eq_glanz_drone, // [2026-10-23 第二批] 绿灵·格伦茨的四旋翼无人机（凯旋金币）· 原名「凯旋之匣」
         isArmament: true,
+        nonCombat: true,
         // Novel：打通"战斗表现"与"局内经济"（保护英雄 = 更多资源）；结算在 run 层，不走战斗内管线
         runBattleEndGold: 30,
     },
     {
         id: 'arm_unyielding',
-        name: '不屈之证',
+        name: '洛迦的不屈肩章',
         description: '每场战斗中，当天启者已升级时，其首次阵亡会以 1 点生命值存活（每场一次）。',
-        rarity: 'legendary', icon: abc_spell,
+        rarity: 'legendary', icon: eq_loka_epaulet, // [2026-10-23 第二批] 梵音·洛迦的肩章（不屈）· 原名「不屈之证」
         isArmament: true,
         // Condition 型：门槛是"天启者已升级"，在死亡清算处判定并拦截（每场一次，账本用 questProgress 的 used: 键）
         reviveOncePerBattle: true,
@@ -734,9 +780,9 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'arm_spell_mana',
-        name: '秘法回响',
+        name: '阿花的回响长杖',
         description: '回合开始时，恢复己方全部法术法力。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'epic', icon: eq_ahhua_staff, // [2026-10-23 第二批] 信使·阿花的长杖（法力回响）· 原名「秘法回响」
         isArmament: true,
         onRoundStart: { class: 'RESTORE_SPELL_MANA' },
     },
@@ -759,17 +805,17 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
     },
     {
         id: 'arm_quick_feather',
-        name: '迅捷之羽',
+        name: '凯特琳的疾行滑板',
         description: '使卡牌获得【先攻】，费用 -1。',
-        rarity: 'rare', icon: abc_spell,
+        rarity: 'legendary', icon: eq_caitlin_board, // [2026-10-23 第二批] 诗人·凯特琳的滑板（疾行）· 原名「迅捷之羽」
         isArmament: true,
         keywords: ['QuickAttack'], costMod: -1,
     },
     {
         id: 'arm_overwhelm_hammer',
-        name: '破阵之锤',
+        name: '瓦力的破阵重锤',
         description: '使卡牌获得【碾压】+1/+1。',
-        rarity: 'epic', icon: abc_spell,
+        rarity: 'epic', icon: eq_walle_toolbox, // [2026-10-23 第二批] 信使·瓦力的橙黄工具箱（破阵碾压）· 原名「破阵之锤」
         isArmament: true,
         keywords: ['Overwhelm'], powerMod: 1, healthMod: 1,
     },
@@ -785,7 +831,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'arm_elusive_cloak',
         name: '梅贝尔的树下幻境',
         description: '使卡牌获得【隐秘】【先攻】。',
-        rarity: 'epic', icon: eq_mabel_hat, // [2026-09-11] 重叶·梅贝尔的帽子（小说《树下幻境》＝躲进故事里 → 灵巧）· 原名「夜幕斗篷」
+        rarity: 'legendary', icon: eq_mabel_hat, // [2026-09-11] 重叶·梅贝尔的帽子（小说《树下幻境》＝躲进故事里 → 灵巧）· 原名「夜幕斗篷」
         isArmament: true,
         keywords: ['Elusive', 'QuickAttack'],
     },
@@ -801,7 +847,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'arm_play_burn',
         name: '献祭烈焰',
         description: '打出时，对敌方备战席所有单位造成 3 点伤害。',
-        rarity: 'epic', icon: abc_spell,
+        rarity: 'legendary', icon: abc_spell,
         isArmament: true,
         onPlay: { class: 'STRIKE_ENEMY_BENCH', value: 3 },
     },
@@ -809,15 +855,15 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         id: 'arm_grow_spell_ally',
         name: '梅芙的赞美特调',
         description: '我方施放一个法术后，随机一个我方单位获得 +2/+2。',
-        rarity: 'legendary', icon: eq_maeve_drink, // [2026-09-11] 阿尔斯特·梅芙的饮料（"受赞美的植物会长得更茁壮" → 一杯饮品把赞美递出去）· 原名「法术共鸣」；⚠️ 与迷宫强化「法术共鸣」重名，本次改名顺带解开撞车
+        rarity: 'epic', icon: eq_maeve_drink, // [2026-09-11] 阿尔斯特·梅芙的饮料（"受赞美的植物会长得更茁壮" → 一杯饮品把赞美递出去）· 原名「法术共鸣」；⚠️ 与迷宫强化「法术共鸣」重名，本次改名顺带解开撞车
         isArmament: true,
         onTrigger: { event: 'player_cast_spell', target: 'random_ally', power: 2, health: 2 },
     },
     {
         id: 'arm_dimension_jump',
-        name: '次元折跃',
+        name: '欧白芷的藏刃拐杖',
         description: '使卡牌获得【先攻】，费用 -2。',
-        rarity: 'legendary', icon: abc_spell,
+        rarity: 'mythic', icon: eq_angelica_cane, // [2026-10-23 第二批] 梵音·欧白芷的拐杖刃（折跃突袭）· 原名「次元折跃」
         isArmament: true,
         keywords: ['QuickAttack'], costMod: -2,
     },
@@ -844,6 +890,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         description: '携带并通关推演时，获得经验翻倍并消耗此武装；败北或中途放弃不消耗、不翻倍，可留到下一局（消耗品，每日推演任务可再领）。',
         rarity: 'common', icon: equipment_resonance, // [2026-09-07] 原 epic → common（程拍板降为普通消耗品）；[2026-09-09] 专属图 equipment00
         isArmament: true,
+        nonCombat: true,
         consumable: true,
         runBonus: { doubleRunExp: true },
     },
@@ -854,6 +901,7 @@ export const EQUIPMENT_DEFS: EquipmentDef[] = [
         description: '不提供任何效果。携带通关推演后，按难度将该武装所在槽位的可装备品质上限提升至：普通→史诗、机密→传说、绝密→神话（槽已达更高则本局不消耗）。升档后此武装消失 1 份（消耗品）。',
         rarity: 'rare', icon: equipment_retrain, // [2026-09-09] 专属图 equipment01
         isArmament: true,
+        nonCombat: true,
         consumable: true,
         runBonus: { retrainUpgrade: true },
     },
@@ -892,7 +940,7 @@ export const getArmamentDefs = (): EquipmentDef[] => EQUIPMENT_DEFS.filter(e => 
  *   ⚠️ 刻意**不给默认值**：调用点必须显式想清"这是给谁买的"—— 09-28 商店漏武装就是"没想清作用对象"造成的。
  */
 export const getEquipmentOnlyDefs = (scope: 'unit' | 'spell'): EquipmentDef[] =>
-    EQUIPMENT_DEFS.filter(e => !e.isArmament && (scope === 'spell' ? e.spellOnly === true : !e.spellOnly));
+    EQUIPMENT_DEFS.filter(e => !e.isArmament && !e.nonCombat && (scope === 'spell' ? e.spellOnly === true : !e.spellOnly));
 
 /**
  * [2026-09-28 莉莉子 装备适用性铁律（程拍板）] 一件装备是否**对这张卡有实际提升**。
@@ -1032,6 +1080,7 @@ export const getEquipPoolForCard = (card: { type: string; cost?: number; keyword
     const isSpell = card.type.startsWith('spell');
     return EQUIPMENT_DEFS.filter(e =>
         !e.isArmament
+        && !e.nonCombat
         && !exclude?.has(e.id)
         && (isSpell ? e.spellOnly === true : !e.spellOnly)
         && isEquipmentApplicable(e, card, excludeIds)
