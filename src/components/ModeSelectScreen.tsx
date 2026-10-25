@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sword, Dices, Swords, Skull, BookOpen, ArrowLeft } from 'lucide-react';
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { pickTuning } from '../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 模式选择（`ModeSelectScreen`）· 视觉调参区（**程微调就改这里**）
@@ -14,7 +15,8 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 // ⚠️ 本屏跑在 `ScaleWrapper` 的 1680×1050 画布内 ⇒ **禁 vh/vw**（原 `h-[65vh]` 已于 2026-10-15 换算成 683px）。
 // ⚠️ `stageMaxWidth` 那条注释务必看一眼 —— 它有一个**不能随手改成数字**的理由。
 // ══════════════════════════════════════════════════════════════════════
-export const MODE_UI = {
+// 🖥️📱 【双平台】`MODE_UI_MOBILE`（手机端）+ `MODE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const MODE_UI_MOBILE = {
     /**
      * 【主旋钮】整块 3×3 舞台（正中大圆 + 四张角卡 + 它们之间的间距）的**整体缩放**（1 = 原样）。
      *
@@ -111,7 +113,49 @@ export const MODE_UI = {
     lobbyBtnBottom: 48,
     /** 字号 px（原 text-sm = 14） */
     lobbyBtnFontSize: 28,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `MODE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g6-system.md` §2 的逐项表（git 基线 × 注释「原 XXX」双源）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ⚠️ `stageScale` **不在**这里：git（`bee34d8c` 创建 + `6fad14a1` 完整 diff）证实它
+//    **从未被手调过**（当前 = 1 = 不加内联样式）⇒ 两端本来就一样，别给它写 PC 差异项。
+// ⚠️ `stageMaxWidth` 的 `'none'` **不是手调**（是 `index.css:56` 的 `max-w-*` 规避）⇒ 刻意不列。
+// ══════════════════════════════════════════════════════════════════════
+const MODE_UI_PC_DIFF = {
+    // ══ ① 顶部（标题 + 右上返回按钮）═══════════════════════════════════
+    titleFontSize: 36,            // 原 text-4xl = 36
+    backIconSize: 24,             // 原 `<ArrowLeft size={24} />`
+
+    // ══ ② 3×3 舞台框 ═══════════════════════════════════════════════════
+    stageHeight: 683,             // 原 h-[683px]（更早是 65vh —— 1050 × 65% = 683）
+
+    // ══ ③ 四张角卡 ═════════════════════════════════════════════════════
+    cardWidth: 256,               // 原 w-64 = 256
+    cardHeight: 160,              // 原 h-40 = 160
+    cardIconSize: 40,             // 原 `size={40}`
+    cardTitleFontSize: 20,        // 原 text-xl = 20
+    cardDescFontSize: 10,         // 原 text-[10px]
+
+    // ══ ④ 正中「超元链接」大圆 ═════════════════════════════════════════
+    centerSize: 320,              // 原 w-80 h-80 = 320
+    centerIconSize: 80,           // 原 `size={80}`
+    centerTitleFontSize: 36,      // 原 text-4xl = 36
+    centerDescFontSize: 12,       // 原 text-xs = 12
+    badgePadY: 4,                 // 原 py-1 = 4
+    badgeFontSize: 10,            // 原 text-[10px]
+
+    // ══ ⑤ 底部「返回大厅」═══════════════════════════════════════════════
+    lobbyBtnFontSize: 14,         // 原 text-sm = 14
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const MODE_UI_PC = { ...MODE_UI_MOBILE, ...MODE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const MODE_UI = pickTuning(MODE_UI_PC, MODE_UI_MOBILE);
 
 /** 四张角卡**共用**的盒子尺寸（都读 `MODE_UI` ⇒ 改一处、四张一起变） */
 const cornerCardStyle: React.CSSProperties = {

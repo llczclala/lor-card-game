@@ -18,6 +18,7 @@ import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
 import type { RogueSettleDetail } from '../../../data/roguelike/rogueExp';
 import { getExpToNextLevel, getHeroLevelBonus, combineArmamentRarity, type ArmamentRarity } from '../../../data/roguelike/heroProgression';
 import { HeroAvatarRing, HeroHandContent, ArmamentSlot } from '../RogueHeroInfoModal';
+import { RARITY_META } from '../RarityIcon'; // [2026-10-20 莉莉子 🎨] 品质色（开匣按钮小图外发光用，不新建颜色表）
 import { ROGUE_DIFFICULTIES } from '../../../data/roguelike/difficulties';
 import { useHeroProgression } from '../../../hooks/useHeroProgression'; // [2026-09-08] 等级→槽数量/基础品质
 import { useArmamentConfig } from '../../../hooks/useArmamentConfig'; // [2026-09-08] 实时武装槽/品质档
@@ -25,6 +26,8 @@ import { useArmamentConfig } from '../../../hooks/useArmamentConfig'; // [2026-0
 import { PackOpenModal } from '../PackOpenModal'; // [2026-09-04] 通关卡包·完整滚轮开箱演出
 import { ChestOpenModal, type ChestOpenResult } from '../ChestOpenModal'; // [2026-09-29 程拍板] 打开匣子 → 得道具
 import type { ChestInstance } from '../../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
+// [2026-10-20 莉莉子 🎨 视觉层优化] 匣子插画唯一真源（UI 侧不出现裸图片路径）
+import { getChestArt } from '../../../data/roguelike/chestArt';
 import { RunEnhancementsModal } from './RunEnhancementsModal';
 import { RunEnhancementStrip } from '../RunEnhancementStrip'; // [2026-10-04 程拍板] 手牌下方的迷宫强化图标列（悬停出大卡） // [2026-10-04 程拍板] 本局构筑回顾（迷宫强化清单）
 
@@ -90,6 +93,21 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
     // [2026-09-09 莉莉子] 演出期亮出被消耗的消耗品本体图标（结算时武装已清出槽=空槽，玩家看不清谁在生效）
     const [resoIconShow, setResoIconShow] = useState(false); // 共鸣本体亮相 → 白光带走后隐去
     const [retrainIconShow, setRetrainIconShow] = useState(false); // 重修本体亮相 → 升档完成隐去
+
+    // [2026-10-20 莉莉子 🎨] 开匣按钮小图：取待开匣子里品质最高的那一个（纯展示，不动任何结算数据）
+    // [2026-10-20 莉莉子 🎨] 品质色外发光需要知道该小图的品质 ⇒ 先挑出 best，再派生 art / color（色仍取自 RARITY_META）
+    const chestBtnBest = useMemo(() => {
+        const order: ChestInstance['rarity'][] = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
+        let best: ChestInstance | undefined;
+        for (const c of pendingChests) {
+            if (!best || order.indexOf(c.rarity) > order.indexOf(best.rarity)) best = c;
+        }
+        return best;
+    }, [pendingChests]);
+    const chestBtnArt = chestBtnBest
+        ? getChestArt(chestBtnBest.kind, chestBtnBest.rarity)
+        : getChestArt('armament', 'common');
+    const chestBtnColor = (RARITY_META[chestBtnBest?.rarity ?? 'common'] ?? RARITY_META.common).color;
 
     // refs：共鸣光束起止点 + 重修槽定位
     const ringRef = useRef<HTMLDivElement | null>(null);
@@ -367,7 +385,19 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
                             onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setChestOpen(true); }}
                             className="px-6 py-2.5 rounded-xl bg-amber-500/25 border-2 border-amber-400/60 text-amber-100 font-black tracking-widest hover:bg-amber-500/45 hover:scale-105 transition-all shadow-[0_0_25px_rgba(250,204,21,0.4)]"
                         >
-                            💠 打开匣子 ×{pendingChests.length}
+                            {/* [2026-10-20 莉莉子 🎨] 💠 → 神经匣/武装匣插画小图（20px，inline-flex 保持按钮单行） */}
+                            <span className="inline-flex items-center gap-1.5">
+                                <img
+                                    src={chestBtnArt}
+                                    alt=""
+                                    className="object-contain"
+                                    // [2026-10-20 莉莉子 🎨] 品质色外发光（20px 小图 → 4px/66 轻光，色取 RARITY_META）
+                                    style={{ width: 20, height: 20, filter: `drop-shadow(0 0 4px ${chestBtnColor}66)` }}
+                                    draggable={false}
+                                    onError={e => { e.currentTarget.style.visibility = 'hidden'; }}
+                                />
+                                打开匣子 ×{pendingChests.length}
+                            </span>
                         </motion.button>
                     )}
 

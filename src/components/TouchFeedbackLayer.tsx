@@ -11,6 +11,9 @@
 //   ③ 长按达成 → 进入「悬停模式」：浮出卡牌/关键词/武装/强化预览（= 触屏版的 hover）
 //   ④ 抬手     → 浮层滞留 ~1.8s，期间可点浮层上的「详情」按钮
 //
+// ⚠️ [2026-10-20 莉莉子 · 震动开关] ①③ 两处**震动**已收进全局总闸 `utils/haptics.ts`，
+//    开关在「设置 → 游戏 → 触感反馈」（仅手机端可见）。点按震动**默认关**（程：太频繁太吵）。
+//
 // ⚠️ 批3 变更（程 2026-10-15 真机反馈）：
 //   · 圆环收敛 —— 只在命中了 `[data-gaze]`（= 长按真有作用的元素）时才出环，
 //     不再是"任何按下都出环"（滚动列表 / 拖地图 / 翻页全出环 ⇒ 太吵）
@@ -39,7 +42,10 @@ import {
     dispatchGazeSwitch,
     touchLingerStore,
     registerTouchGazeCloser,
+    consumeTapActionClickSuppression, // [2026-10-17] 第二个 click 抑制来源：出牌成功后的补发 click
+    clearTapActionClickSuppression,
 } from '../utils/touchGaze';
+import { haptic } from '../utils/haptics'; // [2026-10-20] 震动改走全局总闸（带 4 个开关 + 节流）
 
 type Ripple = { id: number; x: number; y: number };
 
@@ -86,14 +92,12 @@ export const TouchFeedbackLayer: React.FC = () => {
     useEffect(() => {
         if (!enabled) return;
 
-        /** 震动：能力可用才调（安卓 WebView 需要 VIBRATE 权限，见 AndroidManifest） */
-        const vibrate = (ms: number) => {
-            try {
-                if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-                    navigator.vibrate(ms);
-                }
-            } catch { /* 不支持就忽略 */ }
-        };
+        // [2026-10-20 莉莉子 · 触屏震动开关] 震动不再由本层自己调 ——
+        //   统一走 `utils/haptics.ts` 的总闸（`haptic('tap')` / `haptic('longPress')`）：
+        //     · 总闸里有**设置界面那 4 个开关**（程反馈「震得太频繁太吵」⇒ 点按默认关）
+        //     · 总闸统一做能力检测（安卓 WebView 需要 VIBRATE 权限，见 AndroidManifest）
+        //     · 总闸统一做节流，避免同一次手势连震
+        //   ⚠️ 本层**不许**再出现 `navigator.vibrate` —— 否则等于绕开了开关。
 
         const clearLongTimer = () => {
             if (longTimerRef.current !== null) {
@@ -157,6 +161,9 @@ export const TouchFeedbackLayer: React.FC = () => {
 
             // 新一次手势开始 ⇒ 上一次的 click 抑制标记作废
             suppressClickAtRef.current = 0;
+            // [2026-10-17] 外部来源（出牌成功）的抑制申请同样作废：
+            //   否则"申请了但浏览器没补发 click"会把**这一次**无关点击也吃掉。
+            clearTapActionClickSuppression();
 
             // 滞留在屏幕上时又按了一下（且在操作条外）⇒ 先把滞留的浮层收掉，再当作全新一次按下
             if (modeRef.current === 'linger') {
@@ -180,7 +187,7 @@ export const TouchFeedbackLayer: React.FC = () => {
                 setRipples(prev => prev.filter(r => r.id !== id));
             }, TOUCH_TUNE.rippleMs);
             rippleTimersRef.current.add(rippleTimer);
-            vibrate(12);
+            haptic('tap'); // [2026-10-20] 点按震动（设置里可关；默认关）
 
             // ② 长按计时 + 进度环
             //    ⚠️ 只在「长按真有作用」的元素上出环（程 2026-10-15：圆环要在它能出现的地方出现）
@@ -191,7 +198,7 @@ export const TouchFeedbackLayer: React.FC = () => {
             longTimerRef.current = window.setTimeout(() => {
                 longTimerRef.current = null;
                 setRing(null);
-                vibrate(30); // ③ 达成：长震一下
+                haptic('longPress'); // ③ 达成：长震一下（设置里可关；默认开）
                 // 长按手势可能让浏览器在抬手时补发一次 click ⇒ 标记待吃掉的那一次
                 suppressClickAtRef.current = performance.now();
                 targetRef.current = hit;
@@ -333,12 +340,17 @@ export const TouchFeedbackLayer: React.FC = () => {
          *     ⇒ 关键词 / 武装浮层在抬手瞬间消失，1.8s 滞留完全失效
          *   · Card.tsx:1956 的 onClick 也可能被误触发（出牌 / 选卡）
          * 用时间窗判定，避免浏览器没补发 click 时把下一次无关的点击也吃掉。
+         *
+         * [2026-10-17 莉莉子 · 第二个来源] 除了"长按抬手"，**"这次 tap 已经触发过动作"**（出牌成功）
+         *   也会补发一发 click，落点在 touchend 当下**重新命中测试**的结果上
+         *   ⇒ 会打到刚挂载的抉择层背景（= 取消抉择）或正后方的备战席单位（= 误选目标）。
+         *   两个来源共用这一道闸：取更晚的那个时间戳，同样是**一次性 + 时间窗**。
          */
         const onClickCapture = (e: MouseEvent) => {
-            const at = suppressClickAtRef.current;
+            const at = Math.max(suppressClickAtRef.current, consumeTapActionClickSuppression());
             if (!at) return;
             suppressClickAtRef.current = 0;
-            if (performance.now() - at > 700) return; // 隔太久 ⇒ 不是这次长按的余波
+            if (performance.now() - at > TOUCH_TUNE.tapClickSuppressMs) return; // 隔太久 ⇒ 不是这次手势的余波
             e.preventDefault();
             e.stopPropagation();
         };

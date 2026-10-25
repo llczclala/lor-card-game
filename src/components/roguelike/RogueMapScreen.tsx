@@ -52,6 +52,42 @@ const MAP_BTN = {
     btnIcon: 36,      // 图标按钮图标尺寸 px（原 返回 20 / 缩放·定位 18）
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [2026-10-17 莉莉子 · 安卓触屏] 地图触屏手势调参区 —— 程要调手感就改这里
+//   ⚠️ 速度/阈值类参数分两种量纲，**别混**：
+//      · **布局 px** = 游戏画布坐标。地图原始尺寸 `MAP_WIDTH = 3168`（`mapLayout.ts:681`），
+//        经 ScaleWrapper 以 `scale = min(屏宽/1680, 屏高/1050)` 缩放（`ScaleWrapper.tsx:21-26`）
+//        铺到设备 ⇒ **布局 px = 屏幕 px ÷ scale**。
+//      · 本 App 锁横屏（AndroidManifest `sensorLandscape`）：手机 scale ≈ 1.0~1.1 ⇒ 两者近乎 1:1；
+//        平板 scale 可到 ~1.5 ⇒ 布局 px 比屏幕 px 小。
+//   ⇒ 惯性速度对 scale 是**不变量**（同一次滑动量到的布局速度 × scale = 屏幕速度），按"几屏/秒"调即可；
+//     只有"跟浏览器的 tap slop 比大小"时必须换算，所以拖拽阈值**分鼠标/触摸两套**（见下）。
+// ═══════════════════════════════════════════════════════════════════════════
+const MAP_TOUCH = {
+    /** **鼠标**拖拽阈值（布局 px，欧几里得）：与改动前的硬编码 6 逐字节一致 ⇒ PC 手感零变化 */
+    dragThresholdPx: 6,
+    /**
+     * **触摸**拖拽阈值（**屏幕 px**，切比雪夫）。为什么必须单独一套：
+     *   `touch-action` 只是让浏览器不再接管手势，**它仍会把小位移当 tap 补发 click**（安卓 slop ≈ 8px）。
+     *   若应用判"拖拽"比浏览器判"tap"更早，中间就有死带 —— 应用把 click 抑制掉、浏览器却已补发它
+     *   ⇒ 实测表现是「**手指略抖地点节点，毫无反应**」。
+     *   ⇒ 与全项目同口径：**8 屏幕 px、切比雪夫**（`touchGaze.ts:33` / `GameSession.tsx:1311`）。
+     */
+    dragThresholdScreenPx: 8,
+    /** 惯性：抬手起飞的最低速度。1.0 ≈ 一秒划过半个屏幕宽。调大 = 要甩很快才滑；调小 = 轻推就滑 */
+    flingMinSpeed: 1.0,
+    /** 惯性：每 16.67ms 的速度保留系数（越小停得越快）。
+     *  停下来的时长按 τ·ln(v0/flingStopSpeed) 算（τ = 16.67/|ln 0.92| ≈ 200ms）：
+     *  v0=1.0（刚过阈值）≈ **0.6s** · v0=3 ≈ **0.8s** · 用力甩 ≈ **1.0s**（原注释写"0.4~0.6 秒"偏乐观） */
+    flingFriction: 0.92,
+    /** 惯性：速度低于它就停 */
+    flingStopSpeed: 0.05,
+    /** 惯性：单帧最大位移 —— 掉帧时防止"跳一大段" */
+    flingMaxStepPx: 80,
+    /** 惯性：速度平滑系数（0~1，越大越"只看最近这一帧"）。0.4 ⇒ 手指停住后速度迅速掉下来，不会"手停了还在飞" */
+    flingVelocityAlpha: 0.4,
+};
+
 // [2026-08-27 莉莉子] 节点类型 → 名称 + 简介（进入方形面板用；战斗节点用敌人流派名/简介覆盖）
 const NODE_INFO: Record<RogueNodeType, { title: string; desc: string }> = {
     start: { title: '起点', desc: '从这里开始你的悖论迷宫之旅。' },
@@ -192,8 +228,28 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     const canvasRef = useRef<HTMLDivElement>(null);
     const panRef = useRef({ x: 0, y: 0 });
     const zoomRef = useRef(0.5);
-    const dragRef = useRef({ startX: 0, startY: 0, panX: 0, panY: 0, active: false, moved: false });
+    const dragRef = useRef({ startX: 0, startY: 0, startCx: 0, startCy: 0, panX: 0, panY: 0, active: false, moved: false });
     const suppressClickRef = useRef(false); // [2026-08-10] 拖拽松手后抑制误触 click
+    /**
+     * [2026-10-17 第 2 轮独立审查 F2] **"上一次手势不是一次纯粹的轻点"** —— 专门给画布那条
+     * "空白点击"闸门用（见画布 `onClick`）。为什么要单独立一个字段、而不复用 `dragRef.moved`：
+     *   `moved` 的职责是"本次拖拽是否已起手"（触屏上接管平移时要**重新累计阈值** ⇒ 必须能归零），
+     *   而闸门要的是"这次手势**整体**算不算点击"（跨 `pointerup`→`click` 两个事件、**必须留到下一次按下**）。
+     *   一个字段扛两个相反的要求，就必然出现"接管分支把它归零 ⇒ 闸门失效"或反过来"闸门对了 ⇒ 拖拽起不来"。
+     *   ⇒ 拆开：`moved` 归零自由，`nonTap` 的唯一复位点是**下一次 `onPointerDown`**。
+     */
+    const nonTapRef = useRef(false);
+
+    // ── [2026-10-17 莉莉子 · 安卓触屏] 多指 / 惯性状态 ─────────────────────
+    /** 当前按在地图上的指针（pointerId → **布局坐标 x/y + 屏幕坐标 cx/cy**）。
+     *  两种坐标都要：位移与 pan 用布局坐标，而"跟浏览器 tap slop 比大小"必须用屏幕坐标。 */
+    const pointersRef = useRef<Map<number, { x: number; y: number; cx: number; cy: number }>>(new Map());
+    /** 捏合会话：起手双指距离 / 缩放平移快照 + 被钉住的地图锚点 */
+    const pinchRef = useRef<{ startDist: number; startZoom: number; anchorX: number; anchorY: number } | null>(null);
+    /** 惯性：最近一次采样点与滑动平均速度（布局 px/ms） */
+    const flingSampleRef = useRef<{ x: number; y: number; t: number; vx: number; vy: number } | null>(null);
+    /** 惯性：正在跑的 rAF 帧（卸载 / 新按下 / 捏合都要能把它掐掉） */
+    const flingRafRef = useRef<number | null>(null);
 
     // [2026-08-07 难度地图构造] 按本局难度生成地图布局（机密/绝密精英更多）
     // [2026-09-01 莉莉子 修复] 敌人预分配存 run（startRun 生成一次）：放弃本场战斗返回地图不再重新随机敌人
@@ -261,10 +317,191 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
         panRef.current.y = Math.max(minY, Math.min(0, panRef.current.y));
     }, []);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // [2026-10-17 莉莉子 · 安卓触屏 B+C] 手势核心：拖拽不断线 + 抬手惯性 + 双指捏合
+    //
+    //  ① 拖拽断线的根因（✅ 代码证据）：地图视口**没有** `touch-action`，而同一个病根本仓库
+    //     已修过两次（`Battlefield.tsx:56-65` 从战场起手的拖拽 / `CardAnimations.tsx:434-439` 手牌区）。
+    //     缺它 ⇒ 安卓把这次触摸判成浏览器滚动/手势并派发 `pointercancel`
+    //     ⇒ 视口的 `onPointerCancel` 直接收摊 ⇒ **地图只动一下就死**。
+    //  ② ⚠️ 与 `规范-界面调参区.md`「touch-action 别全局加，靠横向拖动看内容的容器不能加」不冲突。
+    //     ⚠️【第 2 轮独立审查 F10 更正前提】原先我写的是"地图根本不靠浏览器滚动"——**这句是错的**：
+    //      视口是 `absolute inset-0 overflow-hidden`，装在 1680×1050 的盒子里，而画布是 **3168×1344**
+    //      ⇒ **视口自己就是一个带 1488×294 布局溢出的滚动容器**，浏览器的 scroll chain 正好终结在它身上。
+    //      这是"为什么祖先全 overflow:hidden 仍会被接管"的真正答案。（`overscroll-behavior` 在这里不够。）
+    //     那条手册规矩防的是"掐死浏览器自己的横滚"，而地图的平移/缩放**由下面这套 pointer 逻辑自实现**
+    //     ⇒ 这里 `none` 正是掐掉这次接管的正确手段。**别改回 pan-y**：初始缩放下纵向确有 ~294px 真实溢出，
+    //     给了 pan-y 就等于把竖直拖动交还浏览器 ⇒ 地图上下拖不动。
+    //  ③ 惯性只对**非鼠标指针**开：按事件自身的 `e.pointerType` 判，**不用设备类别**
+    //     （同 `TouchFeedbackLayer.tsx:148-151` 的既有口径 —— 那边专门否掉过 `pointer: coarse`，
+    //      因为"触屏设备 + 外接鼠标"会让鼠标也吃到触屏逻辑，反过来触屏笔记本又吃不到）。
+    //     ⇒ PC 鼠标抬手即停是既有手感，按"PC 零回归"不参加；安卓外接鼠标不甩、`coarse=false` 的触屏本也能甩。
+    //  ④ 捏合只在真的有两根指针时生效 ⇒ 鼠标（单指针）天然进不去这条分支。
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** 停掉惯性滑行。任何"用户要重新掌控"的时刻（新按下 / 捏合 / 点缩放·定位按钮 / 卸载）都必须先调它 */
+    const stopFling = useCallback(() => {
+        if (flingRafRef.current !== null) {
+            cancelAnimationFrame(flingRafRef.current);
+            flingRafRef.current = null;
+        }
+        flingSampleRef.current = null;
+    }, []);
+
+    // 卸载时把惯性动画掐掉（否则 rAF 会在组件消失后继续改已卸载节点的 transform）
+    useEffect(() => () => {
+        if (flingRafRef.current !== null) {
+            cancelAnimationFrame(flingRafRef.current);
+            flingRafRef.current = null;
+        }
+    }, []);
+
+    /**
+     * [2026-10-17 莉莉子 · 独立审查 A3/A10] 切后台 / 失焦 ⇒ **收摊**。
+     * ⚠️ 这不是锦上添花：`pointerup` 在来电 / 下拉通知 / 分屏 / 切后台时**可能永远不到**，
+     *   残留的 `pointersRef` 项会让下一次**单指按下也满足 `size>=2` 直接走捏合**（地图从此拖不动）。
+     *   同 `TouchFeedbackLayer.tsx:352-354` 的既有约定（那边也挂了 `blur` + `visibilitychange`）。
+     */
+    useEffect(() => {
+        const reset = () => {
+            pointersRef.current.clear();
+            pinchRef.current = null;
+            dragRef.current.active = false;
+            stopFling();
+        };
+        window.addEventListener('blur', reset);
+        document.addEventListener('visibilitychange', reset);
+        return () => {
+            window.removeEventListener('blur', reset);
+            document.removeEventListener('visibilitychange', reset);
+        };
+    }, [stopFling]);
+
+    /** 双指中点 + 距离（布局坐标）；不足两指返回 null */
+    const twoPointerMetrics = () => {
+        const pts = Array.from(pointersRef.current.values());
+        if (pts.length < 2) return null;
+        const [a, b] = pts;
+        return {
+            dist: Math.hypot(a.x - b.x, a.y - b.y),
+            midX: (a.x + b.x) / 2,
+            midY: (a.y + b.y) / 2,
+        };
+    };
+
+    /** 第二根手指落下 ⇒ 进入捏合会话：把"起手中点下方的地图坐标"钉住，全程锚定它。
+     *  ⚠️ 第三根手指**不再重建会话**（由 `onPointerDown` 判 `pinchRef` 拦掉），否则锚点会跳。 */
+    const beginPinch = () => {
+        const m = twoPointerMetrics();
+        if (!m || m.dist <= 0) return;
+        stopFling();                      // 捏合与惯性互斥
+        dragRef.current.active = false;   // 拖拽让位给捏合（否则两套逻辑同时改 pan）
+        // [F2] 捏合整体算"非点击"：尾随 click 不该被画布闸门当成空白点击。
+        //   ⚠️ 用 `nonTapRef` 而**不是** `dragRef.moved` —— 后者在接管分支必须能归零（要重新累计阈值）。
+        nonTapRef.current = true;
+        pinchRef.current = {
+            startDist: m.dist,
+            startZoom: zoomRef.current,
+            anchorX: (m.midX - panRef.current.x) / zoomRef.current,
+            anchorY: (m.midY - panRef.current.y) / zoomRef.current,
+        };
+    };
+
+    /** 捏合每帧：缩放 + 跟随双指中点（等于"边捏边平移"）。
+     *  用「起手快照 + 当前比值」一次算到位，不做增量累乘 ⇒ 不会有累积误差与漂移。 */
+    const applyPinch = () => {
+        const p = pinchRef.current;
+        const vp = viewportRef.current;
+        const m = twoPointerMetrics();
+        if (!p || !vp || !m || p.startDist <= 0) return;
+        const minZoom = Math.max(vp.clientWidth / MAP_WIDTH, vp.clientHeight / MAP_HEIGHT);
+        const next = Math.max(minZoom, Math.min(MAX_ZOOM, p.startZoom * (m.dist / p.startDist)));
+        zoomRef.current = next;
+        panRef.current.x = m.midX - p.anchorX * next;
+        panRef.current.y = m.midY - p.anchorY * next;
+        clampPan();
+        applyTransform();
+    };
+
+    /** 抬手接力惯性：按摩擦衰减继续推 pan，撞边或速度耗尽即停 */
+    const startFling = () => {
+        stopFling(); // [F7] 防御性：保证任何时刻只有一条 rAF 链（否则旧链会失去句柄 ⇒ 按不住、卸载也取消不掉）
+        const s = flingSampleRef.current;
+        if (!s) return;
+        let vx = s.vx;
+        let vy = s.vy;
+        if (Math.hypot(vx, vy) < MAP_TOUCH.flingMinSpeed) { flingSampleRef.current = null; return; }
+        let last = performance.now();
+        const step = (now: number) => {
+            const dt = Math.min(48, now - last); // 掉帧保护：卡一帧也不会瞬移一大段
+            last = now;
+            const k = Math.pow(MAP_TOUCH.flingFriction, dt / 16.67);
+            vx *= k;
+            vy *= k;
+            const cap = MAP_TOUCH.flingMaxStepPx;
+            const beforeX = panRef.current.x;
+            const beforeY = panRef.current.y;
+            panRef.current.x += Math.max(-cap, Math.min(cap, vx * dt));
+            panRef.current.y += Math.max(-cap, Math.min(cap, vy * dt));
+            clampPan();
+            applyTransform();
+            // 撞边 ⇒ 该轴速度归零，另一轴继续滑（斜着甩到角上不会整只僵住）
+            if (panRef.current.x === beforeX) vx = 0;
+            if (panRef.current.y === beforeY) vy = 0;
+            if ((vx === 0 && vy === 0) || Math.hypot(vx, vy) < MAP_TOUCH.flingStopSpeed) {
+                flingRafRef.current = null;
+                flingSampleRef.current = null;
+                return;
+            }
+            flingRafRef.current = requestAnimationFrame(step);
+        };
+        flingRafRef.current = requestAnimationFrame(step);
+    };
+
+    /** 手势收尾：把这一根指针出表、按当前剩余指针数复位会话。
+     *  ⚠️【第 2 轮独立审查】它**不只**"记账" —— 还会复活 `active`（接管分支）与改写基线。
+     *   原先的注释写"只记账…不产生惯性"，与行为不符（`abortGesture` 经它也会复活 `active`）⇒ 已改正。 */
+    const endGesture = (pointerId: number) => {
+        pointersRef.current.delete(pointerId);
+        const wasPinch = pinchRef.current !== null;
+        if (pointersRef.current.size < 2) pinchRef.current = null;
+        // [2026-10-17] 捏合中抬起一根 ⇒ 让余下那根**就地接管平移**，否则第二根手指一直按着却"拖不动"。
+        //   起点取它**当前**坐标、pan 取**当前**值 ⇒ 接管瞬间位移为 0，不会跳。
+        if (wasPinch && pointersRef.current.size === 1) {
+            const [left] = Array.from(pointersRef.current.values());
+            dragRef.current = {
+                startX: left.x, startY: left.y,
+                startCx: left.cx, startCy: left.cy,
+                panX: panRef.current.x, panY: panRef.current.y,
+                active: true,
+                moved: false, // 重新累计阈值（这只影响"平移何时起手"）——见下方 nonTap 说明
+            };
+            nonTapRef.current = true; // [F2] 但**这次手势整体仍算"非点击"**：捏过就不是轻点，闸门与节点点击都不该响应
+            flingSampleRef.current = { x: left.x, y: left.y, t: performance.now(), vx: 0, vy: 0 };
+            return;
+        }
+        // 🔴 [F1] 三指场景：抬掉"捏合对中的一根"后 `size` 仍 ≥2，此时**必须按当前这一对重新快照**。
+        //   否则 `twoPointerMetrics()` 取的是插入序前两个（已经换了一对），却拿旧的 `startDist`/anchor 去除
+        //   ⇒ `next = startZoom × |新对| / |旧对|`，一帧内缩放跳到 MAX_ZOOM、位置同时跳，且**无法自愈**。
+        //   重新快照用的是**当前** pan/zoom，当帧连续 ⇒ 不跳。
+        if (pinchRef.current && pointersRef.current.size >= 2) { beginPinch(); return; }
+        dragRef.current.active = false;
+        // 捏合整体收尾 ⇒ 这次手势不是点击：闸门（nonTap）+ 节点点击（suppressClick）两道都挡住。
+        if (wasPinch) {
+            nonTapRef.current = true;
+            suppressClickRef.current = true;
+            setTimeout(() => { suppressClickRef.current = false; }, 120);
+        }
+        // ⚠️【F2】`moved` 在这里**已经不需要**保持残留了 —— 跨事件的闸门改由 `nonTapRef` 承担
+        //   （旧写法的注释说"moved 的唯一复位点是下一次按下"是**权宜之计**，它让接管分支无法归零 `moved`）。
+        if (pointersRef.current.size === 0) flingSampleRef.current = null;
+    };
+
     // 初始视角：默认放大视口（无黑边下限 × 放大倍数），画面中心对准当前所处节点（战斗返回地图不再回默认位置）
     useEffect(() => {
         const viewport = viewportRef.current;
         if (!viewport) return;
+        stopFling(); // [2026-10-17] 换 Act / 重挂载是"重新摆视角"⇒ 先掐掉上一段滑行，别和它抢 pan
         const vw = viewport.clientWidth;
         const vh = viewport.clientHeight;
         const fit = Math.min(vw / MAP_WIDTH, vh / MAP_HEIGHT);
@@ -281,7 +518,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
         };
         clampPan();
         applyTransform();
-    }, [applyTransform, clampPan, run.act, layout]);
+    }, [applyTransform, clampPan, stopFling, run.act, layout]);
 
     // [2026-08-28 莉莉子 推演开场] 动画总时长结束后复位 reveal（App 收到后，本局后续挂载不重播）
     const onRevealEndRef = useRef(onRevealEnd);
@@ -296,6 +533,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     const zoomAround = useCallback((mx: number, my: number, factor: number) => {
         const viewport = viewportRef.current;
         if (!viewport) return;
+        stopFling(); // [2026-10-17] 用户开始缩放 ⇒ 先掐掉滑行，否则"一边缩一边还在滑"
         const vw = viewport.clientWidth;
         const vh = viewport.clientHeight;
         const oldScale = zoomRef.current;
@@ -307,7 +545,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
         zoomRef.current = newScale;
         clampPan();
         applyTransform();
-    }, [clampPan, applyTransform]);
+    }, [clampPan, applyTransform, stopFling]);
 
     // 滚轮缩放（native listener + passive:false 保证 preventDefault 生效），以鼠标为中心
     useEffect(() => {
@@ -340,38 +578,127 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     };
     const onPointerDown = (e: React.PointerEvent) => {
         // [2026-08-11] 仅左键参与拖拽平移；右键保留给节点预览
+        // [2026-10-17] 触屏的 `button` 恒为 0 ⇒ 这条判据天然放过手指，无需改
         if (e.button !== 0) return;
         // [2026-08-10 修复] 根因：原先无条件 setPointerCapture，指针捕获会把节点 click 事件重定向到视口层，
         // 导致点击节点（移动不触发）。现在只记录起点，等确认是"拖拽"（位移超阈值）才捕获。
+        stopFling(); // [2026-10-17] 手指落下 ⇒ 立刻停住滑行，否则"想按住"按不住（C 的跟手前提）
+        // 🔴 [2026-10-17 独立审查 F2] **活性对账：一次 primary 按下 = 上一轮手势已经结束。**
+        //   安卓 WebView 会丢 `pointerup` / `pointercancel`（本仓库已记过同族事故：
+        //   `GameSession.tsx:1265-1274`「有一个没到 ⇒ 永久停在 true」，修法就是"新手势先归零"）。
+        //   不清残留项的话：`pointersRef` 会**永远 ≥2** ⇒ 之后**单指按下也满足 `size>=2` 直接走捏合**
+        //   ⇒ 押下不动、地图完全不动，且抬手只删新 id ⇒ **永久卡死、无法自愈**（只能退出地图重进）。
+        //   `isPrimary` 为真 ⇒ 这是新一轮手势的第一根指针（第二根手指恒为 false，不会误清正在捏合的会话）。
+        // [F5] 活性对账**只对非鼠标指针**做。原写法对所有 pointerType 清表 ⇒ 鼠标/笔几乎恒为
+        //   `isPrimary`，"安卓平板外接鼠标、一指正在拖或双指正在捏"时按一下鼠标就会**把触摸会话整份清掉**
+        //   （那根手指还在屏上却不再被跟踪，要抬手重按才恢复）。
+        //   鼠标自己不需要靠清表自愈：它的残留项最多一条，且已被下面的 `buttons` 守卫挡住拖拽。
+        if (e.isPrimary && e.pointerType !== 'mouse') {
+            pointersRef.current.clear();
+            pinchRef.current = null;
+        }
+        nonTapRef.current = false; // [F2] 新手势开始 —— 这是画布"空白点击"闸门的**唯一复位点**
         const { x, y } = toLayoutPoint(e);
+        pointersRef.current.set(e.pointerId, { x, y, cx: e.clientX, cy: e.clientY });
+        // 两根及以上 ⇒ 捏合。⚠️ 第三根手指**不重建会话**（重建会把锚点与缩放比整份换掉 ⇒ 画面跳一下）
+        if (pointersRef.current.size >= 2) {
+            if (!pinchRef.current) beginPinch();
+            return;
+        }
         dragRef.current = {
             startX: x, startY: y,
+            startCx: e.clientX, startCy: e.clientY, // 屏幕坐标：触摸阈值要跟浏览器 tap slop 同口径（见 MAP_TOUCH）
             panX: panRef.current.x, panY: panRef.current.y,
             active: true,
             moved: false,
         };
+        flingSampleRef.current = { x, y, t: performance.now(), vx: 0, vy: 0 };
     };
     const onPointerMove = (e: React.PointerEvent) => {
-        if (!dragRef.current.active) return;
+        // 早退：鼠标悬停（未按下）时不量布局 —— 旧版也是先判 active 才继续，
+        // 别在这里新增强制同步布局（`toLayoutPoint` 内含 `getBoundingClientRect`）。
+        if (!pinchRef.current && !dragRef.current.active && !pointersRef.current.has(e.pointerId)) return;
         const { x, y } = toLayoutPoint(e);
-        // 位移超过阈值才判定为拖拽：点击（无位移）不 capture、不动画布，click 事件能正常到达节点
-        if (!dragRef.current.moved && Math.hypot(x - dragRef.current.startX, y - dragRef.current.startY) > 6) {
-            dragRef.current.moved = true;
+        const pt = { x, y, cx: e.clientX, cy: e.clientY };
+        // 捏合优先：实时更新双指坐标后重算（双指同时动，每个 pointermove 都要刷新）
+        if (pinchRef.current) {
+            if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, pt);
+            applyPinch();
+            return;
+        }
+        if (!dragRef.current.active) return;
+        // 🛡️ 悬停保护：**没有按下的 move**（鼠标悬停）绝不参与拖拽判定。
+        //   为什么需要它：上面 `onPointerLeave` 为了"拖到黑边也不断手"而忽略了已被跟踪指针的 leave，
+        //   于是"鼠标在窗口外松手"会留下一个残留的 `active=true`（鼠标 pointerId 恒定，
+        //   单靠跟踪表分辨不出它是旧手势还是当前悬停）⇒ 悬停就会被当成拖拽。
+        //   [F4] **判据必须限定 mouse**：原写法对所有 pointerType 生效 ⇒ 触摸平移从此依赖
+        //   "WebView 把按住期间的 buttons 报成非 0"这一条浏览器行为，一旦为 0 就**彻底拖不动、且没有退路**；
+        //   触摸有隐式 pointer capture，本来不需要这道守卫。
+        if (e.buttons === 0 && e.pointerType === 'mouse') return;
+        if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, pt);
+        // 位移超过阈值才判定为拖拽：点击（无位移）不 capture、不动画布，click 事件能正常到达节点。
+        // ⚠️ 阈值**分两套**（理由见 `MAP_TOUCH`）：鼠标沿用旧的「布局 px 欧几里得 6」⇒ PC 逐字节不变；
+        //    触摸改用「屏幕 px 切比雪夫 8」⇒ 与浏览器 tap slop 同口径，消掉 6~8px 那条吞点击的死带。
+        const d = dragRef.current;
+        const passedThreshold = e.pointerType === 'mouse'
+            ? Math.hypot(x - d.startX, y - d.startY) > MAP_TOUCH.dragThresholdPx
+            : Math.max(Math.abs(e.clientX - d.startCx), Math.abs(e.clientY - d.startCy)) > MAP_TOUCH.dragThresholdScreenPx;
+        if (!d.moved && passedThreshold) {
+            d.moved = true;
+            nonTapRef.current = true; // [F2] 拖过了 ⇒ 这次手势整体不是轻点（尾随 click 不得被当空白点击）
             e.currentTarget.setPointerCapture(e.pointerId);
         }
-        if (!dragRef.current.moved) return;
-        panRef.current.x = dragRef.current.panX + (x - dragRef.current.startX);
-        panRef.current.y = dragRef.current.panY + (y - dragRef.current.startY);
+        if (!d.moved) return;
+        panRef.current.x = d.panX + (x - d.startX);
+        panRef.current.y = d.panY + (y - d.startY);
         clampPan();
         applyTransform();
+        // [2026-10-17 触屏 C] 速度采样（指数滑动平均）。α=0.4 ⇒ 手指突然停住时速度迅速掉下来，
+        //   避免"手已经停了，松手地图还在飞"。只在**非鼠标**指针上采（鼠标不用惯性，白算）。
+        if (e.pointerType !== 'mouse') {
+            const now = performance.now();
+            const s = flingSampleRef.current;
+            if (s) {
+                const dt = now - s.t;
+                if (dt > 0) {
+                    const a = MAP_TOUCH.flingVelocityAlpha;
+                    s.vx = s.vx * (1 - a) + ((x - s.x) / dt) * a;
+                    s.vy = s.vy * (1 - a) + ((y - s.y) / dt) * a;
+                    s.x = x; s.y = y; s.t = now;
+                }
+            }
+        }
     };
-    const onPointerEnd = () => {
+    const onPointerUp = (e: React.PointerEvent) => {
         // 若本次是拖拽：抑制随后的 click（拖拽松手在节点上会触发 click，需忽略），短暂生效后自动恢复
         if (dragRef.current.active && dragRef.current.moved) {
             suppressClickRef.current = true;
             setTimeout(() => { suppressClickRef.current = false; }, 120);
+            // [2026-10-17 触屏 C] 抬手接力惯性。⚠️ 必须排在 endGesture **之前** ——
+            //   endGesture 会清掉速度采样，清完再起飞就只能滑 0 像素。
+            //   判据用 **事件自己的 `pointerType`**（不用设备类别）：安卓外接鼠标不该甩、
+            //   `pointer:coarse=false` 的触屏本也该甩（同 `TouchFeedbackLayer.tsx:148-151` 的口径）。
+            //   捏合结束时 dragRef.active 已被 beginPinch 置 false ⇒ 天然进不来这一支。
+            if (e.pointerType !== 'mouse') startFling();
         }
-        dragRef.current.active = false;
+        endGesture(e.pointerId);
+    };
+    /** 指针离开视口：**只对"没在跟踪中的指针"收摊**（2026-10-17 独立审查 A4）
+     *  ⚠️ 视口 ≠ 整窗：`ScaleWrapper` 把 1680×1050 的盒子居中缩放 ⇒ 横屏手机上左右各有黑边，
+     *     横向拖到黑边上就会触发 `pointerleave`。若在这里**无条件**结束手势，
+     *     "拖多远都跟手"就被结构性破坏（正是 CONTRACT 1 要保证的）。
+     *     规范上指针被 capture 后边界事件会被抑制，但**越过阈值、`setPointerCapture` 之前没有这层保护**。
+     *     ⇒ 在跟踪表里 ⇒ 无视，等 `pointerup`/`pointercancel`；不在（如鼠标只是悬停移出）⇒ 照旧收尾。 */
+    const onPointerLeave = (e: React.PointerEvent) => {
+        if (pointersRef.current.has(e.pointerId)) return;
+        endGesture(e.pointerId);
+    };
+    /** 指针离开视口 / 被浏览器接走：**只收摊，绝不接力惯性**
+     *  ⚠️ `pointercancel` 的语义是「浏览器把这个手势接走了」，**不是**「用户抬手」
+     *  （同 `TouchFeedbackLayer.tsx:280-290` 的教训）⇒ 此时若还让地图滑行，
+     *  观感会变成"手指明明还在屏幕上，地图自己跑了"。 */
+    const abortGesture = (e: React.PointerEvent) => {
+        endGesture(e.pointerId);
     };
 
     const handleNodeClick = (node: RogueNode) => {
@@ -647,6 +974,7 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
     const handleLocateCurrent = () => {
         const vp = viewportRef.current;
         if (!vp) return;
+        stopFling(); // [2026-10-17] 定位是"直接跳过去"，跳的过程里不该还有上一段滑行在叠加
         const curNode = (run.currentNodeId ? nodeById.get(run.currentNodeId) : undefined) ?? layout[run.act]?.nodes[0];
         if (!curNode) return;
         const vw = vp.clientWidth;
@@ -709,11 +1037,19 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
             <div
                 ref={viewportRef}
                 className={`absolute inset-0 overflow-hidden ${reveal ? 'cursor-default pointer-events-none' : 'cursor-grab active:cursor-grabbing'}`}
+                // [2026-10-17 莉莉子 · 安卓触屏] 🔴 **别删这一行** —— 它就是"安卓上地图拖不动"的解药。
+                //   缺它 ⇒ 浏览器把触摸判成滚动/手势并派发 `pointercancel` ⇒ 下面的 onPointerCancel 收摊 ⇒ 地图只动一下。
+                //   ⚠️ 也**别改成 `pan-y`**：地图横竖都要自己拖（不是"竖着交给浏览器"的列表），
+                //     给了 pan-y 反而让竖直拖动被浏览器接走、地图上下拖不动。理由详见上方手势核心注释②。
+                //   ⚠️【真机必验 ①】安卓上"长按地图节点 → 弹节点预览"（`MapNode.tsx:67` 的 onContextMenu）
+                //     是否仍然有效。`touch-action` 按规范只管滚动/缩放、不该影响长按菜单，
+                //     但这一条我**无法在无真机的情况下证实** ⇒ 若失效，就是在节点上另加长按判定，别回退本行。
+                style={{ touchAction: 'none' }}
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
-                onPointerUp={onPointerEnd}
-                onPointerLeave={onPointerEnd}
-                onPointerCancel={onPointerEnd}
+                onPointerUp={onPointerUp}
+                onPointerLeave={onPointerLeave}
+                onPointerCancel={abortGesture}
                 onContextMenu={(e) => {
                     // [2026-08-11 节点预览] 空白右键：抑制浏览器菜单 + 若预览开着则关闭（节点右键已被节点 stopPropagation 拦截，不会到这）
                     e.preventDefault();
@@ -727,7 +1063,10 @@ export const RogueMapScreen: React.FC<RogueMapScreenProps> = ({
                     className="absolute left-0 top-0 will-change-transform"
                     onClick={(e) => {
                         // [2026-08-11 节点预览] 空白左键关闭（地图底图 img/svg 均 pointer-events-none，空白点击 target === canvasRef.current；拖拽松手不误关）
-                        if (!dragRef.current.moved && e.target === canvasRef.current) { eventBus.emit(GameEvents.UI_BACK);
+                        // ⚠️ [F2] 闸门读的是 `nonTapRef`（跨 `pointerup`→补发 `click` 两个事件、留到下一次按下），
+                        //    **不是** `dragRef.moved` —— 后者在"捏合后余指接管"分支必须归零（要重新累计阈值），
+                        //    拿它当闸门会让那条路径的尾随 click 直接关掉面板。
+                        if (!nonTapRef.current && e.target === canvasRef.current) { eventBus.emit(GameEvents.UI_BACK);
                             if (previewNode) setPreviewNode(null);
                             // [2026-08-27] 点地图空白主动关闭进入面板
                             if (entryNode) { setEntryNode(null); entryNodeRef.current = null; }

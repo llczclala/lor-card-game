@@ -19,6 +19,7 @@ import type { CardData } from '../../types'; // [2026-10-15 莉莉子 · 触屏]
 import { FullArtOverlay } from '../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
 // [2026-10-15 莉莉子] 牌组「立体盒子」尺寸改为**共享常量**（原先照搬 DeckBuilder 各留一份）
 import { DIORAMA_SIZE } from '../dioramaSpacing';
+import { pickTuning } from '../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 天启者配置 · **个性化页**（`RoguePersonalize`）· 视觉调参区（**程微调就改这里**）
@@ -36,7 +37,8 @@ import { DIORAMA_SIZE } from '../dioramaSpacing';
 //    🔴 **不要**给字号配写死的 `lineHeight`：程会把字号成倍调大，写死行高会**压字**；
 //    继承 1.5 是随字号等比走的，怎么调都不会重叠。（2026-10-16 子智能体曾成对搬行高，已按此改正。）
 // ══════════════════════════════════════════════════════════════════════
-export const PERSONALIZE_UI = {
+// 🖥️📱 【双平台】`PERSONALIZE_UI_MOBILE`（手机端）+ `PERSONALIZE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const PERSONALIZE_UI_MOBILE = {
     /**
      * 【主旋钮】中翼那个「**牌组立体盒子**」（`DeckDiorama`）的**整体缩放**（1 = 原样）。
      *
@@ -253,7 +255,50 @@ export const PERSONALIZE_UI = {
     previewDeskTop: '85%',
     /** 悬停大图放大倍数（原 `scale={1.25}`） */
     floatingPreviewScale: 1.25,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `PERSONALIZE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const PERSONALIZE_UI_PC_DIFF = {
+    // 🔴 本项**缺「原」注释**，1 由 git 还原（`d2f18b1c` 建区即为 1，`677b18a4` 才改成 1.3）。
+    dioramaScale: 1,                // 原 1（哨兵 = 原样）
+
+    // ══ ② 左翼：卡组预览列表面板 ══
+    leftPanelWidth: 320,            // 原 w-80
+    leftPanelHeight: 560,           // 原 h-[560px]
+    cardRowHeight: 48,              // 原 h-12
+    costNameGap: 12,                // 原 gap-3
+    costBadgeSize: 24,              // 原 w-6 h-6
+    costBadgeFontSize: 12,          // 原 text-xs
+    cardNameFontSize: 14,           // 原 text-sm
+    cardNameWidth: 128,             // 原 w-32
+    cardCountFontSize: 14,          // 原 text-sm
+
+    // ══ ④ 右翼：定制面板 ══
+    selectorLabelFontSize: 12,      // 原 text-xs
+
+    // ── 右翼：悬停大图预览 ──
+    previewLabelFontSize: 12,       // 原 text-xs
+
+    // ══ ⑤ 关闭按钮（右上角悬浮）══
+    closeIconSize: 24,              // 原 <X size={24} />
+
+    // ══ ⑥ 悬停大图检视（FloatingCardPreview）══
+    previewCardBackLeft: '-105%',   // 原 left-[105%]
+    previewDeskLeft: '-105%',       // 原 left-[105%]
+    previewCardBackTop: '50%',      // 原 top-1/2
+    previewDeskTop: '50%',          // 原 top-1/2
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const PERSONALIZE_UI_PC = { ...PERSONALIZE_UI_MOBILE, ...PERSONALIZE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const PERSONALIZE_UI = pickTuning(PERSONALIZE_UI_PC, PERSONALIZE_UI_MOBILE);
 
 // ── 牌组图标尺寸：已改为共享常量 ──
 //   ⚠️ [2026-10-15 莉莉子] 原先这里「照搬 DeckBuilder」各留一份 ⇒ 改一处不生效另一处。

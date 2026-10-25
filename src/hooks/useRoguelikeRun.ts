@@ -125,7 +125,19 @@ export const useRoguelikeRun = () => {
     const runRef = useRef(run);
     runRef.current = run;
 
-    const startRun = useCallback((heroKey: string, starterDeck: string[], difficulty: RogueDifficulty, bonus?: RoguelikeStartBonus) => {
+    const startRun = useCallback((heroKey: string, starterDeck: string[], difficulty: RogueDifficulty, bonus?: RoguelikeStartBonus): {
+        /**
+         * [2026-10-20 莉莉子 · 图鉴 NEW 提示] **实际挂上了**的装备 id。
+         * 为什么必须由本函数返回、而不是让 App 拿 bonus 自己猜：
+         *   本函数内部有 `isAttachable` 闸门（`:170-206`），被拒的装备**根本没挂上**；
+         *   而开局等级奖励（Lv11/22/25/28）发的装备也走这条路（`heroProgression.ts:71/82/85/88`）。
+         *   ⇒ 只有把"过闸之后的真实结果"回传，App 才能把图鉴记成"玩家真的拿到了"，
+         *     否则图鉴会出现"显示已收录、玩家其实从没拿到"的假记录。
+         */
+        appliedEquipments: string[];
+        /** 等级奖励带来的开局强化 id（即时型开局生效 / 战斗型进 enhancements，两者都算获得） */
+        appliedEnhancements: string[];
+    } => {
         // [2026-08-12 天启者养成] 等级加成：生命/金币/复活/刷新 + 开局迷宫强化（即时型应用效果、战斗型进 enhancements）+ 装备（战斗构建时挂英雄卡）
         let maxHp = DEFAULT_MAX_HP + (bonus?.maxHp ?? 0);
         let hp = maxHp;
@@ -251,6 +263,13 @@ export const useRoguelikeRun = () => {
             equipRarityBonus: bonus?.equipRarityBonus, // [2026-08-29] 装备稀有度加成
             scout: null, // [2026-08-29 休整·探路]
         });
+
+        // [2026-10-20 莉莉子 · 图鉴 NEW 提示] 把"本局开局实际拿到的东西"回传给 App 记图鉴。
+        //   `equippedCards` 的值就是过闸后真正挂上的装备（去重后 flatten）。
+        return {
+            appliedEquipments: Array.from(new Set(Object.values(equippedCards).flat())),
+            appliedEnhancements: extraEnh,
+        };
     }, []);
 
     // [2026-08-29 休整·探路] 派出单位卡探路：暂时移出牌组，2 节点后回归带随机装备

@@ -13,6 +13,7 @@ import { CARD_DB } from '../data/cards';
 import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS, HERO_IMAGES } from '../data/imageData';
 import { getMissionItems } from '../data/skinData';
 import { getEquipmentById } from '../data/equipment';
+import { UNIVERSAL_SHARD_ART } from '../data/roguelike/chestArt'; // [2026-10-20 莉莉子 🎨] 万能神格碎片插画
 import type { MissionRewardType } from '../data/missionData';
 
 // ==========================================
@@ -78,7 +79,9 @@ export const buildRewardPopupData = (title: string, reward: MissionRewardShape):
         popup.amount = reward.amount ?? 1;
     } else if (reward.type === 'universalShard') {
         // [2026-09-29 程拍板] 万能神格碎片：可替代任何天启者的专属碎片
+        // [2026-10-20 莉莉子 🐛 BUG修复] 此前只填了名字**没有 imageSrc、也没有渲染分支** ⇒ 弹窗整块空白
         popup.itemName = '万能神格碎片';
+        popup.imageSrc = UNIVERSAL_SHARD_ART;
         popup.amount = reward.amount ?? 0;
     }
     return popup;
@@ -174,6 +177,22 @@ export const RewardClaimPopup: React.FC<{ data: RewardPopupData; onClose: () => 
                             </div>
                             <span className="text-2xl font-black text-yellow-200">{data.itemName ?? '悖论迷宫卡包'}</span>
                             <span className="text-sm text-amber-300 font-mono tracking-widest">已存入待打开 ×{data.amount ?? 1}</span>
+                        </div>
+                    ) : data.type === 'universalShard' ? (
+                        /* [2026-10-20 莉莉子 🐛 BUG修复] 万能神格碎片补渲染分支（此前无分支 ⇒ 弹窗空白） */
+                        <div className="flex flex-col items-center gap-4 px-8">
+                            <span className="text-3xl font-black text-amber-300 tracking-widest drop-shadow-[0_0_15px_rgba(245,158,11,0.5)]">💠 万能碎片获取 💠</span>
+                            <div className="w-28 h-28 flex items-center justify-center border-2 border-amber-400/50 rounded-2xl bg-amber-950/30 shadow-[0_0_25px_rgba(245,158,11,0.35)]">
+                                <img
+                                    src={data.imageSrc ?? UNIVERSAL_SHARD_ART}
+                                    alt="万能神格碎片"
+                                    className="w-full h-full object-contain"
+                                    draggable={false}
+                                    onError={e => { e.currentTarget.style.visibility = 'hidden'; }}
+                                />
+                            </div>
+                            <span className="text-2xl font-black text-amber-200">{data.itemName ?? '万能神格碎片'}</span>
+                            <span className="text-sm text-amber-300 font-mono tracking-widest">×{data.amount ?? 0} · 可替代任何天启者的专属碎片</span>
                         </div>
                     ) : data.type === 'analystExp' ? (
                         <div className="flex flex-col items-center gap-4 px-8">

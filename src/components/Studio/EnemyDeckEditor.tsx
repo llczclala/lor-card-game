@@ -366,6 +366,13 @@ export const EnemyDeckEditor: React.FC<{ onClose?: () => void }> = () => {
     // 网格数据计算
     const visibleCards = useMemo(() => {
         return Object.values(CARD_DB).filter(c => {
+            // [2026-10-23 莉莉子 · 衍生卡不进口袋] `isCollectible: false` 的衍生卡（局内生成的
+            //   法术/单位，如「囤积」「刻骨冰寒」「千莲叠绽」）**不该出现在任何牌库里** ——
+            //   AI 的流派配置同理，否则「囤积」会被配进敌方 40 张牌库。
+            //   口径与玩家侧五处完全一致：DeckBuilder / gachaLogic / rewards / shop / rogueStarterDecks。
+            //   ⚠️ 只影响"**新选**"的可选池：已经配在 coreCards / preferredPool 里的既有条目照旧显示，
+            //      既有敌方流派配置逐字不变。
+            if (c.isCollectible === false) return false;
             if (searchTerm && !c.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
             if (category === 'HERO' && !c.isChampion) return false;
             if (category === 'SPELL' && !c.type?.includes('spell')) return false;

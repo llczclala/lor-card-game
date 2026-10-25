@@ -215,7 +215,11 @@ export const useArmamentConfig = () => {
         return true;
     }, []);
 
-    /** [2026-09-07 消耗品武装] 从所有英雄的所有槽位移除指定武装（用后消失——清库存同时清槽，防止残留仍带入战斗） */
+    /** [2026-09-07 消耗品武装] 从所有英雄的所有槽位移除指定武装（用后消失——清库存同时清槽，防止残留仍带入战斗）
+     *  ⚠️ [2026-10-20 独立武装库] **本函数是"跨英雄"语义，当前零调用点**。
+     *     武装库已改为按天启者独立 ⇒ 若日后把它接到消耗品结算（"用掉一件就卸槽"）上，
+     *     会把**其他天启者**装着的同款一并卸下，与"每英雄各一份"直接冲突。
+     *     真要这么做，请改为按当前英雄 key 卸槽（`setArmamentSlot(heroKey, i, null)`）。 */
     const clearArmamentById = useCallback((equipId: string) => {
         if (!equipId) return;
         let changed = false;

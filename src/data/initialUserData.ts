@@ -1,4 +1,6 @@
 import type { UserSettings } from '../types'; // [2026-08-16] DEFAULT_SETTINGS 显式注解，根治 useUserSystem 类型债
+import { HAPTICS_DEFAULT } from '../utils/haptics'; // [2026-10-20] 震动四开关的默认值（唯一真源在 utils/haptics.ts）
+import { UI_CONTROL_DEFAULT } from '../utils/fullscreen'; // [2026-10-24] 全屏/暂停按钮与 ESC 口径的默认值（唯一真源在 utils/fullscreen.ts）
 import { CARD_DB } from './cards';
 import { SKIN_IMAGES } from './imageData'; // [皮肤] 用于构建全皮肤数据
 import { COSMETIC_REGISTRY } from './skinData'; // [2026-09-18] 全解锁列表改为从注册表推导（不再手写）
@@ -32,6 +34,21 @@ export const DEFAULT_SETTINGS: UserSettings = {
     heroDynamic: false,                // [2026-08-16] 默认静态卡面（对局内英雄卡动态视频需玩家手动开启）
     cardBackDynamic: false,            // [2026-08-23] 默认静态卡背（动态卡背视频需玩家手动开启）
     spellDynamic: false,               // [2026-09-26] 默认静态法术/单位卡面（动态视频需玩家手动开启）
+    // ── [2026-10-20 莉莉子 · 触屏震动] 四个通道的默认值 —— **不要在这里写死 true/false**，
+    //    一律引用 `HAPTICS_DEFAULT`（唯一真源），否则默认值和总闸逻辑迟早漂移。
+    hapticsTap: HAPTICS_DEFAULT.tap,             // 点按（默认关：程反馈太频繁太吵）
+    hapticsLongPress: HAPTICS_DEFAULT.longPress, // 长按达成（默认开）
+    hapticsNexusIn: HAPTICS_DEFAULT.nexusIn,     // 敌方打击我方水晶（默认开）
+    hapticsNexusOut: HAPTICS_DEFAULT.nexusOut,   // 我方打击敌方水晶（默认开）
+
+    // ── [2026-10-24 莉莉子 · ESC 归属权 / 右上角控制条] ─────────────────────
+    // 默认值就是「新方案」：两个悬浮按钮都出来（给玩家显式入口），ESC 一律归游戏。
+    // ⚠️ 一律引用 `UI_CONTROL_DEFAULT`（唯一真源），改默认操作方式只改那一处。
+    //    第三项是给**老习惯**留的逃生舱，默认关——开启后全屏下 ESC 退回
+    //    "先退全屏、再按才暂停"的旧手感。
+    showFullscreenButton: UI_CONTROL_DEFAULT.showFullscreenButton, // 右上角全屏按钮
+    showPauseButton: UI_CONTROL_DEFAULT.showPauseButton,           // 右上角暂停按钮（仅对局中）
+    escExitFullscreenFirst: UI_CONTROL_DEFAULT.escExitFullscreenFirst, // 全屏下 ESC 是否优先退全屏
 };
 
 // --- 2. 卡牌收藏定义 ---

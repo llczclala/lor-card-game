@@ -75,6 +75,11 @@ function getWatchEvents(subTask: TutorialSubTask): string[] {
     case 'attack_declared':
       events.push(GameEvents.ATTACK_DECLARE);
       break;
+    case 'combat_resolved':
+      // [2026-10-17 莉莉子] 「进攻**结算完毕后**」才完成（玩家派完单位 → 敌方格挡 → 战斗结算播完）
+      //   用于"打完这一段再讲解"的任务；中央台词不会再抢在结算之前弹出。
+      events.push(GameEvents.COMBAT_RESOLVED);
+      break;
     case 'unit_die':
       // [2026-08-26 莉莉子] 指定单位死亡（配合 targetCardKey 精确匹配，如单挑消灭安蒂娜）
       events.push(GameEvents.UNIT_DIE);
@@ -120,6 +125,9 @@ function doesEventMatchCondition(
       return eventName === GameEvents.PLAY_CARD;
     case 'attack_declared':
       return eventName === GameEvents.ATTACK_DECLARE;
+    case 'combat_resolved':
+      // [2026-10-17 莉莉子] 对应 resolveCombatAnimation 收尾广播
+      return eventName === GameEvents.COMBAT_RESOLVED;
     case 'unit_die':
       // [2026-08-26 莉莉子] 指定单位死亡；配了 targetCardKey 时精确匹配死亡单位（避免我方单位阵亡误判）
       if (eventName !== GameEvents.UNIT_DIE) return false;
@@ -142,7 +150,7 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
   onComplete,
   onAutoAction,
 }) => {
-  const { state, actions } = useTutorialController(script);
+  const { state, actions } = useTutorialController(script, onAutoAction);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
   const scriptRef = useRef(script);
@@ -219,7 +227,12 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
       eventBus.emit(GameEvents.TUTORIAL_SET_INTERACTION_MODE, { mode: null });
       return;
     }
-    eventBus.emit(GameEvents.TUTORIAL_SET_INTERACTION_MODE, { mode: activeTask.expectedAction.type });
+    eventBus.emit(GameEvents.TUTORIAL_SET_INTERACTION_MODE, {
+      mode: activeTask.expectedAction.type,
+      // [2026-10-16 莉莉子] 精确到"必须点哪张卡"：教程要求「必须用里芙格挡」时，
+      //   点别的单位应被拦下并提示，而不是静默选中（否则子任务完成、演示目标却落空）
+      requireCardKey: activeTask.expectedAction.requireCardKey,
+    });
   }, [state.currentTaskGroup, state.activeSubTaskIndex]);
 
   // ─── 教程锁死跳过按钮控制 ───
@@ -314,6 +327,36 @@ export const TutorialController: React.FC<TutorialControllerProps> = ({
     eventBus.on(GameEvents.SFX_SELECT_BLOCKER_UNIT, handler);
     return () => eventBus.off(GameEvents.SFX_SELECT_BLOCKER_UNIT, handler);
   }, [state.currentTaskGroup, state.activeSubTaskIndex, actions]);
+
+  // ─── 引导步推进：多目标法术"选满一步"时切到下一步指引 ───
+  // [2026-10-16 莉莉子 BUG修复 · 施法的速度「单挑」断链]
+  //   症状：子任务要求"先选芬妮、再选安蒂娜"，玩家选完芬妮后引导文案/箭头纹丝不动，像卡死。
+  //   根因有两层：① 该子任务 type 是 'free'，而既有推进逻辑只认 type==='click_target'；
+  //             ② 更根本——单挑选第一个目标时 **游戏侧一个事件都不发**（只有最后一步选满才发
+  //                TUTORIAL_SPELL_TARGETS_SELECTED）⇒ 没有任何时机可供推进。
+  //   ⇒ 由 useSpellSystem 在"某一步选满且还有后续步骤"时补发 TUTORIAL_SPELL_TARGET_STEP_DONE，
+  //     这里按 stepIndex 去重推进。
+  //   ⚠️ 两道护栏（独立审查建议，防误推进）：
+  //     · 只对"法术选目标类"子任务生效（id 以 `resolve_` 开头）——否则标准对局/其他关卡里
+  //       任何多目标法术都会把当前引导步 +1；
+  //     · 推进前校验不越界（currentGuidanceStepIndex + 1 必须仍在 guidanceSteps 内）。
+  const spellTargetStepRef = useRef(-1);
+  useEffect(() => { spellTargetStepRef.current = -1; }, [state.activeSubTaskIndex]);
+  useEffect(() => {
+    const handler = (payload?: { stepIndex?: number }) => {
+      if (!state.currentTaskGroup) return;
+      const activeTask = state.currentTaskGroup.subTasks[state.activeSubTaskIndex];
+      if (!activeTask || !activeTask.id.startsWith('resolve_')) return;
+      const nextIdx = state.currentGuidanceStepIndex + 1;
+      if (nextIdx >= activeTask.guidanceSteps.length) return;
+      const stepIndex = payload?.stepIndex ?? 0;
+      if (stepIndex <= spellTargetStepRef.current) return;
+      spellTargetStepRef.current = stepIndex;
+      actions.advanceGuidance();
+    };
+    eventBus.on(GameEvents.TUTORIAL_SPELL_TARGET_STEP_DONE, handler);
+    return () => eventBus.off(GameEvents.TUTORIAL_SPELL_TARGET_STEP_DONE, handler);
+  }, [state.currentTaskGroup, state.activeSubTaskIndex, state.currentGuidanceStepIndex, actions]);
 
   // ─── 引导步推进：自由练习子任务完成格挡分配时推进到确认按钮指引 ───
   const blockAssignedForFreeRef = useRef(false);

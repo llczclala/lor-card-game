@@ -15,6 +15,7 @@ import rogueIcon1 from '../../image/icon/rogue_icon_1.webp';
 import rogueIcon2 from '../../image/icon/rogue_icon_2.webp';
 import rogueIcon3 from '../../image/icon/rogue_icon_3.webp';
 import rogueStar from '../../image/icon/rogue_star.webp';
+import { pickTuning } from '../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 肉鸽大厅（`RogueLobby`）· 视觉调参区（**程微调就改这里**）
@@ -36,7 +37,8 @@ import rogueStar from '../../image/icon/rogue_star.webp';
 //    `image/icon/rogue_background.webp` 这张图里**的（已看图确认）⇒ **没有旋钮能调它**，只能换图。
 // ⚠️ 天启者信息框里那个等级徽章（`HeroLevelBadge size="md"`）的**内部尺寸不在本文件** ⇒ 本调参区管不到。
 // ══════════════════════════════════════════════════════════════════════
-export const ROGUE_LOBBY_UI = {
+// 🖥️📱 【双平台】`ROGUE_LOBBY_UI_MOBILE`（手机端）+ `ROGUE_LOBBY_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const ROGUE_LOBBY_UI_MOBILE = {
 
     uiScale: 2,
 
@@ -133,7 +135,25 @@ export const ROGUE_LOBBY_UI = {
     startBtnWidth: 240,
     /** 前往推演按钮高 px（原 `START_BUTTON` = h-32 = 128） */
     startBtnHeight: 128,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `ROGUE_LOBBY_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g4-rogue-nav.md` §2.1（双源交叉：git `a3b6adee` + 被删注释原文）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const ROGUE_LOBBY_UI_PC_DIFF = {
+    /** 【主旋钮】整体缩放（原值 1 = 原样 · 手机端 2 = 整体放大一倍）
+     *  ⚠️ 该旋钮的说明注释已被程在 `a3b6adee` 里删掉 ⇒ 原值以 git 为准 = 1 */
+    uiScale: 1,
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const ROGUE_LOBBY_UI_PC = { ...ROGUE_LOBBY_UI_MOBILE, ...ROGUE_LOBBY_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const ROGUE_LOBBY_UI = pickTuning(ROGUE_LOBBY_UI_PC, ROGUE_LOBBY_UI_MOBILE);
 
 interface RogueLobbyProps {
     onBackToModeSelect: () => void;   // 右上角：返回模式选择

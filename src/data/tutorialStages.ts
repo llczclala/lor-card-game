@@ -164,8 +164,14 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
         category: 'basic',
         enemyArchetypeId: 'fenny_pressure',
 
-        playerDeck: ['lyfe', 'fenny'],
-        enemyDeck: ['fenny'],
+        // [2026-10-16 莉莉子] 牌库加固：教学全程只用到手牌那张单挑/暗箭，
+        //   但牌库**绝不能为空**——回合推进会 `drawCards(1)`，牌库一见底就"疲劳判负"
+        //   （见 避坑-教程模式开发 坑 3）。这里补一批与场上英雄不重名的法术，
+        //   避免抽到 lyfe/fenny 触发手牌变形系统、干扰教学。
+        playerDeck: ['single_combat', 'single_combat', 'hidden_arrow', 'hidden_arrow'],
+        // 敌方同理：教学里敌方不抽单位上场（只用剧本指定的单挑），
+        //   故垫法术卡而非单位卡——多塞几张纯粹是防"牌库见底触发疲劳判负"。
+        enemyDeck: ['single_combat', 'single_combat', 'single_combat'],
         enemyVisual: {
             displayName: '鬼怪·安蒂娜',
             cardKey: 'Ghost_Squad_Antina',
@@ -194,10 +200,14 @@ export const TUTORIAL_STAGES: Record<string, TutorialStage> = {
 
         // [2026-08-20 莉莉子 BUG修复] 牌库不能为空：回合推进抽卡时牌库空会触发"疲劳判负"→ 结算面板过早弹出
         playerDeck: ['fenny', 'test_overwhelm', 'fenny', 'test_overwhelm', 'fenny'],
-        enemyDeck: ['test_frostbite', 'titan_gaimer', 'test_frostbite'],
+        // [2026-10-17 莉莉子 · 程拍板] 碾压关改造：敌方训练目标全部换成【幻莲音蛇】
+        //   —— 0 攻（格挡不反击，我方 1 血碾压单位不会被反杀）+ 3 血（正好被 4 攻打穿，溢出恰好 1 点）。
+        //   牌库给足 20 张：既满足"牌库里有很多张"，也彻底排除牌库空触发的疲劳判负
+        //   （教程初始化会从牌库扣掉开局布置到备战席的那 6 张，剩 14 张仍绰绰有余）。
+        enemyDeck: Array.from({ length: 20 }, () => 'Loka_Phantom_Serpent'),
         enemyVisual: {
-            displayName: '训练守卫',
-            cardKey: 'test_frostbite',
+            displayName: '幻莲音蛇',
+            cardKey: 'Loka_Phantom_Serpent',
         },
         disableMulligan: true,
         objectives: [

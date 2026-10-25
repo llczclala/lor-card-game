@@ -40,6 +40,7 @@ import { Card } from '../../Card';
 import { EnhancementCard } from './EnhancementCard';
 import type { EventApplyResult, EventShowcaseItem } from '../../../data/roguelike/eventAppliers';
 import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
+import { pickTuning } from '../../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 悖论迷宫 · **事件奖励展示**（`EventRewardShowcase`）· 视觉调参区（**程微调就改这里**）
@@ -58,7 +59,8 @@ import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
 //   `[class*="max-w-"]{max-width:none!important}` 打死过 ⇒ 默认必须 `'none'` 锁住现状，
 //   填数字会「突然真的生效、方块变窄」（`StyleSelector` / `MODE_UI` 都踩过同款）。
 // ══════════════════════════════════════════════════════════════════════
-export const EVENT_REWARD_UI = {
+// 🖥️📱 【双平台】`EVENT_REWARD_UI_MOBILE`（手机端）+ `EVENT_REWARD_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const EVENT_REWARD_UI_MOBILE = {
     /** 【主旋钮】整层缩放（原 `SHOWCASE_SCALE` = 1.32 · 1 = 基准） */
     showcaseScale: 1.35,
     /** 卡面单独缩放（原 `CARD_SCALE` = 1.28 —— `Card` 基准比强化卡小，不放大会挤在一起） */
@@ -175,7 +177,45 @@ export const EVENT_REWARD_UI = {
     btnPadY: 14,
     /** 圆角 px（原 rounded-xl = 12） */
     btnRadius: 12,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `EVENT_REWARD_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g5-rogue-modals.md` §2.5（双源交叉：git `89d1c154` + 注释「原」值）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// 🔴 `rowMaxWidthVw` / `rowMaxHeightVh` **必须成对改** —— 它们是 `calc(NNvw / scale)`
+//    的反向补偿（`transform: scale` 不参与布局），净效果 = 真实视口 88% / 62%。
+//    只改一个 / 漏改 ⇒ 内容会被根层裁掉。
+// 🔴 `statMaxWidth` 刻意**没有**列进来 —— 它是锁定项（原 `max-w-[260px]` 被 `index.css:56`
+//    打死过，值须保持 `'none'`），不是手调项 ⇒ 两端同值。
+// ══════════════════════════════════════════════════════════════════════
+const EVENT_REWARD_UI_PC_DIFF = {
+    /** 【主旋钮】整层缩放（原 `SHOWCASE_SCALE` = 1.32） */
+    showcaseScale: 1.32,
+    /** 卡面单独缩放（原 `CARD_SCALE` = 1.28） */
+    cardScale: 1.28,
+
+    // ══ ② 标题与空态 ═════════════════════════════════════════════════
+    titleFontSize: 24,          // 原 text-2xl
+    emptyFontSize: 14,          // 原 text-sm
+
+    // ══ ③ 奖励行（内容多时可滚轮滚动） ════════════════════════════════
+    rowMaxWidthVw: 88,          // 原 88vw（与下面一项成对）
+    rowMaxHeightVh: 62,         // 原 62vh（与上面一项成对）
+
+    // ══ ④ 数值 / 文字奖励方块 ════════════════════════════════════════
+    statLucideSize: 34,         // 原 <HeartCrack size={34} />
+    statEmojiFontSize: 30,      // 原 text-3xl
+    statLabelFontSize: 11,      // 原 text-[11px]
+    statTextFontSize: 13,       // 原 text-[13px]
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const EVENT_REWARD_UI_PC = { ...EVENT_REWARD_UI_MOBILE, ...EVENT_REWARD_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const EVENT_REWARD_UI = pickTuning(EVENT_REWARD_UI_PC, EVENT_REWARD_UI_MOBILE);
 
 /** 用**指定的**装备列表渲染一张完整卡面（补 runtime 字段；与 `NodeEventModal.deckCardToFull` 同口径） */
 const cardWith = (key: string, equipIds: string[]): CardData => {

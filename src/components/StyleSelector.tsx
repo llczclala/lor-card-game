@@ -8,6 +8,7 @@ import { CardBackVideo } from './Card'; // [2026-08-23] 卡背动态视频组件
 import { COSMETIC_REGISTRY, type CosmeticSource } from '../data/skinData'; // [2026-09-26 莉莉子] 名称/来源/价格元数据（此前界面完全没用上 registry）
 import { getCosmeticTone } from '../data/cosmeticTones'; // [2026-09-26 莉莉子] 色调分类（脚本按主色+亮度自动生成）
 import { eventBus, GameEvents } from '../utils/eventBus';
+import { pickTuning } from '../platform/tuning';
 
 // ==========================================
 // [2026-09-26 莉莉子] 筛选 + 排序
@@ -55,7 +56,8 @@ const SOURCE_COLORS: Record<string, string> = { SHOP: '#fbbf24', GACHA: '#a855f7
 // ⚠️ 这一屏尺寸项特别多。想"**整体**放大/缩小"别逐个改 —— 跟莉莉子说一声，
 //    照 `DECK_UI.deckScale` 的做法加一个整体旋钮（一次 `transform: scale`）更省事。
 // ══════════════════════════════════════════════════════════════════════
-export const STYLE_UI = {
+// 🖥️📱 【双平台】`STYLE_UI_MOBILE`（手机端）+ `STYLE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const STYLE_UI_MOBILE = {
     // ══ ① 右上角关闭按钮（fixed 定位，独立于布局）═════════════════════
     closeTop: 32,           // 距顶 px（原 top-8 = 32）
     closeRight: 32,         // 距右 px（原 right-8 = 32）
@@ -232,7 +234,69 @@ export const STYLE_UI = {
     listEmptyBtnPadX: 12,   // 「清空筛选」左右内边距 px（原 px-3 = 12）
     listEmptyBtnPadY: 4,    // 「清空筛选」上下内边距 px（原 py-1 = 4）
     listEmptyBtnFontSize: 11, // 「清空筛选」字号 px（原 text-[11px]）
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `STYLE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g6-system.md` §2 的逐项表（git 基线 × 注释「原 XXX」双源；
+//      这 28 项是 `dc1c4456`（`fix(ui): 卡背预览的 70vh 改成画布 px`）夹带进来的，
+//      所以 `git log --grep=tuning` 命中 0 —— 但数值有注释与 git 双证，照做）。
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ⚠️ **`previewHeight` 不在这里**：620 是本周的 **BUG 修复**（原 `70vh` 两端不一致 ⇒
+//    改用画布 px，一个数同时管两端），**不是手调** ⇒ 分叉它会把 BUG 放回来。
+// ⚠️ `frameMaxWidth` / `gridMaxWidth` 两个 `'none'` **不是手调**（是 `index.css:56`
+//    的 `max-w-*` 规避）⇒ 刻意不列在这里。
+// ══════════════════════════════════════════════════════════════════════
+const STYLE_UI_PC_DIFF = {
+    // ══ ① 右上角关闭按钮 ═══════════════════════════════════════════════
+    closeIconSize: 32,            // 原 size={32}
+
+    // ══ ③ 左侧列表栏 ═══════════════════════════════════════════════════
+    leftWidth: 256,               // 原 w-64 = 256
+
+    // ══ ④ 工具条 ═══════════════════════════════════════════════════════
+    barGap: 6,                    // 原 gap-1.5 = 6
+    barMarginBottom: 8,           // 原 mb-2 = 8
+    searchIconLeft: 10,           // 原 left-2.5 = 10
+    searchIconSize: 14,           // 原 size={14}
+    searchPadY: 6,                // 原 py-1.5 = 6
+    searchPadLeft: 32,            // 原 pl-8 = 32（给放大镜让位）
+    searchPadRight: 8,            // 原 pr-2 = 8
+    searchFontSize: 12,           // 原 text-xs = 12
+    toolBtnPad: 6,                // 原 p-1.5 = 6
+    toolIconSize: 14,             // 原 size={14}
+    sortMenuMarginTop: 4,         // 原 mt-1 = 4
+    sortItemPadX: 10,             // 原 px-2.5 = 10
+    sortItemPadY: 6,              // 原 py-1.5 = 6
+    sortItemFontSize: 11,         // 原 text-[11px]
+    sortDirFontSize: 12,          // 原 text-[12px]
+
+    // ══ ⑤ 计数 + 筛选面板 ══════════════════════════════════════════════
+    countFontSize: 10,            // 原 text-[10px]
+
+    // ══ ⑥ 左侧列表卡片 ═════════════════════════════════════════════════
+    listNameFontSize: 11,         // 原 text-[11px]
+    badgeIconSize: 12,            // 原 size={12}
+    listLockIconSize: 24,         // 原 size={24}
+
+    // ══ ⑧ 右侧大图预览 ═════════════════════════════════════════════════
+    titleFontSize: 36,            // 原 text-4xl = 36
+    lockedIconSize: 64,           // 原 size={64}
+    lockedIconMarginBottom: 16,   // 原 mb-4 = 16
+    lockedFontSize: 24,           // 原 text-2xl = 24
+
+    // ══ ⑨ 底部操作栏 ═══════════════════════════════════════════════════
+    counterFontSize: 20,          // 原 text-xl = 20
+    mainBtnFontSize: 18,          // 原 text-lg = 18
+    mainBtnIconSize: 20,          // 原 size={20}
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const STYLE_UI_PC = { ...STYLE_UI_MOBILE, ...STYLE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const STYLE_UI = pickTuning(STYLE_UI_PC, STYLE_UI_MOBILE);
 
 interface StyleSelectorProps {
     type: 'cardBack' | 'desk'; // 当前选择的是卡背还是牌桌

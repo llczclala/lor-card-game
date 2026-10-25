@@ -8,6 +8,7 @@ import { HERO_IMAGES } from '../../data/imageData'; // [新增]
 import { ENEMY_ARCHETYPES } from '../../data/enemies/archetypes'; // [新增]
 import { CARD_DB } from '../../data/cards'; // [新增]
 import { isStageCompleted } from '../../utils/tutorialProgress'; // [新增] 完成状态检测
+import { pickTuning } from '../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 战术考核 · **考核关卡列表**（`StageSelectScreen`）· 视觉调参区（**程微调就改这里**）
@@ -36,7 +37,8 @@ import { isStageCompleted } from '../../utils/tutorialProgress'; // [新增] 完
 // ⚠️ 两侧 HUD（ADJUTANT / ENEMY）**共用** `sideLabel*` / `sideName*` 六个字段 —— 改一处两侧一起变
 //   （有意如此，红蓝对称）；要左右分开调说一声。
 // ══════════════════════════════════════════════════════════════════════
-export const STAGE_SELECT_UI = {
+// 🖥️📱 【双平台】`STAGE_SELECT_UI_MOBILE`（手机端）+ `STAGE_SELECT_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const STAGE_SELECT_UI_MOBILE = {
     // ══ ① 左栏：考核列表面板（含头部与空态） ═══════════════════════════
     /** 左栏宽 px（原 w-[280px] = 280） */
     listPanelWidth: 360,
@@ -258,7 +260,55 @@ export const STAGE_SELECT_UI = {
     emptyHintFontSize: 14,
     /** 提示上距 px（原 mt-2 = 8） */
     emptyHintMarginTop: 8,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `STAGE_SELECT_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g6-system.md` §2 的逐项表（git 基线 × 注释「原 XXX」双源；
+//      提交 `6115ca0e` 的信息写「14 项」，**实际 diff 21 项** ⇒ 以 diff 为准）。
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ⚠️ `stageDescMaxWidth` / `footerRowMaxWidth` 两个 `'none'` **不是手调**（是 `index.css:56`
+//    的 `max-w-*` 规避）⇒ 刻意不列在这里，别顺手补进来。
+// ══════════════════════════════════════════════════════════════════════
+const STAGE_SELECT_UI_PC_DIFF = {
+    // ══ ① 左栏：考核列表面板 ═══════════════════════════════════════════
+    listPanelWidth: 280,          // 原 w-[280px] = 280
+    backIconSize: 20,             // 原 <ArrowLeft size={20} /> = 20
+    categoryChipFontSize: 12,     // 原 text-xs = 12
+    listTitleFontSize: 14,        // 原 text-sm = 14
+    listEmptyIconFontSize: 30,    // 原 text-3xl = 30
+    listEmptyTextFontSize: 14,    // 原 text-sm = 14
+
+    // ══ ② 左栏：关卡缩略卡 ═════════════════════════════════════════════
+    stageNoSize: 20,              // 原 w-5 h-5 = 20
+    stageNoFontSize: 10,          // 原 text-[10px] = 10
+    stageNameFontSize: 14,        // 原 text-sm = 14
+    stageCheckFontSize: 14,       // 原 text-sm = 14
+    stageMetaFontSize: 10,        // 原 text-[10px] = 10
+
+    // ══ ③ 右栏：红蓝对抗背景（两侧 HUD）═══════════════════════════════
+    sideLabelFontSize: 12,        // 原 text-xs = 12
+    sideLabelIconSize: 12,        // 原 <Shield size={12}/> / <Sword size={12}/> = 12
+    sideNameFontSize: 30,         // 原 text-3xl = 30
+
+    // ══ ⑤ 右栏：关卡简报 ═══════════════════════════════════════════════
+    stageBadgeFontSize: 12,       // 原 text-xs = 12
+    stageTitleFontSize: 36,       // 原 text-4xl = 36
+    stageDescFontSize: 14,        // 原 text-sm = 14
+    objectivesTitleFontSize: 12,  // 原 text-xs = 12
+    objectivesTitleIconSize: 14,  // 原 <Target size={14} /> = 14
+
+    // ══ ⑥ 右栏：考核目标卡 ═════════════════════════════════════════════
+    objectiveIconSize: 40,        // 原 w-10 h-10 = 40
+    objectiveTextFontSize: 14,    // 原 text-sm = 14
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const STAGE_SELECT_UI_PC = { ...STAGE_SELECT_UI_MOBILE, ...STAGE_SELECT_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const STAGE_SELECT_UI = pickTuning(STAGE_SELECT_UI_PC, STAGE_SELECT_UI_MOBILE);
 
 interface StageSelectScreenProps {
     categoryId: ExamCategoryId;

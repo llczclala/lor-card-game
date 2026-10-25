@@ -46,7 +46,8 @@ export const RunEnhancementStrip: React.FC<RunEnhancementStripProps> = ({ enhanc
             // ⚠️ 必须**同步**取 rect：React 合成事件在异步回调里 currentTarget 会被置 null
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
             // [2026-10-15 莉莉子 · 触屏] 触屏上由长按触发，延迟归零（PC 仍 400ms）
-            enterRef.current = setTimeout(() => setHover({ buff, rect }), gazeEnterDelay(400));
+            // [2026-10-20] `noNew: true` —— 这里展示的是**玩家本局已持有**的强化，不该标 NEW 角标
+            enterRef.current = setTimeout(() => setHover({ buff, rect, noNew: true }), gazeEnterDelay(400));
         },
         onMouseLeave: () => {
             if (enterRef.current) { clearTimeout(enterRef.current); enterRef.current = null; }

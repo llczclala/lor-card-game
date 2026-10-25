@@ -10,6 +10,8 @@ import { useMovie } from './hooks/useMovie';
 import { VideoPlayer } from './components/VideoPlayer';
 // [2026-10-14 程拍板] FullScreenToggle 已收进设置窗口（SettingsModal「显示」区），不再全局悬浮
 import { TouchFeedbackLayer } from './components/TouchFeedbackLayer'; // [2026-10-14] 触屏点击反馈（涟漪 + 长按进度环 + 震动；仅触屏启用）
+import { HapticsBridge } from './components/HapticsBridge'; // [2026-10-20] 水晶受击震动（订阅 NEXUS_STRIKED；仅触屏启用）
+import { setHapticsSwitches } from './utils/haptics'; // [2026-10-20] 把设置里的震动四开关同步进全局总闸
 import { LoadingScreen } from './components/LoadingScreen';
 import { CARD_DB } from './data/cards';
 import { useUserSystem } from './hooks/useUserSystem';
@@ -22,6 +24,11 @@ import { MissionPanel } from './components/MissionUI'; // [核心新增] 引入�
 import { AnnouncementPanel } from './components/AnnouncementPanel'; // [2026-08-09] 引入公告中心面板
 import { useMissionSystem } from './hooks/useMissionSystem'; // [核心新增] 引入军功大脑
 import { SettingsModal } from './components/SettingsModal';
+import { TopRightControls } from './components/TopRightControls'; // [2026-10-24 莉莉子] 右上角悬浮控制条（全屏 + 暂停）
+// [2026-10-24 莉莉子 · ESC 归属权改造] 全屏 / ESC 的唯一真源
+//   `installEscapeLock`：进全屏就把 ESC 从浏览器手里锁回来（方案 A 的前提）
+//   `shouldEscapeExitFullscreen`：非对局界面按 ESC 时，判断该不该"先退全屏"
+import { installEscapeLock, shouldEscapeExitFullscreen, leaveFullscreen } from './utils/fullscreen';
 import { eventBus, GameEvents } from './utils/eventBus';
 // [2026-10-05 莉莉子 BUG修复 · 20261005-06] 全局音量快照：让"音量"变成**可读取的当前值**，
 //   而不是只能靠一次性事件推给当时的实例（`useVoice` 每场对局都会新挂，收不到那次推送）
@@ -70,6 +77,8 @@ import { ACCOUNT_EXP_BY_MODE, ACCOUNT_LEVEL_REWARD_DATA_GOLD } from './data/acco
 import { computeNodeExp, getNodeDepth, computeRunExpTotal, computeResourceExp, timeExpMult, DIFFICULTY_EXP_MULT, DIFFICULTY_PAR_MINUTES, CLEAR_EXP, type RogueSettleDetail } from './data/roguelike/rogueExp'; // [2026-08-29] 经验经济（局内渐进/时长/难度/共鸣）· [2026-09-07] 剩余资源折算
 // [2026-08-29] 局内经验横幅 → [2026-10-08 莉莉子 · 交互回响层] 升级为**统一局内反馈层**（经验 + 节点交互回执）
 import { RogueExpFeed, type ExpFeedItem, type FeedbackTone } from './components/roguelike/RogueExpFeed';
+import { RogueNewUnlockFeed, type NewUnlockItem } from './components/roguelike/RogueNewUnlockFeed'; // [2026-10-20] 右上角「NEW!!」图鉴首收录提示
+import { hydrateCodexUnlocked, markCodexUnlocked } from './utils/codexNew'; // [2026-10-20] 图鉴 NEW 判定层（候选卡角标读它）
 import { getBuffById } from './data/roguelike/buffs'; // [2026-10-08 交互回执] 强化名查询（商店买强化 / 宝箱强化 / 强化节点） // [2026-08-29] 局内经验横幅
 import { ReviveModal } from './components/roguelike/modals/ReviveModal'; // [2026-10-04 程拍板] 复活询问弹窗（本场失败 → 消耗 1 次复活重打本节点）
 import { EvaluationPanel } from './components/roguelike/EvaluationPanel'; // [2026-08-29 评估嘉勉] 分析员等级面板
@@ -110,6 +119,29 @@ export default function App() {
     }
     return undefined;
   }, [userSystem.profile?.createdAt]);
+  // ==========================================
+  // [2026-10-20 莉莉子 · 触屏震动开关]
+  //   震动是**全局副作用**：手势层（点按/长按）与水晶受击（HapticsBridge）都要读同一份开关。
+  //   ⇒ 开关唯一真源在 `userSystem.settings`，本 effect 负责把它**写进模块级总闸**
+  //     （`utils/haptics.ts` 的 `setHapticsSwitches`），两个来源只管读总闸。
+  // ⚠️ 依赖写 4 个布尔值而不是整个 `settings` 对象：改音量/换卡背都会换 settings 引用，
+  //    依赖整个对象会让这个 effect 每次都白跑一遍。
+  // ⚠️ 传 `undefined`（老存档没这 4 个字段）时总闸内部按 `HAPTICS_DEFAULT` 归一，不会当成"关"。
+  // ==========================================
+  useEffect(() => {
+    setHapticsSwitches({
+      tap: userSystem.settings?.hapticsTap,
+      longPress: userSystem.settings?.hapticsLongPress,
+      nexusIn: userSystem.settings?.hapticsNexusIn,
+      nexusOut: userSystem.settings?.hapticsNexusOut,
+    });
+  }, [
+    userSystem.settings?.hapticsTap,
+    userSystem.settings?.hapticsLongPress,
+    userSystem.settings?.hapticsNexusIn,
+    userSystem.settings?.hapticsNexusOut,
+  ]);
+
   const missionSystem = useMissionSystem(userSystem.userId, registerTime); // [核心挂载] 实例化军功大脑
   const [isMissionOpen, setIsMissionOpen] = useState(false); // [新增] 军需面板开关状态
   const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false); // [2026-08-09] 公告中心开关状态
@@ -525,6 +557,25 @@ export default function App() {
     setAppState('system_loading'); // 立即进入加载界面
   };
 
+  /**
+   * [2026-10-24 莉莉子] 设置面板「返回标题界面」—— 回主菜单。
+   *
+   * ── 清理口径照抄 `handleExitGame`（停音画 + 清教程关/标准遭遇），原因相同：
+   *    残留的 `tutorialStageId` / `standardEncounter` 会把下一次进局搞乱（项目里踩过多次）。
+   * ── **不走 `system_loading`**：标题就是主菜单，没有进场演出要等；
+   *    而 `appState === 'title'` 的那个 effect 会自动 `playBgm('title')` + `playTitleMovie()`。
+   * ── 只清"本次会话的临时状态"，**不做任何结算动作**：
+   *    返回标题不是"放弃本局"，不能替玩家把肉鸽进度或战绩结掉。
+   */
+  const handleReturnToTitle = () => {
+      setIsSettingsOpen(false); // 先把设置面板关掉，否则切界面后它可能残留在标题之上
+      stopMovie();
+      stopBgm();
+      setTutorialStageId(null);
+      setStandardEncounter(null);
+      setAppState('title');
+  };
+
   // [2026-08-30 莉莉子] 暂停层「关机」按钮：退出并关闭游戏（Electron nodeIntegration 下 window.close 关窗）
   const handleQuitGame = () => {
     eventBus.emit(GameEvents.UI_CLICK);
@@ -571,7 +622,7 @@ export default function App() {
     // [2026-08-29 经验重构] 本局武装快照（碳原子板"通关经验翻倍"，未通关不消耗不翻倍）
     // [2026-09-25 莉莉子 武装不叠加] 本局武装快照按同日启者去重（老存档可能残留重复槽）
     const armForHero = Array.from(new Set(armamentConfig.getArmament(rogueHeroKey, heroLevel).filter((v): v is string => !!v)));
-    rogue.startRun(rogueHeroKey, getConfiguredStarterDeck(userSystem.decks, rogueHeroKey), difficulty, {
+    const rogueApplied = rogue.startRun(rogueHeroKey, getConfiguredStarterDeck(userSystem.decks, rogueHeroKey), difficulty, {
       maxHp: bonus.maxHpBonus,
       gold: bonus.goldBonus,
       reviveCount: bonus.reviveBonus,
@@ -587,6 +638,14 @@ export default function App() {
       heroLevel,
       rarityBonus: bonus.rarityBonus,
     });
+    // ── [2026-10-20 莉莉子 · 图鉴 NEW 提示 · 补漏 P0] 开局（等级奖励）发的装备/强化也要进图鉴 ──
+    //   病根：`startRun` 内部直接把装备挂进 `equippedCards`、把强化并进 `run.enhancements`，
+    //     而那个 hook **拿不到** `recordCodexUnlock`（它只存在于 App）⇒ 这条路的获得
+    //     从来没有进过图鉴。后果有两层：① 图鉴永久显示"未收录"（玩家其实一直带着它）
+    //     ② 日后在商店/宝箱再拿到同一件时会**重复弹一次 NEW**（违反"获得过就不该再提示"）。
+    //   ⇒ `startRun` 现在回传"过闸后真的挂上了的"清单（被 `isAttachable` 拒掉的不在内）。
+    rogueApplied.appliedEquipments.forEach(id => recordCodexUnlock('equipment', id));
+    rogueApplied.appliedEnhancements.forEach(id => recordCodexUnlock('enhancement', id));
     playBgm('deck_builder'); // [2026-08-28 莉莉子 推演开场] 地图播备战曲（配老电视显影开场）
     setRogueMapReveal(true); // [2026-08-28 莉莉子 推演开场] 本局首进地图播推演开场动画
     rogue.clearPendingRun(); // [2026-08-28 对局记录] 开新局清除旧的未结算存档
@@ -634,6 +693,60 @@ export default function App() {
     setExpFeed(prev => [...prev.slice(-3), { id, text, tone }]);
     setTimeout(() => setExpFeed(prev => prev.filter(f => f.id !== id)), 2500);
   };
+
+  // ==========================================
+  // [2026-10-20 莉莉子 · 肉鸽图鉴 NEW 提示]
+  //   粉丝反馈：第一次在迷宫遇到某些强化 / 武装装备时毫无直观提示 ⇒ 收藏欲完全没被点燃。
+  //   程的口径：右上角挂一个「NEW！！」。
+  //
+  //   两层实现（**分工明确，别混用**）：
+  //     ① 右上角提示（本段）—— 覆盖**全部 12 条获得路径**（商店买/宝箱/强化三选一/迎战奖励/
+  //        事件/招募附装备/探路归来…），因为它们全都经过 `recordCodexUnlock`。
+  //     ② 候选卡 NEW 角标（`modals/EnhancementCard`）—— 让玩家**遇到时就看得见**，
+  //        判定读 `utils/codexNew.ts` 的模块快照（App 负责写入）。
+  //
+  //   ⚠️ 「是不是第一次」= 图鉴未收录（`settings.unlockedRogue*`，跨局）。
+  //      [2026-10-20 决定] **开发者号也落盘记录**（原来对 dev 早退）—— 因为：
+  //        · 不记录 ⇒ dev 的图鉴收录列表永远空 ⇒ 角标会在他号上"永远 NEW"或者"永远没有"，
+  //          两种都验不了观感；
+  //        · 图鉴展示对 dev 仍由 `RogueCodex` 的 `isDev` 全解锁，所以"记录"不会把开发者的图鉴变灰。
+  //      ⇒ 现在 dev 与玩家口径完全一致，程用自己号就能直接验收。
+  // ==========================================
+  const [newUnlockFeed, setNewUnlockFeed] = useState<NewUnlockItem[]>([]);
+  const newUnlockIdRef = useRef(0);
+  /**
+   * 同一 tick 内连续记录用 —— settings 的 `cur` 在这一 tick 里是**旧值**，
+   * 而事件「双强化」那条路径是 `playerIds.forEach(id => recordCodexUnlock(...))`
+   * （`App.tsx` 事件结算处）⇒ 后写会把前写覆盖掉，图鉴只记下最后一个。
+   * 这里兜住"刚刚写进去的"，并集后再判重，保证一次交互里连续获得多件都不丢。
+   */
+  const codexJustWroteRef = useRef<{ enhancement: string[]; equipment: string[] }>({
+    enhancement: [],
+    equipment: [],
+  });
+
+  const pushNewUnlock = (kind: 'enhancement' | 'equipment', name: string) => {
+    const id = ++newUnlockIdRef.current;
+    // [2026-10-20 审查修复] 上限由 3 条放宽到 5 条：商店「一次买多件新装备」会逐件 push，
+    //   `slice(-2)` 会把最早的几条**静默丢掉**（玩家只看到最后 3 条）。
+    //   5 条竖排在右上角仍然放得下（每条约 60px），且不会再出现"买了却不提示"。
+    setNewUnlockFeed(prev => [...prev.slice(-4), { id, kind, name }]);
+    setTimeout(() => setNewUnlockFeed(prev => prev.filter(f => f.id !== id)), 3200);
+  };
+
+  // 把 settings 里的图鉴收录情况灌进模块快照（候选卡角标要用）
+  useEffect(() => {
+    hydrateCodexUnlocked('enhancement', userSystem.settings?.unlockedRogueEnhancements ?? []);
+    hydrateCodexUnlocked('equipment', userSystem.settings?.unlockedRogueEquipments ?? []);
+    // settings 已经追上来了 ⇒ 清掉"本 tick 暂存"，避免它无限累积。
+    //   ⚠️ 这一步也是「恢复默认设置」后能重新记录的保证：否则清空图鉴后旧 id 会一直躺在暂存里，
+    //      再获得同一件时会被误判成"已收录"⇒ 既不弹 NEW，也不落盘。
+    codexJustWroteRef.current.enhancement = [];
+    codexJustWroteRef.current.equipment = [];
+  }, [
+    userSystem.settings?.unlockedRogueEnhancements,
+    userSystem.settings?.unlockedRogueEquipments,
+  ]);
   // [2026-10-08 莉莉子 · 交互回响层] 名字取用统一口径（卡名去换行；强化/装备查库；查不到退回 id 原文）
   const nameOfCard = (key: string) => CARD_DB[key]?.name?.replace(/\n/g, '') ?? key;
   const nameOfEnh = (id: string) => getBuffById(id)?.name ?? id;
@@ -1091,6 +1204,9 @@ export default function App() {
     if (scoutRet?.returned) {
       const cardName = CARD_DB[scoutRet.cardKey]?.name ?? scoutRet.cardKey;
       const equipName = scoutRet.equipId ? getEquipmentById(scoutRet.equipId)?.name : '';
+      // [2026-10-20 莉莉子 · 图鉴 NEW 提示 · 补漏] 探路归来的装备**此前从来不记图鉴** ——
+      //   上一行只发了横幅 ⇒ 图鉴里那件装备永远"未收录"，NEW 提示也就永远不会响。
+      if (scoutRet.equipId) recordCodexUnlock('equipment', scoutRet.equipId);
       pushExpFeed(`🗺️ ${cardName} 探路归来${equipName ? `，获得装备「${equipName}」` : ''}`, 'level');
     }
   };
@@ -1210,13 +1326,34 @@ export default function App() {
     handleRogueFinalDefeat();
   };
 
-  // [2026-08-26 莉莉子] 逻辑研习·图鉴解锁记录：获得强化/装备时写入 settings（开发者账号全解锁不记录）
+  // [2026-08-26 莉莉子] 逻辑研习·图鉴解锁记录：获得强化/装备时写入 settings
+  // [2026-10-20 莉莉子 · 图鉴 NEW 提示] 这里同时是**唯一**能知道"这是不是第一次"的地方
+  //   （12 条获得路径全经过它）⇒ 首次收录时在这里发右上角 NEW!! 提示。
+  //   ⚠️ 顺序铁律：**先判定，后写入**。写完再判 `includes` 就永远是 false（一条提示都不会有）。
+  //   ⚠️ [2026-10-20] 开发者账号**也记录**了（原来对他早退）—— 理由见上方 `newUnlockFeed` 的注释。
   const recordCodexUnlock = (type: 'enhancement' | 'equipment', id: string) => {
-    if (!id || userSystem.userId === 'dev_full_admin') return;
-    const cur = type === 'enhancement'
+    if (!id) return;
+    const fromSettings = type === 'enhancement'
       ? (userSystem.settings?.unlockedRogueEnhancements ?? [])
       : (userSystem.settings?.unlockedRogueEquipments ?? []);
-    if (cur.includes(id)) return;
+    // 并上"本 tick 刚写进去的"，否则同一交互里连续获得两件时后写会覆盖前写
+    const justWrote = codexJustWroteRef.current[type];
+    const cur = justWrote.length === 0 ? fromSettings : Array.from(new Set([...fromSettings, ...justWrote]));
+
+    // ① 判定"是不是第一次" —— 必须在写入之前
+    const firstTime = !cur.includes(id);
+
+    // ② 内存快照立刻更新：保证同一次交互里后续渲染不再给这张卡打 NEW 角标
+    markCodexUnlocked(type, id);
+
+    // ③ 首次收录 ⇒ 右上角「NEW!!」（名字走 App 的统一取法：查不到就退回 id 原文）
+    if (firstTime) {
+      pushNewUnlock(type, type === 'enhancement' ? nameOfEnh(id) : nameOfEquip(id));
+    }
+
+    // ④ 图鉴落盘（已收录就不重复写）
+    if (!firstTime) return;
+    if (!codexJustWroteRef.current[type].includes(id)) codexJustWroteRef.current[type].push(id);
     if (type === 'enhancement') userSystem.updateSettings({ unlockedRogueEnhancements: [...cur, id] });
     else userSystem.updateSettings({ unlockedRogueEquipments: [...cur, id] });
   };
@@ -1751,6 +1888,19 @@ export default function App() {
           playBgm(getHallBgmByIndex(actualIndex));
       }
   };
+  // =====================================
+  // [2026-10-24 莉莉子 · ESC 归属权改造] 全局装一次「全屏 → 锁 ESC」跟随
+  // ── 为什么要在 App 顶层装：全屏状态是**文档级**的（`document.fullscreenElement`），
+  //    与当前在哪个界面无关 ⇒ 大厅、备战、对局都必须共用同一份锁，
+  //    否则会出现"对局里锁上了、退回大厅却没解锁"的鬼状态。
+  // ── 锁上之后 ESC 才可能到达页面，方案 A（ESC 一律归游戏）才成立；
+  //    环境不支持 Keyboard Lock 时本函数内部静默降级为浏览器原生行为（ESC 退全屏）。
+  // =====================================
+  useEffect(() => installEscapeLock(), []);
+
+  // 玩家偏好：全屏下 ESC 是否优先退出全屏（默认 false = 方案 A）
+  const escExitFullscreenFirst = userSystem.settings.escExitFullscreenFirst === true;
+
   // 全局 ESC 监听
   useEffect(() => {
       const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -1765,6 +1915,19 @@ export default function App() {
           //   若放行，玩家能把它关掉，留下"战斗已结束、本局却没落子"的悬空状态
           if (rogueRevivePrompt) {
               e.preventDefault(); e.stopImmediatePropagation();
+              return;
+          }
+          // [2026-10-24 莉莉子 · ESC 归属权] 老习惯逃生舱：全屏 + 偏好开启 → 这一下 ESC 只退全屏。
+          //   ⚠️ 位置刻意在 switch **之前**：它必须整体接管这一下 ESC，
+          //      不能"退了全屏又顺手返回上一级"。对局内的同类判断在 `GameSession.tsx`（capture 更早）。
+          //   🔴 `!isSettingsOpen` 是必须的（2026-10-24 独立审查抓出）：`SettingsModal` 自己的
+          //      ESC 监听（bubble 阶段、**没有** stopImmediatePropagation）也会收到同一个事件，
+          //      而两者都在 window 的 bubble 阶段 ⇒ 执行顺序只取决于**注册先后**（会随渲染历史漂移）
+          //      ⇒ 面板开着时按 ESC 会**既关面板又退全屏**，一下干两件事。
+          //      这里让"面板最上层"的语义优先：面板开着时这一下 ESC 只关面板，不碰全屏。
+          if (!isSettingsOpen && shouldEscapeExitFullscreen(escExitFullscreenFirst)) {
+              e.preventDefault(); e.stopImmediatePropagation();
+              void leaveFullscreen();
               return;
           }
           // [2026-08-15 莉莉子] 有返回按钮的界面：ESC 等同点击该界面的返回按钮 → 返回上一界面，而非打开设置
@@ -1816,7 +1979,7 @@ export default function App() {
       };
       window.addEventListener('keydown', handleGlobalKeyDown);
       return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [appState, isSettingsOpen, rogueCodexOpen, handleBackToLobby, handleBackToModeSelect, handleBackFromStageSelect]);
+  }, [appState, isSettingsOpen, rogueCodexOpen, escExitFullscreenFirst, handleBackToLobby, handleBackToModeSelect, handleBackFromStageSelect]);
 
 
   useEffect(() => {
@@ -1983,6 +2146,10 @@ export default function App() {
   <ScaleWrapper>
   {/* [2026-10-14 程拍板] 全屏按钮已迁入设置窗口 → SettingsModal「Video Quality / Display」 */}
   <TouchFeedbackLayer />
+  {/* [2026-10-20 莉莉子 · 触屏震动] 水晶受击震动桥：敌方打击我方水晶 / 我方打击敌方水晶。
+      订阅 `NEXUS_STRIKED` 一个事件即覆盖全部水晶伤害来源（战斗/法术/效果/肉鸽强化等 11 处发射点）；
+      仅触屏挂载，PC 不订阅。 */}
+  <HapticsBridge />
     <div className="relative w-full h-full bg-slate-950 overflow-hidden">
 
 
@@ -2096,6 +2263,10 @@ export default function App() {
             onGachaNav={handleDeckToGacha} // [2026-08-02] 卡牌详情页跳转抽卡
             onDifficultyChange={handleDifficultyChange} // [2026-08-06] AI 难度选择回调
             initialEditDeckId={rogueEditDeckId} // [2026-08-13] 肉鸽编辑目标牌组
+            // [2026-10-24 莉莉子 · 卡组码] 缺卡弹窗「去抽卡」→ 大厅那条「加载界面 → 共鸣抽卡」入口
+            //   ⚠️ 用 `handleLobbyGacha`（不带池，走常驻池）而不是 `handleDeckToGacha`：
+            //      后者需要具体池 id，而缺卡弹窗不知道玩家缺的卡在哪个池里。
+            onGoGacha={handleLobbyGacha}
         />
       )}
 
@@ -2136,6 +2307,7 @@ export default function App() {
                 onOpenSettings={() => setIsSettingsOpen(true)} // [2026-08-30 莉莉子] 暂停层齿轮 → 设置面板
                 onQuitGame={handleQuitGame} onSurrender={handleSurrender} onRestartBattle={handleRestartBattle} surrenderNote={surrenderNote} surrenderSignal={surrenderSignal}
                 isSettingsOpen={isSettingsOpen} // [2026-08-30 莉莉子] 暂停 ESC 协调
+                escExitFullscreenFirst={escExitFullscreenFirst} // [2026-10-24 莉莉子] 全屏下 ESC 是否优先退全屏（默认 false = ESC 归游戏）
                 onAccountSettle={handleRealMatchSettled} // [2026-09-04 账号等级/战绩]
             />
        )}
@@ -2164,6 +2336,7 @@ export default function App() {
                 onOpenSettings={() => setIsSettingsOpen(true)} // [2026-08-30 莉莉子] 暂停层齿轮 → 设置面板
                 onQuitGame={handleQuitGame} // [2026-09-25 莉莉子] 教程模式不接投降（投降对教程无意义），保留原退出
                 isSettingsOpen={isSettingsOpen} // [2026-08-30 莉莉子] 暂停 ESC 协调
+                escExitFullscreenFirst={escExitFullscreenFirst} // [2026-10-24 莉莉子] 全屏下 ESC 是否优先退全屏（默认 false = ESC 归游戏）
                 onAccountSettle={handleRealMatchSettled} // [2026-09-04 账号等级/战绩]
             />
        )}
@@ -2326,9 +2499,25 @@ export default function App() {
               onOpenSettings={() => setIsSettingsOpen(true)} // [2026-08-30 莉莉子] 暂停层齿轮 → 设置面板
               onQuitGame={handleQuitGame} onSurrender={handleSurrender} onRestartBattle={handleRestartBattle} surrenderNote={surrenderNote} surrenderSignal={surrenderSignal}
               isSettingsOpen={isSettingsOpen} // [2026-08-30 莉莉子] 暂停 ESC 协调
+                escExitFullscreenFirst={escExitFullscreenFirst} // [2026-10-24 莉莉子] 全屏下 ESC 是否优先退全屏（默认 false = ESC 归游戏）
               onAccountSettle={handleRealMatchSettled} // [2026-09-04 账号等级/战绩]（rogue 逐节点在 GameOverScreen 被跳过，整局走 settleRun）
           />
       )}
+
+      {/* =====================================
+          [2026-10-24 莉莉子 · ESC 归属权改造] 右上角悬浮控制条
+          ── 挂在**全局层**（与设置面板同级、覆盖所有界面）而不是 GameSession 里：
+             全屏按钮在大厅/备战/抽卡也要能用，而 GameSession 只在三个对局 Wrapper 里存在。
+          ── 显隐：两个设置项各自把关；暂停按钮额外要求"在对局中"（大厅没有可暂停的东西）。
+          ── ⚠️ 取默认值一律 `?? true`：老存档缺字段是 `undefined`，必须落回默认开；
+                写 `|| false` 会让"默认开"变成"默认关"，写 `|| true` 会让玩家关不掉。
+          ===================================== */}
+      <TopRightControls
+          inGame={appState === 'game' || appState === 'tutorial_game' || appState === 'rogue_game'}
+          showFullscreen={userSystem.settings.showFullscreenButton ?? true}
+          showPause={userSystem.settings.showPauseButton ?? true}
+          hidden={isSettingsOpen} // 设置面板打开时收起来：本条 z-[9999] 会压住面板右上角的关闭按钮 X
+      />
 
       {/* 全局设置面板 */}
           <SettingsModal
@@ -2355,9 +2544,34 @@ export default function App() {
               onToggleCardBackDynamic={() => userSystem.updateSettings({ cardBackDynamic: !(userSystem.settings as any)?.cardBackDynamic } as any)}
               spellDynamic={(userSystem.settings as any)?.spellDynamic || false} // [2026-09-26] 动态法术/单位卡面开关
               onToggleSpellDynamic={() => userSystem.updateSettings({ spellDynamic: !(userSystem.settings as any)?.spellDynamic } as any)}
+              // ── [2026-10-20 莉莉子 · 触屏震动] 四个震动开关（仅手机端设置界面渲染）
+              //    ⚠️ 这里刻意**不用** `|| false` 兜底：老存档缺字段时是 `undefined`，
+              //       要让 SettingsModal 的默认参数（= HAPTICS_DEFAULT）接管，
+              //       否则「点按默认关」会被 `undefined || false` 意外"看起来对"、但长按默认开会被错当成关。
+              hapticsTap={userSystem.settings.hapticsTap}
+              onToggleHapticsTap={() => userSystem.updateSettings({ hapticsTap: !(userSystem.settings.hapticsTap ?? false) })}
+              hapticsLongPress={userSystem.settings.hapticsLongPress}
+              onToggleHapticsLongPress={() => userSystem.updateSettings({ hapticsLongPress: !(userSystem.settings.hapticsLongPress ?? true) })}
+              hapticsNexusIn={userSystem.settings.hapticsNexusIn}
+              onToggleHapticsNexusIn={() => userSystem.updateSettings({ hapticsNexusIn: !(userSystem.settings.hapticsNexusIn ?? true) })}
+              hapticsNexusOut={userSystem.settings.hapticsNexusOut}
+              onToggleHapticsNexusOut={() => userSystem.updateSettings({ hapticsNexusOut: !(userSystem.settings.hapticsNexusOut ?? true) })}
+              // ── [2026-10-24 莉莉子 · ESC 归属权 / 右上角控制条] ────────────────────
+              //    ⚠️ 与上面震动开关同一口径：**不写 `|| false`**。
+              //       老存档里这三个字段是 `undefined`，要让 SettingsModal 的默认参数
+              //       （= `UI_CONTROL_DEFAULT`）接管；写了兜底会把"默认开"误判成"关"。
+              showFullscreenButton={userSystem.settings.showFullscreenButton}
+              onToggleShowFullscreenButton={() => userSystem.updateSettings({ showFullscreenButton: !(userSystem.settings.showFullscreenButton ?? true) })}
+              showPauseButton={userSystem.settings.showPauseButton}
+              onToggleShowPauseButton={() => userSystem.updateSettings({ showPauseButton: !(userSystem.settings.showPauseButton ?? true) })}
+              escExitFullscreenFirst={userSystem.settings.escExitFullscreenFirst}
+              onToggleEscExitFullscreenFirst={() => userSystem.updateSettings({ escExitFullscreenFirst: !(userSystem.settings.escExitFullscreenFirst ?? false) })}
               onResetSettings={() => userSystem.resetSettings()} // [2026-08-16] 恢复默认设置
               onRestartMatch={() => { setIsSettingsOpen(false); (userSystem.userId === 'dev_full_admin' && appState === 'rogue_game') ? handleRogueRestartBattle() : handleStartGame(); }}
               onReturnToLobby={() => { setIsSettingsOpen(false); handleBackToLobby(); }}
+              // [2026-10-24 莉莉子] 返回标题界面：**标题界面本身不传**（那边显示这个按钮没有意义），
+              //   组件靠"有没有回调"决定渲不渲染 ⇒ 不用再加一个可见性开关。
+              onReturnToTitle={appState === 'title' ? undefined : handleReturnToTitle}
               isInGame={appState === 'game' || appState === 'tutorial_game'}
               isRogueDevRestart={userSystem.userId === 'dev_full_admin' && appState === 'rogue_game'} // [2026-08-25 开发者] 肉鸽开发者重开入口
           />
@@ -2492,6 +2706,8 @@ export default function App() {
 
       {/* [2026-08-29 经验重构] 局内渐进经验/升级轻量横幅 */}
       <RogueExpFeed feed={expFeed} />
+      {/* [2026-10-20 莉莉子] 右上角「NEW!!」图鉴首收录提示（与上面的顶部居中回执分工：那是流水账，这是收藏里程碑） */}
+      <RogueNewUnlockFeed items={newUnlockFeed} />
 
       {/* [2026-10-04 程拍板] 复活询问弹窗 —— 本场推演失败且仍有复活次数时弹出（**必须二选一**，ESC 已被吞掉） */}
       {appState === 'rogue_map' && rogueRevivePrompt && rogue.run && (

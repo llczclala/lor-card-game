@@ -34,6 +34,7 @@ import { attachEquipment } from '../../../data/equipment';
 import { EventRewardShowcase } from './EventRewardShowcase';
 // [2026-10-10 程实测] 选项按钮用**游戏内图标**（数据金 / 生命特效图），不再是一律紫色
 import { CURRENCY_ICONS, EFFECT_IMAGES } from '../../../data/imageData';
+import { pickTuning } from '../../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 悖论迷宫 · **事件节点**（`NodeEventModal` 的 `type === 'event'` 分支）· 视觉调参区
@@ -55,7 +56,8 @@ import { CURRENCY_ICONS, EFFECT_IMAGES } from '../../../data/imageData';
 // ⚠️ 几处 `%` 值（`storyLeft` / `panelRight` / `panelWidth`）是**相对父容器**的百分比 ⇒ 两端一致，
 //   不违反"禁用 vh/vw"那条铁律（铁律禁的是视口单位，不是 `%`）。
 // ══════════════════════════════════════════════════════════════════════
-export const EVENT_NODE_UI = {
+// 🖥️📱 【双平台】`EVENT_NODE_UI_MOBILE`（手机端）+ `EVENT_NODE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const EVENT_NODE_UI_MOBILE = {
     // ══ ① 顶部：类型 / 稀有度徽章 + 事件名 ═════════════════════════════
     /** 距顶 px（原 top-7 = 28） */
     headerTop: 28,
@@ -225,7 +227,39 @@ export const EVENT_NODE_UI = {
     pickCardNameFontSize: 11,
     /** 卡名最大宽（原 max-w-[130px] —— **同样被 index.css:56 打死过**，默认 'none' 锁住现状） */
     pickCardNameMaxWidth: 'none',
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `EVENT_NODE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g5-rogue-modals.md` §2.3（双源交叉：git `0da5ee80` + 注释「原」值）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// 🔴 **两个 `max-w-*` 项刻意没有列进来**（`panelMaxWidth` / `pickCardNameMaxWidth`）——
+//    它们是**锁定项、不是手调**：原类被 `index.css:56` 打死过，值必须保持 `'none'` 锁住现状，
+//    一旦写数字会「突然真的生效、画面变窄」。⇒ 两端同值，不进 PC 差异项。
+// ══════════════════════════════════════════════════════════════════════
+const EVENT_NODE_UI_PC_DIFF = {
+    // ══ ① 顶部：类型 / 稀有度徽章 + 事件名 ═════════════════════════════
+    badgeFontSize: 11,          // 原 text-[11px]
+    titleFontSize: 36,          // 原 text-4xl
+
+    // ══ ② 中下方：叙事文案 ═════════════════════════════════════════════
+    storyFontSize: 19,          // 原 text-[19px]
+
+    // ══ ③ 右侧：选项栏容器 ═════════════════════════════════════════════
+    panelGap: 16,               // 原 gap-4
+
+    // ══ ④ 选项按钮（长条平行四边形） ═══════════════════════════════════
+    choiceImgIconSize: 28,      // 原 w-7 h-7
+    choiceTitleFontSize: 18,    // 原 text-lg
+    choiceSubFontSize: 11.5,    // 原 text-[11.5px]
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const EVENT_NODE_UI_PC = { ...EVENT_NODE_UI_MOBILE, ...EVENT_NODE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const EVENT_NODE_UI = pickTuning(EVENT_NODE_UI_PC, EVENT_NODE_UI_MOBILE);
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 悖论迷宫 · **篝火休整节点**（`NodeEventModal` 的 `type === 'rest'` 分支）· 视觉调参区
@@ -244,7 +278,8 @@ export const EVENT_NODE_UI = {
 //   ⇒ 刻意留在类名里没提参；要改列数说一声。
 // ⚠️ 二次确认弹窗是共享件 `ConfirmDialog` ⇒ 不在本块（要调得单独排期）。
 // ══════════════════════════════════════════════════════════════════════
-export const REST_NODE_UI = {
+// 🖥️📱 【双平台】`REST_NODE_UI_MOBILE`（手机端）+ `REST_NODE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const REST_NODE_UI_MOBILE = {
     // ══ ① 弹窗外壳 ═══════════════════════════════════════════════════
     /** 面板宽 px（原 w-[920px] = 920） */
     panelWidth: 920,
@@ -310,7 +345,27 @@ export const REST_NODE_UI = {
     emptyFontSize: 14,
     /** 空态上下内边距 px（原 py-4 = 16） */
     emptyPadY: 16,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `REST_NODE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g5-rogue-modals.md` §2.4（双源交叉：git `1a9185a3` + 注释「原」值）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ⚠️ 注意 `titleFontSize` 的 PC 值 24 —— 它与 `EVENT_NODE_UI.titleFontSize` 的**手机值**
+//    36 不是一回事（那个的 PC 值是 36）。批量改值时**不要按数值匹配**，认字段名。
+// ══════════════════════════════════════════════════════════════════════
+const REST_NODE_UI_PC_DIFF = {
+    // ══ ② 头部（火焰图标 + 「篝火 · 休整」+ 返回菜单） ════════════════
+    headerIconSize: 28,     // 原 <Flame size={28} />
+    titleFontSize: 24,      // 原 text-2xl
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const REST_NODE_UI_PC = { ...REST_NODE_UI_MOBILE, ...REST_NODE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const REST_NODE_UI = pickTuning(REST_NODE_UI_PC, REST_NODE_UI_MOBILE);
 
 interface NodeEventModalProps {
     type: Exclude<RogueNodeType, 'battle' | 'elite' | 'boss'>;

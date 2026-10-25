@@ -18,9 +18,12 @@ import { CURRENCY_ICONS, getSkinImage, PERSONALIZATION_ASSETS } from '../data/im
 import { getMissionItems } from '../data/skinData'; // [新增] 引入外观调度局 API
 import { getEquipmentById } from '../data/equipment'; // [2026-09-08] 武装奖励展示/弹窗
 import { eventBus, GameEvents } from '../utils/eventBus';
-import { ShardIcon } from './roguelike/ShardIcon'; // [2026-09-29 程拍板] 万能碎片橙菱形图标
+import { ShardIcon } from './roguelike/ShardIcon'; // [2026-09-29 程拍板] 万能碎片橙菱形图标（现作为插画兜底）
+// [2026-10-20 莉莉子 🎨 视觉层优化] 万能神格碎片插画（唯一真源在 chestArt）
+import { UNIVERSAL_SHARD_ART } from '../data/roguelike/chestArt';
 // [2026-09-09 莉莉子] 金光领取弹窗抽为共享组件（主大厅/肉鸽复用），数据构造器与卡图辅助一并移入
 import { RewardClaimPopup, buildRewardPopupData, getCardRewardImage, type RewardPopupData } from './RewardClaimPopup';
+import { pickTuning } from '../platform/tuning';
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 战区军功 · 任务面板（`MissionPanel`）· 视觉调参区（**程微调就改这里**）
 // ──────────────────────────────────────────────────────────────────────
@@ -44,7 +47,8 @@ import { RewardClaimPopup, buildRewardPopupData, getCardRewardImage, type Reward
 //     · `transition-*` · `shadow-*` · `bg-*` / `text-<色>` / `border-<色>`
 // ⚠️ 本屏无 `vh` / `vw`（合 `design-guide.md` §3 铁律）；`panelHighlightHeight` 是**父容器 `%`**。
 // ══════════════════════════════════════════════════════════════════════
-export const MISSION_UI = {
+// 🖥️📱 【双平台】`MISSION_UI_MOBILE`（手机端）+ `MISSION_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const MISSION_UI_MOBILE = {
     // ══ ① 面板本体 ════════════════════════════════════════════════════
     /** 面板宽 px（原 w-[1000px]） */
     panelWidth: 1300,
@@ -229,7 +233,57 @@ export const MISSION_UI = {
     previewRadius: 12,
     /** 大图描边 px（原 border-2 = 2） */
     previewBorderWidth: 2,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `MISSION_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g6-system.md` §2 的逐项表（git 基线 × 注释「原 XXX」双源）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ⚠️ `progressMaxWidth` / `rewardNameMaxWidth` 两个 `'none'` **不是手调**（是 `index.css:56`
+//    的 `max-w-*` 规避），两端本来就该一样 ⇒ **刻意不列在这里**，别顺手补进来。
+// ══════════════════════════════════════════════════════════════════════
+const MISSION_UI_PC_DIFF = {
+    // ══ ① 面板本体 ════════════════════════════════════════════════════
+    panelWidth: 1000,             // 原 w-[1000px]
+    panelHeight: 700,             // 原 h-[700px]
+
+    // ══ ② 左侧边栏 ════════════════════════════════════════════════════
+    sidebarWidth: 256,            // 原 w-64 = 256
+    titleFontSize: 20,            // 原 text-xl = 20
+    subtitleFontSize: 10,         // 原 text-[10px] = 10
+
+    // ══ ③ 标签按钮 ════════════════════════════════════════════════════
+    tabFontSize: 14,              // 原 text-sm = 14
+    dotSize: 10,                  // 原 w-2.5 h-2.5 = 10（内外两层共用）
+
+    // ══ ④ 右侧内容区 ══════════════════════════════════════════════════
+    closeIconSize: 24,            // 原 size={24}
+    pageTitleFontSize: 24,        // 原 text-2xl = 24
+
+    // ══ ⑤ 任务列表 ════════════════════════════════════════════════════
+    rowTitleFontSize: 18,         // 原 text-lg = 18
+    rowDescFontSize: 14,          // 原 text-sm = 14
+    progressTextFontSize: 10,     // 原 text-[10px] = 10
+
+    // ══ ⑥ 奖励展示 ════════════════════════════════════════════════════
+    goldIconSize: 20,             // 原 w-5 h-5 = 20
+    rewardFallbackIconSize: 18,   // 原 size={18}
+    rewardNameFontSize: 12,       // 原 text-xs = 12
+
+    // ══ ⑦ 状态按钮 ════════════════════════════════════════════════════
+    claimBtnFontSize: 14,         // 原 text-sm = 14
+
+    // ══ ⑧ 重置倒计时行 ════════════════════════════════════════════════
+    countdownIconSize: 14,        // 原 size={14}
+    countdownFontSize: 12,        // 原 text-xs = 12
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const MISSION_UI_PC = { ...MISSION_UI_MOBILE, ...MISSION_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const MISSION_UI = pickTuning(MISSION_UI_PC, MISSION_UI_MOBILE);
 
 
 // ============================================================================
@@ -459,7 +513,26 @@ export const MissionPanel: React.FC<MissionPanelProps> = ({ isOpen, onClose, mis
                                                 if (mission.reward.type === 'universalShard') {
                                                     return (
                                                         <div className="flex items-center bg-black/40 border-amber-500/30" style={{ gap: MISSION_UI.chipGap, paddingLeft: MISSION_UI.chipPadX, paddingRight: MISSION_UI.chipPadX, paddingTop: MISSION_UI.chipPadY, paddingBottom: MISSION_UI.chipPadY, borderRadius: MISSION_UI.chipRadius, borderWidth: MISSION_UI.chipBorderWidth, borderStyle: 'solid', minWidth: MISSION_UI.chipMinWidth }}>
-                                                            <ShardIcon size={20} className="shrink-0" />
+                                                            {/* [2026-10-20 莉莉子 🎨] 万能神格碎片插画（26px；20px 时缩略图看不清橙色菱形轮廓。兜底 ShardIcon 同步 26 保持失败态大小一致）
+                                                                ⚠️ 该图**带透明通道** ⇒ 兜底图标平时 opacity-0，只有加载失败才显形，避免透过插画露出来 */}
+                                                            <span className="relative shrink-0" style={{ width: 26, height: 26 }}>
+                                                                <span data-art-fallback className="absolute inset-0 opacity-0">
+                                                                    <ShardIcon size={26} />
+                                                                </span>
+                                                                <img
+                                                                    src={UNIVERSAL_SHARD_ART}
+                                                                    alt="万能神格碎片"
+                                                                    title="万能神格碎片（可替代任何天启者的专属碎片）"
+                                                                    className="relative w-full h-full object-contain"
+                                                                    draggable={false}
+                                                                    onError={e => {
+                                                                        const img = e.currentTarget;
+                                                                        img.style.visibility = 'hidden';
+                                                                        const fb = img.parentElement?.querySelector<HTMLElement>('[data-art-fallback]');
+                                                                        if (fb) fb.style.opacity = '1';
+                                                                    }}
+                                                                />
+                                                            </span>
                                                             <div className="flex flex-col items-start overflow-hidden">
                                                                 <span className="font-bold text-amber-500/80 tracking-widest uppercase" style={{ fontSize: MISSION_UI.rewardTagFontSize }}>SHARD</span>
                                                                 <span className="font-bold text-amber-200" style={{ fontSize: MISSION_UI.rewardNameFontSize }}>万能碎片 ×{mission.reward.amount ?? 0}</span>

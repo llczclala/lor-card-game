@@ -29,8 +29,10 @@ import { bindArmamentGaze } from './ArmamentPreview'; // [2026-08-26 莉莉子] 
 import { MAX_DIVINITY_LEVEL, getDivinityNodes, getDivinityIconKey } from '../../data/roguelike/heroDivinity'; // [2026-09-28 神格神经]
 import { useHeroDivinity } from '../../hooks/useHeroDivinity'; // [2026-09-28 神格神经] 解锁/碎片钱包
 import { HERO_IMAGES, SPELL_IMAGES } from '../../data/imageData'; // [2026-09-29] 神格神经：中央卡面原画 + 节点技能图标
-import { ShardIcon } from './ShardIcon'; // [2026-09-29 程拍板] 神格碎片图标（专属=头像菱形 / 万能=橙菱形）
+import { ShardIcon } from './ShardIcon'; // [2026-09-29 程拍板] 神格碎片图标（专属=头像菱形 / 万能=橙菱形，现仅作插画兜底）
+import { UNIVERSAL_SHARD_ART } from '../../data/roguelike/chestArt'; // [2026-10-20 莉莉子 🎨] 万能碎片插画（唯一真源在 chestArt）
 import { FullArtOverlay } from '../Overlays'; // [2026-10-15 莉莉子 · 触屏] 触屏详情入口（本项目既有惯例：本地 viewCard + FullArtOverlay）
+import { pickTuning, pickScalar } from '../../platform/tuning';
 
 // [2026-08-13] 流派图标映射（lucide + 阵营主题色，对齐 heroTheme 单一来源）
 const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
@@ -54,7 +56,8 @@ const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
 // ⚠️ 右半两张图（手牌样式 / 武装槽）的**内部尺寸不在这一段** —— 它们整体由 `handScale` 缩放；
 //    其中武装槽的槽高 = `HAND_CARD_HEIGHT × handScale`（见本文件 `HAND_CARD_HEIGHT`）。
 // ══════════════════════════════════════════════════════════════════════
-export const OVERVIEW_UI = {
+// 🖥️📱 【双平台】`OVERVIEW_UI_MOBILE`（手机端）+ `OVERVIEW_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const OVERVIEW_UI_MOBILE = {
     // ── 布局（原 `OVERVIEW_GEOMETRY`，值未变）────────────────────────────
     topGap: 200,           // 三个窗口离内容区顶部的距离（程可微调，px）
     topRowHeight: 300,    // 上排（流派/难度）窗口高度（≈ 初始牌组按钮顶部对齐；背景故事从此向下延伸到底部）
@@ -112,13 +115,32 @@ export const OVERVIEW_UI = {
 };
 
 // ══════════════════════════════════════════════════════════════════════
+// 🖥️ `OVERVIEW_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const OVERVIEW_UI_PC_DIFF = {
+    // ✅ 本块在 91 项分叉清单里**无差异项** —— 两端取值完全相同，全部继承手机端。
+    //    §3.2 已核：`topGap` / `topRowHeight` / `rightWidth` / `handScale` / `handOffsetTop`
+    //    / `armamentGap` / `gap` 这 7 项是 `OVERVIEW_GEOMETRY` 时代的手调旋钮，两端本来就一致。
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const OVERVIEW_UI_PC = { ...OVERVIEW_UI_MOBILE, ...OVERVIEW_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const OVERVIEW_UI = pickTuning(OVERVIEW_UI_PC, OVERVIEW_UI_MOBILE);
+
+// ══════════════════════════════════════════════════════════════════════
 // 🎛️ 天启者配置 · **天启者等级页**（`LevelsContent`）· 视觉调参区（**程微调就改这里**）
 // ──────────────────────────────────────────────────────────────────────
 // 这一页 = 竖排三块：①圆环头像 + 经验数字 ②「下一个等级奖励」横条（+ 开发者加减级按钮）③查看全部按钮。
 // 📌 原名 `LEVELS_GEOMETRY`，2026-10-16 按手册 §4 改名 `LEVELS_UI` 并补齐页内尺寸（**原值全部未变**）。
 // ⚠️ 「所有等级奖励」那个弹窗（`LevelRewardsModal`）的尺寸在文件顶部的 `LEVEL_REWARDS_UI`，**不在本块**。
 // ══════════════════════════════════════════════════════════════════════
-export const LEVELS_UI = {
+// 🖥️📱 【双平台】`LEVELS_UI_MOBILE`（手机端）+ `LEVELS_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const LEVELS_UI_MOBILE = {
     // ── 布局（原 `LEVELS_GEOMETRY`，值未变）──
     topGap: 100,           // 三个区域离内容区顶部的距离（程可微调，px）
     avatarSize: 400,       // 区域1 圆环头像直径 px（缩放大小）
@@ -180,6 +202,33 @@ export const LEVELS_UI = {
 };
 
 // ══════════════════════════════════════════════════════════════════════
+// 🖥️ `LEVELS_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const LEVELS_UI_PC_DIFF = {
+    // ── 区域 1：头像 + 经验 ──
+    expFontSize: 20,            // 原 text-xl
+
+    // ── 区域 2：下一个等级奖励 ──
+    rewardTitleFontSize: 14,    // 原 text-sm
+    levelCircleSize: 64,        // 原 w-16 h-16
+    levelNumberFontSize: 36,    // 原 text-4xl
+    rewardLabelFontSize: 20,    // 原 text-xl
+    rewardValueFontSize: 16,    // 原 text-base
+
+    // ── 区域 3：按钮行 ──
+    viewAllFontSize: 16,        // 原 text-base
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const LEVELS_UI_PC = { ...LEVELS_UI_MOBILE, ...LEVELS_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const LEVELS_UI = pickTuning(LEVELS_UI_PC, LEVELS_UI_MOBILE);
+
+// ══════════════════════════════════════════════════════════════════════
 // 🎛️ 天启者配置 · **初始牌组页**（`DeckContent`）· 视觉调参区（**程微调就改这里**）
 // ──────────────────────────────────────────────────────────────────────
 // 这一页 = 左「卡牌列表（横条 + 悬停大图检视 + 后方武装图标）」／右「手牌样式大图（无按钮）」。
@@ -188,7 +237,8 @@ export const LEVELS_UI = {
 //    因此每一行必须带 `shrink-0`：**列方向 flex 会压扁子项**，不补就会出现"行被压扁、滚动区反而滚不动"
 //    （2026-10-16 在备战枢纽上踩过同一条，别再犯）。
 // ══════════════════════════════════════════════════════════════════════
-export const DECK_UI = {
+// 🖥️📱 【双平台】`DECK_UI_MOBILE`（手机端）+ `DECK_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const DECK_UI_MOBILE = {
     // ── 布局（原 `DECK_GEOMETRY`，值未变）──
     topGap: 75,            // 整体距离内容区顶部 px
     listWidth: 700,        // 左侧卡牌列表宽度 px（[2026-08-26] 收窄，武装图标放每行卡牌后方独立区）
@@ -227,6 +277,32 @@ export const DECK_UI = {
 };
 
 // ══════════════════════════════════════════════════════════════════════
+// 🖥️ `DECK_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const DECK_UI_PC_DIFF = {
+    // ── 布局 ──
+    // 🔴 本项**缺「原」注释**，800 由 git 还原（`4a2dac59` / `1e3d4671` 两版均为 800），非注释标注。
+    listWidth: 800,             // 原 800（[2026-08-26] 收窄之前）
+
+    // ── 左侧卡牌列表 ──
+    rowHeight: 56,              // 原 h-14
+    costSize: 28,               // 原 w-7 h-7
+    costFontSize: 14,           // 原 text-sm
+    nameFontSize: 16,           // 原 text-base
+    equipIconSize: 40,          // 原 w-10 h-10
+    equipFontSize: 14,          // 原 text-sm
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const DECK_UI_PC = { ...DECK_UI_MOBILE, ...DECK_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const DECK_UI = pickTuning(DECK_UI_PC, DECK_UI_MOBILE);
+
+// ══════════════════════════════════════════════════════════════════════
 // 🎛️ 天启者配置 · **所有等级奖励弹窗**（`LevelRewardsModal`）· 视觉调参区（**程微调就改这里**）
 // ──────────────────────────────────────────────────────────────────────
 // 这一块 = 等级页点「查看所有天启者等级奖励」后弹出来的那个窗（标题栏 + 1~30 级奖励列表，可滚动）。
@@ -235,7 +311,8 @@ export const DECK_UI = {
 //    因此每一行都补了 `shrink-0`：**列方向 flex 会压扁子项**，不补会出现「行被压扁、滚动区反而滚不动」
 //    （同 `DECK_UI.listRowGap` 那条踩坑记录）。
 // ══════════════════════════════════════════════════════════════════════
-export const LEVEL_REWARDS_UI = {
+// 🖥️📱 【双平台】`LEVEL_REWARDS_UI_MOBILE`（手机端）+ `LEVEL_REWARDS_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const LEVEL_REWARDS_UI_MOBILE = {
     // ── ① 弹窗主体 ──
     /** 弹窗宽度 px（原 w-[720px]） */
     panelWidth: 720,
@@ -285,7 +362,31 @@ export const LEVEL_REWARDS_UI = {
     labelFontSize: 32,
     /** 奖励完整效果字号 px（原 text-sm = 14） */
     valueFontSize: 28,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `LEVEL_REWARDS_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const LEVEL_REWARDS_UI_PC_DIFF = {
+    // ── ② 标题栏 ──
+    titleFontSize: 20,          // 原 text-xl
+    closeIconSize: 20,          // 原 <X size={20} />
+
+    // ── ③ 奖励列表 ──
+    levelCircleSize: 48,        // 原 w-12 h-12
+    levelNumberFontSize: 24,    // 原 text-2xl
+    labelFontSize: 16,          // 原 text-base
+    valueFontSize: 14,          // 原 text-sm
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const LEVEL_REWARDS_UI_PC = { ...LEVEL_REWARDS_UI_MOBILE, ...LEVEL_REWARDS_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const LEVEL_REWARDS_UI = pickTuning(LEVEL_REWARDS_UI_PC, LEVEL_REWARDS_UI_MOBILE);
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 天启者配置 · **武装页**（`ArmamentContent`）+ 武装共享件 · 视觉调参区（**程微调就改这里**）
@@ -299,7 +400,8 @@ export const LEVEL_REWARDS_UI = {
 //      **没有**可搬的写死尺寸类（剩下的只有 `inset-*` / `inset-[3px]` 定位类，按规范不搬）。
 //    · `ArmamentSlots` 的间距来自 `gap` 参数、槽高由 `totalHeight` 均分 ⇒ 同样无可搬项。
 // ══════════════════════════════════════════════════════════════════════
-export const ARMAMENT_UI = {
+// 🖥️📱 【双平台】`ARMAMENT_UI_MOBILE`（手机端）+ `ARMAMENT_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const ARMAMENT_UI_MOBILE = {
     // ── ① 共享件：手牌样式 + 右侧武装槽组合 ──
     /** `HandWithArmament` 内「手牌 ↔ 武装槽组」间距 px（原 gap-6 = 24，**不被 gap 参数覆盖**） */
     handGroupGap: 24,
@@ -490,7 +592,57 @@ export const ARMAMENT_UI = {
     handleRadius: 16,
     /** 开合按钮箭头图标 px（原 `<ChevronsLeft size={18} />` / `<ChevronsRight size={18} />`） */
     handleIconSize: 36,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `ARMAMENT_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const ARMAMENT_UI_PC_DIFF = {
+    // ── ② 左侧：手牌样式 + 3 个武装槽 ──
+    leftGap: 40,                // 原 gap-10
+    handScale: 1.9,             // 原写死字面量 1.9
+    btnIconSize: 16,            // 原 <RefreshCw size={16} /> / <Minus size={16} />
+
+    // ── ③ 右侧武装库抽屉 ──
+    // ⚠️ 本项非单调改过：420 → 600 → 500；两源一致指向**原值 420**。
+    drawerWidth: 420,           // 原 w-[420px]
+    countFontSize: 12,          // 原 text-xs
+    searchFontSize: 14,         // 原 text-sm
+    searchIconSize: 14,         // 原 <Search size={14} />
+    toolIconSize: 15,           // 原 <Filter/…/RotateCcw size={15} />
+    sortMenuMarginTop: 4,       // 原 mt-1
+    sortItemFontSize: 12,       // 原 text-xs
+
+    // ── ④ 抽屉内筛选面板 ──
+    chipFontSize: 12,           // 原 text-xs
+    hintFontSize: 11,           // 原 text-[11px]
+    hintGap: 8,                 // 原 gap-2
+
+    // ── ⑤ 抽屉内武装列表 ──
+    emptyTitleFontSize: 14,     // 原 text-sm
+    emptyDescFontSize: 12,      // 原 text-xs
+    emptyBtnFontSize: 12,       // 原 text-xs
+    itemIconWidth: 60,          // 原写死裸数字 60
+    stockFontSize: 12,          // 原 text-xs
+    itemNameFontSize: 18,       // 原 text-lg
+    itemDescFontSize: 14,       // 原 text-sm
+    itemRarityFontSize: 12,     // 原 text-xs
+
+    // ── ⑥ 右缘开合按钮 ──
+    handleWidth: 32,            // 原 w-8
+    handleHeight: 56,           // 原 h-14
+    handleRadius: 8,            // 原 rounded-l-lg
+    handleIconSize: 18,         // 原 <ChevronsLeft size={18} /> / <ChevronsRight size={18} />
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const ARMAMENT_UI_PC = { ...ARMAMENT_UI_MOBILE, ...ARMAMENT_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const ARMAMENT_UI = pickTuning(ARMAMENT_UI_PC, ARMAMENT_UI_MOBILE);
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 天启者配置 · **共享小件**（`HeroHandContent` / `HeroAvatarRing`）· 视觉调参区（**程微调就改这里**）
@@ -505,7 +657,8 @@ export const ARMAMENT_UI = {
 //    没有 style 口子**（见 `components/CroppedAvatar.tsx` 的 props：cardKey / skinId / className），
 //    要搬就得改别的文件 ⇒ 按本轮"只改本文件"的红线**原地保留**。
 // ══════════════════════════════════════════════════════════════════════
-export const HERO_SHARED_UI = {
+// 🖥️📱 【双平台】`HERO_SHARED_UI_MOBILE`（手机端）+ `HERO_SHARED_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const HERO_SHARED_UI_MOBILE = {
     // ── HeroHandContent（单张英雄卡主视觉）──
     /** 「上标签 ↔ 卡面 ↔ 卡名」纵向间距 px（原 gap-3 = 12） */
     handLabelGap: 12,
@@ -523,7 +676,26 @@ export const HERO_SHARED_UI = {
     avatarLevelFontSize: 20,
     /** 等级黑圆描边粗细 px（原 border-2 = 2） */
     avatarLevelBorderWidth: 2,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `HERO_SHARED_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const HERO_SHARED_UI_PC_DIFF = {
+    // ✅ 本块在 91 项分叉清单里**无差异项** —— 两端取值完全相同，全部继承手机端。
+    //    §2 的手调提交逐项核对下来，`handLabelGap` / `handLabelSmallFontSize` / `handLabelNameFontSize`
+    //    / `handScaleMarginComp` / `avatarLevelBadgeSize` / `avatarLevelFontSize`
+    //    / `avatarLevelBorderWidth` 这 7 项从未被手调过。
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const HERO_SHARED_UI_PC = { ...HERO_SHARED_UI_MOBILE, ...HERO_SHARED_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const HERO_SHARED_UI = pickTuning(HERO_SHARED_UI_PC, HERO_SHARED_UI_MOBILE);
 
 // 内容类型：总览 / 初始牌组 / 天启者等级 / 武装 / 神格神经图 / 个性化（null = 未选）
 export type HeroInfoWindow = 'overview' | 'deck' | 'levels' | 'divinity' | 'armament' | 'personalize' | null;
@@ -1108,9 +1280,9 @@ const LevelRewardsModal: React.FC<{ isOpen: boolean; currentLevel: number; onClo
 const DIV_CARD_W = 310;                    // 中央卡面宽（**显式写死**）
 //   ↑ 不能改用 aspect-ratio + flex-1 —— 在 auto 宽容器里宽度会算飞，直接撑爆面板（踩过）
 const DIV_CARD_H = 540;                    // 中央卡面高
-const DIV_ICON_PX = 120;                    // 节点技能图标徽章直径
-const DIV_ICON_INNER_PX = 100;              // 徽章内圈（技能图）直径
-const DIV_BLOCK_W = 380;                   // 节点面板块宽
+const DIV_ICON_PX = pickScalar(96, 120);                    // 节点技能图标徽章直径
+const DIV_ICON_INNER_PX = pickScalar(80, 100);              // 徽章内圈（技能图）直径
+const DIV_BLOCK_W = pickScalar(250, 380);                   // 节点面板块宽
 const DIV_CARD_GAP = 26;                   // 卡面 ↔ 节点 的横向间距（收紧，别拉远）
 /** 弧线：**只有中间那个节点**（③④）往外推多少 px —— 上下两个留在原位，形成外弧 */
 const DIV_ARC_OFFSET = 44;
@@ -1141,17 +1313,17 @@ const DIV_EMPTY_NOTE_FONT = 12;            // 说明块字号（原 text-xs = 12
 const DIV_TOP_GAP = 12;                    // 顶部条 ↔ 神经图 ↔ 详情 的纵向间距（原 gap-3 = 12）
 const DIV_TOP_PAD_X = 8;                   // 顶部条左右内边距（原 px-2 = 8）
 const DIV_TOP_ROW_GAP = 8;                 // 左组（标题/星数）与右组（按钮/钱包）内部间距（原 gap-2 = 8）
-const DIV_HEAD_FONT = 28;                  // 「神格神经图」小标题字号（原 text-sm = 14）
+const DIV_HEAD_FONT = pickScalar(14, 28);                  // 「神格神经图」小标题字号（原 text-sm = 14）
 const DIV_STAR_ROW_GAP = 2;                // 星数那一排 ★ 的间距（原 gap-0.5 = 2）
-const DIV_HEAD_STAR_FONT = 26;             // 顶部星数字号（原 text-[13px]）
-const DIV_COUNT_FONT = 24;                 // 「N/6」计数号字号（原 text-xs = 12）
+const DIV_HEAD_STAR_FONT = pickScalar(13, 26);             // 顶部星数字号（原 text-[13px]）
+const DIV_COUNT_FONT = pickScalar(12, 24);                 // 「N/6」计数号字号（原 text-xs = 12）
 const DIV_CHIP_PAD_X = 12;                 // 胶囊（重置按钮 / 碎片钱包）左右内边距（原 px-3 = 12）
 const DIV_CHIP_PAD_Y = 4;                  // 胶囊上下内边距（原 py-1 = 4）
 const DIV_CHIP_RADIUS = 8;                 // 胶囊圆角（原 rounded-lg = 8）
-const DIV_CHIP_FONT = 24;                  // 胶囊字号（原 text-xs = 12）
+const DIV_CHIP_FONT = pickScalar(12, 24);                  // 胶囊字号（原 text-xs = 12）
 const DIV_CHIP_BORDER = 1;                 // 胶囊描边粗细（原 border = 1）
 const DIV_CHIP_GAP = 6;                    // 胶囊内「图标 ↔ 文字」间距（原 gap-1.5 = 6）
-const DIV_WALLET_ICON_PX = 30;             // 碎片钱包里的碎片图标（原 `<ShardIcon size={20} />`）
+const DIV_WALLET_ICON_PX = pickScalar(20, 30);             // 碎片钱包里的碎片图标（原 `<ShardIcon size={20} />`）
 
 // ── ③ 节点按钮 ──
 const DIV_NODE_GAP = 16;                   // 徽章 ↔ 文案 横向间距（原 gap-4 = 16）
@@ -1159,17 +1331,17 @@ const DIV_NODE_PAD_X = 16;                 // 按钮左右内边距（原内联 
 const DIV_NODE_PAD_Y = 14;                 // 按钮上下内边距（原内联 `padding: '14px 16px'` 的 14）
 const DIV_NODE_RADIUS = 16;                // 按钮圆角（原 rounded-2xl = 16）
 const DIV_NODE_BORDER = 1;                 // 按钮描边粗细（原 border = 1）
-const DIV_NODE_SLOT_FONT = 30;             // 无图标时兜底显示的节点号字号（原 text-xl = 20）
+const DIV_NODE_SLOT_FONT = pickScalar(20, 30);             // 无图标时兜底显示的节点号字号（原 text-xl = 20）
 const DIV_NODE_TEXT_GAP = 6;               // 文案三行之间间距（原 gap-1.5 = 6）
-const DIV_NODE_NUM_FONT = 26;              // 「节点 N」字号（原 text-[13px]）
-const DIV_NODE_TITLE_FONT = 36;            // 节点名字号（原 text-[21px]）
+const DIV_NODE_NUM_FONT = pickScalar(13, 26);              // 「节点 N」字号（原 text-[13px]）
+const DIV_NODE_TITLE_FONT = pickScalar(21, 36);            // 节点名字号（原 text-[21px]）
 const DIV_NODE_STATUS_FONT = 15;           // 状态行（已激活 / 消耗 N 片）字号（原 text-[15px]）
 const DIV_NODE_STATUS_GAP = 6;             // 状态行内「图标 ↔ 文字」间距（原 gap-1.5 = 6）
-const DIV_NODE_SHARD_PX = 32;              // 状态行里的碎片图标（原 `<ShardIcon size={16} />`）
-const DIV_STAR_BADGE_PX = 48;              // 已激活右下角金星直径（原 w-6 h-6 = 24）
+const DIV_NODE_SHARD_PX = pickScalar(16, 32);              // 状态行里的碎片图标（原 `<ShardIcon size={16} />`）
+const DIV_STAR_BADGE_PX = pickScalar(24, 48);              // 已激活右下角金星直径（原 w-6 h-6 = 24）
 const DIV_STAR_BADGE_FONT = 13;            // 金星字号（原 text-[13px]）
 const DIV_STAR_BADGE_BORDER = 2;           // 金星描边粗细（原 border-2 = 2）
-const DIV_DOT_PX = 32;                     // 可激活提示点直径（原 w-4 h-4 = 16）
+const DIV_DOT_PX = pickScalar(16, 32);                     // 可激活提示点直径（原 w-4 h-4 = 16）
 const DIV_DOT_BORDER = 2;                  // 提示点描边粗细（原 border-2 = 2）
 
 // ── ④ 中央天启者卡面 ──
@@ -1193,23 +1365,23 @@ const DIV_DETAIL_PAD_X = 16;               // 详情块左右内边距（原 px-
 const DIV_DETAIL_PAD_Y = 12;               // 详情块上下内边距（原 py-3 = 12）
 const DIV_DETAIL_HEAD_GAP = 8;             // 标题行内「名字 ↔ 节点徽标 ↔ 固定槽」间距（原 gap-2 = 8）
 const DIV_DETAIL_HEAD_MARGIN_BOTTOM = 4;   // 标题行与描述间距（原 mb-1 = 4）
-const DIV_BADGE_FONT = 15;                 // 「节点 N」小徽标 / 「全英雄固定槽」字号（原 text-[10px]）
+const DIV_BADGE_FONT = pickScalar(10, 15);                 // 「节点 N」小徽标 / 「全英雄固定槽」字号（原 text-[10px]）
 const DIV_BADGE_PAD_X = 6;                 // 小徽标左右内边距（原 px-1.5 = 6）
 const DIV_BADGE_PAD_Y = 2;                 // 小徽标上下内边距（原 py-0.5 = 2）
 const DIV_BADGE_RADIUS = 4;                // 小徽标圆角（原 rounded = 4）
-const DIV_DESC_FONT = 24;                  // 节点描述字号（原 text-xs = 12）
+const DIV_DESC_FONT = pickScalar(12, 24);                  // 节点描述字号（原 text-xs = 12）
 const DIV_DESC_MARGIN_BOTTOM = 8;          // 描述与消耗行间距（原 mb-2 = 8）
-const DIV_COST_FONT = 24;                  // 消耗明细行字号（原 text-[12px]）
+const DIV_COST_FONT = pickScalar(12, 24);                  // 消耗明细行字号（原 text-[12px]）
 const DIV_COST_GAP_X = 8;                  // 消耗明细横向间距（原 gap-x-2 = 8）
 const DIV_COST_GAP_Y = 4;                  // 消耗明细纵向间距（原 gap-y-1 = 4）
 const DIV_COST_ITEM_GAP = 4;               // 消耗明细内「碎片图标 ↔ 数字」间距（原 gap-1 = 4）
 const DIV_COST_MARGIN_BOTTOM = 8;          // 消耗明细与前置行间距（原 mb-2 = 8）
 const DIV_DETAIL_FOOT_GAP = 12;            // 底行「前置 ↔ 激活按钮」间距（原 gap-3 = 12）
-const DIV_REQ_FONT = 22;                   // 「前置：…」字号（原 text-[11px]）
+const DIV_REQ_FONT = pickScalar(11, 22);                   // 「前置：…」字号（原 text-[11px]）
 const DIV_ACT_BTN_PAD_X = 20;              // 激活按钮左右内边距（原 px-5 = 20）
 const DIV_ACT_BTN_PAD_Y = 6;               // 激活按钮上下内边距（原 py-1.5 = 6）
 const DIV_ACT_BTN_RADIUS = 8;              // 激活按钮圆角（原 rounded-lg = 8）
-const DIV_ACT_BTN_FONT = 24;               // 激活按钮字号（原 text-xs = 12）
+const DIV_ACT_BTN_FONT = pickScalar(12, 24);               // 激活按钮字号（原 text-xs = 12）
 
 export const DivinityContent: React.FC<{ heroKey: string; heroName: string; userSystem?: any }> = ({ heroKey, heroName, userSystem }) => {
     const { getUnlocked, getHeroShardCount, getUniversalShardCount, getSpendPlan, canUnlock, unlockNode, resetHero } = useHeroDivinity();
@@ -1378,7 +1550,7 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                             {resetArmed ? '确认重置？' : '重置'}
                         </button>
                     )}
-                    {/* [2026-09-29 程拍板] 碎片钱包：本英雄专属（头像菱形）+ 万能（橙菱形） */}
+                    {/* [2026-09-29 程拍板] 碎片钱包：本英雄专属（头像菱形）+ 万能（插画，2026-10-20 起） */}
                     <span className="flex items-center bg-purple-500/15 border-purple-400/40 text-purple-200 font-black"
                         style={{ gap: DIV_CHIP_GAP, paddingLeft: DIV_CHIP_PAD_X, paddingRight: DIV_CHIP_PAD_X, paddingTop: DIV_CHIP_PAD_Y, paddingBottom: DIV_CHIP_PAD_Y, borderRadius: DIV_CHIP_RADIUS, fontSize: DIV_CHIP_FONT, borderWidth: DIV_CHIP_BORDER, borderStyle: 'solid' }}
                         title={`${heroName}的神格碎片（专属，只能点本英雄）`}>
@@ -1387,7 +1559,9 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                     <span className="flex items-center bg-amber-500/15 border-amber-400/40 text-amber-200 font-black"
                         style={{ gap: DIV_CHIP_GAP, paddingLeft: DIV_CHIP_PAD_X, paddingRight: DIV_CHIP_PAD_X, paddingTop: DIV_CHIP_PAD_Y, paddingBottom: DIV_CHIP_PAD_Y, borderRadius: DIV_CHIP_RADIUS, fontSize: DIV_CHIP_FONT, borderWidth: DIV_CHIP_BORDER, borderStyle: 'solid' }}
                         title="万能碎片（可替代任何天启者的专属碎片）">
-                        <ShardIcon size={DIV_WALLET_ICON_PX} /> 万能 {uniShards}
+                        {/* [2026-10-20 莉莉子 🎨] 换成万能碎片插画（原先用橙色菱形占位图标） */}
+                        <img src={UNIVERSAL_SHARD_ART} alt="万能神格碎片" className="object-contain shrink-0"
+                            style={{ width: DIV_WALLET_ICON_PX, height: DIV_WALLET_ICON_PX }} draggable={false} /> 万能 {uniShards}
                     </span>
                 </div>
             </div>
@@ -1489,7 +1663,9 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                                 </span>
                                 {plan.universalSpend > 0 && (
                                     <span className="flex items-center text-amber-300" style={{ gap: DIV_COST_ITEM_GAP }}>
-                                        <ShardIcon size={DIV_NODE_SHARD_PX} />{plan.universalSpend} 万能
+                                        {/* [2026-10-20 莉莉子 🎨] 万能碎片插画（原先橙色菱形占位） */}
+                                        <img src={UNIVERSAL_SHARD_ART} alt="万能神格碎片" className="object-contain shrink-0"
+                                            style={{ width: DIV_NODE_SHARD_PX, height: DIV_NODE_SHARD_PX }} draggable={false} />{plan.universalSpend} 万能
                                     </span>
                                 )}
                                 <span className="text-gray-500">（共 {plan.total} 片）</span>
@@ -1572,7 +1748,7 @@ const ARM_SORT_LABELS: Record<ArmSortMode, string> = {
     order: '原始顺序',
 };
 const ARM_RARITY_ORDER = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'] as const;
-// 武装/装备持有数量上限（每个最多 3 个；开发者持有所有武装和装备各 3）
+// ⚠️ 这是**槽间距 px**（不是持有数量上限！持有上限见 `data/roguelike/armamentStock.ts` 的 MAX_ARMAMENT_STOCK）
 const ARMAMENT_MAX_STOCK = 3;
 // [2026-09-07 程拍板] 品质上限空槽 = 斜向渐变（左上品质色 → 右下渐透），通透不艳、无文字
 /** 描边层渐变：左上 cap 色 b3(70%) → 中段 40 → 右下透明 */
@@ -1673,11 +1849,11 @@ interface ArmDragState { type: 'slot' | 'lib'; id: string; fromSlot: number; sta
 const isPointInRect = (x: number, y: number, r: DOMRect) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 
 /** 武装界面：手牌样式 + 3 个武装槽（放大，对齐其他界面尺寸）+ 右侧抽屉武装库
- *  槽位右侧更换按钮 → 屏幕右侧滑出抽屉收纳武装；点击或拖拽配置；每个最多持有 3 个，用完变灰 X0
- *  普通玩家：仅武装可选；开发者：全部装备+武装可选（持有所有装备和武装各 3）
+ *  槽位右侧更换按钮 → 屏幕右侧滑出抽屉收纳武装；点击或拖拽配置；每位天启者各持有 1 份，用完变灰 X0
+ *  普通玩家：仅武装可选；开发者：全部装备+武装可选（普通武装各 1 份，消耗品看真实库存）
  */
 export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = ({ heroKey, userSystem }) => {
-    const { config, getArmament, setArmamentSlot, getQualityTier } = useArmamentConfig(); // [2026-09-07] config：数量库存全局占用计算
+    const { getArmament, setArmamentSlot, getQualityTier } = useArmamentConfig(); // [2026-10-19] 不再需要 config：占用改为按英雄独立，全局占用统计已移除
     const isDev = userSystem?.userId === 'dev_full_admin'; // [2026-08-14] 开发者账号独有：全装备可装
     const [activeSlot, setActiveSlot] = useState<number | null>(null); // 正在更换的槽（null=收起抽屉）
     const [dragOverSlot, setDragOverSlot] = useState<number | null>(null); // [2026-08-14] 正在拖入的槽（白框反馈）
@@ -1783,32 +1959,20 @@ export const ArmamentContent: React.FC<{ heroKey: string; userSystem?: any }> = 
         return getArmamentDefs().filter(def => (armStockMap[def.id] ?? 0) > 0);
     }, [isDev, armStockMap]);
 
-    // [2026-09-07 数量库存] 可用数量 = 库存份数 − 全局已占用槽位份数（库存共享：可跨英雄分装）
+    // [2026-10-19 程拍板 · 独立武装库] 可用数量 = **本英雄**还能装几份该武装（不再扣其它天启者的占用）
     const stockOf = (def: EquipmentDef) => {
         if (!def.isArmament && !isDev) return 0;
         // [2026-09-25 莉莉子 武装不叠加] 同一天启者内不允许重复武装：已在本英雄任一槽 → 不可再装。
-        //   原「同一天启者可三槽各放 1 个相同武装」作废（战斗构建对同名武装硬去重，多装纯浪费库存）；
-        //   不同天启者之间仍可各带一份（一局只上一个英雄，不存在叠加问题）。原碳原子板特判并入本规则。
+        //   不同天启者之间互不影响（一局只上一个英雄，也不存在叠加问题）。
         if ((activeSlots ?? []).includes(def.id)) return 0;
-        // [2026-09-08 修复] 占用跨全英雄统计；消耗品/普通都尊重真实库存——
-        //  开发者普通武装库存为 0 时给 3 份便于白嫖测试；但消耗品一律看真实库存（福利领 6 就该显示 ×6，不被开发者上限盖掉）
-        //
-        // 🔴 [2026-10-05 莉莉子 BUG修复] **占用只统计「已解锁槽」** ——
-        //   病根：原先遍历每个英雄的**全部 3 个槽**（含未解锁），而"生效"判定用的是
-        //   `activeSlots = slots.slice(0, unlockSlots)`（只含已解锁槽）⇒ **两套口径不一致**：
-        //   未解锁槽里的**历史残留**会**虚占库存** ⇒ 玩家"明明还有份数，却显示装不了"
-        //   （典型场景：某英雄还低等级时留下的残留，此后一直占着别人的份数）。
-        //   ⚠️ 每个英雄的解锁槽数**各不相同**（Lv1 / Lv9 / Lv18 → 1 / 2 / 3 槽，
-        //      见 heroProgression 的等级里程碑），必须按**各自的等级**算，不能用同一个 n。
-        //   📌 与「未解锁槽的残留不生效」同一条口径（见 useArmamentConfig.getArmament 的注释）。
-        let occupied = 0;
-        for (const [hk, arr] of Object.entries(config ?? {})) {
-            const n = Math.max(1, getHeroLevelBonus(heroProgression.getHeroLevel(hk)).armamentSlots);
-            for (let i = 0; i < n; i++) if (arr?.[i] === def.id) occupied++;
-        }
+        // 🔵 [2026-10-19 程拍板] 与原实现（`库存 − 全英雄已占槽数`）的根本差别：
+        //   武装库**按天启者独立** —— A 装了这件，B 仍然显示 ×1、照样能装。
+        //   ⇒ 占用的唯一口径 = 本英雄自己的槽（上一行的 activeSlots 判定），不再遍历其它英雄。
+        //   ⚠️ 保持「只算已解锁槽」语义：`activeSlots` 是 `slots.slice(0, unlockSlots)`，
+        //      未解锁槽里的历史残留**不占份数**（否则又回到"有份数却显示装不了"的老 BUG）。
         const have = armStockMap[def.id] ?? 0;
-        const base = isDev && !def.consumable && have === 0 ? 3 : have;
-        return Math.max(0, base - occupied);
+        // 开发者未持有普通武装时兜底 1 份（便于白嫖测试；消耗品一律看真实库存，福利领 6 就该显示 ×6）
+        return isDev && !def.consumable && have === 0 ? 1 : have;
     };
     // [2026-08-26 莉莉子] 可装备判断：某武装能否装进第 slotIdx 个槽（[2026-09-07] 品质上限按槽独立 + 数量）
     const isEquippable = (def: EquipmentDef, slotIdx: number) => {

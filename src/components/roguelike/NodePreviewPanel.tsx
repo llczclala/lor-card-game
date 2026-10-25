@@ -61,7 +61,11 @@ export const NodePreviewPanel: React.FC<NodePreviewPanelProps> = ({ node, run, s
     const bindBuffHover = (buff: MazeBuff) => ({
         onMouseEnter: (e: React.MouseEvent) => {
             clearLeave();
-            enterTimerRef.current = setTimeout(() => setHoverBuff({ buff, rect: e.currentTarget.getBoundingClientRect() }), 500);
+            // [2026-10-20 莉莉子 · 图鉴 NEW 角标] `noNew: true` —— 本面板上的强化是**敌方**的
+            //   （`node.enemyBuffs`，与玩家共用同一套 id 空间），敌方强化不在玩家图鉴里，
+            //   自动判定会把每一件敌方强化都标成 NEW。同场景另一个入口
+            //   （`RogueEnhancementPanel`）用的是另一张无角标的卡，两处表现必须一致。
+            enterTimerRef.current = setTimeout(() => setHoverBuff({ buff, rect: e.currentTarget.getBoundingClientRect(), noNew: true }), 500);
         },
         onMouseLeave: () => {
             clearEnter();

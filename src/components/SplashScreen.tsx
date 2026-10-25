@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { SENTRY_IMAGE_HASH, SENTRY_IMAGE_PATH } from '../data/sentryHash';
 import titleLogo from '../image/icon/titile.webp'; // [哨兵] 游戏标题图片
 import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 首次点击音效
+import { pickTuning } from '../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 启动页 · 视觉调参区（**程微调就改这里**）
@@ -11,7 +12,9 @@ import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉�
 // 改完存盘即生效（HMR 直接刷新，电脑上就能看到，不用出包）。
 // 用法：先调【主旋钮】scale 把整体大小定下来，再动下面的细节值。
 // ══════════════════════════════════════════════════════════════════════
-export const SPLASH_UI = {
+// 🖥️📱 【双平台】本屏两份值：`SPLASH_UI_MOBILE`（手机端，程在雷电里调）+ `SPLASH_UI_PC`（PC 端，见下方）。
+//   判定收在 `src/platform/tuning.ts`；电脑浏览器 = PC 版，雷电 = 手机版，天然可对比。
+const SPLASH_UI_MOBILE = {
     /** 【主旋钮】整屏内容整体缩放（1 = 原样） */
     scale: 1,
 
@@ -39,7 +42,45 @@ export const SPLASH_UI = {
         versionSize: 10,    // 底部版本号字号 px（原 text-[10px]）
         versionBottom: 18,  // 版本号距屏幕底边 px（原 bottom-6）
     },
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`git show e6963262:src/components/SplashScreen.tsx`（2026-10-13，
+//       = 本周手机端适配开始前的版本），逐项由那一版的 Tailwind 类反推：
+//       `space-y-5` / `text-4xl mb-6` / `text-2xl` / `w-[420px] mb-10` / `space-y-1` / `bottom-6` …
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// 嵌套对象（health / legal）各自浅合并，因为 texture 是两层结构。
+// ══════════════════════════════════════════════════════════════════════
+const SPLASH_UI_PC = {
+    ...SPLASH_UI_MOBILE,
+    health: {
+        ...SPLASH_UI_MOBILE.health,
+        titleSize: 36,   // 原 text-4xl
+        titleGap: 24,    // 原 mb-6
+        bodySize: 24,    // 原 text-2xl
+        lineGap: 20,     // 原 space-y-5
+    },
+    legal: {
+        ...SPLASH_UI_MOBILE.legal,
+        logoWidth: 420,      // 原 w-[420px]
+        logoGap: 40,         // 原 mb-10
+        strongSize: 18,      // 原 text-lg
+        bodySize: 16,        // 原 text-base
+        lineGap: 4,          // 原 space-y-1
+        blankHeight: 12,     // 原 h-3
+        textGap: 40,         // 原 mb-10
+        btnFontSize: 14,     // 原 text-sm
+        btnPadX: 40,         // 原 px-10
+        btnPadY: 12,         // 原 py-3
+        /** ⚠️ 这是本屏**唯一被手机端调小**的项（18 → 24）：PC 端恢复后版本号会**往上抬** */
+        versionBottom: 24,   // 原 bottom-6
+    },
+};
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const SPLASH_UI = pickTuning(SPLASH_UI_PC, SPLASH_UI_MOBILE);
 
 /** 使用 Web Crypto API 计算 SHA-256 */
 async function computeSHA256(url: string): Promise<string> {
@@ -317,6 +358,12 @@ const DisclaimerScreen: React.FC<{
             </div>
 
             {/* 底部版本 */}
+            {/* [2026-10-18 莉莉子 BUG修复] 此前这里是**硬编码 `v1.0.7`**，从 1.0.7 之后一路没再跟过版本
+                ⇒ 玩家每次开机看到的都是错版本号（v1.0.20 时仍显示 1.0.7）。
+                现改用全项目统一的编译期常量 `import.meta.env.PACKAGE_VERSION`
+                （由 `vite.config.ts` / `vite.android.config.ts` 从 `package.json` 注入，
+                  声明见 `src/vite-env.d.ts:45`；设置页与 `App.tsx` 走的也是这条通路）。
+                ⚠️ 防回归：**任何界面都不许再手写版本号** —— 改 `package.json` 一处即可全局跟随。 */}
             <div
                 className="absolute text-slate-300 tracking-wider font-mono"
                 style={{
@@ -324,7 +371,7 @@ const DisclaimerScreen: React.FC<{
                     fontSize: SPLASH_UI.legal.versionSize,
                 }}
             >
-                v1.0.7 · FAN-MADE · FREE
+                v{import.meta.env.PACKAGE_VERSION} · FAN-MADE · FREE
             </div>
         </motion.div>
     );

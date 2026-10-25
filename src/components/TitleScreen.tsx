@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AccountSelectionModal } from './AccountSelectionModal';
 import type { useUserSystem } from '../hooks/useUserSystem';
 import chengAvatar from '../image/icon/CQWRSZDSA432.webp'; // [哨兵] 程的头像
+import { pickTuning } from '../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 标题页/登录页 · 视觉调参区（**程微调就改这里**）
@@ -13,11 +14,18 @@ import chengAvatar from '../image/icon/CQWRSZDSA432.webp'; // [哨兵] 程的头
 // 这一屏 = 点掉「点击进入游戏」之后、带「开始游戏」按钮的那一屏。
 // 管：标题 logo /「开始游戏」/ PRESS START / 头像+B站 / 左上账号按钮 / 屏与块的留白。
 // 改完存盘即生效（HMR 直接刷新，电脑上就能看到，不用出包）。
+//
+// 🖥️📱 【双平台】本屏有两套值，同一份代码按运行平台自动二选一：
+//   · `TITLE_UI_MOBILE` = 手机端（安卓壳）—— **程在雷电里调的就是这份**
+//   · `TITLE_UI_PC_DIFF` = PC 端差异项 —— 只列**与手机不同**的项，其余继承手机值
+//   判定收在 `src/platform/tuning.ts`（合 `platform/index.ts` 铁律：组件里不出现 isNative）。
+//   ⇒ 电脑浏览器开 dev server = PC 版，雷电 = 手机版，天然可对比，不用切换开关。
 // 用法：先调【主旋钮】scale 把整块大小定下来，再动下面的细节值。
 // ⚠️ scale 的支点在【底部】——放大时内容往上长；若顶部被裁，把组件里的
 //    transformOrigin 改成 'center center' 变成上下平分。
 // ══════════════════════════════════════════════════════════════════════
-export const TITLE_UI = {
+// 📱 手机端值（= 原 `TITLE_UI`，值一个没动；程继续在这里调）
+const TITLE_UI_MOBILE = {
     /** 【主旋钮】核心内容块整体缩放（1 = 原样）。左上账号按钮不在这个块里。 */
     scale: 1,
 
@@ -69,7 +77,53 @@ export const TITLE_UI = {
     toastGap: 12,          // 原 gap-3
     toastDotSize: 8,       // 绿点尺寸 px（原 w-2 h-2）
     toastY: 20,            // 出现后距屏幕顶部的落点 px（原 animate y:20）
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`git show e6963262:src/components/TitleScreen.tsx`（2026-10-13，
+//       = 本周手机端适配开始前的版本），**逐项由那一版的 Tailwind 类反推**，
+//       没有采信注释（注释可能过时 —— 先例见 `MAP_BTN` / `DIORAMA_SIZE`）。
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const TITLE_UI_PC_DIFF = {
+    // ══ ① 标题 logo ══════════════════════════════════════════════════
+    logoWidth: 450,     // 原 w-[450px]
+    logoGap: 32,        // 原 mb-8（手机端把它压到了 16）
+
+    // ══ ② 「开始游戏」主按钮 ═════════════════════════════════════════
+    startFontSize: 20,  // 原 text-xl
+    startIconSize: 24,  // 原 <Sword /> 未传 size ⇒ lucide 默认 24
+    startPadX: 48,      // 原 px-12
+    startPadY: 16,      // 原 py-4
+    startIconGap: 16,   // 原 gap-4
+
+    // ══ ④ 底部行（头像 + B站入口）════════════════════════════════════
+    footerGap: 40,      // 原 mt-10（手机端把它压到了 15）
+    avatarSize: 56,     // 原 w-14 / h-14
+    footerItemGap: 20,  // 原 gap-5
+    biliFontSize: 14,   // 原 text-sm
+    biliIconSize: 28,   // 原 w-7 / h-7
+    biliPadX: 16,       // 原 px-4
+    biliPadY: 8,        // 原 py-2
+    biliIconGap: 12,    // 原 gap-3
+
+    // ══ ⑤ 左上角账号按钮 ═════════════════════════════════════════════
+    accountFontSize: 12,   // 原 text-xs
+    accountIconSize: 16,   // 原 <UserCircle size={16} />
+    accountPadX: 16,       // 原 px-4
+    accountPadY: 8,        // 原 py-2
+    accountIconGap: 8,     // 原 gap-2
+    accountTop: 16,        // 原 top-4
+    accountLeft: 16,       // 原 left-4
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const TITLE_UI_PC = { ...TITLE_UI_MOBILE, ...TITLE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const TITLE_UI = pickTuning(TITLE_UI_PC, TITLE_UI_MOBILE);
 
 interface User {
     uid: string;
@@ -148,6 +202,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     onDeleteUser={userSystem.deleteUser}
                     onCreateUser={userSystem.createNewUser}
                     onClose={() => setShowAccountModal(false)}
+                    onRefreshList={userSystem.refreshUserList}
                 />
             )}
 

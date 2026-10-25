@@ -24,17 +24,20 @@ export const SpellCard: React.FC<SpellCardProps> = ({ data, className = '', burn
     // [2026-07-14] 兜底计算 displayParams：从效果定义读取参数替换{value}
     const resolvedDisplayParams = useMemo<Record<string, number> | undefined>(() => {
         if (externalDisplayParams) return externalDisplayParams; // 外部传入优先
-        if (!data.effects || data.effects.length === 0) return undefined;
-        const effectDef = EFFECT_DB[data.effects[0]];
-        if (!effectDef?.params) return undefined;
         const display: Record<string, number> = {};
-        for (const [key, val] of Object.entries(effectDef.params)) {
-            if (typeof val === 'number') {
-                display[key] = val;
+        // ① 效果定义里的数字参数（原有口径）
+        if (data.effects?.length) {
+            const effectDef = EFFECT_DB[data.effects[0]];
+            for (const [key, val] of Object.entries(effectDef?.params ?? {})) {
+                if (typeof val === 'number') display[key] = val;
             }
         }
+        // ② [2026-10-24 程拍板] **卡自身携带的动态值**：让「囤积」把"已攒多少点"实时上卡面。
+        //    ⚠️ `data.hoardStored` 必须进依赖数组 —— 玩家每打出别的卡，只有这个字段变，
+        //       `data` 的引用会换但 `effects` 不变；漏了依赖就不会重算，数字永远停在第一次渲染的值。
+        if (data.key === 'spell_hoard') display.hoardStored = data.hoardStored ?? 0;
         return Object.keys(display).length > 0 ? display : undefined;
-    }, [externalDisplayParams, data.effects]);
+    }, [externalDisplayParams, data.effects, data.key, data.hoardStored]);
 
     // 替换描述中的 {paramName} 占位符
     const renderDescription = (description: string): React.ReactNode => {

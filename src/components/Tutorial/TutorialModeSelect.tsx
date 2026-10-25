@@ -4,6 +4,7 @@ import { ArrowLeft, Home, Sword, BookOpen, Lock } from 'lucide-react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { EXAM_CATEGORIES } from '../../data/tutorialStages';
 import type { ExamCategoryId } from '../../data/tutorialStages';
+import { pickTuning } from '../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 战术考核 · **考核分类选择**（`TutorialModeSelect`）· 视觉调参区（**程微调就改这里**）
@@ -23,7 +24,8 @@ import type { ExamCategoryId } from '../../data/tutorialStages';
 // ⚠️ 口径：字号只搬 `fontSize`、**不配写死 `lineHeight`**（规范 §6）；因此这几处字号的行高由
 //   Tailwind `text-*` 的配套行高改为继承 1.5（项目既定口径，有意如此，别回改成成对行高）。
 // ══════════════════════════════════════════════════════════════════════
-export const TUTORIAL_MODE_UI = {
+// 🖥️📱 【双平台】`TUTORIAL_MODE_UI_MOBILE`（手机端）+ `TUTORIAL_MODE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const TUTORIAL_MODE_UI_MOBILE = {
     // ══ ① 右上角：返回大厅 / 返回模式选择 ═════════════════════════════
     /** 整组距顶 px（原 top-8 = 32） */
     cornerTop: 32,
@@ -36,15 +38,15 @@ export const TUTORIAL_MODE_UI = {
     /** 圆钮描边 px（原 border = 1） */
     cornerBtnBorderWidth: 1,
     /** 圆钮里的图标 px（原 <Home size={24} /> / <ArrowLeft size={24} /> = 24） */
-    cornerIconSize: 24,
+    cornerIconSize: 48,
 
     // ══ ② 标题：战术考核 + 副标题 ═════════════════════════════════════
     /** 标题块下距 px（原 mb-12 = 48） */
     titleMarginBottom: 48,
     /** 「战术考核」字号 px（原 text-4xl = 36） */
-    titleFontSize: 36,
+    titleFontSize: 72,
     /** 副标题字号 px（原 text-sm = 14） */
-    subtitleFontSize: 14,
+    subtitleFontSize: 28,
     /** 副标题上距 px（原 mt-2 = 8） */
     subtitleMarginTop: 8,
 
@@ -52,9 +54,9 @@ export const TUTORIAL_MODE_UI = {
     /** 卡片行间距 px（原 gap-8 = 32） */
     rowGap: 32,
     /** 单卡宽 px（原 w-72 = 288） */
-    cardWidth: 288,
+    cardWidth: 488,
     /** 单卡高 px（原 h-96 = 384） */
-    cardHeight: 384,
+    cardHeight: 584,
     /** 单卡圆角 px（原 rounded-3xl = 24） */
     cardRadius: 24,
     /** 单卡描边 px（原 border = 1 · 颜色仍走 `CATEGORY_THEMES.border`） */
@@ -62,28 +64,63 @@ export const TUTORIAL_MODE_UI = {
     /** 卡片顶部装饰条高 px（原 h-1.5 = 6） */
     cardTopBarHeight: 6,
     /** 卡片中央分类大图标 px（原 `CATEGORY_ICONS` 里 <Sword size={36} /> 等三个 = 36） */
-    cardIconSize: 36,
+    cardIconSize: 72,
     /** 卡片内容区内边距 px（原 p-8 = 32） */
     cardPad: 32,
     /** 卡片内容区行距 px（原 gap-6 = 24） */
     cardGap: 24,
     /** 分类名字号 px（原 text-2xl = 24） */
-    cardNameFontSize: 24,
+    cardNameFontSize: 48,
     /** 分类描述字号 px（原 text-sm = 14） */
-    cardDescFontSize: 14,
+    cardDescFontSize: 28,
     /** 「N 个考核关卡」距卡底 px（原 bottom-8 = 32） */
     cardCountBottom: 32,
     /** 「N 个考核关卡」字号 px（原 text-xs = 12） */
-    cardCountFontSize: 12,
+    cardCountFontSize: 24,
     /** 锁定遮罩「COMING SOON」字号 px（原 text-sm = 14） */
-    lockTextFontSize: 14,
+    lockTextFontSize: 28,
 
     // ══ ④ 底部提示 ═══════════════════════════════════════════════════
     /** 距底 px（原 bottom-8 = 32） */
     footerBottom: 32,
     /** 字号 px（原 text-xs = 12） */
-    footerFontSize: 12,
-} as const;
+    footerFontSize: 24,
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `TUTORIAL_MODE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g6-system.md` §2 的逐项表（git 基线 × 注释「原 XXX」双源）。
+// ⚠️ 本块全 11 项差异都在**工作区未提交改动**里（该文件最后一次提交是抽取提交 `12dab176`，
+//    之后没有 tuning 提交）—— 数值是**真实的**手调，照做；`git diff` 可复现。
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const TUTORIAL_MODE_UI_PC_DIFF = {
+    // ══ ① 右上角两个圆钮 ═══════════════════════════════════════════════
+    cornerIconSize: 24,           // 原 <Home size={24} /> / <ArrowLeft size={24} /> = 24
+
+    // ══ ② 标题与副标题 ═════════════════════════════════════════════════
+    titleFontSize: 36,            // 原 text-4xl = 36
+    subtitleFontSize: 14,         // 原 text-sm = 14
+
+    // ══ ③ 三张分类卡 ═══════════════════════════════════════════════════
+    cardWidth: 288,               // 原 w-72 = 288
+    cardHeight: 384,              // 原 h-96 = 384
+    cardIconSize: 36,             // 原 `CATEGORY_ICONS` 里 <Sword size={36} /> 等三个 = 36
+    cardNameFontSize: 24,         // 原 text-2xl = 24
+    cardDescFontSize: 14,         // 原 text-sm = 14
+    cardCountFontSize: 12,        // 原 text-xs = 12
+    lockTextFontSize: 14,         // 原 text-sm = 14
+
+    // ══ ④ 底部提示 ═════════════════════════════════════════════════════
+    footerFontSize: 12,           // 原 text-xs = 12
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const TUTORIAL_MODE_UI_PC = { ...TUTORIAL_MODE_UI_MOBILE, ...TUTORIAL_MODE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const TUTORIAL_MODE_UI = pickTuning(TUTORIAL_MODE_UI_PC, TUTORIAL_MODE_UI_MOBILE);
 
 interface TutorialModeSelectProps {
     onSelectCategory: (categoryId: ExamCategoryId) => void;

@@ -14,6 +14,7 @@ import { getHeroTheme } from '../../data/roguelike/heroTheme'; // [2026-08-13] �
 import { OverviewContent, HeroAvatarRing, HeroHandContent, DeckContent, LevelsContent, DivinityContent, ArmamentContent, type HeroInfoWindow } from './RogueHeroInfoModal'; // [2026-08-13] 内容组件 · [2026-09-28] 神格神经占位 → DivinityContent
 import { HeroSelectModal } from './HeroSelectModal'; // [2026-08-13] 更换天启者弹窗
 import { RoguePersonalize } from './RoguePersonalize'; // [2026-08-13] 个性化界面（照搬 PVE 枢纽详情）
+import { pickTuning } from '../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 天启者配置界面**外壳**（`RogueHeroSelect`）· 视觉调参区（**程微调就改这里**）
@@ -37,7 +38,8 @@ import { RoguePersonalize } from './RoguePersonalize'; // [2026-08-13] 个性化
 // ⚠️ 头像圆环（`HeroAvatarRing`）、手牌样式大图（`HeroHandContent`）的**内部尺寸不在本文件**
 //    ⇒ 它们的"整体大小"由内容侧那个文件里的 `scale` / `size` 参数控制（总览页见 `OVERVIEW_UI`）。
 // ══════════════════════════════════════════════════════════════════════
-export const ROGUE_HERO_UI = {
+// 🖥️📱 【双平台】`ROGUE_HERO_UI_MOBILE`（手机端）+ `ROGUE_HERO_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const ROGUE_HERO_UI_MOBILE = {
     // ══ ① 左上返回按钮 ═════════════════════════════════════════════════
     /** 距顶 px（原 top-6 = 24） */
     backTop: 24,
@@ -125,7 +127,39 @@ export const ROGUE_HERO_UI = {
     swapIconSize: 33,
     /** 「更换天启者」文字字号 px（原 text-[10px] = 10） */
     swapLabelFontSize: 20,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `ROGUE_HERO_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g3-hero-config.md` §2 的逐项表（双源一致）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const ROGUE_HERO_UI_PC_DIFF = {
+    // ══ ① 左上返回按钮 ═════════════════════════════════════════════════
+    backIconSize: 22,       // 原 <ArrowLeft size={22} />
+
+    // ══ ③ 左列：圆环头像 + 名字 + 星槽 ═════════════════════════════════
+    leftColumnWidth: 280,   // 原 w-[280px]
+    nameFontSize: 24,       // 原 text-2xl
+    starSize: 18,           // 原 <Star size={18} />
+
+    // ══ ④ 六个页签按钮 ═════════════════════════════════════════════════
+    tabsShift: -256,        // 原 -mt-64
+    tabItemGap: 12,         // 原 gap-3
+    tabLabelFontSize: 20,   // 原 text-xl
+
+    // ══ ⑦ 左下角「更换天启者」═══════════════════════════════════════════
+    swapBtnSize: 56,        // 原 w-14 h-14
+    swapIconSize: 22,       // 原 <RefreshCcw size={22} />
+    swapLabelFontSize: 10,  // 原 text-[10px]
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const ROGUE_HERO_UI_PC = { ...ROGUE_HERO_UI_MOBILE, ...ROGUE_HERO_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const ROGUE_HERO_UI = pickTuning(ROGUE_HERO_UI_PC, ROGUE_HERO_UI_MOBILE);
 
 interface RogueHeroSelectProps {
     onBack: () => void;

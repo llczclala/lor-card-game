@@ -101,7 +101,19 @@ function initSubTaskStates(taskGroup: TaskGroupStep | null): {
 
 // ─── Hook ───────────────────────────────────────────────────────────
 
-export function useTutorialController(script: TutorialScript | null): {
+export function useTutorialController(
+  script: TutorialScript | null,
+  /**
+   * [2026-10-16 莉莉子] 子任务完成瞬间可触发的"敌方演出"回调。
+   * ── 为什么需要：某些教学桥段要求"玩家刚做完 A，敌方立刻做 B"（如
+   *    「里芙格挡焰心」→「敌方单挑反打」）。若把 B 写成独立的 auto_action 步骤，
+   *    task_group 全部完成与步骤推进会形成时序竞争（600ms 自动 advanceStep），
+   *    B 可能跑在 A 之后很久、甚至在别的步骤里。这里改为在子任务落地的瞬间同步触发。
+   * 触发约定：子任务 id 以 `enemy_cast_` 开头 ⇒ 调用 `onAutoAction(action, params)`，
+   *   其中 action 为去掉该前缀的剩余部分（如 `enemy_cast_single_combat` → `single_combat`）。
+   */
+  onAutoAction?: (action: string, params: Record<string, unknown>) => void,
+): {
   state: TutorialControllerState;
   actions: TutorialControllerActions;
 } {
@@ -149,6 +161,34 @@ export function useTutorialController(script: TutorialScript | null): {
       const next = { ...prev, [subTaskId]: 'completed' as SubTaskStatus };
       return next;
     });
+    // [2026-10-16 莉莉子] 敌方演出钩子：id 前缀 `enemy_cast_` ⇒ 子任务完成后触发敌方自动施法。
+    //   ⚠️ 触发时机的**唯一**来源就是这里（单一给定路径）——此前还额外挂过一个
+    //      「等 COMBAT_RESOLVED 再放行」的监听器，那个监听器在子任务**激活**时就挂了 pending，
+    //      导致上一场战斗的结算事件一冒出来就把敌方法术提前放了出去
+    //      （程实测：「我一用里芙去格挡焰心，单挑就锁定了里芙和焰心」）⇒ 已彻底删除，不再双路径。
+    //   `delayMs`：从子任务完成到敌方出手的等待时间。用于"玩家点完确定、还要等战斗结算播完
+    //      才轮到敌方出手"这类场景（本关「确认防线」用的就是它）。
+    //   ⚠️ 映射规则：剥掉前缀后若仍是 `single_combat*` 形态，统一归一成 `single_combat`
+    //      —— 否则会变成不存在的 action，消费端（GameSession 的 'single_combat' 分支）永远收不到。
+    if (subTaskId.startsWith('enemy_cast_') && onAutoAction) {
+      let action = subTaskId.slice('enemy_cast_'.length);
+      if (action.startsWith('single_combat')) action = 'single_combat';
+      const selfTask = derived.currentTaskGroup?.subTasks.find(st => st.id === subTaskId);
+      const cfg = selfTask?.expectedAction.onCompleteAction;
+      // 🛡️ [2026-10-16 莉莉子 BUG修复 · 硬防线]
+      //   此前是"只认 id 前缀就开火"，没配 `onCompleteAction` 的也照打（退化成 150ms + 空参数）。
+      //   于是当另一处子任务**重名**沿用该前缀时，就静默多打了一发敌方「单挑」
+      //   （程实测："我一用里芙去格挡焰心，单挑就锁定了里芙和焰心"）。
+      //   ⇒ 现在要求**必须显式配置 `onCompleteAction`** 才施法：前缀只是命名习惯，
+      //     配置才是开火开关。谁再重名也不会误开火。
+      if (!cfg) {
+        console.warn(`[Tutorial] 子任务 ${subTaskId} 带 enemy_cast_ 前缀但未配置 onCompleteAction ⇒ 不触发敌方施法`);
+        return;
+      }
+      const extraParams = cfg.params ?? {};
+      const delayMs = typeof cfg.delayMs === 'number' ? cfg.delayMs : 150;
+      setTimeout(() => onAutoAction(action, extraParams), delayMs);
+    }
     // 解锁下一个子任务
     const tg = derived.currentTaskGroup;
     if (!tg) return;
@@ -164,7 +204,7 @@ export function useTutorialController(script: TutorialScript | null): {
       setActiveSubTaskIndex(-1);
       // 不在此处调用 advanceStep，由组件层判断推进
     }
-  }, [derived.currentTaskGroup]);
+  }, [derived.currentTaskGroup, onAutoAction]);
 
   // 推进引导步
   const advanceGuidance = useCallback(() => {

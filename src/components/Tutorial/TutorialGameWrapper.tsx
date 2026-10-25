@@ -50,6 +50,7 @@ interface TutorialGameWrapperProps {
     onOpenSettings?: () => void; // [2026-08-30 莉莉子] 暂停层齿轮 → 打开设置面板
     onQuitGame?: () => void; // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏
     isSettingsOpen?: boolean; // [2026-08-30 莉莉子] 设置面板开合状态（暂停 ESC 协调）
+    escExitFullscreenFirst?: boolean; // [2026-10-24 莉莉子] 全屏下 ESC 是否优先退全屏（透传 GameSession）
     // [2026-09-04 账号等级/战绩] 结算上抛（透传到 GameSession/GameOverScreen 一次性入账）
     onAccountSettle?: (payload: { result: 'victory' | 'defeat'; mode: 'pve' | 'tutorial' | 'rogue'; heroKeys: string[] }) => void;
 }
@@ -105,11 +106,15 @@ export const TutorialGameWrapper: React.FC<TutorialGameWrapperProps> = ({
             playerField: init.playerField,
             enemyField: init.enemyField,
             playerBench: init.playerBench,
+            // [2026-10-16 莉莉子] 备战席血量覆盖（格挡者必须来自备战席，故满血演示走这里）
+            playerBenchHp: init.playerBenchHp,
             playerHand: init.playerHand,
             playerCrystalHp: init.playerCrystalHp,
             enemyCrystalHp: init.enemyCrystalHp,
             playerMana: init.playerMana,
             playerMaxMana: init.playerMaxMana,
+            // [2026-10-16 莉莉子] 教程专用每回合法力加成（第 2 回合要够 5 费打出「振奋」）
+            manaBonus: init.manaBonus,
             enemyMana: init.enemyMana,
             enemyMaxMana: init.enemyMaxMana,
         };

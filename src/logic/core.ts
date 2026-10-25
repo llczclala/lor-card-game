@@ -94,9 +94,15 @@ export const grantExtraAttackTurn = (
 export const calculateRoundStart = (
     currentGame: GameState,
     firstAttacker: 'player' | 'enemy' = 'player',
+    /**
+     * [2026-10-16 莉莉子] **教程关卡专用**的最大法力加成（默认 0 ⇒ 标准对局行为完全不变）。
+     * 用于"倒推第 N 回合需要几点法力、从而反推开局要给多少 bonus"的教程场景：
+     * 本关第 2 回合要打出 5 费的「振奋」，故传 3 ⇒ `min(10, 2+3) = 5`。
+     */
+    tutorialManaBonus = 0,
 ): Partial<GameState> => {
     const prev = currentGame;
-    const manaBonus = startManaBonusOf(prev);
+    const manaBonus = startManaBonusOf(prev) + tutorialManaBonus;
     // [2026-09-29 莉莉子] 敌方开局法力强化（enemy_start_mana_*）→ 与玩家侧同口径，仅作用于敌方
     const enemyManaBonus = enemyStartManaBonusOf(prev);
 

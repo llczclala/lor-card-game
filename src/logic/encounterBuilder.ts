@@ -26,10 +26,21 @@ interface EncounterData {
 /**
  * 辅助：获取公共填充池 (Logistics 阵营非英雄卡)
  * 用于当流派专属池不够时兜底
+ *
+ * [2026-10-23 莉莉子 BUG修复 · 衍生卡混进 AI 牌库]
+ * ── 病根（程提出）：本池原先只过滤 `region` 与 `isChampion`，**没有过滤 `isCollectible`**
+ *    ⇒ 所有 `isCollectible: false` 的**衍生法术**（如「囤积」「刻骨冰寒」这类
+ *      由强化/干员在局内生成的卡）都会被当作填充料塞进 AI 的 40 张牌库。
+ *    `isCollectible` 的本意是"普通玩家无法加入卡组"，但**衍生卡同样不该出现在 AI 牌库里**——
+ *    它们的存在前提是"某个局内来源生成了它"。
+ * ── 修法：补 `c.isCollectible !== false`，与 `gachaLogic` / `rewards` / `shop` /
+ *    `rogueStarterDecks` 四处玩家侧口径**完全一致**（那些地方早就在过滤，只有这里漏了）。
+ * ── 影响面：仅缩小"填充池"。流派**手配**的 coreCards / preferredPool 不经此池
+ *    （它们直接进 deck），所以手工配置的既有卡组逐字不变。
  */
 const getLogisticsPool = (): string[] => {
     return Object.values(CARD_DB)
-        .filter(c => c.region === 'Logistics' && !c.isChampion)
+        .filter(c => c.region === 'Logistics' && !c.isChampion && c.isCollectible !== false)
         .map(c => c.key);
 };
 

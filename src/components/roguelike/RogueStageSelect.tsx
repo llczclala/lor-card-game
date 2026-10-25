@@ -14,6 +14,7 @@ import mapZeroVideo from '../../movie/map/map_zero.webm'; // [2026-09-26 莉莉�
 // [2026-10-10] 诊断探针加全：本页的视频是独立元素（没走 LoopVideo），单独挂探针（默认静默）
 import { attachVideoProbe } from '../../utils/videoDiagnostics';
 import type { useUserSystem } from '../../hooks/useUserSystem';
+import { pickTuning } from '../../platform/tuning';
 
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 悖论迷宫 · **关卡选择**（`RogueStageSelect`）· 视觉调参区（**程微调就改这里**）
@@ -32,7 +33,8 @@ import type { useUserSystem } from '../../hooks/useUserSystem';
 //      `tracking-*` · `rotate-[-8deg]`（铭牌倾斜）· `drop-shadow-*` · `mix-blend-overlay` ·
 //      `animate-[rogue-*]`（抖动/呼吸/扫描线/雪花，全在 `index.css` 关键帧里）
 // ══════════════════════════════════════════════════════════════════════
-export const ROGUE_STAGE_UI = {
+// 🖥️📱 【双平台】`ROGUE_STAGE_UI_MOBILE`（手机端）+ `ROGUE_STAGE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const ROGUE_STAGE_UI_MOBILE = {
     /** 【主旋钮】三组角落控件（关卡列表 / 难度+推演 / 返回）整体缩放（1 = 原样） */
     uiScale: 1.5,
 
@@ -125,7 +127,26 @@ export const ROGUE_STAGE_UI = {
     cornerSize: 40,
     /** 角标描边粗细 px（原 border-t-4 等 = 4） */
     cornerBorderWidth: 4,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `ROGUE_STAGE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g4-rogue-nav.md` §2.1（双源交叉：git `67a6f76f` + 注释「原」值）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const ROGUE_STAGE_UI_PC_DIFF = {
+    /** 【主旋钮】三组角落控件整体缩放（原值 1 = 原样 · 手机端 1.5） */
+    uiScale: 1,
+    /** 进行推演：字号 px（原 text-lg = 18 · 手机端 36） */
+    startBtnFontSize: 18,
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const ROGUE_STAGE_UI_PC = { ...ROGUE_STAGE_UI_MOBILE, ...ROGUE_STAGE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const ROGUE_STAGE_UI = pickTuning(ROGUE_STAGE_UI_PC, ROGUE_STAGE_UI_MOBILE);
 
 // 缩略图切片：map_zero/1.png ~ 8.png（1 秒轮播）
 const sliceModules = import.meta.glob('../../image/map/map_zero/*.webp', { eager: true });

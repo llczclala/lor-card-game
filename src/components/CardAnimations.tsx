@@ -7,7 +7,7 @@ import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, check
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
 import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
-import { isTouchInput, TOUCH_TUNE } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 手牌「防误打」：上浮改由显式状态驱动 · [2026-10-16] 聚焦 + 阈值
+import { isTouchInput, TOUCH_TUNE, markTapActionHandled } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 手牌「防误打」：上浮改由显式状态驱动 · [2026-10-16] 聚焦 + 阈值 · [2026-10-17] +markTapActionHandled（出牌后吃掉补发的 click）
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
     hand: CardData[];
@@ -224,7 +224,11 @@ const AnimatedHandCard = ({
                             if (burnoutCost <= 0) return false;
                         // [2026-10-13 F2] 玩家手牌可用性
                         } else if (!canAffordCard(c, game.playerMana, game.playerSpellMana, playerBench, 'player')) return false;
-                        if (game.spellStack.length > 0) return c.type === 'spell-burst' || c.type === 'spell-fast';
+                        // [2026-10-23 莉莉子 BUG修复] 与点击守卫**同源**：`pendingSpell` 也算"法术进行中"。
+                        //   病根：第一张慢速法术打出后只进 `pendingSpell`、没进 `spellStack`
+                        //   ⇒ 这里读到 `length === 0` ⇒ **慢速手牌照样亮着**，而实际点下去已被拦
+                        //   = "手里亮着却说不能打" 的错信息。快速/极速仍放行（程拍板：待确认连罗合理）。
+                        if (game.spellStack.length > 0 || !!game.pendingSpell) return c.type === 'spell-burst' || c.type === 'spell-fast';
                         const isMainPhase = game.phase === 'main';
                         const isCombatPhase = game.phase === 'attack_declare' || game.phase === 'block_declare' || game.phase === 'react_to_block';
                         if (isMainPhase) return true;
@@ -548,6 +552,23 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                         setTouchFocusIndex(index);
                                         return;
                                     }
+                                    // ═══════════════════════════════════════════════════════════════
+                                    // [2026-10-17 莉莉子 BUG修复 · 安卓「抉择法术点不出去 / 选目标误选备战席」]
+                                    //   病根（✅ 程真机证实：抉择界面一闪而过 + 听到「撤回法术」音效）：
+                                    //     下面这行 `onCardClick` 走的是 **pointerup**，而 pointerup **先于**
+                                    //     浏览器补发的 `click`。那发 click 在 touchend 当下**重新命中测试**，
+                                    //     于是落到"出牌后才出现的东西"上：
+                                    //       · 抉择法术 ⇒ 落到全屏抉择层背景，它的 onClick 就是"取消抉择"
+                                    //         （`GameSession.tsx:2775-2781`）⇒ 卡当场退回手牌；
+                                    //       · 需选目标的法术 ⇒ 穿过 `pointer-events-none` 的手牌区，
+                                    //         落到正后方的备战席单位（`GameSession.tsx:3328`）⇒ 直接选成目标。
+                                    //   ⇒ 出牌这一刻"申请"一次 click 抑制，由 `TouchFeedbackLayer` 在
+                                    //     **window capture 阶段**把它吃掉（复用长按那套既有机制）。
+                                    //   ⚠️ 只对**非鼠标**指针申请：鼠标 click 的 target 是 mousedown/mouseup 的
+                                    //     最近公共祖先，而出牌这张卡已被卸载 ⇒ 本来就打不到任何东西（PC 实测正常）。
+                                    //   ⚠️ 申请是"一次性 + 新手势开始即作废"⇒ 浏览器没补发时绝不误伤下一次点击。
+                                    // ═══════════════════════════════════════════════════════════════
+                                    if (e.pointerType !== 'mouse') markTapActionHandled();
                                     onCardClick(c);
                                 }
                             }}

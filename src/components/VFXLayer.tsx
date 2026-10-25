@@ -14,6 +14,7 @@ import React, { useRef, useEffect, useCallback, useState } from 'react';
 import gsap from 'gsap';
 import { DrawSVGPlugin } from 'gsap/DrawSVGPlugin';
 import { eventBus } from '../utils/eventBus'; // [新增] 引入事件总线通信能力
+import { TOUCH_TUNE, markTapActionHandled } from '../utils/touchGaze'; // [2026-10-17 莉莉子 · 安卓触屏 A] 触屏瞄准线开关 + 合成 click 前的一次性抑制
 
 gsap.registerPlugin(DrawSVGPlugin);
 
@@ -296,14 +297,108 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
         return () => window.removeEventListener('resize', updateCenter);
     }, []);
 
-    // 鼠标跟踪
+    // ── 指针跟踪 ────────────────────────────────────────────────────────────
+    //   [2026-10-17 莉莉子 · 安卓触屏 A] 病根：原先**只听 `mousemove`**。安卓没有真鼠标，
+    //   只有点击时 Chrome 补发的那一次兼容 mousemove ⇒ `mousePosRef` 定格在"点牌那一下"的位置
+    //   （手牌处）⇒ 白色预览箭头一直指着玩家的手，看起来像坏了。
+    //   修法：改用 `pointermove`（鼠标 / 触摸 / 笔同一条通路），并给**非鼠标指针**加"按住才显示"：
+    //     · pointerdown ⇒ 点亮，同时把终点同步到按下点（不这么做，第一帧会闪到手牌旧位置）
+    //     · pointerup / pointercancel ⇒ 熄灭（手指离开后不存在"当前位置"）
+    //   ⚠️ 鼠标路径**行为不变**：鼠标抬手不熄灭（它本来就有一根常驻光标）；初值 false 只表示
+    //      "还没见过任何指针"，鼠标一动就 true。
+    //   ⚠️ `TOUCH_TUNE.aimFollowFinger === false` ⇒ 方案 B：触屏干脆不画这条线。
+    const pointerAliveRef = useRef(false);
+    const [hasLivePointer, setHasLivePointer] = useState(false);
     useEffect(() => {
-        const onMouseMove = (e: MouseEvent) => {
-            mousePosRef.current = { x: e.clientX, y: e.clientY };
+        // 用 ref 去重：`pointermove` 每帧都来，不判重会每帧调一次 setState
+        const setAlive = (alive: boolean) => {
+            if (pointerAliveRef.current === alive) return;
+            pointerAliveRef.current = alive;
+            setHasLivePointer(alive);
         };
-        window.addEventListener('mousemove', onMouseMove);
-        return () => window.removeEventListener('mousemove', onMouseMove);
+        const onPointerMove = (e: PointerEvent) => {
+            if (e.pointerType !== 'mouse' && !TOUCH_TUNE.aimFollowFinger) return;
+            mousePosRef.current = { x: e.clientX, y: e.clientY };
+            setAlive(true);
+        };
+        const onPointerDown = (e: PointerEvent) => {
+            if (e.pointerType !== 'mouse' && !TOUCH_TUNE.aimFollowFinger) return;
+            mousePosRef.current = { x: e.clientX, y: e.clientY }; // 第一帧就用按下点，别闪
+            setAlive(true);
+        };
+        const onPointerEnd = (e: PointerEvent) => {
+            if (e.pointerType === 'mouse') return; // 鼠标抬手仍有光标 ⇒ 不熄灭
+            setAlive(false);
+        };
+        window.addEventListener('pointermove', onPointerMove, { passive: true });
+        window.addEventListener('pointerdown', onPointerDown, { passive: true });
+        window.addEventListener('pointerup', onPointerEnd, { passive: true });
+        window.addEventListener('pointercancel', onPointerEnd, { passive: true });
+        return () => {
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerdown', onPointerDown);
+            window.removeEventListener('pointerup', onPointerEnd);
+            window.removeEventListener('pointercancel', onPointerEnd);
+        };
     }, []);
+
+    /** 预览线是否该出现：调用方允许（`showMousePreview`）**且**当前真的有一个"活指针"。
+     *  触屏抬手后没有指针 ⇒ 不画 ⇒ 不会再出现"箭头傻指着旧位置"。 */
+    const previewVisible = showMousePreview && hasLivePointer;
+
+    // ── 触屏「拖拽瞄准 · 抬手即选中」────────────────────────────────────────
+    //   [2026-10-17 莉莉子 · 安卓触屏] 程的口径：既然按住会出现瞄准线并跟随手指，
+    //   那**松手落在合法目标上就应该等于选中它** —— 否则这条线只是装饰。
+    //
+    //   ⚠️ 为什么必须自己在 `pointerup` 判：手指拖动超过浏览器的 tap slop 之后，
+    //      Chrome **不会再补发 `click`** ⇒ 只靠 onClick 的选中路径永远等不到"松手选中"。
+    //   ⚠️ 为什么"合成一发 click"而不是直接调选中函数：目标可能是
+    //      备战席单位 / 战场单位 / 水晶 / 堆叠法术 / 手牌，五类各有自己的入口，
+    //      还带 `source` 来源隔离校验（`useSpellSystem.ts:562-567`）⇒
+    //      **合成 click 让它们原样跑**，比在这里把路由重写一遍安全得多。
+    //   ⚠️ 合成前先 `markTapActionHandled()`：万一浏览器这次仍然补发了 click，
+    //      会被触屏层那套一次性抑制吃掉 ⇒ 保证**一次手势只选中一次**
+    //      （`select_discard` 那条分支是 toggle，重复会自我抵消）。
+    //   ⚠️ 只认**移动超过阈值**的手势：没动的那一下交给浏览器原生的 click，
+    //      "轻点选中"这条路一个字不改。
+    //   🔴 门用的是 `showMousePreview`（调用方的"我要选目标"意图），**不是** `previewVisible`：
+    //      后者要等"按下"那一刻才会翻真，而那时 `pointerdown` 已经过去了 ⇒ 监听器挂得太晚、
+    //      抓不到按下坐标，整次手势都判不出来。（这是自查抓到的一个顺序 bug。）
+    useEffect(() => {
+        if (!showMousePreview) return; // 只在"正在选目标"的窗口内武装
+        let downAt: { x: number; y: number } | null = null;
+        const onDown = (e: PointerEvent) => {
+            if (e.pointerType === 'mouse') return;
+            downAt = { x: e.clientX, y: e.clientY };
+        };
+        const onUp = (e: PointerEvent) => {
+            if (e.pointerType === 'mouse' || !downAt) return;
+            // 与全项目同口径：切比雪夫超过 `moveCancelPx` 就算"拖动"（同 TouchFeedbackLayer）
+            const moved = Math.max(Math.abs(e.clientX - downAt.x), Math.abs(e.clientY - downAt.y)) > TOUCH_TUNE.moveCancelPx;
+            downAt = null;
+            if (!moved) return; // 没拖动 ⇒ 交给浏览器补发的那发 click
+            // 取**最上层**元素再派发：SVG 特效层是 `pointer-events-none` 会被跳过，
+            // 派发到卡内最深层元素 ⇒ 冒泡到卡牌根节点的 onClick 才触发。
+            const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+            if (!el) return;
+            // 🔴 顺序很重要：**先派发、后武装抑制**。
+            //   `TouchFeedbackLayer` 的抑制监听在 `window` 的 **capture** 阶段，
+            //   而我这一发 click 也要走同一条捕获链 ⇒ 若先武装，**自己这一发会被自己吃掉**，
+            //   松手选目标直接静默失效。（自查抓到的第二个顺序 bug。）
+            //   `dispatchEvent` 是同步的：派发完再武装，正好只吃掉"浏览器随后补发的那一发"。
+            el.dispatchEvent(new MouseEvent('click', {
+                bubbles: true, cancelable: true, view: window,
+                clientX: e.clientX, clientY: e.clientY,
+            }));
+            markTapActionHandled();
+        };
+        window.addEventListener('pointerdown', onDown, { passive: true });
+        window.addEventListener('pointerup', onUp, { passive: true });
+        return () => {
+            window.removeEventListener('pointerdown', onDown);
+            window.removeEventListener('pointerup', onUp);
+        };
+    }, [showMousePreview]);
 
     // [新增] 强制二刷机制：确保 SVG 节点挂载后，利用其执行 CTM 矩阵逆转以定位卡牌
     const [isMounted, setIsMounted] = useState(false);
@@ -325,8 +420,9 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
     // 预览线：gsap.ticker（与 GSAP 同频）
     // ==========================================
     useEffect(() => {
-        // [核心修复] 不再依赖 isCasting，而是严格遵循 showMousePreview
-        if (!showMousePreview) return;
+        // [核心修复] 不再依赖 isCasting，而是严格遵循 showMousePreview；
+        // [2026-10-17] 再加一道"活指针"门 —— 触屏抬手后没有指针，就不画
+        if (!previewVisible) return;
 
         const updatePreview = () => {
             const l1 = previewL1Ref.current;
@@ -355,7 +451,7 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
 
         gsap.ticker.add(updatePreview);
         return () => { gsap.ticker.remove(updatePreview); };
-    }, [isCasting, getStartPos, boomerang]); // [2026-08-15] 回力镖方向变化时重建预览线
+    }, [previewVisible, isCasting, getStartPos, boomerang]); // [2026-08-15] 回力镖方向变化时重建预览线 · [2026-10-17] +previewVisible
 
     // ==========================================
     // DrawSVG 入场动画
@@ -462,9 +558,10 @@ export const VFXLayer: React.FC<VFXLayerProps> = ({
                 );
             })}
 
-            {/* C. 鼠标预览线 (采用全程序化生成的连续流光形体) */}
+            {/* C. 指针预览线 (采用全程序化生成的连续流光形体) */}
             {/* [核心修复 BUG 1] 使用精确开关控制 */}
-            {showMousePreview && (
+            {/* [2026-10-17 安卓触屏 A] 改用 `previewVisible`：触屏只在手指按住期间出现，抬手即隐 */}
+            {previewVisible && (
                 <g>
                     {/* L1. 外层光晕 (自带外圈巨型箭头) */}
                     <path ref={previewL1Ref} fill={COLORS.preview} stroke="none" opacity={0.2} />

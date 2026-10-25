@@ -10,6 +10,7 @@ import { Card } from './Card';
 import { FullArtOverlay } from './Overlays';
 import type { CardData } from '../types';
 import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 图鉴 关闭/ESC 音效
+import { pickTuning } from '../platform/tuning';
 
 interface GalleryCodexProps {
     onClose: () => void;
@@ -37,7 +38,9 @@ type TabType = 'tutorial' | 'keywords' | 'cards';
 // 现在每页 2×2（一跨页 8 张）＋ 卡片放大 cardScale 倍。
 // 改完存盘即生效（HMR 直接刷新，电脑上就能看到，不用出包）。
 // ══════════════════════════════════════════════════════════════════════
-export const CODEX_UI = {
+// 🖥️📱 【双平台】本屏两份值：`CODEX_UI_MOBILE`（手机端）+ `CODEX_UI_PC`（PC 端，见下方）。
+//   判定收在 `src/platform/tuning.ts`；电脑浏览器 = PC 版，雷电 = 手机版。
+const CODEX_UI_MOBILE = {
     // ══ ① 全图鉴（卡牌双页）═══════════════════════════════════════════
     /** 每页网格：列 × 行（左右两页相同）。2 × 2 = 每页 4 张、一跨页 8 张 */
     cols: 2,
@@ -70,7 +73,43 @@ export const CODEX_UI = {
     menuSubSize: 12,
     /** 详细版解释的字号（比正文略小一档，因为它是补充说明） */
     detailSize: 18,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`git show e6963262:src/components/GalleryCodex.tsx`（2026-10-13，
+//       = 本周手机端适配开始前的版本），逐项由那一版的 Tailwind 类反推：
+//       `grid grid-cols-3 grid-rows-3 gap-y-4 gap-x-2` / `text-4xl` / `leading-[1.8]` / `text-[8px]` …
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const CODEX_UI_PC_DIFF = {
+    // ══ ① 全图鉴（卡牌双页）═══════════════════════════════════════════
+    cols: 3,        // 原 grid-cols-3（= 每页 3×3、一跨页 18 张）
+    rows: 3,        // 原 grid-rows-3
+    cardScale: 1,   // 原 <Card> 走 collection 原生 130×202，无缩放
+    gapX: 8,        // 原 gap-x-2
+    gapY: 16,       // 原 gap-y-4
+
+    // ══ ② 文字口径 ═══════════════════════════════════════════════════
+    titleSize: 36,      // 原 text-4xl
+    subTitleSize: 14,   // 原 text-sm
+    bodySize: 14,       // 原 text-sm
+    bodyLineHeight: 1.8, // 原 leading-[1.8]
+    menuSize: 12,       // 原 text-xs
+    menuSubSize: 8,     // 原 text-[8px]（⚠️ 8px 在 PC 上同样很小，原样保留）
+    //
+    // 🔴 `headingSize` **刻意没有列进来** —— 它是「一个字段对应两个原值」：
+    //    教程页原 `text-sm`(14) ／ 机制档案页原 `text-xs`(12)。要正确恢复 PC，
+    //    必须先把字段拆成两个（并改 2 处 JSX 引用），**已列为待程裁决项**。
+    //    在那之前：PC 端这个字段会沿用手机端的 24 ⇒ **PC 上的小节标题偏大，是已知缺口**。
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const CODEX_UI_PC = { ...CODEX_UI_MOBILE, ...CODEX_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const CODEX_UI = pickTuning(CODEX_UI_PC, CODEX_UI_MOBILE);
 
 /** [详细版] 段落结构 + 可选的详细解释
  *  数据在 `src/data/tutorials.ts` 的 `paragraphsDetail`（与 `paragraphs` 一一对应）。
