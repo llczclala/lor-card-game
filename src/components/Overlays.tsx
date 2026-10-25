@@ -21,6 +21,12 @@ import { bindArmamentGaze } from './roguelike/ArmamentPreview'; // 悬停浮出�
 import { useArmamentConfig } from '../hooks/useArmamentConfig';   // 天启者的武装槽（装备之外的第二条数据源）
 import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 详情/结算 交互音效
 import { useHeroProgression } from '../hooks/useHeroProgression'; // 武装槽按英雄等级解锁，取等级用
+import { pickTuning } from '../platform/tuning';
+// [2026-10-24 莉莉子] 能力描述里的金色/蓝色词汇：手机端点一下就能看含义
+//   · isTouchInput —— 能力检测（不用平台判断），只给触屏加点击，PC 的 group-hover 小气泡一行不动
+//   · bindTextTokenGaze —— 复用关键词浮层（portal z-10001，压在详情层 10000 之上）
+import { isTouchInput } from '../utils/touchGaze';
+import { bindTextTokenGaze } from './KeywordPreview';
 
 // [2026-10-04] 六边形 clip-path + 装备品质色 —— **独立定义同款**（与 Card.tsx:329/331 一致）。
 //   理由同 RogueHeroInfoModal:837 的注释：Card.tsx 是核心文件，不为了两个常量去动它。
@@ -70,7 +76,8 @@ export const FULLART_EQUIP_UI = {
 //    [class*="max-w-"]{max-width:none!important} 打死过 ⇒ 搬成内联后**填数字会"突然真的生效"、整屏变窄**。
 // ⚠️ 字号项**只搬 fontSize、绝不配写死的 lineHeight**（作者会把字号成倍调大，写死行高会压行）。
 // ══════════════════════════════════════════════════════════════════════
-export const BATTLE_SCORE_UI = {
+// 🖥️📱 【双平台】`BATTLE_SCORE_UI_MOBILE`（手机端）+ `BATTLE_SCORE_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const BATTLE_SCORE_UI_MOBILE = {
     // ══ ① 左右两栏容器 ═══════════════════════════════════════════════
     /** 左栏 ↔ 右栏 的横向间距 px（原 gap-16 = 64） */
     rowGap: 64,
@@ -166,7 +173,44 @@ export const BATTLE_SCORE_UI = {
     exitBtnGap: 16,
     /** 刷新图标边长 px（原 <RefreshCw size={20}> 的入参，非类名） */
     exitBtnIconSize: 20,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `BATTLE_SCORE_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g6-system.md` §2 的逐项表（git 基线 × 注释「原 XXX」双源）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ⚠️ `rowMaxWidth` 的 `'none'` **不是手调**（是 `index.css:56` 的 `max-w-*` 规避）⇒ 刻意不列。
+// ⚠️ 同文件的 `FULLART_EQUIP_UI`（详情页装备图标列）**无差异项** ⇒ 本文件里
+//    **只有 `BATTLE_SCORE_UI` 分叉**，那一块保持原样、一个字都别动。
+// ══════════════════════════════════════════════════════════════════════
+const BATTLE_SCORE_UI_PC_DIFF = {
+    // ══ ② 左侧：胜负大字 + 副标题 ════════════════════════════════════
+    resultFontSize: 128,          // 原 text-9xl = 128
+    subtitleFontSize: 24,         // 原 text-2xl = 24
+
+    // ══ ③ 左侧：战斗奖励条 ═══════════════════════════════════════════
+    rewardCoinSize: 64,           // 原 w-16 h-16 = 64
+    rewardLabelFontSize: 14,      // 原 text-sm = 14
+    rewardValueFontSize: 48,      // 原 text-5xl = 48
+
+    // ══ ④ 右侧：评分面板外框 + 表头行 ════════════════════════════════
+    panelTitleFontSize: 20,       // 原 text-xl = 20
+
+    // ══ ⑤ 右侧：明细行 / 加成行 ══════════════════════════════════════
+    baseRowFontSize: 14,          // 原 text-sm = 14（如「水晶伤害 x3 90」）
+    bonusRowFontSize: 14,         // 原 text-sm = 14（如「战斗胜利 +50%」）
+
+    // ══ ⑥ 右侧：总计得分 ═════════════════════════════════════════════
+    totalLabelFontSize: 18,       // 原 text-lg = 18
+    totalValueFontSize: 36,       // 原 text-4xl = 36
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const BATTLE_SCORE_UI_PC = { ...BATTLE_SCORE_UI_MOBILE, ...BATTLE_SCORE_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const BATTLE_SCORE_UI = pickTuning(BATTLE_SCORE_UI_PC, BATTLE_SCORE_UI_MOBILE);
 
 // [新增] 自定义购买确认弹窗组件
 const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: any) => (
@@ -190,7 +234,23 @@ const PurchaseConfirmModal = ({ cardName, count, cost, onConfirm, onCancel }: an
 // ==========================================
 // [核心修改] 接收深度跳转方法
 const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card: CardData) => void }) => {
+    /**
+     * [2026-10-24 程拍板 · 蓝色卡名两段式手势] 当前展开"大图浮层"的是哪张关联卡（存 card.key）。
+     * ⚠️ 必须放在下面的 `if (!text) return null` **之前** —— hooks 不允许出现在提前返回之后。
+     */
+    const [openCardKey, setOpenCardKey] = useState<string | null>(null);
+
     if (!text) return null;
+
+    /**
+     * [2026-10-24 莉莉子] 手机端：能力描述里的词条要能**点开看含义**。
+     * ── 病根：下面四个分支的说明气泡全部靠 CSS `group-hover`（:hover），
+     *    触屏上 `:hover` 天然不生效 ⇒ **那颗气泡永远不会出现**，手机玩家看到金色/蓝色词汇却无从得知含义。
+     *    PC 端一直是好的（鼠标悬停即可），所以这是个"只在手机上坏"的缺陷。
+     * ── 修法：触屏时给词条挂 `bindTextTokenGaze`（点击 → 复用关键词浮层）；
+     *    PC 端**一行不加**，继续用原来的小气泡，观感零变化。
+     */
+    const isTouch = isTouchInput();
 
     // 1. 动态生成正则
     const glossaryKeys = Object.keys(GLOSSARY_DB).sort((a, b) => b.length - a.length);
@@ -214,19 +274,49 @@ const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card
                     const associatedCard = Object.values(CARD_DB).find(c => c.name.includes(tokenName) || c.key.includes(tokenName));
 
                     if (associatedCard) {
+                        const card = associatedCard as CardData;
+                        const previewOpen = openCardKey === card.key;
                         return (
+                            // [2026-10-24 程拍板 · 蓝色卡名两段式手势]
+                            //   单击 → 打开该卡的**大图浮层**（就是下面那个 `<Card location="deck-builder">`，PC 本来就是悬停出）
+                            //   长按（光圈环绕一圈后）→ 才跳转到该卡的**详情页**
+                            //   理由：详情页是"离开当前页"的重动作，误触代价高 ⇒ 用长按门槛把它和"看一眼卡面"分开。
+                            // ⚠️ 长按怎么判定：`TouchFeedbackLayer` 在 `[data-gaze]` 元素上按住
+                            //   `TOUCH_TUNE.longPressMs` 后会**合成一次 mouseover**（脚本造的 ⇒ `isTrusted === false`）。
+                            //   而真实鼠标悬停、以及浏览器给轻点补发的 mouseover 都是 `isTrusted === true`。
+                            //   ⇒ 用 `isTrusted` 这一条判据即可精确区分"长按完成"和"轻点/悬停"，不必自己再写一份计时器
+                            //     （那样会和光圈各跑一个 400ms，还要各自对齐取消条件，反而容易错位）。
+                            // ⚠️ 长按之后浏览器补发的那一发 click 已被 `TouchFeedbackLayer` 吃掉 ⇒ 不会又触发一次"打开浮层"。
+                            // PC 端一个属性都不加：仍是悬停出浮层、右键下钻。
                             <span
                                 key={index}
                                 className="group relative inline-block text-blue-400 font-bold mx-1 cursor-pointer hover:brightness-125 transition-all"
+                                {...(isTouch ? {
+                                    'data-gaze': 'card-link',   // 让 TouchFeedbackLayer 在它上面画长按光圈
+                                    onMouseEnter: (e: React.MouseEvent) => {
+                                        if (e.nativeEvent.isTrusted) return; // 真实悬停 / 轻点补发 ⇒ 不算长按
+                                        setOpenCardKey(null);
+                                        if (onNavigate) onNavigate(card);
+                                    },
+                                    onClick: () => setOpenCardKey(previewOpen ? null : card.key),
+                                } : {})}
                                 onContextMenu={(e) => {
                                     e.preventDefault();
-                                    if (onNavigate) onNavigate(associatedCard as CardData);
+                                    if (onNavigate) onNavigate(card);
                                 }}
                             >
                                 {part}
-                                {/* [核心修改] 切换为 deck-builder 尺寸，恢复完整的卡面排版与介绍信息 */}
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-[400] text-center translate-y-2 group-hover:translate-y-0 origin-bottom drop-shadow-2xl">
-                                    <Card data={associatedCard as CardData} location="deck-builder" />
+                                {/* [核心修改] 切换为 deck-builder 尺寸，恢复完整的卡面排版与介绍信息
+                                    [2026-10-24] 触屏端改成**状态驱动**（点一下出、再点收起），
+                                      PC 端仍是 `group-hover`（一个类不改）。
+                                      触屏刻意**不挂 group-hover** —— 安卓轻点会给元素留下 sticky :hover，
+                                      会和状态驱动打架（关不掉的浮层）。 */}
+                                <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-3 transition-all pointer-events-none z-[400] text-center origin-bottom drop-shadow-2xl ${
+                                    isTouch
+                                        ? (previewOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2')
+                                        : 'opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0'
+                                }`}>
+                                    <Card data={card} location="deck-builder" />
                                 </div>
                             </span>
                         );
@@ -243,7 +333,16 @@ const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card
 
                     if (kwConfig) {
                         return (
-                            <span key={index} className="group relative inline-flex items-center text-yellow-400 font-bold mx-1 cursor-help">
+                            // [2026-10-24 莉莉子] 触屏：点击弹出关键词浮层（复用 KeywordPreview 那套观感）
+                            <span key={index}
+                                className="group relative inline-flex items-center text-yellow-400 font-bold mx-1 cursor-help"
+                                {...(isTouch ? bindTextTokenGaze({
+                                    label: kwConfig.label,
+                                    description: kwConfig.description,
+                                    color: kwConfig.color,
+                                    icon: kwConfig.icon,
+                                }) : {})}
+                            >
                                 {kw}
                                 <img src={kwConfig.icon} alt={kw} className="w-5 h-5 ml-1 inline-block align-middle drop-shadow-md -mt-0.5" />
 
@@ -260,7 +359,15 @@ const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card
                     const glConfig = Object.values(GLOSSARY_DB).find(config => config.label === kw);
                     if (glConfig) {
                         return (
-                            <span key={index} className="group relative inline-block text-yellow-300 font-bold mx-1 border-b border-yellow-500/50 cursor-help border-dashed">
+                            // [2026-10-24 莉莉子] 触屏：点击弹出术语浮层（无图标 ⇒ 浮层标"术语"）
+                            <span key={index}
+                                className="group relative inline-block text-yellow-300 font-bold mx-1 border-b border-yellow-500/50 cursor-help border-dashed"
+                                {...(isTouch ? bindTextTokenGaze({
+                                    label: glConfig.label,
+                                    description: glConfig.description,
+                                    color: glConfig.color,
+                                }) : {})}
+                            >
                                 {kw}
                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-slate-900 border border-yellow-600/50 p-3 rounded-lg shadow-2xl opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-[300] text-center translate-y-2 group-hover:translate-y-0">
                                     <div className="font-bold text-yellow-400 mb-1 text-sm">{glConfig.label}</div>
@@ -289,7 +396,15 @@ const RichTextParser = ({ text, onNavigate }: { text: string, onNavigate?: (card
                 if (GLOSSARY_DB[part]) {
                     const glConfig = GLOSSARY_DB[part];
                     return (
-                        <span key={index} className="group relative inline-block text-yellow-300 font-bold mx-1 border-b border-yellow-500/50 cursor-help border-dashed">
+                        // [2026-10-24 莉莉子] 触屏：点击弹出术语浮层（同上方 [术语] 分支）
+                        <span key={index}
+                            className="group relative inline-block text-yellow-300 font-bold mx-1 border-b border-yellow-500/50 cursor-help border-dashed"
+                            {...(isTouch ? bindTextTokenGaze({
+                                label: glConfig.label,
+                                description: glConfig.description,
+                                color: glConfig.color,
+                            }) : {})}
+                        >
                             {part}
 
                             {/* 悬浮术语气泡 */}
@@ -383,6 +498,19 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
 
     // 当前正在浏览的 skinId（初始为传入的 currentSkinId，否则为 0）
     const [browsingSkinId, setBrowsingSkinId] = useState(skinData?.currentSkinId ?? 0);
+    /**
+     * [2026-10-16 莉莉子] 关键词详情展开态。
+     * ── 病根：关键词说明此前是**纯 CSS 悬停**（`opacity-0 group-hover:opacity-100`），
+     *    触屏根本没有 hover ⇒ 手机玩家打开卡牌详情后**永远看不到关键词效果**
+     *    （程实测：打开了安蒂娜的详情，却看不到【隐秘】到底什么意思）。
+     *   教程第二关又正好靠这一步教学 ⇒ 直接卡关。
+     * ── 改法：**点击展开/收起**（点击同一个再收掉）。PC 的悬停仍然保留，不退化。
+     */
+    const [openKeyword, setOpenKeyword] = useState<string | null>(null);
+    // 切换卡牌时收起已展开的关键词（翻页/下钻后不该残留上一张的展开态）
+    useEffect(() => {
+        setOpenKeyword(null);
+    }, [currentCard.key]);
     // 当传入 currentSkinId 变化时同步
     useEffect(() => {
         setBrowsingSkinId(skinData?.currentSkinId ?? 0);
@@ -938,19 +1066,37 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                 {targetCard.keywords.map(k => {
                                     const kwConfig = KEYWORD_DB[k];
                                     if (!kwConfig) return null;
+                                    // [2026-10-16 莉莉子] 点击展开（触屏可用），悬停保留（PC 习惯）
+                                    const isOpen = openKeyword === k;
                                     return (
-                                        <div key={k} data-tutorial-keyword={k} className="group relative flex flex-col items-center gap-2 cursor-help">
+                                        <div
+                                            key={k}
+                                            data-tutorial-keyword={k}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setOpenKeyword(prev => (prev === k ? null : k));
+                                            }}
+                                            className="group relative flex flex-col items-center gap-2 cursor-pointer select-none"
+                                        >
                                             <div className="w-16 h-16 flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6 bg-black/30 rounded-xl p-2 border border-white/5 group-hover:border-white/20 shadow-lg">
                                                 <img src={kwConfig.icon} alt={kwConfig.label} className="w-full h-full object-contain drop-shadow-md" />
                                             </div>
                                             <span className="text-sm font-bold text-gray-400 group-hover:text-white transition-colors tracking-wide">
                                                 {kwConfig.label}
                                             </span>
-                                            <div className="absolute top-full mt-3 w-56 bg-gray-800 border border-white/20 p-4 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-50 text-center translate-y-2 group-hover:translate-y-0">
+                                            {/* [2026-10-16 莉莉子] 展开判据 = **点击态 或 悬停态**：
+                                                触屏走点击（没有 hover），PC 两种都行。 */}
+                                            <div className={`absolute top-full mt-3 w-56 bg-gray-800 border border-white/20 p-4 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] transition-all z-50 text-center translate-y-2 group-hover:translate-y-0 ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 group-hover:opacity-100 pointer-events-none'}`}>
                                                 <div className="font-bold text-yellow-400 mb-1 text-sm">{kwConfig.label}</div>
                                                 <div className="text-gray-300 text-xs leading-relaxed">{kwConfig.description}</div>
                                                 <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-gray-800 border-t border-l border-white/20 rotate-45"></div>
                                             </div>
+                                            {/* 点击态额外补一个"已展开"视觉锚（触屏没有 hover 高亮，避免玩家以为没反应） */}
+                                            {isOpen && (
+                                                <span className="absolute -top-1 right-0 text-[10px] font-black text-cyan-300 bg-cyan-500/20 border border-cyan-400/40 rounded-full px-1.5 py-0.5">
+                                                    详情
+                                                </span>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -984,8 +1130,17 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                 {viewLevel === 2 ? 'LEVEL 2 EFFECT' : 'EFFECT'}
                             </h3>
                             {/* [核心修改] 传入 handleDeepNavigate 支持衍生卡右键下钻 */}
+                            {/* [2026-10-24 程拍板] 「囤积」的描述带 `{hoardStored}` 动态占位符 ——
+                                本浮层不走卡片组件（那条路在 `SpellCard` 里已用 resolvedDisplayParams 插值），
+                                必须在这里自行替换，否则会把占位符原样露给玩家。
+                                ⚠️ 将来若出现更多"卡自身动态值"的卡，把这段抽成通用工具，别一张一张加。 */}
                             <p className="text-gray-300 text-lg leading-relaxed font-light px-4 whitespace-pre-wrap">
-                                <RichTextParser text={targetCard.description} onNavigate={handleDeepNavigate} />
+                                <RichTextParser
+                                    text={targetCard.key === 'spell_hoard'
+                                        ? targetCard.description.replace('{hoardStored}', String(targetCard.hoardStored ?? 0))
+                                        : targetCard.description}
+                                    onNavigate={handleDeepNavigate}
+                                />
                             </p>
                         </div>
                     )}

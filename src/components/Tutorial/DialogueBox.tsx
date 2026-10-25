@@ -13,6 +13,8 @@ import type { DialogueStep } from '../../data/tutorialScript';
 import { HERO_IMAGES } from '../../data/imageData';
 import { CARD_CROP_CONFIG } from '../../data/cardCropConfig'; // [新增] 读取头像裁剪
 import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 对话推进音效
+// [2026-10-23 莉莉子] 手机端可读性：对话框是底部**主阅读面**，按视口 1:1 渲染（PC 端原样不变）
+import { pickUiScale, MIN_DIALOGUE_UI_SCALE } from '../../platform/tuning';
 
 // ════════════════════════════════════════════════════════════
 
@@ -35,6 +37,18 @@ export const DialogueBox: React.FC<DialogueBoxProps> = ({ step, onComplete }) =>
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  /**
+   * [2026-10-23 莉莉子 · 手机端可读性]
+   * ── 病根：整块对话只乘了一次画布 `scale`。手机横屏 `scale ≈ 0.374` ⇒
+   *    名字 `text-sm` 14px → **5.2 CSS px**、正文 `text-base` 16px → **6.0 CSS px**、
+   *    「点击继续」`text-xs` 12px → 4.5px；连头像 96px 都只剩 36px。PC（≈1.03）完全正常。
+   * ── 修法：改乘 `uiScale`（手机端地板 1.0 ⇒ 正文 16px / 名字 14px），PC 端返回原 `scale`。
+   * ⚠️ `transformOrigin: 'bottom center'` 保持不变 —— 放大后向上长、底边仍贴屏幕底。
+   * ⚠️ 副作用（预期内）：手机上对话框会比原来明显变大变高，会盖住画面下部更多。
+   *    嫌高就调 `platform/tuning.ts` 的 `MIN_DIALOGUE_UI_SCALE`（0.9 → 高度约 -10%）。
+   */
+  const uiScale = pickUiScale(scale, MIN_DIALOGUE_UI_SCALE);
 
   const [isVisible, setIsVisible] = useState(false);
   const [displayedText, setDisplayedText] = useState('');
@@ -118,7 +132,7 @@ export const DialogueBox: React.FC<DialogueBoxProps> = ({ step, onComplete }) =>
                   transition-all duration-500 ease-out
                   ${isVisible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
       onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleClick(); }}
-      style={{ pointerEvents: 'auto', cursor: isTextFullyShown ? 'pointer' : 'default', transform: `translateY(${isVisible ? '0' : '100%'}) scale(${scale})`, transformOrigin: 'bottom center' }}
+      style={{ pointerEvents: 'auto', cursor: isTextFullyShown ? 'pointer' : 'default', transform: `translateY(${isVisible ? '0' : '100%'}) scale(${uiScale})`, transformOrigin: 'bottom center' }}
     >
       {/* 对话框容器 */}
       <div className="max-w-4xl mx-auto flex items-end gap-4">

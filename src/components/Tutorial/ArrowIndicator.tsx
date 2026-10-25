@@ -11,6 +11,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion'; // [核心新增] 引入动画引擎
+// [2026-10-23 莉莉子] 与 GuideLayer 同一套可读性口径（见 platform/tuning.ts :: MIN_LEGIBLE_UI_SCALE）
+import { pickUiScale, pickScalar, MIN_LEGIBLE_UI_SCALE } from '../../platform/tuning';
 
 // ════════════════════════════════════════════════════════════
 
@@ -96,6 +98,17 @@ export const ArrowIndicator: React.FC<ArrowIndicatorProps> = ({
     setTargetRect(rect);
   }, [targetSelector]);
 
+  /**
+   * [2026-10-23 莉莉子 · 方案 A] 箭头**内容**的缩放，与定位用的视口坐标分开：
+   * ── 病根：内容乘 `scale`（手机横屏 ≈0.374）⇒ `text-xs` 12px 只剩 **4.5px**、箭头图标 32px 只剩 12px；
+   *    PC（≈1.03）完全正常 ⇒ 手机端看不见、PC 测不出。
+   * ── 修法：内容乘 `uiScale`（手机抬到 0.85 ⇒ 文字 10.2px、图标 27px），PC 端返回原 `scale`。
+   * ⚠️ 定位（`targetRect` / `window.innerWidth`）始终是视口 px，不能跟着 uiScale 走。
+   */
+  const uiScale = pickUiScale(scale, MIN_LEGIBLE_UI_SCALE);
+  /** PC 端乘 1（严格不变）、手机端乘 uiScale —— 间隙跟着箭头一起缩放 */
+  const spacingScale = pickScalar(1, uiScale);
+
   useEffect(() => {
     // 延迟一帧确保 DOM 已渲染
     const t = setTimeout(measure, 50);
@@ -123,28 +136,34 @@ export const ArrowIndicator: React.FC<ArrowIndicatorProps> = ({
   const direction = getAutoDirection();
 
   // 计算箭头绝对位置
+  // [2026-10-23 莉莉子 BUG修复] 这里的 `32` / `16` 是**箭头图标的布局尺寸**（w-8 h-8 = 32，半宽 16），
+  //   而图标是用 `scale(uiScale)` 渲染的 ⇒ 它在屏幕上的真实高/宽 = 32×uiScale。
+  //   原实现按未缩放的 32/16 去偏移 ⇒ 手机端箭头会离目标远约 (32−32×0.85)=4.8px、居中再偏 2.4px。
+  //   PC 端原本也有 3% 的同类误差（uiScale≈1.03 → 差 0.9px，肉眼不可见），此处一并修正。
   const getArrowStyle = (): React.CSSProperties | undefined => {
     if (!targetRect) return { display: 'none' };
-    const gap = 8;
+    const gap = 8 * spacingScale;
+    const iconSize = 32 * uiScale;   // 箭头图标真实视觉边长
+    const iconHalf = 16 * uiScale;   // 真实半边长
     switch (direction) {
       case 'top':
         return {
-          top: targetRect.top - gap - 32 + (offset.y ?? 0),
-          left: targetRect.left + targetRect.width / 2 - 16 + (offset.x ?? 0),
+          top: targetRect.top - gap - iconSize + (offset.y ?? 0),
+          left: targetRect.left + targetRect.width / 2 - iconHalf + (offset.x ?? 0),
         };
       case 'bottom':
         return {
           top: targetRect.top + targetRect.height + gap + (offset.y ?? 0),
-          left: targetRect.left + targetRect.width / 2 - 16 + (offset.x ?? 0),
+          left: targetRect.left + targetRect.width / 2 - iconHalf + (offset.x ?? 0),
         };
       case 'left':
         return {
-          top: targetRect.top + targetRect.height / 2 - 16 + (offset.y ?? 0),
-          right: window.innerWidth - targetRect.left + 12,
+          top: targetRect.top + targetRect.height / 2 - iconHalf + (offset.y ?? 0),
+          right: window.innerWidth - targetRect.left + 12 * spacingScale,
         };
       case 'right':
         return {
-          top: targetRect.top + targetRect.height / 2 - 16 + (offset.y ?? 0),
+          top: targetRect.top + targetRect.height / 2 - iconHalf + (offset.y ?? 0),
           left: targetRect.left + targetRect.width + gap + (offset.x ?? 0),
         };
     }
@@ -167,7 +186,7 @@ export const ArrowIndicator: React.FC<ArrowIndicatorProps> = ({
     {/* 内层：只负责缩放内容 */}
     <div
       className={`flex ${direction === 'left' ? 'flex-row items-center' : 'flex-col items-center'}`}
-      style={{ transform: `scale(${scale})`, transformOrigin: originMap[direction] }}
+      style={{ transform: `scale(${uiScale})`, transformOrigin: originMap[direction] }}
     >
       {/* 文字 — direction='left' 时放在箭头左边 */}
       {text && (
