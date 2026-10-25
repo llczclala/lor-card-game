@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import type { MutableRefObject } from 'react';
 import type { CardData, GameState, GameRecordCategory, RecordEntity } from '../types';
 import { calculateRoundStart, spellManaCapOf } from '../logic/core';
-import { resetSpellCastRoundCounters } from '../utils/gameRules'; // [2026-10-08 第二波] 回合开始清零本回合施法计数
+import { resetSpellCastRoundCounters, resetRoundChainTax, clearHandCostTax, resetNexusHitCount } from '../utils/gameRules'; // [2026-10-08 第二波] 回合开始清零本回合施法计数 · [2026-10-24] + 费用修饰器回合清零 / 第21条受伤计数
 import { getCurrentHP } from '../logic/combat';
 import { processEffect, relayEffectEvents, hasLiveUnitOfSide, processOnGetAttackToken } from '../logic/effectProcessor'; // [2026-10-04] +hasLiveUnitOfSide（回合兜底复用"存在性"唯一出口）｜ [2026-10-06] +processOnGetAttackToken（块 B 改走唯一入口）
 import type { EffectContext } from '../logic/effectProcessor';
@@ -17,7 +17,8 @@ import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating
 import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
 // [2026-10-05 莉莉子 BUG修复 · 20261005-12] 「unit_die 强化已派发」账本（与 `isDead` 解耦；见 utils/deathLedger.ts 头注释）
 import { markUnitDieDispatched, hasUnitDieDispatched } from '../utils/deathLedger';
-import { runRogueTrigger, commitSlicePatch, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎（原 rogueBattle 分发已收编）
+import { runRogueTrigger, commitSlicePatch, getCostTaxMode, hasMassacre, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎（原 rogueBattle 分发已收编）· [2026-10-24] 费用税版本查询 / 第16条处决标记
+import { findStrongestUnit } from '../logic/rogueBattle'; // [2026-10-24 莉莉子 · 第 16 条] 回合末处决要判"双方各自最强"
 import { runSummonEntry } from '../logic/summonEntry'; // [2026-10-06 程拍板 · A 方案] 「入场」门铃唯一实现
 
 // ==========================================
@@ -100,6 +101,12 @@ const waitForHits = (count: number, timeoutMs: number = 1200): Promise<void> => 
 export interface UseRoundLifecycleParams {
     // 0. 教程模式先手偏移（用于校正进攻标识奇偶交替）
     firstAttacker?: 'player' | 'enemy';
+    /**
+     * [2026-10-16 莉莉子] **教程专用**：每回合开始的最大法力加成（默认 0 ⇒ 标准对局零影响）。
+     * 每回合最大法力是"从零重算"的（`min(10, round + bonus)`），`initialState.playerMaxMana`
+     * 不参与运算，所以教程若需要"第 N 回合有 X 点法力"只能从这里注入。
+     */
+    tutorialManaBonus?: number;
 
     // 1. 核心状态快照引用 (避免闭包陷阱)
     stateRef: MutableRefObject<{
@@ -153,6 +160,7 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         recordAction, captureSnapshot, // [2026-07-23 对局记录] 补全遗漏的解构
         firstAttacker = 'player', // [新增] 教程模式先手偏移
         armamentManaRestore, // [2026-08-14 武装] 秘法回响：回合开始恢复全部法术法力
+        tutorialManaBonus = 0, // [2026-10-16 莉莉子] 教程专用：每回合最大法力加成（标准对局为 0）
     } = params;
 
     // ==========================================
@@ -610,9 +618,12 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                                         console.log(`[Kelo_Debug] 回收触发，单位=${unit.name}(${unit.key})，owner=${owner}，上回合出牌:`, JSON.stringify(lastCards));
                                         if (lastCards.length > 0) {
                                             const maxCopy = Math.min(3, lastCards.length);
-                                            const handRef = owner === 'player' ? stateRef.current.playerHand : stateRef.current.enemyHand;
                                             const setHand = owner === 'player' ? setPlayerHand : setEnemyHand;
-                                            let currentHand = [...handRef];
+                                            // [BUG修复 · 科洛「收藏癖」完全不给牌]
+                                            //   工作副本必须从块 A 的 temp 副本取，不能用 stateRef 重建：
+                                            //   temp 副本含本 tick 内"库效·备战席满→退手牌"（就地 push）等
+                                            //   尚未进 state 的牌；从 stateRef 重建会把那些牌一起丢掉。
+                                            let currentHand = [...(owner === 'player' ? tempPHand : tempEHand)];
                                             console.log(`[Kelo_Debug] 开始回收(${owner})，maxCopy=${maxCopy}，当前手牌数=${currentHand.length}`);
                                             for (let i = 0; i < maxCopy; i++) {
                                                 const cardKey = lastCards[i];
@@ -625,7 +636,11 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                                                 newCard.keywords = Array.from(new Set([...(newCard.keywords || []), 'Volatile']));
                                                 if (currentHand.length < 10) {
                                                     currentHand.push(newCard);
-                                                    res.events.push({ type: 'sfx_generate', payload: newCard });
+                                                    // [BUG修复 · 死音效] 原 res.events.push({type:'sfx_generate'}) 永不播放：
+                                                    //   relayEffectEvents 已在前面调用完，且只转发 unit_damage/nexus_damage；
+                                                    //   sfx_generate 既非 eventBus 事件也无监听。改用本文件同款通道
+                                                    //   （库效退手牌亦用此；监听在 useSfx.ts）。
+                                                    eventBus.emit(GameEvents.SFX_DROP_BENCH);
                                                     console.log(`[Kelo_Debug] ✓ 回收了 ${cardKey}(${newCard.name}) 到${owner}手中，手牌数=${currentHand.length}`);
                                                 } else {
                                                     console.warn(`[Kelo_Debug] 手牌已满，无法回收 ${cardKey}`);
@@ -634,6 +649,10 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                                             setHand(currentHand);
                                             if (owner === 'player') stateRef.current.playerHand = currentHand;
                                             else stateRef.current.enemyHand = currentHand;
+                                            // [BUG修复] 同步进块 A 的工作副本 —— 否则下方统一提交会用不含回收牌的
+                                            //   tempPHand/tempEHand 在同一 React 批次里覆盖上面这次 setHand（根因）
+                                            if (owner === 'player') tempPHand = currentHand;
+                                            else tempEHand = currentHand;
                                             hasEffectTriggered = true;
                                             setMessage(`${unit.name} 发动：收藏癖——回收上回合卡牌！`);
                                         } else {
@@ -911,7 +930,13 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
         const currentGameState = stateRef.current.game;
         // [2026-10-03 莉莉子 · 进攻标识三层分离 ①] 先手方直接传给规则层算 parity
-        const nextRoundBase = calculateRoundStart(currentGameState, firstAttacker);
+        // [2026-10-16 莉莉子] 教程法力加成**只在第 2 回合起**生效：第 1 回合的初始法力由
+        //   `tutorialInit.playerMana` 卡通（`useGameState` 里覆盖），若这里也加会重复抬升。
+        const nextRoundBase = calculateRoundStart(
+            currentGameState,
+            firstAttacker,
+            currentGameState.round >= 1 ? tutorialManaBonus : 0,
+        );
 
         // [2026-07-31 安卡希雅] 若安卡已升级，每回合开始同步手牌+牌库法术（残留剑舞→重锋、安卡副本→Lv2）
         // [2026-10-04 莉莉子 BUG修复 · I5] 判据改**按方**：这段只改**玩家**的手牌/牌库，
@@ -1047,6 +1072,11 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         // [2026-10-08 莉莉子 · 法术专属装备 第二波] **本回合施法计数清零**
         //   （活页夹页"本回合尚未打出过法术"的判据；「本场」累计保留）
         resetSpellCastRoundCounters();
+        // [2026-10-24 莉莉子 · 费用修饰器] 回合开始清「本回合」类的 ③ 连出税 + 出牌计数。
+        //   ⚠️ ② 费用税**不在这里清** —— 它的清零时机由强化版本决定（见回合末那段）。
+        resetRoundChainTax();
+        // [2026-10-24 莉莉子 · 第 21 条] 水晶「本回合受伤次数」每回合重置（限伤计数的分母）
+        resetNexusHitCount();
 
         // [2026-10-03 莉莉子 · 进攻标识三层分离 ①] 原来这里有一段「敌方先攻 ⇒ 交换 attackToken + turnOwner」的补偿，
         //   现已在 `calculateRoundStart(game, firstAttacker)` 里按「先手方占奇数回合」**直接算清** ⇒ 补偿删除，
@@ -1097,6 +1127,15 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         console.log('[LILITH-DEBUG] 🎬 executeRoundEndSequence 入口被调用');
         // [2026-08-04 莉莉子] 收集待播瞬逝弃置动画的卡 id，供 startRound 前等待动画播完
         const volatilePending = new Set<string>();
+        // [2026-10-24 莉莉子 · 费用修饰器] 5 版费用税（`mode: 'round'`）：**只在「刚结束的是玩家回合」时清零**。
+        //   🔴 为什么必须判 `turnOwner === 'player'`：程原话是"回合结束后清零、和基座炮击时机一致"，
+        //      但基座炮击（`processRoundEndAttacks`）在 `:1675-1676` 是**每回合双方各跑一次**。
+        //      照搬会让"AI 在自己回合攒的税"在玩家看到之前就被清光 ⇒ 整条强化等于空气。
+        //      round_end 序列执行时 `turnOwner` 还没切换（切换在末尾的 `startRound()`）⇒ 判据可靠。
+        if (stateRef.current.game.turnOwner === 'player') {
+            if (getCostTaxMode(stateRef.current.game.enemyEnhancements) === 'round') clearHandCostTax('player');
+            if (getCostTaxMode(stateRef.current.game.rogueEnhancements) === 'round') clearHandCostTax('enemy');
+        }
         // [SBA] 回合结束效果前先清尸
         judgeLifeAndDeath();
         setGame(prev => ({ ...prev, phase: 'animating' }));
@@ -1796,6 +1835,30 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             if (ctx.dirty.hand.has('enemy')) setEnemyHand(ctx.enemyHand);
             if (ctx.dirty.deck.has('player')) setPlayerDeck(ctx.playerDeck);
             if (ctx.dirty.deck.has('enemy')) setEnemyDeckState(ctx.enemyDeck);
+            // ==========================================
+            // [2026-10-23 莉莉子 BUG修复] **game 级改动此前整段丢失**
+            // ── 病根（程提出）：`runRogueTrigger` 里 `oncePerBattle` 的记账写的是
+            //    `ctx.game.questProgress['used:<id>:<class>']`，并置 `ctx.dirty.game = true`。
+            //    本段（回合末清场死亡派发 unit_die）只回写了 bench / hand / deck / field，
+            //    **唯独没有回写 `dirty.game`** ⇒ 记账永远不落盘。
+            // ── 后果：任何"每场一次"的 unit_die 强化，在这条路径上等于**没有次数限制**。
+            //    程实测推演：我方 2 个单位（其中一个是幻象）→ 回合末幻象消散 → 触发；
+            //    下回合再打一个幻象 → 又能触发 ⇒ 可无限叠出大哥。
+            // ── 修法：与 `useGameState` 的 processDeaths / judgeLifeAndDeath 两处**同构**——
+            //    对 `ctx.game` 做**差异合并**（只合并与播种快照不同的字段），并同步 stateRef
+            //    （同一流程后续还会读账本判"是否用过"，只改 state 不改 ref 会读到旧账本）。
+            // ==========================================
+            if (ctx.dirty.game) {
+                const seededGame: any = stateRef.current.game;
+                const changed: Record<string, any> = {};
+                for (const k of Object.keys(ctx.game as any)) {
+                    if ((ctx.game as any)[k] !== seededGame[k]) changed[k] = (ctx.game as any)[k];
+                }
+                if (Object.keys(changed).length > 0) {
+                    setGame(prev => ({ ...prev, ...changed }));
+                    stateRef.current.game = { ...stateRef.current.game, ...changed };
+                }
+            }
         });
 
         // ==========================================
@@ -2072,6 +2135,53 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
 
         // 7. 开启新回合（先做交战区幸存者归位安全网；正常路径交战区已空 → no-op）
         reconcileLeftoverCombatSurvivors();
+
+        // ==========================================
+        // [2026-10-24 莉莉子 · 第 16 条] 回合末处决：保留双方各自最强，其余**逐个**消灭
+        //   程口径：「回合结束，击杀敌我双方最强单位以外的单位」+「挨个杀挨个处理，同时一起杀可能递归」
+        //   🔴 为什么在 hook 侧做：`judgeLifeAndDeath` 是 hook 内部闭包，迷宫 handler 的 ctx 拿不到；
+        //      而"杀一个 → 走完死亡链 → 再杀下一个"必须串行，只能放这里。
+        //   ⚠️ 位置在所有 `nextXxx` 写回**之后**（紧跟 `reconcileLeftoverCombatSurvivors`）：
+        //      放前面会被后续 `setPlayerBench(nextXxx)` 用旧快照覆盖掉。
+        //   ⚠️ 每步都重新读 `stateRef` 并重算"最强" —— 亡语会召唤/复活，用旧快照会漏掉新单位。
+        //   ⚠️ `MAX_MASSACRE_STEPS` 是递归护栏：复活类亡语（亡灵军团 / 聚光灯不落）会不断补人，
+        //      没有上限就是死循环（程明确担心过这一点）。
+        // ==========================================
+        if (hasMassacre(stateRef.current.game.rogueEnhancements)
+            || hasMassacre(stateRef.current.game.enemyEnhancements)) {
+            const MAX_MASSACRE_STEPS = 20;
+            const isAliveUnit = (u: CardData | undefined): u is CardData =>
+                !!u && !u.isDead && u.animState !== 'dying' && u.animState !== 'ephemeral_dying';
+            for (let step = 0; step < MAX_MASSACRE_STEPS; step++) {
+                const pBench = stateRef.current.playerBench;
+                const eBench = stateRef.current.enemyBench;
+                const field = stateRef.current.combatField;
+                const pKeep = findStrongestUnit(pBench, field, 'player');
+                const eKeep = findStrongestUnit(eBench, field, 'enemy');
+                const victims = [
+                    ...pBench.filter(u => isAliveUnit(u) && u.id !== pKeep?.id),
+                    ...eBench.filter(u => isAliveUnit(u) && u.id !== eKeep?.id),
+                ];
+                if (!victims.length) break;
+                const victim = victims[0];
+                // 走**正常死亡链**：把 damageTaken 推到必定致死（`judgeLifeAndDeath` 的判据是 hp<=0）。
+                //   不直接写 `isDead` —— 那会绕过亡语与 `unit_die` 派发（成了"假死"）。
+                const lethal = (victim.health || 0) + (victim.buffs?.health || 0)
+                    + (victim.roundBuffs?.health || 0) + 99;
+                const patch = (u: CardData) => (u.id === victim.id ? { ...u, damageTaken: lethal } : u);
+                const onPlayerSide = pBench.some(u => u.id === victim.id);
+                if (onPlayerSide) {
+                    setPlayerBench(prev => prev.map(patch));
+                    stateRef.current.playerBench = stateRef.current.playerBench.map(patch);
+                } else {
+                    setEnemyBench(prev => prev.map(patch));
+                    stateRef.current.enemyBench = stateRef.current.enemyBench.map(patch);
+                }
+                judgeLifeAndDeath();
+                await wait(320); // 给亡语链留拍子；下一步会重新计算目标
+            }
+        }
+
         startRound();
     };
 

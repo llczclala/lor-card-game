@@ -69,8 +69,10 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     | 'CHAMPION_TO_HAND'      // [2026-09-01 莉莉子] 天启共鸣：开局从牌库随机抽一张天启者到手牌（提高上手率，天启者等级奖励专属）
     | 'DRAW_CARDS'            // [2026-09-25 莉莉子 三线任务化框架] 开局抽 N 张（params.value）：牌库顶 N 张进手牌；武装任务兑现与后续条目共用
     | 'DISCARD_LOWEST_BUFF_CHAMPION' // [2026-09-25 莉莉子 武装线] 噬牌之匣：回合开始弃掉手牌中费用最低的一张 → 天启者永久 +1/+1
-    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **从牌库召唤**（区别于 SUMMON 的"造卡"）：
-    //   取牌库里的**实例** ⇒ 天然带装备/武装（开局构建时已挂好）；语义是**移出**牌库
+    // [2026-10-08 莉莉子 · 瓦尔基里大赛] **从牌库/手牌召唤**（区别于 SUMMON 的"造卡"）：
+    //   取牌库或手牌里的**实例** ⇒ 天然带装备/武装（开局构建时已挂好）；语义是**移出**原处
+    //   ⚠️ [2026-10-10] 加查手牌；⚠️ [2026-10-21] 两处都没有时**兜底造卡**（并随机挂 3 件装备）
+    //   ⇒ 与 SUMMON 的差别现在只剩"**优先**取实例"这一层，不再是"绝不造卡"。
     | 'SUMMON_FROM_DECK'
     // [2026-09-25 莉莉子 武装线] 武装专用效果类（载体为 armfx_* 条目）
     | 'SUMMON_INHERIT_LAST_DEAD'    // 亡者低语：此后每次召唤，新单位获得"最后阵亡单位"的攻血
@@ -84,7 +86,7 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     //   ⚠️ 这两个类需要 game 级提交（悬赏写标记、终焉回响扣水晶）—— game_start 站点本轮已补上差异合并提交
     | 'OPENING_ZERO_COST'           // 终焉回响：开局随机 2 张手牌费用变 0；代价：每场开局我方水晶 −2
     | 'BOUNTY_CYCLE'                // 悬赏：标记敌方最强的单位 → 它被击杀后抽 2 张牌 + 50 金币（自循环：结算后下回合重标记）
-    | 'LONE_GUARD_BUFF'             // 孤军：我方场上恰好 1 个单位时，该单位 +4/+4 并获得【屏障】
+    | 'LONE_GUARD_BUFF'             // 孤军：我方场上恰好 1 个单位时，该单位 +5/+5 并获得【坚韧】【再生】
     // [2026-09-28 莉莉子 神格神经线] 两个新类（载体为 divfx_* 条目，playerEligible:false）
     //   · START_MANA_BONUS：**常驻查询型**，无 handler —— 生效点在 logic/core.ts 的 calculateRoundStart
     //     （每回合最大法力由 round 从零重算，故必须走"规则查询"而不是在 game_start 写值，否则会被冲掉）
@@ -103,7 +105,37 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     | 'REMOVE_MAX_POWER'         // ⑥清除指定卡（臆莲基座）的攻击力上限
     // [2026-09-28 神格神经 · 茉莉安]
     | 'EXPOSE_AND_DAMAGE'        // ②④回合开始：暴露一个敌人，并对随机/血量最多的敌人造成 N 点伤害
-    | 'BEACON_DAMAGE_MULT';      // ⑥常驻查询型：獠牙信标亡语伤害翻倍（在 SPREAD_DAMAGE 处乘算，无 handler）
+    | 'BEACON_DAMAGE_MULT'       // ⑥常驻查询型：獠牙信标亡语伤害翻倍（在 SPREAD_DAMAGE 处乘算，无 handler）
+    // [2026-10-24 程拍板] 开局：给我方**手牌 + 牌库**的每张卡各随机挂一件**指定品质**的装备（params.rarity）
+    //   池子走项目铁律 `getEquipPoolForCard` —— 自动排除武装 / 非战斗装 / 不适用本卡的件，
+    //   法术卡只会拿到 `spellOnly` 件（不会出现"挂了却毫无作用"的空装备）。
+    //   ⚠️ 每张卡**只挂一件**；无同品质候选的卡原样不动（不留空槽、不报错）。
+    | 'EQUIP_ALL_CARDS'
+    // [2026-10-24 程拍板] 指定费用的**我方单位**获得 +N/+M（第 15 条「1 费单位 +3/+3」）
+    //   双时机搭档：`game_start`（开局已在场的）+ `on_summon`（此后召唤的）—— 与「决意·不退之阵」同范式
+    | 'BUFF_COST_UNITS'
+    // [2026-10-24 程拍板 · 第 1 条] 回合开始：**随机**从牌组（没有则手牌）召唤一个指定费用的非天启者单位
+    | 'SUMMON_BY_COST_FROM_DECK'
+    // [2026-10-24 程拍板 · 第 2 条] 我方单位首次阵亡：从**完整卡池**随机召唤一个费用低 1 费的非天启者单位
+    | 'SUMMON_LOWER_COST_ON_DEATH'
+    // [2026-10-24 程拍板 · 费用修饰器三套] 三者都是**查询/标记型**（无 handler）：
+    //   生效点在 `utils/gameRules.ts` 的费用修饰器快照 + 各站点埋点（建局重设 / 出牌累加 / 回合清零）。
+    | 'SPELL_COST_UP_ALL'   // 4/5：**敌我双方**的法术费用 +N（params.amount；按持有条数叠加）
+    | 'COST_TAX'            // 6/7：持有方每打出一张卡 ⇒ 对手所有手牌 +1（params.mode: 'round' 回合末清 / 'run' 跨回合）
+    | 'CHAIN_PLAY_TAX'      // 20：持有方每回合从第 (after+1) 张起，每张给对手 +amount（可叠加，回合末清）
+    // [2026-10-24 程拍板 · 第 14 条] 开局把六位天启者的 **Lv2 形态**各一张洗入牌库（params.championKeys）
+    | 'UPGRADED_CHAMPIONS_TO_DECK'
+    // [2026-10-24 程拍板 · 第 19 条] 回合开始：随机选定一支后勤小队，把它的**全部成员**召唤到备战席
+    | 'SUMMON_RANDOM_SQUAD'
+    // [2026-10-24 程拍板 · 第 16 条] 回合结束：消灭敌我双方除**各自最强**以外的所有单位。
+    //   **查询/标记型**（无 handler）：真正执行在 `useRoundLifecycle` 的回合末序列里 ——
+    //   "逐个杀 → 走完死亡链 → 再杀下一个"必须待在 hook 侧（`judgeLifeAndDeath` 是 hook 内部闭包，
+    //   迷宫 handler 的 ctx 拿不到），详见那边的实现注释。
+    | 'MASSACRE_EXCEPT_STRONGEST'
+    // [2026-10-24 程拍板 · 第 21 条] 我方水晶**每回合**受到 3 次伤害后，此后每次受到的伤害降至 1。
+    //   **查询/标记型**（无 handler）：执行点在 `useGameState` 的两处水晶扣血（战斗主路径），
+    //   计数快照在 `utils/gameRules`（每回合重置）。
+    | 'NEXUS_DAMAGE_CAP';
 export interface BattleEffectDef {
     trigger: BattleTrigger;
     effectClass: BattleEffectClass;
@@ -111,6 +143,13 @@ export interface BattleEffectDef {
     params?: Record<string, unknown>; // 执行参数，逻辑层按类读取
     oncePerBattle?: boolean; // [2026-09-25 莉莉子 三线任务化框架] 本场战斗只生效一次（破晓号令等）；账本借用 questProgress 的 used:<id> 键
     requireOnlyOneUnit?: boolean; // [2026-09-25 莉莉子 强化线] 苛刻条件：我方场上恰好 1 个单位才分发（孤军）；判定在"每场一次"记账之前，不会白白消耗掉那一次
+    /**
+     * [2026-10-24 莉莉子 · 「第 N 回合」类强化] **回合门槛**：声明后，该效果只在 `game.round` 等于此值时分发。
+     * 判据在分发器统一收口（`logic/rogueTrigger.ts` 的 `runRogueTrigger`），**任何 effectClass 都能用**，handler 无需关心。
+     * round 语义：首回合 = 1（`logic/core.ts` 的 `calculateRoundStart` 把 0 → 1），与 UI 上看到的"第几回合"一致。
+     * 典型用法：第五回合才发生一次的召唤 / 生成 ⇒ 天然只触发一次，不需要再配 `oncePerBattle`。
+     */
+    round?: number;
 }
 
 /** [2026-09-25 莉莉子 武装线] 共鸣水晶的「随机关键词」候选池（只从中挑一个赠予天启者，再扩散给我方单位） */
@@ -163,7 +202,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
         id: 'enhance_ghost_action', name: '幽灵行动', description: '开局召唤 1 费的鬼怪「安提娜」。',
         rarity: 'uncommon', icon: UNIT_IMAGES.antina, effect: { type: 'passive' }, // [2026-08-27] 原 common→uncommon
         battleEffect: { trigger: 'game_start', effectClass: 'SUMMON', params: { summonKey: 'Ghost_Squad_Antina' } },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     // [2026-10-08 莉莉子 · 瓦尔基里大赛] **世纪和解**（仅「瓦尔基里大赛」绝密档可得）
     //   效果：开局时**从牌库与手牌**召唤里芙与芬妮到备战席（从原处移出，带装备随卡而来）
@@ -173,24 +212,247 @@ export const MAZE_BUFFS: MazeBuff[] = [
     //   ⚠️ `playerEligible: false` ⇒ **不进任何随机池**（同神格神经 `divfx_*` 的做法），
     //      玩家唯一的获取途径是该事件的 `addEnhancementFrom`。
     //   ⚠️ `enemyEligible: true` ⇒ 绝密档「在哪里参赛？」的敌方**也持有一条**（程的表里明确写了）。
+    //   ⚠️ [2026-10-21 莉莉子 BUG修复 · 程点名] 牌库与手牌**都**没有某一位时，原实现直接跳过
+    //      ⇒ 对"既没带里芙也没带芬妮"的卡组，本强化等于空气。现改为**逐 key 兜底**：
+    //      造一个该天启者到备战席，并随机佩戴 **3 件**装备（`getEquipPoolForCard` 全池、不设品质上限、
+    //      每件不重复）。程原话：「这个兜底就是专门做给敌人的」—— 玩家侧在此前调整下已不会缺这两位；
+    //      实现上仍**敌我同款**（按 `ctx.owner` 分侧，不额外分化）。
+    //      （实现见 `logic/rogueTrigger.ts` 的 `SUMMON_FROM_DECK` ③ 分支）
     {
         id: 'enhance_century_reconciliation', name: '世纪和解',
-        description: '开局时，从牌库与手牌召唤里芙与芬妮到备战席。',
+        description: '开局时，从牌库与手牌召唤里芙与芬妮到备战席；若找不到某一位，则直接召唤她并随机佩戴三件装备。',
         rarity: 'mythic', icon: SPELL_IMAGES.lyfe_fenny, effect: { type: 'passive' },
         battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['lyfe', 'fenny'] } },
         playerEligible: false, enemyEligible: true,
     },
+
+    // ── [2026-10-24 程拍板 · 开局召唤六位天启者] 单英雄版「世纪和解」 ──
+    //   与「世纪和解」走**同一条管线**（`game_start` + `SUMMON_FROM_DECK`：牌库 → 手牌 → 兜底造卡 三级回退）。
+    //   🔴 [2026-10-24 程拍板 · 定稿] **品质 = 传说（金）**，兜底装备 = **1 件**（`fallbackEquips: 1`）。
+    //      程的原话：「不能不做兜底，否则玩家拿到这个强化一点用都没有会骂娘；但件数要可控，一件就行」。
+    //      ⇒ 卡组没带该英雄时**仍然**会造一个她上场（强化不会变成空气），但只带一件装备，不是三件。
+    //      「世纪和解」**不传**这个参数 ⇒ 仍走默认 3 件，本改动不影响它。
+    //   📌 key 与 `ROGUE_HEROES`（`rogueStarterDecks.ts:15-22`）同源，即肉鸽天启者选择界面的六位。
+    //   📌 图标用各英雄的大招图（与 `divfx_*_6` 神格节点同款），无需新增图片资源。
+    {
+        id: 'enhance_open_lyfe', name: '凛冬先声',
+        description: '开局时，从牌库与手牌召唤里芙到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        rarity: 'legendary', icon: SPELL_IMAGES.lyfe_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['lyfe'], fallbackEquips: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_open_fenny', name: '耀目开场',
+        description: '开局时，从牌库与手牌召唤芬妮到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        rarity: 'legendary', icon: SPELL_IMAGES.fenny_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['fenny'], fallbackEquips: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_open_mauxir', name: '莲开于席',
+        description: '开局时，从牌库与手牌召唤猫汐尔到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        rarity: 'legendary', icon: SPELL_IMAGES.mauxir_lotus_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['mauxir_lotus_drive'], fallbackEquips: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_open_marian', name: '鹰隼先临',
+        description: '开局时，从牌库与手牌召唤茉莉安到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        rarity: 'legendary', icon: SPELL_IMAGES.marian_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['marian'], fallbackEquips: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_open_pupu', name: '镜影先至',
+        description: '开局时，从牌库与手牌召唤卜卜到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        rarity: 'legendary', icon: SPELL_IMAGES.pupu_specular_soul_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['pupu_specular_soul'], fallbackEquips: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_open_acacia', name: '时序先行',
+        description: '开局时，从牌库与手牌召唤安卡希娅到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        rarity: 'legendary', icon: SPELL_IMAGES.acacia_chrono_echo_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['acacia_chrono_echo'], fallbackEquips: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+
+    // ── [2026-10-24 程拍板 · 「第 N 回合」类] 靠 `BattleEffectDef.round` 这一个新字段实现 ──
+    //   判据在分发器统一收口（`logic/rogueTrigger.ts` 的 `runRogueTrigger`），**handler 零改动**。
+    //   与 `oncePerBattle` 的分工：这里靠"只剩那一个回合"天然只发生一次，不需要额外记账。
+    {
+        id: 'enhance_round5_shalo', name: '梵音后至',
+        description: '第五回合开始时，召唤莎罗。',
+        rarity: 'rare', icon: UNIT_IMAGES.shalo, effect: { type: 'passive' },
+        // SUMMON 的既有口径：造白板 Lv1 + 走「入场」门铃；同 key 已在备战席 / 备战席满则跳过。
+        battleEffect: {
+            trigger: 'round_start', effectClass: 'SUMMON',
+            params: { summonKey: 'SacredChants_Squad_Shalo' }, round: 5,
+        },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_round5_white_hunt', name: '准星应召',
+        description: '第五回合开始时，在手牌中生成一张 0 费的「白猎」。',
+        rarity: 'epic', icon: UNIT_IMAGES.white_hunt, effect: { type: 'passive' },
+        // GENERATE + costOverride：进**手牌**、费用改写为 0（与里芙④ 0 费单挑同一条腿）。
+        // 注意白猎自带「打出时从手牌召唤一个费用低于 7 的单位」⇒ 0 费白猎相当于一次免费的大哥空投。
+        battleEffect: {
+            trigger: 'round_start', effectClass: 'GENERATE',
+            params: { generateKey: 'The_Forger_Squad_White_Hunt', costOverride: 0 }, round: 5,
+        },
+        playerEligible: true, enemyEligible: true,
+    },
+
+    // ── [2026-10-24 程拍板 · 装备三档] 开局给**手牌 + 牌库**每张卡随机挂一件指定品质的装备 ──
+    //   三条共用同一个 handler（`EQUIP_ALL_CARDS`），差别只有 `params.rarity`。
+    //   📌 品质映射按项目六档：`common` 白 / `rare` 蓝 / `epic` 紫。
+    //   📌 图标暂用 `abc_spell` 占位（与库内其余 20+ 条同款），待美术出装备主题图。
+    {
+        id: 'enhance_equip_all_epic', name: '秘藏武装',
+        description: '开局时，我方手牌与牌库中的所有卡牌各随机获得一件紫色装备。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'EQUIP_ALL_CARDS', params: { rarity: 'epic' } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_equip_all_rare', name: '精良行装',
+        description: '开局时，我方手牌与牌库中的所有卡牌各随机获得一件蓝色装备。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'EQUIP_ALL_CARDS', params: { rarity: 'rare' } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_equip_all_common', name: '粗制配给',
+        description: '开局时，我方手牌与牌库中的所有卡牌各随机获得一件白色装备。',
+        rarity: 'uncommon', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'EQUIP_ALL_CARDS', params: { rarity: 'common' } },
+        playerEligible: true, enemyEligible: true,
+    },
+
+    // ── [2026-10-24 程拍板 · 第 15 条] 1 费单位 +3/+3 ──
+    //   双时机：`game_start` 管开局在场的，`on_summon` 管此后召唤的（与「决意·不退之阵」同范式）。
+    //   ⚠️ 若只写 `game_start`，则开局之后打出的 1 费单位全部吃不到 —— 那正是 10-06 安卡⑥踩过的坑。
+    {
+        id: 'enhance_1cost_buff', name: '微躯巨力',
+        description: '我方所有 1 费单位获得 +3/+3（含此后召唤的单位）。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffects: [
+            { trigger: 'game_start', effectClass: 'BUFF_COST_UNITS', params: { cost: 1, power: 3, health: 3 } },
+            { trigger: 'on_summon', effectClass: 'BUFF_COST_UNITS', params: { cost: 1, power: 3, health: 3 } },
+        ],
+        playerEligible: true, enemyEligible: true,
+    },
+
+    // ── [2026-10-24 程拍板 · 第 1 / 2 条] 按费用选卡两条 ──
+    //   两条共用同一个筛选判据（单位 + 后勤阵营 + 排除召唤物），差别只在来源：
+    //   第 1 条从**牌组**取实例（带装备随卡而来），第 2 条从**完整卡池**造卡。
+    {
+        id: 'enhance_summon_2cost_round', name: '轮换补员',
+        description: '回合开始时，随机从牌组召唤一个 2 费的非天启者单位。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'round_start', effectClass: 'SUMMON_BY_COST_FROM_DECK', params: { cost: 2 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_death_summon_lower', name: '前赴后继',
+        description: '我方单位首次阵亡时，随机召唤一个费用比它低 1 费的非天启者单位。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'unit_die', effectClass: 'SUMMON_LOWER_COST_ON_DEATH' },
+        playerEligible: true, enemyEligible: true,
+    },
+
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-10-24 程拍板 · 费用修饰器三套] 这批**没有 handler**（查询/标记型）：
+    //   ① 4/5「全场法术加费」：敌我双方都加，双开关都开 —— 玩家刷到等于"自己也变贵"的赌注
+    //   ② 6/7「费用税」：AI 出牌 ⇒ 玩家加价；玩家出一张就清零（`round` 版另在玩家回合末清）
+    //   ③ 20「连出税」：AI 每回合第 3 张起每张给玩家 +3，可叠加，回合末清
+    //   生效点在 `utils/gameRules.ts` 的费用修饰器快照 + 三处站点埋点，见那边逐条注释。
+    // ══════════════════════════════════════════════════════════════════
+    {
+        id: 'enhance_spell_cost_up_1', name: '法力淤塞',
+        description: '敌我双方的法术费用 +1。',
+        rarity: 'uncommon', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SPELL_COST_UP_ALL', params: { amount: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_spell_cost_up_2', name: '万法难行',
+        description: '敌我双方的法术费用 +2。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SPELL_COST_UP_ALL', params: { amount: 2 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_cost_tax_round', name: '步步加价',
+        description: '敌方每打出一张卡牌，我方所有手牌费用 +1；我方打出一张卡牌后清零，回合结束时清零。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { mode: 'round' } },
+        playerEligible: false, enemyEligible: true,
+    },
+    {
+        id: 'enhance_cost_tax_run', name: '积重难返',
+        description: '敌方每打出一张卡牌，我方所有手牌费用 +1；我方打出一张卡牌后清零（跨回合累积）。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { mode: 'run' } },
+        playerEligible: false, enemyEligible: true,
+    },
+    {
+        id: 'enhance_chain_play_tax', name: '连番施压',
+        description: '敌方每回合从第三张卡牌起，每打出一张，我方所有手牌费用 +3（可叠加，回合结束时清零）。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'CHAIN_PLAY_TAX', params: { after: 2, amount: 3 } },
+        playerEligible: false, enemyEligible: true,
+    },
+    {
+        id: 'enhance_upgraded_champions_deck', name: '王牌齐备',
+        description: '开局时，将六位天启者的升级形态各一张洗入牌库。',
+        rarity: 'mythic', icon: abc_spell, effect: { type: 'passive' },
+        // 六位 = `ROGUE_HEROES` 的同一批；「升级形态」走 `getLeveledUpCard`（每位天启者的 Lv2 数据各不相同，
+        // 不要自己写死数值 —— 那是会随版本漂移的复制品）。
+        battleEffect: {
+            trigger: 'game_start', effectClass: 'UPGRADED_CHAMPIONS_TO_DECK',
+            params: { championKeys: ['lyfe', 'fenny', 'pupu_specular_soul', 'mauxir_lotus_drive', 'acacia_chrono_echo', 'marian'] },
+        },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_random_squad', name: '整队集结',
+        description: '回合开始时，随机召唤一整支后勤小队的全部成员。',
+        rarity: 'legendary', icon: abc_spell, effect: { type: 'passive' },
+        // 小队名单由 `rogueTrigger` 的 `SQUAD_MEMBERS` 按 key 命名约定自动聚类（不是手抄表）
+        battleEffect: { trigger: 'round_start', effectClass: 'SUMMON_RANDOM_SQUAD' },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_massacre', name: '唯强独存',
+        description: '回合结束时，消灭敌我双方除各自最强单位以外的所有单位。',
+        rarity: 'mythic', icon: abc_spell, effect: { type: 'passive' },
+        // 查询/标记型：执行在 `useRoundLifecycle` 的回合末序列（逐个杀 + 走死亡链 + 20 步递归护栏）。
+        // ⚠️ 双开关都开 ⇒ 玩家持有时**自己也会被清到只剩最强那个**，是双刃剑不是纯收益。
+        battleEffect: { trigger: 'game_start', effectClass: 'MASSACRE_EXCEPT_STRONGEST' },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        id: 'enhance_nexus_damage_cap', name: '顽石之躯',
+        description: '我方水晶每回合受到 3 次伤害后，本回合此后受到的伤害降至 1 点。',
+        rarity: 'mythic', icon: abc_spell, effect: { type: 'passive' },
+        // 查询/标记型：执行在 `useGameState` 的两处水晶扣血（战斗主路径）；次数快照每回合重置。
+        battleEffect: { trigger: 'game_start', effectClass: 'NEXUS_DAMAGE_CAP' },
+        playerEligible: true, enemyEligible: true,
+    },
+
     {
         id: 'enhance_seize_moment', name: '机不可失', description: '我方召唤单位时，本回合给予其 +1/+1。',
         rarity: 'rare', icon: SPELL_IMAGES.full_purification, effect: { type: 'passive' },
         battleEffect: { trigger: 'on_summon', effectClass: 'BUFF', params: { power: 1, health: 1, duration: 'ROUND' } },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_fighting_spirit', name: '战意盎然', description: '回合开始时，进行备战。',
         rarity: 'epic', icon: SPELL_IMAGES.focus, effect: { type: 'passive' },
         battleEffect: { trigger: 'round_start', effectClass: 'RALLY' },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_shadow_twin', name: '暗影双生', description: '每回合首次打出的单位，召唤一个临时的复制单位。',
@@ -204,7 +466,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
         id: 'enhance_round_buff', name: '回合加护', description: '回合开始时，随机赋予一个我方单位 +1/+1。',
         rarity: 'rare', icon: SPELL_IMAGES.prayer, effect: { type: 'passive' }, // [2026-09-01 程拍板] 普通→稀有
         battleEffect: { trigger: 'round_start', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_after_attack_buff', name: '以战养战', description: '我方单位打击后，获得 +1/+1。',
@@ -223,25 +485,25 @@ export const MAZE_BUFFS: MazeBuff[] = [
         id: 'enhance_after_attacked_buff', name: '以守为攻', description: '我方单位被打击后，获得 +1/+1。',
         rarity: 'uncommon', icon: SPELL_IMAGES.temp_spell_15, effect: { type: 'passive' }, // [2026-08-27] 原 common→uncommon
         battleEffect: { trigger: 'after_attacked', effectClass: 'BUFF_SELF', params: { power: 1, health: 1 } },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_cast_spell_buff', name: '法术共鸣', description: '每打出一个法术，随机赋予一个我方单位 +1/+1。',
         rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
         battleEffect: { trigger: 'on_cast_spell', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_play_unit_buff', name: '军势鼓舞', description: '每打出一个单位，随机赋予一个我方单位 +1/+1。',
         rarity: 'uncommon', icon: SPELL_IMAGES.fenny_support, effect: { type: 'passive' }, // [2026-08-27] 原 common→uncommon
         battleEffect: { trigger: 'on_play_unit', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_first_play_boost', name: '先锋之锐', description: '每回合首个打出的单位获得 +2/+0。',
         rarity: 'rare', icon: SPELL_IMAGES.temp_spell_14, effect: { type: 'passive' },
         battleEffect: { trigger: 'on_first_play_unit', effectClass: 'BUFF_SELF', params: { power: 2, health: 0 } },
-        playerEligible: true, enemyEligible: false,
+        playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_health_to_power', name: '生命壁垒', description: '我方单位打击后，其生命值提升至等于攻击力。',
@@ -262,19 +524,22 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: false,
     },
     {
-        id: 'enhance_nexus_ally_buff', name: '水晶共鸣', description: '敌方水晶每受到 1 次伤害，随机赋予一个我方单位 +1/+1。',
+        id: 'enhance_nexus_ally_buff', name: '水晶共鸣', description: '敌方水晶每受到 1 次伤害，随机赋予一个我方单位 +2/+2。',
         rarity: 'epic', icon: abc_spell, effect: { type: 'passive' }, // [2026-09-05] 原 rare（与牌库灌注品质互换）
-        battleEffect: { trigger: 'on_nexus_strike', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
-        playerEligible: true, enemyEligible: false,
+        // [2026-10-23 程拍板 · 4.2 加强] +1/+1 → +2/+2：一局水晶约只挨 4~6 次打，+1/+1 整局只给 4~6 点，
+        //   撑不起紫档；单次翻倍后整局 8~12 点，才对得起 7 点锚点。
+        battleEffect: { trigger: 'on_nexus_strike', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 2, health: 2 } },
+        playerEligible: true, enemyEligible: true,
     },
 
     // ── [2026-09-25 莉莉子 任务化强化批 v3 · 试点] 《设计-肉鸽三线任务化框架》7.3 ──
     //   任务版：quest 是【解锁门】—— 达成阈值后 battleEffect 才开始逐回合生效。
     //   与现有强化【并列存在】（不替换、不改造）；⚠️ v1 只对玩家侧开放（敌方尚无任务进度推进管线）
     {
-        id: 'enhance_iron_oath', name: '铁誓', description: '我方水晶累计受到 3 次伤害后：此后每回合开始，我方所有单位获得 +1/+1。',
+        id: 'enhance_iron_oath', name: '铁誓', description: '我方水晶累计受到 5 次伤害后：此后每回合开始，我方所有单位获得 +1/+1。',
         rarity: 'uncommon', icon: abc_spell, effect: { type: 'passive' },
-        quest: { event: 'nexus_damaged', threshold: 3, scope: 'battle' },
+        // [2026-10-23 程拍板 · 平衡] 门槛 3 次 → 5 次：绿档价格拿到金档「钢铁洪流」同款效果，靠推迟解锁来压强度
+        quest: { event: 'nexus_damaged', threshold: 5, scope: 'battle' },
         battleEffect: { trigger: 'round_start', effectClass: 'ALL_BUFF', params: { power: 1, health: 1 } },
         playerEligible: true, enemyEligible: false,
     },
@@ -312,10 +577,16 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: false,
     },
     {
-        id: 'enhance_last_stand', name: '孤军', description: '我方场上恰好只有 1 个单位时，该单位获得 +4/+4 与【屏障】（每场一次）。',
+        id: 'enhance_last_stand', name: '孤军', description: '我方单位阵亡后，若我方场上只剩一个单位，该单位获得 +5/+5 与【坚韧】【再生】（每场一次）。',
         rarity: 'legendary', icon: abc_spell, effect: { type: 'passive' },
+        // [2026-10-23 程拍板 · 平衡] +4/+4+屏障 → +5/+5+坚韧+再生：原先理论上限只有 10 分、低于金档锚点 11 分（数学上不可能合档）；改后 10+3+3=16 分
+        // [2026-10-23 程拍板 · 时机改造] round_start → unit_die：
+        //   原时机下"场上恰好只有 1 个单位"实际退化成"本局打出的第一个单位"（回合 1 空场判不了，
+        //   回合 2 开始时场上正好是它）⇒ 名字叫孤军、干的却是起步件的活。
+        //   改到阵亡触发后，语义变成"战友倒下、最后一个站着的变强"，与「孤军」对上。
+        //   ⚠️ 条件仍是"恰好 1 个"，但**判定只数存活单位**（尸体 animState:'dying' 不算，见 rogueTrigger 判定层）。
         battleEffect: {
-            trigger: 'round_start', effectClass: 'LONE_GUARD_BUFF', params: { power: 4, health: 4 },
+            trigger: 'unit_die', effectClass: 'LONE_GUARD_BUFF', params: { power: 5, health: 5, keywords: ['Tough', 'Regeneration'] },
             oncePerBattle: true, requireOnlyOneUnit: true, // 苛刻条件 + 极限单卡流（苛刻判定在分发前，不浪费"每场一次"）
         },
         playerEligible: true, enemyEligible: false,
@@ -333,72 +604,32 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: false,
     },
     {
-        id: 'enhance_hoard', name: '囤积', description: '回合结束时，未使用的法力最多可有 3 点溢出进法术法力池（突破常规 3 点上限）—— 攒一波大招。',
+        id: 'enhance_hoard', name: '囤积', description: '回合开始时，若手牌中没有「囤积」，生成一张「囤积」—— 它在手牌里时，你每打出一张卡牌就为它攒下 1 点法力；打出它即可取回攒下的全部法力（不超过法力上限）。',
         rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
-        hoardSpellMana: 3,
+        // [2026-10-23 程拍板 · 4.2 重做] 从「+3 法术法力池上限」改成「生成一张存钱罐法术」。
+        //   ── 旧版是纯资源规则（`hoardSpellMana: 3`），玩家几乎无感；新版有"攒 → 兑现"的完整玩法。
+        //   ── 攒点数记在**卡自己**身上（`CardData.hoardStored`），用掉即归零；
+        //      下回合强化重新发一张**空的**（`skipIfInHand`：手牌里已有就不再发，避免同时躺着两张半满的）。
+        //   ⚠️ 储量**不设上限**：它天然被"这张卡什么时候被打出"限制住（程的口径）。
+        battleEffect: { trigger: 'round_start', effectClass: 'GENERATE', params: { generateKey: 'spell_hoard', skipIfInHand: true } },
         playerEligible: true, enemyEligible: false,
     },
 
-    // ── [2026-08-27 莉莉子] 敌人专属迷宫强化（enemyEligible：编辑器给流派配置 → 战斗内 battleEffect 生效）──
-    // 覆盖 9 个触发时机，镜像玩家侧管线（敌方 bench/hand/cast 由引擎 enemy 分支分发）
-    {
-        id: 'enemy_mobilize', name: '精锐动员', description: '开局召唤 1 费的鬼怪「安提娜」。',
-        rarity: 'epic', icon: UNIT_IMAGES.antina, effect: { type: 'passive' },
-        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON', params: { summonKey: 'Ghost_Squad_Antina' } },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_round_rally', name: '狼群战术', description: '回合开始时，进行备战。',
-        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'round_start', effectClass: 'RALLY' },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_round_buff', name: '战意高涨', description: '回合开始时，随机赋予一个敌方单位 +1/+1。',
-        rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'round_start', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_on_summon', name: '蜂拥而至', description: '敌方召唤单位时，本回合给予其 +1/+1。',
-        rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'on_summon', effectClass: 'BUFF', params: { power: 1, health: 1, duration: 'ROUND' } },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_play_buff', name: '召唤浪潮', description: '敌方每打出一个单位，随机赋予一个敌方单位 +1/+1。',
-        rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'on_play_unit', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_first_boost', name: '斩杀协议', description: '敌方每回合首个打出的单位获得 +2/+0。',
-        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'on_first_play_unit', effectClass: 'BUFF_SELF', params: { power: 2, health: 0 } },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_cast_buff', name: '法术渗透', description: '敌方每打出一个法术，随机赋予一个敌方单位 +1/+1。',
-        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'on_cast_spell', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
-        playerEligible: false, enemyEligible: true,
-    },
+    // ── [2026-10-23 程拍板 · 地基统一] 敌方专属强化：**只保留"玩家侧没有同效果"的那几条** ──
+    //   背景：此前有一批敌方专属件与玩家件 **trigger/effectClass/params 逐字相同**，
+    //   但档位不同（例：敌方白「战意高涨」vs 玩家蓝「回合加护」；敌方紫「精锐动员」vs 玩家绿「幽灵行动」）。
+    //   ⇒ 同一效果两套价格 = 两把尺子，平衡永远对不齐。
+    //   [2026-10-23] 已删除 9 条克隆件（enemy_mobilize / round_rally / round_buff / on_summon /
+    //   play_buff / first_boost / cast_buff / after_attacked / nexus_buff），
+    //   并把对应玩家件改成 `enemyEligible: true`（敌我共用同一份、同一档）。
+    //   ⚠️ 今后新增强化：**同效果只许有一个条目**，用两个开关控制谁能拿到；
+    //      严禁再给同一效果另起一个"敌方版"改档位。
+    //   下面这条「狂怒印记」暂时保留：它的玩家对应件 `enhance_after_attack_buff`（以战养战）
+    //   已被摘出所有随机池（双开关 false，10-06 审计认定的孤儿数据），故此刻**没有可共用的玩家件**。
     {
         id: 'enemy_after_attack', name: '狂怒印记', description: '敌方单位打击后，获得 +1/+1。',
         rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
         battleEffect: { trigger: 'after_attack', effectClass: 'BUFF_SELF', params: { power: 1, health: 1 } },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_after_attacked', name: '铁壁反击', description: '敌方单位被打击后，获得 +1/+1。',
-        rarity: 'common', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'after_attacked', effectClass: 'BUFF_SELF', params: { power: 1, health: 1 } },
-        playerEligible: false, enemyEligible: true,
-    },
-    {
-        id: 'enemy_nexus_buff', name: '连击之势', description: '我方水晶每受到 1 次伤害，随机赋予一个敌方单位 +1/+1。',
-        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'on_nexus_strike', effectClass: 'RANDOM_ALLY_BUFF', params: { power: 1, health: 1 } },
         playerEligible: false, enemyEligible: true,
     },
 
@@ -436,7 +667,10 @@ export const MAZE_BUFFS: MazeBuff[] = [
     },
     {
         id: 'duel_strongest', name: '王见王', description: '回合结束时，敌我双方攻击力最高的单位相互打击。',
-        rarity: 'epic', icon: SPELL_IMAGES.single_combat, effect: { type: 'passive' },
+        // [2026-10-23 程拍板 · 4.2 调整] epic → rare（紫 → 蓝）：
+        //   这条是严格对称的互殴（双方最强各挨一发），本质是"花点数买一场赌局"，
+        //   顺风才有收益、逆风反成敌人的帮凶 ⇒ 撑不起紫档，降到蓝档与它的实际强度对齐。
+        rarity: 'rare', icon: SPELL_IMAGES.single_combat, effect: { type: 'passive' },
         battleEffect: { trigger: 'round_end', effectClass: 'DUEL_STRONGEST' },
         playerEligible: true, enemyEligible: true,
     },
@@ -509,9 +743,11 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: true,
     },
     {
-        id: 'regen_nexus', name: '愈战愈勇', description: '回合开始时，我方水晶回复 5 点生命值。',
+        id: 'regen_nexus', name: '愈战愈勇', description: '回合开始时，我方水晶回复 2 点生命值。',
         rarity: 'rare', icon: SPELL_IMAGES.vitality_supplement, effect: { type: 'passive' },
-        battleEffect: { trigger: 'round_start', effectClass: 'NEXUS_HEAL', params: { value: 5 } }, // [2026-09-02 程拍板] 回复量 +2 → +5
+        // [2026-10-23 程拍板 · 平衡] 回复量 5 → 2：蓝档每回合回 5 让水晶等同于"打不穿"，回血太厚
+        //   ⚠️ 本条 playerEligible / enemyEligible 均为 true（敌我共用）⇒ 只改这一处数据，两侧同时生效
+        battleEffect: { trigger: 'round_start', effectClass: 'NEXUS_HEAL', params: { value: 2 } },
         playerEligible: true, enemyEligible: true,
     },
     {
@@ -569,7 +805,7 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: true,
     },
     {
-        id: 'arcane_overload', name: '法术狂潮', description: '我方法术与技能造成的伤害翻倍。',
+        id: 'arcane_overload', name: '法术狂潮', description: '我方法术与技能造成的伤害翻倍（对单位卡的战斗伤害无效——它吃的是法术体系，不吃单位流）。',
         rarity: 'mythic', icon: SPELL_IMAGES.destruction, effect: { type: 'passive' },
         battleEffect: { trigger: 'game_start', effectClass: 'SPELL_DOUBLE' },
         playerEligible: true, enemyEligible: true,
@@ -934,22 +1170,31 @@ export interface EnemyBuffWeightTier {
     weights: Record<EnhancementRarity, number>;
 }
 
+// ==========================================
+// [2026-10-23 莉莉子 · 地基统一收尾] **敌方白档池已归零**（9 条克隆件删除后，敌方可用池里一条 common 都没有）
+//   ⇒ 三张表里浅层的 `common` 权重全部清零，原权重**原样挪给 `uncommon`**
+//     （各档**总权重不变** ⇒ 概率形状仍然是"浅层偏弱档、深层偏强档"）。
+//   为什么挪而不是删：删掉会让该档总权重变小、其余品质被无形抬高；
+//   挪给绿档则保住"这一档就是给弱档"的设计意图 —— 白档那几个效果现在以**绿档身份**存在
+//   （同一条目敌我共用：战意高涨→回合加护、蜂拥而至→机不可失…）。
+//   ⚠️ 今后若重新往敌方池里加白档强化，记得把浅层的 `common` 权重补回去，否则永远抽不到。
+// ==========================================
 export const ENEMY_WEIGHT_BY_DIFFICULTY: Record<RogueDifficulty, EnemyBuffWeightTier[]> = {
     normal: [
-        { maxFrac: 0.2, weights: { common: 8, uncommon: 2, rare: 1, epic: 0, legendary: 0, mythic: 0 } },
-        { maxFrac: 0.45, weights: { common: 4, uncommon: 4, rare: 3, epic: 1, legendary: 0, mythic: 0 } },
+        { maxFrac: 0.2, weights: { common: 0, uncommon: 10, rare: 1, epic: 0, legendary: 0, mythic: 0 } },
+        { maxFrac: 0.45, weights: { common: 0, uncommon: 8, rare: 3, epic: 1, legendary: 0, mythic: 0 } },
         { maxFrac: 0.7, weights: { common: 0, uncommon: 3, rare: 5, epic: 3, legendary: 0, mythic: 0 } },
         { maxFrac: 1.01, weights: { common: 0, uncommon: 1, rare: 5, epic: 5, legendary: 1, mythic: 0 } },
     ],
     secret: [
-        { maxFrac: 0.2, weights: { common: 6, uncommon: 2, rare: 3, epic: 1, legendary: 0, mythic: 0 } },
-        { maxFrac: 0.45, weights: { common: 2, uncommon: 3, rare: 6, epic: 3, legendary: 0, mythic: 0 } },
+        { maxFrac: 0.2, weights: { common: 0, uncommon: 8, rare: 3, epic: 1, legendary: 0, mythic: 0 } },
+        { maxFrac: 0.45, weights: { common: 0, uncommon: 5, rare: 6, epic: 3, legendary: 0, mythic: 0 } },
         { maxFrac: 0.7, weights: { common: 0, uncommon: 1, rare: 4, epic: 6, legendary: 1, mythic: 0 } },
         { maxFrac: 1.01, weights: { common: 0, uncommon: 0, rare: 2, epic: 5, legendary: 3, mythic: 1 } },
     ],
     topsecret: [
-        { maxFrac: 0.2, weights: { common: 5, uncommon: 2, rare: 4, epic: 2, legendary: 0, mythic: 0 } },
-        { maxFrac: 0.45, weights: { common: 1, uncommon: 2, rare: 6, epic: 5, legendary: 0, mythic: 0 } },
+        { maxFrac: 0.2, weights: { common: 0, uncommon: 7, rare: 4, epic: 2, legendary: 0, mythic: 0 } },
+        { maxFrac: 0.45, weights: { common: 0, uncommon: 3, rare: 6, epic: 5, legendary: 0, mythic: 0 } },
         { maxFrac: 0.7, weights: { common: 0, uncommon: 0, rare: 3, epic: 7, legendary: 2, mythic: 0 } },
         { maxFrac: 1.01, weights: { common: 0, uncommon: 0, rare: 1, epic: 5, legendary: 4, mythic: 2 } },
     ],
@@ -990,11 +1235,89 @@ export const ENEMY_BUFF_ROLL = {
     qualityWeightByDepth: ENEMY_WEIGHT_BY_DIFFICULTY,
 };
 
+// ==========================================
+// [2026-10-24 · 程拍板「迷宫强化黑名单」] 敌人强化组合的互斥表
+//   程的原话：「我们现在有很多敌人的强化组合都不合理，专门出一个黑名单机制：
+//              给敌人安排强化时，**随机抽取入栈后按品质和黑名单筛选**」。
+//   口径（程已确认）：**成对互斥**（不做"三选一"那种组级约束）· 代码常量表 · 数量不足时**宁少不强凑**。
+//
+//   ⚠️ 这里只作用于 `rollEnemyBuffs`（敌人携带）。
+//      · 玩家侧是 3 选 1，玩家看得见后果，不拦；
+//      · `devEnemyEnhancements`（开发者注入）**刻意绕过**本表 —— 要测的就是组合，不能被黑名单挡住。
+//   ⚠️ 加条目时**必须写 reason**：它是审计依据（为什么这条不能共存），也是后来人判断
+//      "这条还成不成立"的唯一线索。没有理由的黑名单，迟早会被当成迷信删掉。
+// ==========================================
+export interface EnemyBuffConflict {
+    /** 为什么不能共存（会同时上，玩家会遭遇什么） */
+    reason: string;
+    /** 互斥的两条（**对称**：写一次即可，a 遇 b / b 遇 a 都算冲突） */
+    a: string;
+    b: string;
+}
+
+export const ENEMY_BUFF_CONFLICTS: EnemyBuffConflict[] = [
+    {
+        reason: '水晶限伤 + 水晶免疫 ⇒ 玩家的两种破防手段同时被堵死，只剩"等它每回合自扣"一条路，而限伤还可能连自扣一起削',
+        a: 'enhance_nexus_damage_cap', b: 'immortal_body',
+    },
+    {
+        reason: '回合末处决 + 全员复活 ⇒ 杀了复活、复活了再杀，回合末反复空转（有 20 步护栏，但会明显拖长）',
+        a: 'enhance_massacre', b: 'undying_host',
+    },
+    {
+        reason: '同上（亡灵军团每批救一个，仍会与处决来回拉扯）',
+        a: 'enhance_massacre', b: 'undying_legion',
+    },
+    {
+        reason: '回合末处决 + 回合开始整队召唤 ⇒ 每回合白送一整队单位再全部处决，等于免费刷一串亡语',
+        a: 'enhance_massacre', b: 'enhance_random_squad',
+    },
+    {
+        reason: '两条是同一种 COST_TAX 的两种 mode，`getCostTaxMode` 只认第一个 ⇒ 后一条**完全白带**（不是太强，是浪费一个携带位）',
+        a: 'enhance_cost_tax_round', b: 'enhance_cost_tax_run',
+    },
+
+    // ── [2026-10-24 第二批 · 程拍板「只 BAN 真·没法玩的组合」] ──
+    //   判定标准（程的口径）：**某一条通关路径被完全封死**，而不只是"很强/很恶心"。
+    //   第二梯队（战争领主+钢铁洪流 / 冰封+衰弱 / 双复活）刻意**不入表**——那些是"很难"不是"没法玩"。
+    {
+        reason: '水晶免疫（玩家打脸这条路彻底关闭）+ 我方全场每回合 +2/+2 且备战 ⇒ 玩家只能等它自扣 5，但场面撑不到那时候',
+        a: 'immortal_body', b: 'war_lord',
+    },
+    {
+        reason: '全员【幻象】+【吸血】之上再叠"阵亡立即复活并获幻象" ⇒ **清场这件事不存在**：杀一个立刻回来一个，回合末才消散，等于每回合多挨一轮',
+        a: 'immortal_body', b: 'undying_host',
+    },
+    {
+        reason: '两个**独立**税池真叠加：AI 出 3 张 ⇒ 玩家手牌 +3（跨回合累积、打牌不清零）+3（连出）= +6，且越滚越高 ⇒ 多数手牌直接变死牌',
+        a: 'enhance_cost_tax_run', b: 'enhance_chain_play_tax',
+    },
+    {
+        reason: '手牌全体加费之上，法术再单独 +2 ⇒ 出牌与施法**两条路同时被堵**',
+        a: 'enhance_cost_tax_run', b: 'enhance_spell_cost_up_2',
+    },
+];
+
+/** 候选强化与"已选列表"是否冲突；冲突则返回理由（供日志/调试），否则 undefined。 */
+export const findEnemyBuffConflict = (candidateId: string, chosenIds: string[]): string | undefined => {
+    for (const c of ENEMY_BUFF_CONFLICTS) {
+        if (c.a === candidateId && chosenIds.includes(c.b)) return c.reason;
+        if (c.b === candidateId && chosenIds.includes(c.a)) return c.reason;
+    }
+    return undefined;
+};
+
 /**
  * 按深度从可携带强化库中随机抽出实际携带的迷宫强化 id 列表。
  * @param rogueBuffs 流派手配强化 id 库（archetype.rogueBuffs，编辑器配置）；空/undefined = 默认全 enemyEligible 库
  * @param depthFrac  战斗进度深度 0~1（由 mapLayout.computeCombatDepth 提供：第一战 0、最深战斗节点/Boss 1）
  * @param difficulty 本局难度（普通/机密/绝密）→ 决定品质权重表；默认 normal（最温和）
+ *
+ * [2026-10-24 · 程拍板] 改为**三段式**：随机抽取**入栈** → 按黑名单**筛选** → 出栈。
+ *   此前是"边抽边定"，抽到什么就是什么，没有中间栈 ⇒ 没有地方做组合约束。
+ *   ⚠️ 候选栈一次性抽 `count × 3` 个，给黑名单留出被剔除的余量；
+ *   ⚠️ 扫完整栈仍不足 `count` 时**允许少于 count**（宁少不强凑）：
+ *      敌人少带一条只是变简单，而带出冲突组合是让玩家绝望。
  */
 export const rollEnemyBuffs = (rogueBuffs: string[] | undefined, depthFrac: number, difficulty: RogueDifficulty = 'normal'): string[] => {
     // [2026-08-27 程拍板] 池子默认全库：手配为空/未配 → 全部 enemyEligible 强化
@@ -1016,25 +1339,46 @@ export const rollEnemyBuffs = (rogueBuffs: string[] | undefined, depthFrac: numb
         ?? weightTiers[weightTiers.length - 1].weights;
 
     const n = Math.min(count, pool.length);
-    const result: MazeBuff[] = [];
-    const rest = [...pool];
-    while (result.length < n && rest.length > 0) {
-        // 品质加权抽选：按该深度档权重表，池内强化以自身稀有度累权 → 加权随机取一
-        const weightOf = (b: MazeBuff) => weights[b.rarity] ?? 0;
-        const wsum = rest.reduce((s, b) => s + weightOf(b), 0);
+    if (n <= 0) return [];
+
+    // 品质加权抽一个（从给定数组里取，不改动它）
+    const weightOf = (b: MazeBuff) => weights[b.rarity] ?? 0;
+    const drawOne = (from: MazeBuff[]): MazeBuff | undefined => {
+        if (!from.length) return undefined;
+        const wsum = from.reduce((s, b) => s + weightOf(b), 0);
         let idx = 0;
         if (wsum <= 0) {
-            // 兜底：该深度档剩余池所有权重为 0（如池内全是权重 0 的品质）→ 均等抽，防卡死
-            idx = Math.floor(Math.random() * rest.length);
+            // 兜底：该深度档所有候选权重为 0（如全是权重 0 的品质）→ 均等抽，防卡死
+            idx = Math.floor(Math.random() * from.length);
         } else {
             let roll = Math.random() * wsum;
-            for (let i = 0; i < rest.length; i++) {
-                roll -= weightOf(rest[i]);
+            for (let i = 0; i < from.length; i++) {
+                roll -= weightOf(from[i]);
                 if (roll < 0) { idx = i; break; }
             }
         }
-        result.push(rest[idx]);
-        rest.splice(idx, 1); // 不重复选同一个
+        return from[idx];
+    };
+
+    // ① 入栈：抽 count × 3 个候选（去重），留出黑名单剔除的余量
+    const stack: MazeBuff[] = [];
+    const rest = [...pool];
+    const stackSize = Math.min(rest.length, n * 3);
+    while (stack.length < stackSize) {
+        const picked = drawOne(rest);
+        if (!picked) break;
+        rest.splice(rest.indexOf(picked), 1);
+        stack.push(picked);
     }
+
+    // ② 出栈：按栈序逐个取，跳过与已选冲突的
+    const result: MazeBuff[] = [];
+    for (const cand of stack) {
+        if (result.length >= n) break;
+        if (findEnemyBuffConflict(cand.id, result.map(b => b.id))) continue;
+        result.push(cand);
+    }
+
+    // ③ 数量不足就到此为止（宁少不强凑）
     return result.map(b => b.id);
 };

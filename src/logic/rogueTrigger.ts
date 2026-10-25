@@ -22,7 +22,13 @@ import { eventBus, GameEvents } from '../utils/eventBus';
 import { clearUnitDieDispatched } from '../utils/deathLedger';
 import type { MazeBuff, BattleTrigger, BattleEffectClass } from '../data/roguelike/buffs';
 import { CHAMPION_GIFT_KEYWORDS, getBattleEffects } from '../data/roguelike/buffs'; // [2026-09-25 莉莉子 武装线] 共鸣水晶的赠予关键词池 · [2026-09-28] 多效果条目统一视图
+// [2026-10-21 莉莉子 · 世纪和解兜底] 随机装备：池子走项目铁律 `getEquipPoolForCard`，挂载走 `attachEquipment`
+import { getEquipPoolForCard, attachEquipment } from '../data/equipment';
+import type { EquipmentRarity } from '../data/equipment'; // [2026-10-24 莉莉子] EQUIP_ALL_CARDS 按品质筛装备
 import type { CardData, GameState, Keyword } from '../types';
+// [2026-10-24 莉莉子 · 第 2 条] 「从完整卡池随机召唤」需要读全卡表。
+//   依赖方向已核：`data/cards.ts` 只 import `types` 与 `imageData`，**不反向依赖本文件** ⇒ 不成环。
+import { CARD_DB } from '../data/cards';
 
 export type Side = 'player' | 'enemy';
 
@@ -68,6 +74,15 @@ export interface RogueTriggerInfo {
     duelDone?: boolean;           // round_end 王见王：跨双方 pass 去重
     resurrectedSide?: Side;       // unit_die：非全复活强化"每批首个"去重（站点在处理批前清空）
     tryMarkSummonOnce?: (side: Side, summonKey: string) => boolean; // game_start：按侧去重"本局已尝试召唤一次"（返回 true 允许召唤并记录；false 已尝试过）
+    /**
+     * [2026-10-24 莉莉子 · 第 14 条] **站点注入**：把一张天启者卡转成它的 Lv2 形态。
+     * ── 为什么用注入而不是 import：`getLeveledUpCard` 住在 `utils/gameRules`，而本文件已 import
+     *    `logic/keywords`、`data/equipment` 等底层模块；`gameRules` 又要 import 它们中的几个
+     *    ⇒ 直接 import 有**成环**风险（环在 ESM 里会静默变 undefined）。注入零风险，且与
+     *    `tryMarkSummonOnce` 是同一套做法（站点注入回调，见 `useGameState` 的 game_start 块）。
+     * ── 只做"卡面转换"，**不做升级记账**；记账由 handler 内联（见 `UPGRADED_CHAMPIONS_TO_DECK`）。
+     */
+    makeLeveledCard?: (key: string, side: Side) => CardData;
 }
 
 export interface RogueDirty {
@@ -141,6 +156,52 @@ const sideBench = (ctx: RogueTriggerCtx, s: Side) => s === 'player' ? ctx.player
 const sideHand = (ctx: RogueTriggerCtx, s: Side) => s === 'player' ? ctx.playerHand : ctx.enemyHand;
 const sideDeck = (ctx: RogueTriggerCtx, s: Side) => s === 'player' ? ctx.playerDeck : ctx.enemyDeck;
 
+// ==========================================
+// [2026-10-21 莉莉子 · 世纪和解兜底] 随机装备挂载
+//   程 2026-10-21 拍板：牌库与手牌都找不到里芙 / 芬妮时，直接造一个该天启者上场，
+//   **每个各带 3 件随机装备**（不是两人共 3 件）。
+//   ⚠️ 池子必须走项目铁律 `getEquipPoolForCard` —— 它已自动排除武装（`isArmament`）、非战斗装（`nonCombat`）、
+//      法术专属（`spellOnly`）、不适用本卡的件，以及**已挂过的件**（`excludeIds`）。
+//      `data/equipment.ts:901` 明令禁止自己遍历 `EQUIPMENT_DEFS`，违规会绕开这些过滤。
+//   ⚠️ **不设品质上限**（程拍板）：本强化 rarity 'mythic'、仅「瓦尔基里大赛」绝密档可得，强度允许放飞。
+//   ⚠️ 水晶代价不必担心：全库唯一带 `pactNexusCost` 的是一件**武装**（`arm_royal_warrant`，`data/equipment.ts:677`），
+//      已被上面的 `isArmament` 过滤挡在池外 ⇒ 不会出现"白得了带代价的装备、代价却没扣"。
+// ==========================================
+const FALLBACK_EQUIP_PIECES = 3;
+
+// ==========================================
+// [2026-10-24 莉莉子 · 第 19 条] 后勤小队成员表 —— **从卡表按 key 命名约定自动聚类**。
+//   背景：全项目没有"某支小队有哪几个人"的显式数据表，只有 `Xxx_Squad_Yyy` 这个通行命名
+//   （`cards.ts` 里 Ghost / Poet / Forger / SacredChants … 全靠前缀相聚）。
+//   ⇒ 与其手抄一张会随新卡漂移的名单，不如按约定在模块加载时算一次。
+//   收录条件：单位 + 后勤阵营（排除天启者/泰坦/测试卡）+ 排除衍生物（`race` 含 `summon`）。
+//   ⚠️ 成员数 < 2 的前缀不算"小队"（过滤在消费处做）。
+// ==========================================
+const SQUAD_MEMBERS: Record<string, string[]> = (() => {
+    const map: Record<string, string[]> = {};
+    for (const [key, c] of Object.entries(CARD_DB)) {
+        if (c.type !== 'unit') continue;
+        if (c.region !== 'Logistics') continue;
+        if ((c.race ?? []).includes('summon')) continue;
+        const m = key.match(/^(.+_Squad)_.+$/);
+        if (!m) continue;
+        (map[m[1]] ??= []).push(key);
+    }
+    return map;
+})();
+// [2026-10-24 莉莉子] 新增 `rarity` 过滤：只从该品质的候选里挑（`EQUIP_ALL_CARDS` 用）。
+//   不传 ⇒ 行为与改前**逐字一致**（世纪和解的兜底仍是"全池随机 3 件"，不设品质上限）。
+const attachRandomEquipments = (card: CardData, n: number, rarity?: EquipmentRarity): CardData => {
+    let cur = card;
+    for (let i = 0; i < n; i++) {
+        const pool = getEquipPoolForCard(cur, cur.equipment);
+        const candidates = rarity ? pool.filter(e => e.rarity === rarity) : pool;
+        if (!candidates.length) break; // 池空（极罕见）⇒ 有多少挂多少，不留空槽
+        cur = attachEquipment(cur, candidates[Math.floor(Math.random() * candidates.length)].id);
+    }
+    return cur;
+};
+
 /** 在备战席 + 交战区里按 id 找到单位，用纯函数 fn 产出新对象替换（只命中一次，含 dirty 记账） */
 const updateUnitById = (ctx: RogueTriggerCtx, id: string, fn: (u: CardData) => CardData): boolean => {
     const replaceInBench = (cards: CardData[], side: Side): boolean => {
@@ -185,6 +246,18 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         const genKey = def.battleEffect?.params?.generateKey as string | undefined;
         if (!genKey) return;
         const hand = sideHand(ctx, ctx.owner);
+
+        // ==========================================
+        // [2026-10-23 莉莉子 · 强化「囤积」重做] `skipIfInHand`：**手牌里已有同 key 就什么都不做**。
+        //   与下方 `reduceCostIfDuplicate`（已有则减费）是两种不同语义：
+        //     · reduceCostIfDuplicate → 有 ⇒ 减 1 费（莲台无垠「顷刻莲潮」）
+        //     · skipIfInHand         → 有 ⇒ 直接 return，不减费也不新增（囤积「存钱罐」）
+        //   为什么囤积需要它：存钱罐的价值在"这张卡已经攒了多少"；若每回合无脑再发一张，
+        //   玩家手里会同时躺着两张半满的卡，语义就散了。
+        // ==========================================
+        if (def.battleEffect?.params?.skipIfInHand) {
+            if (hand.some(c => c.key === genKey)) return;
+        }
 
         // ==========================================
         // [2026-10-12 莉莉子 BUG修复 · 莲台无垠「顷刻莲潮」每回合无条件多发一张]
@@ -376,6 +449,48 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         if (applied || rally) flashRogueBuff(def);
     },
 
+    // ---- [2026-10-24 程拍板] 指定费用的我方单位获得 +N/+M（第 15 条「1 费单位 +3/+3」）----
+    //   与 `ALL_BUFF` 的唯一差别：多一道**费用过滤**（`params.cost`）。
+    //   ⚠️ 费用按**卡面原始 `cost`** 判，不吃任何临时减费/加费
+    //      （那些是 `getEffectiveSpellCost` 的查询值，从不写回卡面数据）。
+    //   ⚠️ `on_summon` 时**只作用于刚上场的那个**：否则每次召唤都会给全场重新加一遍 ⇒ 滚雪球。
+    BUFF_COST_UNITS: (def, ctx) => {
+        const p = def.battleEffect?.params;
+        const cost = p?.cost as number | undefined;
+        if (cost === undefined) return;
+        const power = (p?.power as number) ?? 0;
+        const health = (p?.health as number) ?? 0;
+        // 召唤时机只认"刚上场的这张"；其余时机（game_start）扫全场
+        const only = ctx.trigger === 'on_summon'
+            ? (ctx.info.playedCard ?? benchLast(ctx, ctx.owner))
+            : undefined;
+        let applied = false;
+        const bench = sideBench(ctx, ctx.owner);
+        for (let i = 0; i < bench.length; i++) {
+            const u = bench[i];
+            if ((u.cost ?? 0) !== cost) continue;
+            if (only && u.id !== only.id) continue;
+            bench[i] = applyPermanentBuff(u, power, health);
+            applied = true;
+        }
+        ctx.combatField.forEach((f, i) => {
+            const unit = (f.owner === ctx.owner ? f.attacker : f.blocker) as CardData | undefined;
+            if (!unit) return;
+            if ((unit.cost ?? 0) !== cost) return;
+            if (only && unit.id !== only.id) return;
+            const next = applyPermanentBuff(unit, power, health);
+            ctx.combatField[i] = f.owner === ctx.owner
+                ? { ...f, attacker: next }
+                : { ...f, blocker: next };
+            applied = true;
+        });
+        if (applied) {
+            ctx.dirty.bench.add(ctx.owner);
+            ctx.dirty.field = true;
+            flashRogueBuff(def);
+        }
+    },
+
     FREEZE_STRONGEST: (def, ctx) => {
         // 霜寒压制：冻结对方攻击力最高的单位（优先级在衰弱前 → 归零后衰弱实时重判到次强）
         const opp: Side = ctx.owner === 'player' ? 'enemy' : 'player';
@@ -491,6 +606,11 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
     SUMMON_FROM_DECK: (def, ctx) => {
         const keys = (def.battleEffect?.params?.summonKeys ?? []) as string[];
         if (!keys.length) return;
+        // [2026-10-24 莉莉子 · 程拍板] **兜底装备件数可配**：
+        //   · 「世纪和解」不传 `fallbackEquips` ⇒ 沿用默认 3 件（原设计不变）
+        //   · 六条单英雄版「开局召唤」传 `fallbackEquips: 1` ⇒ 只挂一件
+        //   程的口径：「不能不做兜底，否则玩家拿到这个强化一点用都没有会骂娘；但件数要可控，一件就行」。
+        const fallbackEquips = (def.battleEffect?.params?.fallbackEquips as number) ?? FALLBACK_EQUIP_PIECES;
 
         const bench = sideBench(ctx, ctx.owner);
         // 用**副本**做 splice 再整体写回 —— 不原地改 ctx 里的数组
@@ -501,7 +621,9 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         //      里芙 / 芬妮 只要有一张被**起手抽到手牌**，那一次就不会被召唤。
         //      （程的怀疑成立：确实等价于"只从牌库召唤"，代码已证实。）
         //   ── 修法：**牌库 + 手牌都查**（顺序固定：**牌库优先**，保持既有行为）；
-        //      两处都是**移出**（与牌库同口径，不是复制），两边都没有才跳过。
+        //      两处都是**移出**（与牌库同口径，不是复制）。
+        //      ⚠️ 本条原写"两边都没有才跳过"——**已被 2026-10-21 的兜底取代**（见下方 ③ 分支），
+        //         现在两边都没有 ⇒ 造一个带 3 件随机装备的该天启者，不再跳过。
         //   ── 敌我同款（本 handler 全程按 `ctx.owner` 分侧）⇒ 敌方那张也一并修好。
         // ══════════════════════════════════════════════════════════════════
         const hand = ctx.owner === 'player' ? [...ctx.playerHand] : [...ctx.enemyHand];
@@ -515,11 +637,30 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             let fromDeck = true;
             let idx = deck.findIndex(c => c.key === key);
             if (idx < 0) { fromDeck = false; idx = hand.findIndex(c => c.key === key); }
-            if (idx < 0) continue;                 // 两处都没有 ⇒ 跳过
-            const [card] = fromDeck ? deck.splice(idx, 1) : hand.splice(idx, 1); // **移出**原处
-            if (fromDeck) deckChanged = true; else handChanged = true;
-            bench.push({ ...card, animState: 'summoning' as const });
-            placedIds.push(card.id);
+            if (idx >= 0) {
+                const [card] = fromDeck ? deck.splice(idx, 1) : hand.splice(idx, 1); // **移出**原处
+                if (fromDeck) deckChanged = true; else handChanged = true;
+                bench.push({ ...card, animState: 'summoning' as const });
+                placedIds.push(card.id);
+                continue;
+            }
+            // ③ [2026-10-21 莉莉子 BUG修复 · 程点名「世纪和解」] **牌库与手牌都没有 ⇒ 兜底造卡**
+            //   ── 症状：原实现两处都找不到就 `continue` ⇒ 对"既没带里芙也没带芬妮"的卡组，本强化等于空气。
+            //   ── 修法（程拍板）：直接造一个该天启者到备战席，并随机佩戴 **3 件**装备（逐 key 兜底：
+            //      谁缺补谁，不会因为里芙在牌库就放弃芬妮）。
+            //   ── ⚠️ 程特别说明：**这个兜底主要是做给敌人的** —— 玩家侧在此前几轮调整下已不会缺这两位。
+            //      但这里**不做 owner 分化**（敌我同款，与本 handler 全程按 `ctx.owner` 分侧的口径一致）。
+            //   ── 造卡用 `ctx.createFullCard`（与 SUMMON 同口径：白板 Lv1 + 随机 id，不写回肉鸽牌组配置）。
+            //      装备随卡而出，因此**不会**经过"牌库实例自带装备"那条路 —— 这正是原设计的差异点。
+            //   ── [2026-10-21 · 独立审查后加固] **护栏：该天启者已在备战席 ⇒ 不再造第二个**
+            //      兄弟 handler `SUMMON` 就是这么做的（`bench.some(c => c.key === summonKey)`）。
+            //      为什么必须有：`game_start` 站点理论上一局只跑一次，但 `main.tsx` 开着 `StrictMode`（dev 下双跑），
+            //      将来若再出现"重进对局 / 重开流程"类入口 ⇒ 无护栏就会**静默多发一张卡 + 3 件装备**；
+            //      而卡 id 是随机的，日志里根本看不出这是重复发放（改动前这段是 `continue`，重复触发无害）。
+            if (bench.some(c => c.key === key)) continue;
+            const built = attachRandomEquipments(ctx.createFullCard(key, ctx.owner), fallbackEquips);
+            bench.push({ ...built, animState: 'summoning' as const });
+            placedIds.push(built.id);
         }
         if (!placedIds.length) return;
 
@@ -556,6 +697,250 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
                 if (entry.enemyDeck) ctx.enemyDeck = entry.enemyDeck;
                 if (entry.combatField) { ctx.combatField = entry.combatField; ctx.dirty.field = true; }
                 // 保守起见全量标脏（同 SUMMON 的理由：漏标才丢改动）
+                ctx.dirty.game = true;
+                ctx.dirty.bench.add('player');
+                ctx.dirty.bench.add('enemy');
+                ctx.dirty.hand.add('player');
+                ctx.dirty.hand.add('enemy');
+                ctx.dirty.deck.add('player');
+                ctx.dirty.deck.add('enemy');
+            }
+        }
+        flashRogueBuff(def);
+    },
+
+    // ---- game_start：我方手牌 + 牌库的每张卡各随机挂一件**指定品质**的装备 ----
+    // [2026-10-24 程拍板 · 紫 / 蓝 / 白 三档]
+    //   ⚠️ 范围 = **手牌 + 牌库**（程原话"手牌+牌库里的所有卡牌"），**不含已在场上的单位**。
+    //   ⚠️ 每张卡只挂**一件**（n = 1）。池子由 `getEquipPoolForCard` 按卡筛选，
+    //      因此法术卡只会拿到 `spellOnly` 件、单位卡拿不到法术专属件 —— 不会出现"挂了却没作用"的空装备。
+    //   ⚠️ 不做跨强化去重：将来若同时存在紫/蓝/白三条，每张卡会各挂一件（那是设计选择，不是 bug）。
+    //      但**同一张卡不会被同一件装备重复挂**（`excludeIds` 已在池子里排除）。
+    EQUIP_ALL_CARDS: (def, ctx) => {
+        const rarity = def.battleEffect?.params?.rarity as EquipmentRarity | undefined;
+        if (!rarity) return;
+        const hand = sideHand(ctx, ctx.owner);
+        const deck = sideDeck(ctx, ctx.owner);
+        let handChanged = false;
+        let deckChanged = false;
+        for (let i = 0; i < hand.length; i++) {
+            const next = attachRandomEquipments(hand[i], 1, rarity);
+            if (next !== hand[i]) { hand[i] = next; handChanged = true; }
+        }
+        for (let i = 0; i < deck.length; i++) {
+            const next = attachRandomEquipments(deck[i], 1, rarity);
+            if (next !== deck[i]) { deck[i] = next; deckChanged = true; }
+        }
+        // 手牌 / 牌库都是**补丁式提交**（站点侧按 id diff）⇒ 只标有变化的切片
+        if (handChanged) ctx.dirty.hand.add(ctx.owner);
+        if (deckChanged) ctx.dirty.deck.add(ctx.owner);
+        if (handChanged || deckChanged) flashRogueBuff(def);
+    },
+
+    // ---- [2026-10-24 程拍板 · 第 1 条] 回合开始：随机从牌组召唤一个指定费用的非天启者单位 ----
+    //   程口径：「回合开始时随机从牌组中召唤一个 2 费的非天启者单位」。
+    //   🔴 与 `SUMMON_FROM_DECK` 的**行为差异只有一处**：这里是**随机**挑一个，不是"第一个符合的"。
+    //   ⚠️ 两处（牌库 / 手牌）都没有 ⇒ 本次不召，**刻意不兜底造卡**
+    //      （兜底只属于「开局召唤天启者」那一批，那是给敌人做的；这条若也兜底会变成"每回合白造一个单位"）。
+    SUMMON_BY_COST_FROM_DECK: (def, ctx) => {
+        const cost = def.battleEffect?.params?.cost as number | undefined;
+        if (cost === undefined) return;
+        const bench = sideBench(ctx, ctx.owner);
+        if (bench.length >= 6) return; // 备战席满 ⇒ 不召
+        const deck = ctx.owner === 'player' ? [...ctx.playerDeck] : [...ctx.enemyDeck];
+        const hand = ctx.owner === 'player' ? [...ctx.playerHand] : [...ctx.enemyHand];
+        // 「非天启者单位」判据 = 单位 + 后勤阵营 + 排除召唤物衍生物。
+        //   天启者 / 泰坦 / 测试卡 / 分析员都不在 `Logistics` 里 ⇒ 这一条判据把它们一并排除。
+        const match = (c: CardData) => c.type === 'unit'
+            && (c.cost ?? 0) === cost
+            && c.region === 'Logistics'
+            && !(c.race ?? []).includes('summon');
+        const collect = (arr: CardData[]) => arr.reduce<number[]>((acc, c, i) => (match(c) ? [...acc, i] : acc), []);
+        let source: 'deck' | 'hand' = 'deck';
+        let idxs = collect(deck);
+        if (!idxs.length) { source = 'hand'; idxs = collect(hand); }
+        if (!idxs.length) return;
+        const arr = source === 'deck' ? deck : hand;
+        const [card] = arr.splice(idxs[Math.floor(Math.random() * idxs.length)], 1);
+        if (source === 'deck') {
+            if (ctx.owner === 'player') ctx.playerDeck = deck; else ctx.enemyDeck = deck;
+            ctx.dirty.deck.add(ctx.owner);
+        } else {
+            if (ctx.owner === 'player') ctx.playerHand = hand; else ctx.enemyHand = hand;
+            ctx.dirty.hand.add(ctx.owner);
+        }
+        const summoned = { ...card, animState: 'summoning' as const };
+        bench.push(summoned);
+        ctx.dirty.bench.add(ctx.owner);
+        // 入场门铃 —— 照 `SUMMON_FROM_DECK` 的既有收尾（数组可能被整体替换，故每次从 ctx 重取）
+        const entry = runSummonEntry(summoned.id, ctx.owner, {
+            game: ctx.game,
+            playerBench: ctx.playerBench,
+            enemyBench: ctx.enemyBench,
+            playerHand: ctx.playerHand,
+            enemyHand: ctx.enemyHand,
+            playerDeck: ctx.playerDeck,
+            enemyDeck: ctx.enemyDeck,
+            combatField: ctx.combatField,
+        }, ctx.createFullCard);
+        if (entry.applied) {
+            ctx.game = entry.game;
+            ctx.playerBench = entry.playerBench;
+            ctx.enemyBench = entry.enemyBench;
+            ctx.playerHand = entry.playerHand;
+            ctx.enemyHand = entry.enemyHand;
+            if (entry.playerDeck) ctx.playerDeck = entry.playerDeck;
+            if (entry.enemyDeck) ctx.enemyDeck = entry.enemyDeck;
+            if (entry.combatField) { ctx.combatField = entry.combatField; ctx.dirty.field = true; }
+            ctx.dirty.game = true;
+            ctx.dirty.bench.add('player');
+            ctx.dirty.bench.add('enemy');
+            ctx.dirty.hand.add('player');
+            ctx.dirty.hand.add('enemy');
+            ctx.dirty.deck.add('player');
+            ctx.dirty.deck.add('enemy');
+        }
+        flashRogueBuff(def);
+    },
+
+    // ---- [2026-10-24 程拍板 · 第 2 条] 我方单位阵亡：从完整卡池随机召唤一个费用低 1 费的非天启者单位 ----
+    //   程口径：「随机召唤一个费用低一费的非天启者单位（从完整的牌库里找符合条件的单位，然后随机选择一个召唤）」。
+    //   ✅ 按方正确性已核：`unit_die` 三处站点都是**按阵亡方**取强化列表并设 `ctx.owner`
+    //      （`useGameState.ts:1236` / `:2557`、`useRoundLifecycle.ts:1791`）
+    //      ⇒ 敌方单位阵亡走的是敌方那张，不会给玩家白召唤。
+    //   ⚠️ 每个**单位实例**只兑现一次（账本 `dieSummon:<id>` 存 `questProgress`，单场作用域）
+    //      ⇒ 复活后再次阵亡不会反复刷单位。
+    //   ⚠️ 费用 1 的单位阵亡时 `cost - 1 = 0`，而全库几乎没有 0 费后勤单位 ⇒ 自然不触发，不需要特判。
+    SUMMON_LOWER_COST_ON_DEATH: (def, ctx) => {
+        const dead = ctx.info.deadUnit;
+        if (!dead) return;
+        const targetCost = (dead.cost ?? 0) - 1;
+        if (targetCost < 0) return;
+        const ledgerKey = `dieSummon:${dead.id}`;
+        if (((ctx.game?.questProgress ?? {})[ledgerKey] ?? 0) > 0) return; // 本实例已兑现过
+        const bench = sideBench(ctx, ctx.owner);
+        if (bench.length >= 6) return;
+        const pool = Object.values(CARD_DB).filter(c => c.type === 'unit'
+            && (c.cost ?? 0) === targetCost
+            && c.region === 'Logistics'
+            && !(c.race ?? []).includes('summon'));
+        if (!pool.length) return;
+        const picked = pool[Math.floor(Math.random() * pool.length)];
+        const built = ctx.createFullCard(picked.key, ctx.owner);
+        if (!built) return;
+        // 记账放在造卡成功之后：造不出来就不占额度
+        ctx.game.questProgress = { ...(ctx.game?.questProgress ?? {}), [ledgerKey]: 1 };
+        ctx.dirty.game = true;
+        const summoned = { ...built, animState: 'summoning' as const };
+        bench.push(summoned);
+        ctx.dirty.bench.add(ctx.owner);
+        const entry = runSummonEntry(summoned.id, ctx.owner, {
+            game: ctx.game,
+            playerBench: ctx.playerBench,
+            enemyBench: ctx.enemyBench,
+            playerHand: ctx.playerHand,
+            enemyHand: ctx.enemyHand,
+            playerDeck: ctx.playerDeck,
+            enemyDeck: ctx.enemyDeck,
+            combatField: ctx.combatField,
+        }, ctx.createFullCard);
+        if (entry.applied) {
+            ctx.game = entry.game;
+            ctx.playerBench = entry.playerBench;
+            ctx.enemyBench = entry.enemyBench;
+            ctx.playerHand = entry.playerHand;
+            ctx.enemyHand = entry.enemyHand;
+            if (entry.playerDeck) ctx.playerDeck = entry.playerDeck;
+            if (entry.enemyDeck) ctx.enemyDeck = entry.enemyDeck;
+            if (entry.combatField) { ctx.combatField = entry.combatField; ctx.dirty.field = true; }
+            ctx.dirty.game = true;
+            ctx.dirty.bench.add('player');
+            ctx.dirty.bench.add('enemy');
+            ctx.dirty.hand.add('player');
+            ctx.dirty.hand.add('enemy');
+            ctx.dirty.deck.add('player');
+            ctx.dirty.deck.add('enemy');
+        }
+        flashRogueBuff(def);
+    },
+
+    // ---- [2026-10-24 程拍板 · 第 14 条] 开局把六位天启者的 Lv2 各塞一张进牌库 ----
+    //   程口径：「往牌库中塞入 6 张升级后的天启者」（= 六位各一张，与 `ROGUE_HEROES` 同源）。
+    //   ⚠️ 卡面转换走 `ctx.info.makeLeveledCard`（站点注入 `getLeveledUpCard`）—— 直接 import 有环风险，见接口注释。
+    //   ⚠️ **升级账本必须一起标**：`isLeveledUpForSide` 是"大招 / 升级效果是否解锁"的判据，
+    //      只把卡面写成 `level: 2` 而不记账 ⇒ "看着是 Lv2、效果按 Lv1 算"的半生效
+    //      （与 10-04 「按方是铁律」那条事故同源）。
+    UPGRADED_CHAMPIONS_TO_DECK: (def, ctx) => {
+        const makeLv2 = ctx.info.makeLeveledCard;
+        if (!makeLv2) return;
+        const keys = (def.battleEffect?.params?.championKeys as string[] | undefined) ?? [];
+        if (!keys.length) return;
+        const deck = ctx.owner === 'player' ? [...ctx.playerDeck] : [...ctx.enemyDeck];
+        const g = ctx.game;
+        let added = 0;
+        for (const key of keys) {
+            if (!CARD_DB[key]) continue;
+            const lv2 = makeLv2(key, ctx.owner);
+            if (!lv2) continue;
+            deck.push(lv2);
+            added++;
+            // 内联等价于 `markLeveledUp(g, ctx.owner, key)`：两个账本一起写（全局镜像 + 按方真源）
+            g.leveledChampions = Array.from(new Set([...(g.leveledChampions || []), key]));
+            const prevSide = g.leveledChampionsBySide?.[ctx.owner] ?? [];
+            g.leveledChampionsBySide = {
+                player: g.leveledChampionsBySide?.player ?? [],
+                enemy: g.leveledChampionsBySide?.enemy ?? [],
+                [ctx.owner]: Array.from(new Set([...prevSide, key])),
+            };
+            ctx.dirty.game = true;
+        }
+        if (!added) return;
+        if (ctx.owner === 'player') ctx.playerDeck = deck; else ctx.enemyDeck = deck;
+        ctx.dirty.deck.add(ctx.owner);
+        flashRogueBuff(def);
+    },
+
+    // ---- [2026-10-24 程拍板 · 第 19 条] 回合开始：随机召唤一整支后勤小队的全部成员 ----
+    //   程口径：「回合开始，随机召唤一整个小队」。
+    //   ⚠️ 名单来自上方 `SQUAD_MEMBERS`（按命名约定自动聚类）⇒ 新增小队成员时无需改这里。
+    //   ⚠️ 备战席上限 6：3 人小队能整队落地；若已接近满员，多出的成员被截断（不做"放不下就换一队"）。
+    SUMMON_RANDOM_SQUAD: (def, ctx) => {
+        const squads = Object.entries(SQUAD_MEMBERS).filter(([, members]) => members.length >= 2);
+        if (!squads.length) return;
+        const [, members] = squads[Math.floor(Math.random() * squads.length)];
+        const bench = sideBench(ctx, ctx.owner);
+        const placedIds: string[] = [];
+        for (const key of members) {
+            if (bench.length >= 6) break;
+            const card = ctx.createFullCard(key, ctx.owner);
+            if (!card) continue;
+            const summoned = { ...card, animState: 'summoning' as const };
+            bench.push(summoned);
+            placedIds.push(summoned.id);
+        }
+        if (!placedIds.length) return;
+        ctx.dirty.bench.add(ctx.owner);
+        // 逐个走入场门铃（与 `SUMMON_FROM_DECK` 的收尾同构：数组可能被整体替换，故每次从 ctx 重取）
+        for (const id of placedIds) {
+            const entry = runSummonEntry(id, ctx.owner, {
+                game: ctx.game,
+                playerBench: ctx.playerBench,
+                enemyBench: ctx.enemyBench,
+                playerHand: ctx.playerHand,
+                enemyHand: ctx.enemyHand,
+                playerDeck: ctx.playerDeck,
+                enemyDeck: ctx.enemyDeck,
+                combatField: ctx.combatField,
+            }, ctx.createFullCard);
+            if (entry.applied) {
+                ctx.game = entry.game;
+                ctx.playerBench = entry.playerBench;
+                ctx.enemyBench = entry.enemyBench;
+                ctx.playerHand = entry.playerHand;
+                ctx.enemyHand = entry.enemyHand;
+                if (entry.playerDeck) ctx.playerDeck = entry.playerDeck;
+                if (entry.enemyDeck) ctx.enemyDeck = entry.enemyDeck;
+                if (entry.combatField) { ctx.combatField = entry.combatField; ctx.dirty.field = true; }
                 ctx.dirty.game = true;
                 ctx.dirty.bench.add('player');
                 ctx.dirty.bench.add('enemy');
@@ -861,17 +1246,27 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
     },
 
     LONE_GUARD_BUFF: (def, ctx) => {
-        // 孤军：我方场上恰好 1 个单位时，该单位 +4/+4 并获得【屏障】（条件判定已在分发前完成，见 requireOnlyOneUnit）
+        // 孤军：我方场上恰好 1 个单位时，该单位 +5/+5 并获得【坚韧】【再生】（条件判定已在分发前完成，见 requireOnlyOneUnit）
+        // [2026-10-23 程拍板 · 平衡] +4/+4+屏障 → +5/+5+坚韧+再生：
+        //   ① 原先理论上限只有 10 分、低于金档锚点 11 分（数学上不可能合档）；改后 10+3+3=16 分
+        //   ② 关键词**不再硬编码** 'Barrier'，改从 `params.keywords` 读取（口径对齐本文件 BUFF handler），缺省为空数组
+        // [2026-10-23 莉莉子 · 孤军改阵亡触发] 与判定层同口径：**只数存活单位**
+        //   阵亡派发时尸体仍带 `animState:'dying'` 留在数组里，不过滤就会把它也算成"场上的一个"
+        const isAliveUnit = (u: any) => !!u && !u.isDead
+            && u.animState !== 'dying' && u.animState !== 'ephemeral_dying';
         const mine = [
             ...sideBench(ctx, ctx.owner),
             ...ctx.combatField.flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : [])),
-        ].filter(Boolean) as CardData[];
+        ].filter(isAliveUnit) as CardData[];
         if (mine.length !== 1) return;
-        const p = (def.battleEffect?.params?.power as number) ?? 4;
-        const h = (def.battleEffect?.params?.health as number) ?? 4;
+        const p = (def.battleEffect?.params?.power as number) ?? 5;
+        const h = (def.battleEffect?.params?.health as number) ?? 5;
+        const extraKeywords = (def.battleEffect?.params?.keywords as Keyword[] | undefined) ?? [];
         updateUnitById(ctx, mine[0].id, c => ({
             ...applyPermanentBuff(c, p, h),
-            keywords: Array.from(new Set([...(c.keywords || []), 'Barrier'])),
+            ...(extraKeywords.length
+                ? { keywords: Array.from(new Set([...(c.keywords || []), ...extraKeywords])) }
+                : {}),
         }));
         flashRogueBuff(def);
     },
@@ -1014,8 +1409,20 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         const attacking = ctx.combatField
             .flatMap(f => (f.owner === ctx.owner ? [f.attacker as CardData] : []))
             .filter(isAliveUnit);
-        const benchAlive = sideBench(ctx, ctx.owner).filter(isAliveUnit);
-        const candidates = [...attacking, ...benchAlive];
+        // [2026-10-21 莉莉子 BUG修复 · 卜卜①③ 复制源越界] **候选只保留"交战区里正在进攻的己方单位"**
+        // ── 症状（粉丝反馈 + 程确认口径）：备战席上**没参战**的单位也会被①③复制出来。
+        // ── 病根：2026-10-05 那次修复为了兜住"空场单人进攻"，把 `sideBench()`（备战席）也并进了候选
+        //    ⇒ ①随机可能抽到未参战的单位；③「攻击力最高」在备战席坐着更高攻单位时**必然**选中它，
+        //    等于绕过了"进攻中"这个限定。
+        // ── 与卡面不符：三处文案写的都是「**进攻中的**复制单位」
+        //    （`buffs.ts:777` 镜爻随征 / `buffs.ts:784` 万象镜身 / `heroDivinity.ts:230`、`:246`）。
+        // ── 为什么不回归 10-05 的"从不召唤"：宣告时 `tempCombatField.length > 0`（`useGameState.ts:2240`）
+        //    已保证交战区非空，且 `declOwner` 取自同一数组首条（`:2241`）⇒ `attacking` 至少命中 1 条。
+        //    而备战席里本来就不存在"进攻中"的单位（上阵时会从备战席移除，`useGameState.ts:5801-5802`）
+        //    ⇒ 它从来就不该是复制源，10-05 那次是"用超集修了空集"，顺手把语义弄宽了。
+        // ── 边界：若攻击者已被本次宣告中更早的效果标成 dying/dead，则**不召唤**
+        //    （那本来就不是可复制的活体）；这比"改去复制一个坐在后方的单位"更贴合卡面。
+        const candidates = attacking;
         if (candidates.length === 0) return;
         const p = def.battleEffect?.params ?? {};
         const source = p.strongest === true
@@ -1539,6 +1946,72 @@ export const getSpellCostDownAll = (enhIds: string[] | undefined): number => {
 };
 
 // ==========================================
+// [2026-10-24 莉莉子 · 费用修饰器] 三个纯查询（与上面 `getSpellCostDownAll` 同范式：只读列表，无副作用）
+// ==========================================
+
+/** 4/5「全场法术加费」按**持有条数**累加。
+ *  ⚠️ 语义是**全场**（敌我双方都加）⇒ 调用方必须把**双方**的结果相加再设快照，
+ *     不能像减费那样按方分开算 —— 见 `useGameState` 的两个建局入口。 */
+export const getSpellCostUpAll = (enhIds: string[] | undefined): number => {
+    let n = 0;
+    for (const def of getRogueDefs(enhIds, 'game_start')) {
+        for (const be of getBattleEffects(def)) {
+            if (be.effectClass === 'SPELL_COST_UP_ALL') n += ((be.params?.amount as number) ?? 1);
+        }
+    }
+    return n;
+};
+
+/** 6/7「费用税」：该侧是否持有，以及它的清零模式（`round` = 回合末清，`run` = 跨回合保留）。 */
+export const getCostTaxMode = (enhIds: string[] | undefined): 'round' | 'run' | null => {
+    for (const def of getRogueDefs(enhIds, 'game_start')) {
+        for (const be of getBattleEffects(def)) {
+            if (be.effectClass === 'COST_TAX') {
+                return (be.params?.mode as 'round' | 'run') === 'run' ? 'run' : 'round';
+            }
+        }
+    }
+    return null;
+};
+
+/** 20「连出税」：该侧是否持有，以及"从第几张起"与"每张加多少"。 */
+export const getChainPlayTaxConfig = (enhIds: string[] | undefined): { after: number; amount: number } | null => {
+    for (const def of getRogueDefs(enhIds, 'game_start')) {
+        for (const be of getBattleEffects(def)) {
+            if (be.effectClass === 'CHAIN_PLAY_TAX') {
+                return {
+                    after: (be.params?.after as number) ?? 2,
+                    amount: (be.params?.amount as number) ?? 3,
+                };
+            }
+        }
+    }
+    return null;
+};
+
+/** 第 16 条：该侧是否持有「回合末处决」。
+ *  真正的执行不在本文件 —— 见 `useRoundLifecycle` 回合末序列（需要 `judgeLifeAndDeath`）。 */
+export const hasMassacre = (enhIds: string[] | undefined): boolean => {
+    for (const def of getRogueDefs(enhIds, 'game_start')) {
+        for (const be of getBattleEffects(def)) {
+            if (be.effectClass === 'MASSACRE_EXCEPT_STRONGEST') return true;
+        }
+    }
+    return false;
+};
+
+/** 第 21 条：该侧是否持有「水晶每回合受伤 3 次后，此后受到的伤害降至 1」。
+ *  执行点在 `useGameState` 的两处水晶扣血（战斗主路径）。 */
+export const hasNexusDamageCap = (enhIds: string[] | undefined): boolean => {
+    for (const def of getRogueDefs(enhIds, 'game_start')) {
+        for (const be of getBattleEffects(def)) {
+            if (be.effectClass === 'NEXUS_DAMAGE_CAP') return true;
+        }
+    }
+    return false;
+};
+
+// ==========================================
 export const runRogueTrigger = (
     ctx: RogueTriggerCtx,
     enhIds: string[] | undefined,
@@ -1560,13 +2033,27 @@ export const runRogueTrigger = (
         for (const be of getBattleEffects(def)) {
             if (be.trigger !== trigger) continue;
             if (restrict && !restrict(be.effectClass)) continue;
+            // [2026-10-24 莉莉子 · 「第 N 回合」类强化] **回合门槛**：`be.round` 声明后，只在指定回合分发。
+            //   判据取 `ctx.game.round`（首回合 = 1，见 `logic/core.ts` 的 `calculateRoundStart(round 0 → 1)`），
+            //   与玩家在界面上看到的"第几回合"同口径。
+            //   用途：第五回合才发生一次的召唤 / 生成（如「梵音后至」「准星应召」）。
+            //   ⚠️ 必须放在 `oncePerBattle` **之前** —— 没到的回合不该把"每场一次"的额度用掉
+            //      （与 `requireOnlyOneUnit` 的判定顺序同一原则，见下方注释）。
+            if (be.round !== undefined && (ctx.game?.round ?? 0) !== be.round) continue;
             // [2026-09-25 莉莉子 强化线] 苛刻条件：我方场上恰好 1 个单位（孤军）
             //   判定放在 oncePerBattle **之前** —— 否则条件不满足时也会把"每场一次"用掉
+            // [2026-10-23 莉莉子 · 孤军改阵亡触发] **必须只数存活单位**：
+            //   `unit_die` 派发时，尸体以 `animState:'dying'`（或 `isDead`）**仍留在** bench / combatField 数组里
+            //   （见 `useGameState.ts:1281` 落席的是 `{ ...unit, animState:'dying' }` 那个新对象）。
+            //   若照旧用 `length !== 1` 判，刚死的那只也会被数进去 ⇒ 改成阵亡触发后**永远判不过**。
+            //   存活口径与 `SET_RANDOM_STATS`（本文件）逐字同源。
             if (be.requireOnlyOneUnit) {
+                const isAliveUnit = (u: any) => !!u && !u.isDead
+                    && u.animState !== 'dying' && u.animState !== 'ephemeral_dying';
                 const mine = [
                     ...sideBench(ctx, ctx.owner),
                     ...ctx.combatField.flatMap(f => (f.owner === ctx.owner ? [f.attacker, f.blocker] : [])),
-                ].filter(Boolean);
+                ].filter(isAliveUnit);
                 if (mine.length !== 1) continue;
             }
             // [2026-09-25 莉莉子 三线任务化框架] oncePerBattle：本场只生效一次

@@ -48,6 +48,9 @@ export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     // [2026-10-10 莉莉子 BUG修复] **文案同步**：该 handler 现在**牌库 + 手牌都查**
     //   （原先只查牌库 ⇒ 有一张被起手抽进手牌时就不会被召唤）⇒ 这里的标签必须跟着改，
     //   否则玩家在**图鉴 / 敌人详情 / 悬浮预览**里看到的仍是旧说法「从牌库召唤」。
+    // [2026-10-21 莉莉子] 该 handler 又加了「两处都没有 ⇒ 直接召唤 + 随机 3 件装备」的兜底。
+    //   ⚠️ **标签刻意不加长**（本标签渲染成 `text-[10px]` 的小胶囊，塞长句会撑破）⇒
+    //      兜底口径只写在卡面 `description` 里（`data/roguelike/buffs.ts` 的 enhance_century_reconciliation）。
     SUMMON_FROM_DECK: '从牌库与手牌召唤',
     BUFF: '增益',
     RALLY: '备战',
@@ -103,6 +106,25 @@ export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     // [2026-09-28 神格神经 · 茉莉安]
     EXPOSE_AND_DAMAGE: '暴露并造成伤害',      // ②④回合开始暴露一个敌人并造成伤害
     BEACON_DAMAGE_MULT: '信标伤害翻倍',       // ⑥常驻查询：獠牙信标亡语伤害翻倍
+    // [2026-10-24 莉莉子] 开局给我方手牌 + 牌库每张卡挂一件指定品质装备（紫/蓝/白三档）
+    EQUIP_ALL_CARDS: '全卡挂装备',
+    // [2026-10-24 莉莉子] 指定费用的我方单位 +N/+M（1 费 +3/+3）
+    BUFF_COST_UNITS: '定向费用增益',
+    // [2026-10-24 莉莉子] 按费用选卡的两条
+    SUMMON_BY_COST_FROM_DECK: '按费召唤',
+    SUMMON_LOWER_COST_ON_DEATH: '阵亡递补',
+    // [2026-10-24 莉莉子] 费用修饰器三套（查询/标记型）
+    SPELL_COST_UP_ALL: '全法术加费',
+    COST_TAX: '费用税',
+    CHAIN_PLAY_TAX: '连出加费',
+    // [2026-10-24 莉莉子] 第 14 条：开局塞 Lv2 天启者进牌库
+    UPGRADED_CHAMPIONS_TO_DECK: '升级天启入库',
+    // [2026-10-24 莉莉子] 第 19 条：随机整队召唤
+    SUMMON_RANDOM_SQUAD: '整队召唤',
+    // [2026-10-24 莉莉子] 第 16 条：回合末处决
+    MASSACRE_EXCEPT_STRONGEST: '除最强全灭',
+    // [2026-10-24 莉莉子] 第 21 条：水晶受击限伤
+    NEXUS_DAMAGE_CAP: '水晶受击限伤',
 };
 
 /** [2026-08-26 莉莉子] 装备静态修饰/效果 → 标签列表（方块底部展示） */

@@ -1,6 +1,6 @@
 import type { CardData, GameState, Keyword } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry'; // [新增] 引入效果字典以读取前置条件
-import { createCard } from '../data/cards'; // [2026-07-31] 安卡升级手牌替换
+import { createCard, CARD_DB } from '../data/cards'; // [2026-07-31] 安卡升级手牌替换 ｜ [2026-10-23] 读卡的 maxPerSide（每方上限）
 import { EQUIPMENT_BY_ID } from '../data/equipment'; // [2026-10-03] 升级时保留「装备/武装授予的关键词」
 import { getPower } from '../logic/keywords'; // [2026-09-26 莉莉子] 攻击力唯一口径（0 下限 + maxPower 上限）
 // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔升级进度的**唯一真源**（模块级账本）
@@ -79,7 +79,14 @@ export const getEffectiveSpellCost = (
     // ── ⚠️ 玩家可见变化（**程已认下**）：单位卡的手牌费用角标从"绿色 −1"回到原价；
     //      且"法力恰好 = 费用−1"时原本能打出去的单位会变成点不动 —— 按设计口径这是**修正**。
     // ==========================================
-    if (!card.type?.startsWith('spell')) return card.cost || 0;
+    // [2026-10-24 莉莉子 · 费用修饰器] 单位卡：**只吃费用税**（②③），不吃法术专属的减费/加费。
+    //   收在这一处而不是让每个调用方各改一遍 ⇒ 手牌显示 / 门禁 / 悬停预览全部自动跟上。
+    //   ⚠️ 单位卡的**实扣**不走本函数（`useGameState.ts` 里 `calculateNewMana(card.cost, …)`）
+    //      ⇒ 那一处必须单独加税，否则就是"显示涨价、实扣没变"的经典分叉。
+    if (!card.type?.startsWith('spell')) {
+        const tax = getCostTaxOf(side);
+        return Math.min(CARD_COST_CAP, (card.cost || 0) + tax);
+    }
 
     // [2026-07-15 梵音] 觉悟减费：巨偶一瞥在法力上限≥10时费用为0
     if (maxMana !== undefined && maxMana >= 10 && card.key === 'Shalo_Golem_Glimpse') {
@@ -103,13 +110,16 @@ export const getEffectiveSpellCost = (
     const cond = getSpellConditionalCost(card, castBasis ?? spellCastSnapshot[side]);
     if (cond.zero) return 0;
     const condBase = Math.max(0, base + cond.mod);
+    // [2026-10-24 莉莉子 · 费用修饰器] 法术额外吃：① 全场法术加费 + ②③ 费用税，最后钳到费用上限。
+    //   ⚠️ 上面 `cond.zero`（双生符：本场法术数达标 ⇒ 费用归零）**优先**，不吃这一层 —— 刻意保留。
+    const extra = getSpellCostUpAllValue() + getCostTaxOf(side);
     // 只有极速(burst)和快速(fast)法术受凯特琳减费影响
     if (card.type === 'spell-burst' || card.type === 'spell-fast') {
         if (hasPoetCaitlinAura(bench)) {
-            return Math.max(0, condBase - 1);
+            return Math.min(CARD_COST_CAP, Math.max(0, condBase - 1) + extra);
         }
     }
-    return condBase;
+    return Math.min(CARD_COST_CAP, condBase + extra);
 };
 
 // ── [2026-10-08 莉莉子 · 法术专属装备 第二波] **条件减费要读的对局状态**（按方，只读快照）──
@@ -156,6 +166,102 @@ export const setSpellCostDownAllSnapshot = (player: number, enemy: number): void
     spellCostDownAllSnapshot.player = Math.max(0, player || 0);
     spellCostDownAllSnapshot.enemy = Math.max(0, enemy || 0);
 };
+
+// ==========================================
+// [2026-10-24 莉莉子 · 费用修饰器] 三套**互相独立**的加费来源（程拍板：20 与 6/7 分两套）
+//   ① 全场法术加费（4/5）：敌我双方的**法术**都 +N。按"持有条数"叠加（双方各持一条 ⇒ 都 +2）
+//   ② 费用税（6/7）：对手每打出一张卡 ⇒ **承受方**所有手牌 +1；
+//        承受方打出任意一张卡后清零；`round` 版另有"回合结束清零"，`run` 版跨回合保留
+//   ③ 连出税（20）：对手每回合从第 `after + 1` 张起，每张给**承受方** +`amount`，可叠加；回合结束清零
+//   ⚠️ 与 `spellCostDownAllSnapshot` 同一范式：模块级快照 + **显式接线**
+//      （开局重设 / 回合清零 / 每次出牌累加）。漏任何一处 ⇒ 费用显示与实扣分叉
+//      —— 这正是本仓库最经典的一类"假参与"死法（见 `技术手册/审计-强化生效-总报告`）。
+//   ⚠️ 单位卡**只吃 ②③**（税），不吃 ①（①是法术专属）。
+// ==========================================
+const spellCostUpAllSnapshot = { value: 0 };
+export const setSpellCostUpAllSnapshot = (v: number): void => {
+    spellCostUpAllSnapshot.value = Math.max(0, v || 0);
+};
+/** 读「全场法术加费」当前值 */
+export const getSpellCostUpAllValue = (): number => spellCostUpAllSnapshot.value;
+
+/** ② 费用税：按**承受方**记账（`handCostTax.player` = 玩家要额外付的钱） */
+const handCostTax = { player: 0, enemy: 0 };
+/** ③ 连出税：同样按承受方记账 */
+const chainCostTax = { player: 0, enemy: 0 };
+
+/** 单卡费用上限 —— 与最大法力同值（`logic/core.ts` 两处 `Math.min(10, …)`） */
+export const CARD_COST_CAP = 10;
+
+/** 某方当前要额外付的税（② + ③）。法术与单位卡**共用**这一个数。 */
+export const getCostTaxOf = (side: 'player' | 'enemy'): number =>
+    Math.min(CARD_COST_CAP, (handCostTax[side] ?? 0) + (chainCostTax[side] ?? 0));
+
+/** ② 累积：`bearer` 是**承受方**（由对手出牌触发） */
+export const addHandCostTax = (bearer: 'player' | 'enemy', amount: number): void => {
+    handCostTax[bearer] = Math.min(CARD_COST_CAP, (handCostTax[bearer] ?? 0) + Math.max(0, amount));
+};
+/** ② 清零：承受方打出一张卡后解除（程口径） */
+export const clearHandCostTax = (bearer: 'player' | 'enemy'): void => {
+    handCostTax[bearer] = 0;
+};
+/** ③ 累积 */
+export const addChainCostTax = (bearer: 'player' | 'enemy', amount: number): void => {
+    chainCostTax[bearer] = Math.min(CARD_COST_CAP, (chainCostTax[bearer] ?? 0) + Math.max(0, amount));
+};
+/** ③ 清零（回合结束；`bearer` 省略 = 双方都清） */
+export const clearChainCostTax = (bearer?: 'player' | 'enemy'): void => {
+    if (bearer) chainCostTax[bearer] = 0;
+    else { chainCostTax.player = 0; chainCostTax.enemy = 0; }
+};
+
+/** 20 的「本回合出牌数」（按方）—— 判"从第 N+1 张起" */
+const roundPlayCount = { player: 0, enemy: 0 };
+export const noteRoundPlay = (side: 'player' | 'enemy'): number => {
+    roundPlayCount[side] = (roundPlayCount[side] ?? 0) + 1;
+    return roundPlayCount[side];
+};
+export const resetRoundPlayCount = (): void => {
+    roundPlayCount.player = 0;
+    roundPlayCount.enemy = 0;
+};
+
+/** 每场开局重设（与 `resetSpellCastState` 同批调用；漏了会跨局残留） */
+export const resetCostModifiers = (): void => {
+    spellCostUpAllSnapshot.value = 0;
+    handCostTax.player = 0; handCostTax.enemy = 0;
+    chainCostTax.player = 0; chainCostTax.enemy = 0;
+    roundPlayCount.player = 0; roundPlayCount.enemy = 0;
+};
+
+/** 每回合开始：清 ③ 连出税 + 出牌计数。
+ *  ⚠️ ② 费用税**刻意不在这里清** —— 它的清零时机由强化版本决定
+ *     （`round` 版在**玩家回合结束**时清，`run` 版不清），见 `useRoundLifecycle` 的接线。 */
+export const resetRoundChainTax = (): void => {
+    chainCostTax.player = 0; chainCostTax.enemy = 0;
+    roundPlayCount.player = 0; roundPlayCount.enemy = 0;
+};
+
+// ==========================================
+// [2026-10-24 莉莉子 · 第 21 条] 水晶「受伤次数」计数（按方、每回合重置）
+//   用途：第 21 条「每回合受到三次伤害后，接下来每次受到的伤害降低至 1」。
+//   ⚠️ 为什么单独一个快照：扣水晶的 `setGame` updater 可能被 React 调用不止一次，
+//      **计数不能放在 updater 里**（会翻倍）。所以由调用方在 setGame **之前**调用
+//      `noteNexusHit()` 取本次是第几次，再把结果传进 updater。
+// ==========================================
+const nexusHitCount = { player: 0, enemy: 0 };
+/** 记一次「该方水晶受到了 1 次伤害」，返回累计次数（1 = 本回合第一次） */
+export const noteNexusHit = (side: 'player' | 'enemy'): number => {
+    nexusHitCount[side] = (nexusHitCount[side] ?? 0) + 1;
+    return nexusHitCount[side];
+};
+/** 每回合开始清零（与 `resetRoundChainTax` 同批调用） */
+export const resetNexusHitCount = (): void => {
+    nexusHitCount.player = 0;
+    nexusHitCount.enemy = 0;
+};
+/** 第 21 条的「前 N 次全额、之后降到 1」—— N 的默认值 */
+export const NEXUS_CAP_AFTER_HITS = 3;
 
 /**
  * [2026-10-06 莉莉子 BUG修复 · 莲台无垠] **建卡瞬间**给法术补上"全法术 −N"（数据层）。
@@ -259,6 +365,12 @@ export const canAffordCard = (
       return false;
   }
 
+  // 🔴 [2026-10-24 莉莉子 · 独立审查纠错] 退化分支**必须读裸 `card.cost`**，不能在这里加费用税。
+  //   ── 病根：`evaluateChoiceCondition`（本文件 `:981`）刻意传 `bench = undefined`，因为调用方
+  //      已经把**实算价（含税）**烘焙进 `choiceCardData.cost` 再传进来（见该处注释）。
+  //      这里若再加一次税 ⇒ 抉择门禁价 = 基础 + **2 倍税** ⇒ 选项显示 3 费却锁"法力值不足"。
+  //   ── 需要含税的场景（悬停预览）由调用方**显式传 bench**（`GameSession.tsx:804` 已改），
+  //      走上面 `getEffectiveSpellCost` 那条正路。
   const cost = bench ? getEffectiveSpellCost(card, bench, undefined, side) : card.cost;
 
   if (card.type.includes('unit')) {
@@ -375,6 +487,54 @@ export const sideOfUnit = (
     if (refs.length > 0) return refs[0].side;
     // ④ 未知来源：保留旧兜底
     return 'player';
+};
+
+// ==========================================
+// [2026-10-17 莉莉子 BUG修复 · 重复播放升级影片] 「这张**升级票**属于哪一方」的唯一出口
+//
+// ── 用途：升级影片队列（`pendingLevelUps`）的**去重**。口径由程 2026-10-17 拍板：
+//    「**同一侧**、同一个天启者播一次就够了；敌我双方有同名天启者时，我方播过之后，
+//      敌方那位升级时**照样要播她自己的那一次**」。
+//    ⇒ 去重键必须是 **`侧别|key`**，不能是裸 `key`：裸 key 会把敌方那次**合法**的升级影片
+//      一起吃掉（旧实现在"我方里芙升级 → 队列里躺着 lyfe → 敌方里芙达标"时就是这个症状）。
+//
+// ── 为什么不直接复用上面的 `sideOfUnit`（同为"哪个方"的问题）：
+//    `sideOfUnit` 的兜底是 `'player'` —— 那是给**必须给出一个方**的判死 / 结算场景用的；
+//    而本函数的误判代价是**吃掉一段合法影片**（不可逆的观感损失）⇒ 口径必须反过来：
+//    **宁可不合并，也绝不合并错**。故查询失败时返回 `null`，由调用方跳过合并（保持原行为）。
+//
+// ── 覆盖面：备战席 / 交战区（**复用 `collectFieldUnits`** —— 交战区归属规则全仓库只此一处）
+//    + 手牌 / 牌库（票的实例可能已被收回手牌/牌库，此时它仍是"这位天启者的票"）
+//    + **墓地**（[2026-10-18 补] 见下方注释）。
+// ==========================================
+export const sideOfLevelUpTicket = (
+    id: string,
+    state: {
+        playerBench?: CardData[]; enemyBench?: CardData[];
+        playerHand?: CardData[]; enemyHand?: CardData[];
+        playerDeck?: CardData[]; enemyDeck?: CardData[];
+        /** [2026-10-18 补] 墓地：**必须查**，否则已入墓的票会算出 `null` ⇒ 去重静默失效 */
+        playerGraveyard?: CardData[]; enemyGraveyard?: CardData[];
+        combatField?: any[];
+    },
+): 'player' | 'enemy' | null => {
+    const refs = collectFieldUnits(state).filter(r => r.card && r.card.id === id);
+    if (refs.length > 0) return refs[0].side;
+    if ((state.playerHand || []).some(c => c.id === id) ||
+        (state.playerDeck || []).some(c => c.id === id)) return 'player';
+    if ((state.enemyHand || []).some(c => c.id === id) ||
+        (state.enemyDeck || []).some(c => c.id === id)) return 'enemy';
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-10-18 莉莉子 · 独立审查第 3 条] **墓地也要查**
+    //   ── 病根：出队口（`GameSession.tsx` 的存活门）**用墓地判"这张票作废"**，
+    //      而本函数此前不认墓地 ⇒ 一张"人已入墓"的票在这里算出 `null`。
+    //      `null` 的语义是"不参与去重"（宁可不合并），于是**去重静默失效**：
+    //      同侧同名的重复票重新被放行 ⇒ 影片又可能播两遍。
+    //   ── 两个机制必须用**同一套归属知识**，否则"一个判废、一个判放行"会互相打架。
+    // ══════════════════════════════════════════════════════════════════
+    if ((state.playerGraveyard || []).some(c => c.id === id)) return 'player';
+    if ((state.enemyGraveyard || []).some(c => c.id === id)) return 'enemy';
+    return null;
 };
 
 // ==========================================
@@ -790,6 +950,19 @@ export interface ChoiceSlowTiming {
     stackLength: number;            // 法术堆栈长度（> 0 = 正在响应某个法术）
 }
 
+/**
+ * [2026-10-23 莉莉子] 抉择子卡的**棋盘上下文** —— 供「枷锁 5」按场上实际情况判定。
+ *
+ * ⚠️ 为什么不直接读某个全局：本函数被**三处**调用（玩家抉择面板 / AI 自动抉择 / AI 决策），
+ *   各自持有的棋盘快照不同；统一由调用方喂入，才保证三处判据同源。
+ * ⚠️ 全部可选：不传 ⇒ 枷锁 5 自动跳过（= 旧行为），绝不会因为拿不到棋盘而误锁。
+ */
+export interface ChoiceBoardCtx {
+    playerBench?: CardData[];
+    enemyBench?: CardData[];
+    combatField?: any[];
+}
+
 export const evaluateChoiceCondition = (
     choiceCardData: CardData,
     // [2026-10-13 莉莉子 BUG修复 · F2「side 缺省参泄漏」]
@@ -803,7 +976,8 @@ export const evaluateChoiceCondition = (
     side: 'player' | 'enemy',
     isHeroLeveled: boolean = false,
     gamePhase?: string, // [2026-07-27 莉莉子] 阶段检查（慢速法术拦截）
-    slowTiming?: ChoiceSlowTiming // [2026-10-05 莉莉子] 慢速子卡的时机检查（与普通慢速法术同口径）
+    slowTiming?: ChoiceSlowTiming, // [2026-10-05 莉莉子] 慢速子卡的时机检查（与普通慢速法术同口径）
+    choiceCtx?: ChoiceBoardCtx // [2026-10-23 莉莉子] 棋盘上下文（枷锁 5：千莲叠绽的召唤分支上限）
 ): { canPlay: boolean; lockedMessage: string } => {
 
     // 防御性检查
@@ -851,6 +1025,41 @@ export const evaluateChoiceCondition = (
         }
         if (slowTiming.stackLength > 0) {
             return { canPlay: false, lockedMessage: "法术响应中，无法施放慢速法术" };
+        }
+    }
+
+    // =====================================
+    // [枷锁判定 5：千莲叠绽 —— 召唤分支已达「每方上限」]
+    // [2026-10-23 莉莉子 BUG修复 · 程拍板]
+    //
+    // ── 为什么在**这里**（而不是 `getSpellPlayBlockReason` 那种"手牌打出"判定）：
+    //    「千莲叠绽」`isCollectible: false`，是「猫汐尔的演算」的**抉择子卡**，
+    //    **永远不会出现在手牌里** ⇒ 任何挂给"手牌打出"的规则对它都是死代码。
+    //    它"被打出"的真实时刻 = 玩家在**抉择面板**点中它 ⇒ 枷锁在这里才拦得住
+    //    （面板会给 `isLocked` 置灰 + 显示 `lockedMessage`）。
+    //
+    // ── 判据 = **打出这一刻**猫汐尔是否在**备战席**（程的口径："只看打出时她的状态"）：
+    //    · 在备战席 ⇒ 未格挡 ⇒ 走**召唤**分支 ⇒ 基座已达上限就会白花 2 费 ⇒ **拦**
+    //    · 不在备战席（在交战区格挡）⇒ 走**与基座调换位置**分支，**不召唤新基座**
+    //      ⇒ 场上数量不影响效果 ⇒ **放行**（拦了就是误伤）
+    //
+    // ── 上限取 `CARD_DB` 的 `maxPerSide`（与召唤收束层同字段），**不硬编码 3**；
+    //    计数只数**备战席**（与 `enforceMaxPerSide` 同口径）。
+    // =====================================
+    if (choiceCardData.key === 'mauxir_lotus_rush' && choiceCtx) {
+        const PEDESTAL_KEY = 'mauxir_lotus_pedestal';
+        const sideLimit = CARD_DB[PEDESTAL_KEY]?.maxPerSide;
+        if (sideLimit !== undefined && sideLimit > 0) {
+            const ownBench = (side === 'player' ? choiceCtx.playerBench : choiceCtx.enemyBench) || [];
+            const live = (c: CardData | null | undefined): boolean =>
+                !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+            const championOnBench = ownBench.some(c => c.key === 'mauxir_lotus_drive' && live(c));
+            if (championOnBench) {
+                const occupied = ownBench.filter(c => c.key === PEDESTAL_KEY && live(c)).length;
+                if (occupied >= sideLimit) {
+                    return { canPlay: false, lockedMessage: `场上已有 ${sideLimit} 个「臆莲基座」` };
+                }
+            }
         }
     }
 
@@ -1169,6 +1378,54 @@ export const getSpellPlayBlockReason = (
         return null;
     }
 
+    // =====================================
+    // [2026-10-23 莉莉子 · 位置修正] 千莲叠绽的拦截**不在这里**。
+    //   「千莲叠绽」(`isCollectible: false`) 是「猫汐尔的演算」的**抉择子卡**，
+    //   **永远不会出现在手牌里** ⇒ 本函数（手牌打出受阻判定）对它是**死代码**，
+    //   曾一度挂在这里，实测不生效。
+    //   正确位置：`evaluateChoiceCondition` 的「枷锁 5」—— 抉择面板那一层，
+    //   那里才有 `canPlay/lockedMessage`（选项置灰 + 显示原因）。
+    // =====================================
+
+    // =====================================
+    // [2026-10-23 莉莉子 · 独立审查修复] 「攻击力搬运类」法术的前置闸
+    //   ── 为什么必须拦：`params.valueFromAllyPower`（崩坏）的伤害**完全来自第 1 个目标
+    //      （我方单位）的当前攻击力**。若场上没有符合种族条件的单位，选目标层会因
+    //      「无合法目标」直接收尾 ⇒ 结算时第 1 目标缺失 ⇒ 整张牌 `break`（0 伤害），
+    //      而**费用照扣 7 点**、屏幕上连一条事件都没有（只有 console.log）。
+    //      0 攻泰坦（异化人 0/2、融合体 0/3）同理：能选中，但 0 伤害。
+    //   ── 判据**纯数据驱动**（读该效果的第 1 个 targetRequirements + valueFromAllyPower 标记），
+    //      不认任何具体 key ⇒ 将来同类法术自动受保护。
+    //   ── 挂在这里 = 手牌高亮与点击拦截**天然同源**（本函数是"打出受阻"的唯一口径）。
+    //   ── 本函数只服务**玩家手牌**（两个调用点：CardAnimations 高亮 / GameSession 点击），
+    //      故 `ctx.playerBench` 就是玩家席；AI 侧不经过这里（AI 走 aiSpellStrategies，
+    //      其 evaluatePOWER_BURST 已自行过滤掉 0 攻源）。
+    // =====================================
+    const powerSourceEffect = (card.effects || [])
+        .map(id => EFFECT_DB[id])
+        .find(e => e && (e.params as { valueFromAllyPower?: boolean } | undefined)?.valueFromAllyPower);
+    if (powerSourceEffect) {
+        const srcReq = powerSourceEffect.targetRequirements?.[0];
+        const raceFilter = (srcReq?.raceFilter || []) as string[];
+        const ownPool: CardData[] = [...(ctx.playerBench || [])];
+        // 交战区：attacker 属 `f.owner`；blocker 属 `f.owner` 的对面（与 useSpellSystem 同口径）
+        (ctx.combatField || []).forEach((f: any) => {
+            if (f?.attacker && f.owner === 'player') ownPool.push(f.attacker);
+            if (f?.blocker && f.owner !== 'player') ownPool.push(f.blocker);
+        });
+        const matched = ownPool.filter(c =>
+            isLive(c)
+            && (raceFilter.length === 0 || (c.race as string[] | undefined)?.some(r => raceFilter.includes(r)))
+        );
+        if (matched.length === 0) {
+            return '场上没有可作为目标的我方单位';
+        }
+        if (!matched.some(c => getPower(c) > 0)) {
+            return '可作为目标的我方单位攻击力均为 0';
+        }
+        return null;
+    }
+
     return null;
 };
 
@@ -1213,4 +1470,27 @@ export const getChampionUpgradeProgress = (
 /** [2026-07-15] 检测巨偶一瞥是否处于觉悟状态（手牌橙色高亮） */
 export const checkShaloGlimpseEnlightened = (card: CardData, maxMana: number): boolean => {
     return card.key === 'Shalo_Golem_Glimpse' && hasEnlightenment(maxMana);
+};
+
+/**
+ * [2026-10-23 莉莉子 · 强化「囤积」重做] **给手牌里每一张「囤积」攒 1 点**。
+ *
+ * 口径（程拍板）：点数记在**卡自己身上**（`CardData.hoardStored`），不是全局累计 ——
+ * 打出它时兑现、卡消失、数字归零；下回合强化重新发一张**空的**。
+ *
+ * ⚠️ 两个调用点 = "卡真的打出去了"的两个出口：
+ *   ① `useGameState.playCard` —— 单位卡 + 无需目标的法术（卡从手牌移除那一处）
+ *   ② `useSpellSystem.confirmPendingSpell` —— 有目标的法术（**确认入栈**时）
+ *      ⚠️ 绝不能挂在 `startSpellCasting`：那里取消会退卡退费 ⇒ 能"开始施法 → 取消"反复刷点数。
+ *
+ * 纯函数：手牌里没有囤积时**原样返回同一引用**（避免无意义 re-render）。
+ */
+export const bumpHoardStored = (hand: CardData[]): CardData[] => {
+    let changed = false;
+    const next = hand.map(c => {
+        if (c.key !== 'spell_hoard') return c;
+        changed = true;
+        return { ...c, hoardStored: (c.hoardStored ?? 0) + 1 };
+    });
+    return changed ? next : hand;
 };
