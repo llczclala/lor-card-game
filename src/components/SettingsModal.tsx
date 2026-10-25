@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { useFullscreen } from './FullScreenToggle'; // [2026-10-14 程拍板] 全屏开关（原右上角独立按钮收进此处）
-import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power, RotateCw, Home, Swords, RotateCcw } from 'lucide-react';
+import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power, RotateCw, Home, Swords, RotateCcw, LogOut } from 'lucide-react';
+import { pickTuning } from '../platform/tuning';
+import { isTouchInput } from '../utils/touchGaze'; // [2026-10-20] 震动四开关只在触屏显示
+import { HAPTICS_DEFAULT, HAPTICS_MS, isHapticsSupported } from '../utils/haptics';    // [2026-10-20] 默认值/毫秒数取唯一真源 + 能力检测
+import { UI_CONTROL_DEFAULT, isEscapeLockSupported } from '../utils/fullscreen'; // [2026-10-24] 全屏/暂停按钮与 ESC 口径的默认值（唯一真源）+ 能力探测
 // ══════════════════════════════════════════════════════════════════════
 // 🎛️ 系统设置面板（`SettingsModal`）· 视觉调参区（**程微调就改这里**）
 // ──────────────────────────────────────────────────────────────────────
@@ -24,7 +28,8 @@ import { X, Music, Volume2, Mic, Film, VolumeX, Settings as SettingsIcon, Power,
 //     已成 `switchKnobTop` / `switchKnobOnLeft` / `switchKnobOffLeft` 三个值 ——
 //     **改 `switchWidth` 时必须同步改 `switchKnobOnLeft`**（否则圆钮会滑出滑轨）。
 // ══════════════════════════════════════════════════════════════════════
-export const SETTINGS_UI = {
+// 🖥️📱 【双平台】`SETTINGS_UI_MOBILE`（手机端）+ `SETTINGS_UI_PC_DIFF`（PC 端差异项，见本块下方）
+const SETTINGS_UI_MOBILE = {
     // ══ ① 顶部标题栏 ══════════════════════════════════════════════════
     /** 左右内边距 px（原 px-8 = 32） */
     headerPadX: 32,
@@ -232,7 +237,62 @@ export const SETTINGS_UI = {
     confirmBtnFontSize: 14,
     /** 「否」按钮描边 px（原 border = 1） */
     confirmNoBorderWidth: 1,
-} as const;
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ `SETTINGS_UI` PC 端差异项 —— 只列「与手机端不同」的项；未列出的项两端相同
+// ──────────────────────────────────────────────────────────────────────
+// 依据：`_scratch/reports/g6-system.md` §2 的逐项表（git 基线 × 注释「原 XXX」双源）
+// 改这里 = 改 PC 端观感；改上面 = 改手机端观感。
+// ══════════════════════════════════════════════════════════════════════
+const SETTINGS_UI_PC_DIFF = {
+    // ══ ① 顶部标题栏 ══════════════════════════════════════════════════
+    titleFontSize: 24,            // 原 text-2xl = 24
+    titleIconSize: 24,            // 原 SettingsIcon 的 size=24
+    closeIconSize: 24,            // 原 ✕ 的 size=24
+
+    // ══ ② 左侧标签栏 ══════════════════════════════════════════════════
+    sidebarWidth: 176,            // 原 w-44 = 176
+    sidebarGap: 4,                // 原 space-y-1 = 4
+    tabFontSize: 14,              // 原 text-sm = 14
+    tabIconSize: 18,              // 原 size={18}
+
+    // ══ ③ 中间内容区 ══════════════════════════════════════════════════
+    sectionTitleFontSize: 12,     // 原 text-xs = 12
+
+    // ══ ④ 音量行 ══════════════════════════════════════════════════════
+    volLabelWidth: 128,           // 原 w-32 = 128
+    volMuteIconSize: 20,          // 原 size={20}
+    volLabelFontSize: 14,         // 原 text-sm = 14
+    volKnobSize: 16,              // 原 w-4 h-4 = 16
+
+    // ══ ⑤ 开关行 ══════════════════════════════════════════════════════
+    toggleTitleFontSize: 14,      // 原 text-sm = 14
+    toggleDescFontSize: 12,       // 原 text-xs = 12
+
+    // ══ ⑥ 画面页「分辨率三选一」═══════════════════════════════════════
+    segItemFontSize: 14,          // 原 text-sm = 14
+
+    // ══ ⑦ 系统页 ══════════════════════════════════════════════════════
+    sysTextFontSize: 14,          // 原 text-sm = 14
+    sysHintFontSize: 12,          // 原 text-xs = 12
+    resetBtnFontSize: 14,         // 原 text-sm = 14
+    resetBtnIconSize: 16,         // 原 size={16}
+
+    // ══ ⑧ 底部功能区 ══════════════════════════════════════════════════
+    footBtnFontSize: 14,          // 原 text-sm = 14
+    footBtnIconSize: 16,          // 原 size={16}
+
+    // ══ ⑨ QUIT GAME 与二次确认 ════════════════════════════════════════
+    quitBtnFontSize: 14,          // 原 text-sm = 14
+    quitBtnIconSize: 16,          // 原 size={16}
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const SETTINGS_UI_PC = { ...SETTINGS_UI_MOBILE, ...SETTINGS_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
+export const SETTINGS_UI = pickTuning(SETTINGS_UI_PC, SETTINGS_UI_MOBILE);
 
 
 interface SettingsModalProps {
@@ -270,6 +330,26 @@ interface SettingsModalProps {
     // [2026-09-26] 动态法术/单位卡面开关
     spellDynamic?: boolean;
     onToggleSpellDynamic?: () => void;
+    // ── [2026-10-20 莉莉子 · 触屏震动] 四个震动通道开关（**仅手机端渲染**，PC 无震动马达）
+    //    ⚠️ 这里传 `undefined` 时由默认参数兜底；而"老存档没有字段"的归一化在
+    //       `utils/haptics.ts` 的 `setHapticsSwitches()` 里做（那边才是判定真源）。
+    hapticsTap?: boolean;
+    onToggleHapticsTap?: () => void;
+    hapticsLongPress?: boolean;
+    onToggleHapticsLongPress?: () => void;
+    hapticsNexusIn?: boolean;
+    onToggleHapticsNexusIn?: () => void;
+    hapticsNexusOut?: boolean;
+    onToggleHapticsNexusOut?: () => void;
+    // ── [2026-10-24 莉莉子 · ESC 归属权 / 右上角控制条] ─────────────────────
+    //    ⚠️ 传 `undefined` 时由默认参数兜底（= `UI_CONTROL_DEFAULT`），
+    //       所以 **App 侧不要写 `|| false`**，否则老存档缺字段会被误当成"关"。
+    showFullscreenButton?: boolean;
+    onToggleShowFullscreenButton?: () => void;
+    showPauseButton?: boolean;
+    onToggleShowPauseButton?: () => void;
+    escExitFullscreenFirst?: boolean;
+    onToggleEscExitFullscreenFirst?: () => void;
     // [2026-08-16] 恢复默认设置（系统标签页入口）
     onResetSettings?: () => void;
     // [新增] 对局操作
@@ -278,6 +358,12 @@ interface SettingsModalProps {
     isRogueDevRestart?: boolean;
     onRestartMatch?: () => void;
     onReturnToLobby?: () => void;
+    /**
+     * [2026-10-24 莉莉子] 「返回标题界面」。
+     * 传 `undefined` 就不渲染这个按钮 —— App 在标题界面本身不会传，
+     * 于是那个界面自然看不到"返回标题"（零额外开关）。
+     */
+    onReturnToTitle?: () => void;
 }
 
 // 设置标签页类型
@@ -359,10 +445,18 @@ const ToggleRow = ({ title, desc, enabled, onToggle }: { title: string; desc: st
     </div>
 );
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, deskDynamic = false, onToggleDeskDynamic, heroDynamic = false, onToggleHeroDynamic, cardBackDynamic = false, onToggleCardBackDynamic, spellDynamic = false, onToggleSpellDynamic, onResetSettings, isInGame = false, isRogueDevRestart = false, onRestartMatch, onReturnToLobby }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, volumes, onVolumeChange, videoResolution = '1k', onResolutionChange, skipStartDrawAnimation = false, onToggleSkipDraw, skipLevelupMovie = false, onToggleSkipLevelup, skipVictoryMovie = false, onToggleSkipVictory, deskDynamic = false, onToggleDeskDynamic, heroDynamic = false, onToggleHeroDynamic, cardBackDynamic = false, onToggleCardBackDynamic, spellDynamic = false, onToggleSpellDynamic, hapticsTap = HAPTICS_DEFAULT.tap, onToggleHapticsTap, hapticsLongPress = HAPTICS_DEFAULT.longPress, onToggleHapticsLongPress, hapticsNexusIn = HAPTICS_DEFAULT.nexusIn, onToggleHapticsNexusIn, hapticsNexusOut = HAPTICS_DEFAULT.nexusOut, onToggleHapticsNexusOut, showFullscreenButton = UI_CONTROL_DEFAULT.showFullscreenButton, onToggleShowFullscreenButton, showPauseButton = UI_CONTROL_DEFAULT.showPauseButton, onToggleShowPauseButton, escExitFullscreenFirst = UI_CONTROL_DEFAULT.escExitFullscreenFirst, onToggleEscExitFullscreenFirst, onResetSettings, isInGame = false, isRogueDevRestart = false, onRestartMatch, onReturnToLobby, onReturnToTitle }) => {
 
     // [2026-08-16] 当前激活的标签页
     const [activeTab, setActiveTab] = useState<SettingsTab>('audio');
+
+    // [2026-10-20 莉莉子 · 触屏震动] 四个震动开关**只在"真的会震"的设备上显示**：
+    //   PC 没有震动马达（`navigator.vibrate` 不存在），摆上去就是永远无效的死开关。
+    //   ⚠️ [2026-10-20 独立审查修复] 判据必须是 `isTouchInput() && isHapticsSupported()` ——
+    //      **只判触屏不够**：iPad / iOS 上 `pointer: coarse` 为真（是触屏），但 Safari
+    //      没有 `navigator.vibrate` ⇒ 只判触屏会摆出 4 个**永远不震的无效开关**，
+    //      与本组件「看得见 = 响得了」的承诺直接矛盾。
+    const [showHaptics] = useState(() => isTouchInput() && isHapticsSupported());
 
     // [2026-10-14 程拍板] 全屏开关（原为右上角独立悬浮按钮）
     const { isFullscreen, toggleFullscreen } = useFullscreen();
@@ -493,6 +587,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap, paddingTop: SETTINGS_UI.sectionPadTop }}>
                                                     <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Display</h3>
                                                     <ToggleRow title="全屏显示" desc="以全屏模式运行游戏（等同 F11）" enabled={isFullscreen} onToggle={toggleFullscreen} />
+                                                    {/* ── [2026-10-24 莉莉子 · ESC 归属权] 操作方式三开关 ──────────────
+                                                        程的原话：「我们最好不要教玩家做事……在优化好默认的操作方法之后，
+                                                        要给习惯之前操作方法的玩家设置之前的操作习惯的渠道」
+                                                        ⇒ 前两项 = 给新操作补**显式入口**（右上角按钮，触屏没有 ESC 也能暂停）；
+                                                          第三项 = **老习惯逃生舱**（全屏 ESC 先退全屏）。
+                                                        默认值全部取 `UI_CONTROL_DEFAULT`，不在这里写死。 */}
+                                                    <ToggleRow
+                                                        title="右上角：全屏按钮"
+                                                        desc="屏幕右上角常驻一个全屏切换按钮（大厅与对局都能用）"
+                                                        enabled={showFullscreenButton}
+                                                        onToggle={onToggleShowFullscreenButton}
+                                                    />
+                                                    <ToggleRow
+                                                        title="右上角：暂停按钮"
+                                                        desc="屏幕右上角常驻一个暂停按钮，仅对局中显示"
+                                                        enabled={showPauseButton}
+                                                        onToggle={onToggleShowPauseButton}
+                                                    />
+                                                    <ToggleRow
+                                                        title="ESC 优先退出全屏"
+                                                        desc={isEscapeLockSupported()
+                                                            // 支持 Keyboard Lock → 这个开关真的有意义
+                                                            ? '全屏时 ESC 先退出全屏（旧习惯）；关闭则 ESC 直接暂停游戏'
+                                                            // 不支持 → 老实说清楚，别让玩家以为开了就好
+                                                            : '当前环境不支持键盘锁定，此项不生效（全屏下 ESC 仍由浏览器退出全屏）'}
+                                                        enabled={escExitFullscreenFirst}
+                                                        onToggle={onToggleEscExitFullscreenFirst}
+                                                    />
                                                 </div>
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap, paddingTop: SETTINGS_UI.sectionPadTop }}>
                                                     <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>动态特效</h3>
@@ -506,12 +628,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
 
                                         {/* ========== 游戏标签 ========== */}
                                         {activeTab === 'game' && (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap }}>
-                                                <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Gameplay</h3>
-                                                <ToggleRow title="快速开局抽卡" desc="换牌后直接获得卡牌，跳过抽卡动画" enabled={skipStartDrawAnimation} onToggle={onToggleSkipDraw} />
-                                                <ToggleRow title="默认跳过升级影片" desc="英雄升级时自动跳过动画影片" enabled={skipLevelupMovie} onToggle={onToggleSkipLevelup} />
-                                                <ToggleRow title="默认跳过胜利影片" desc="对局胜利时自动跳过胜利动画影片" enabled={skipVictoryMovie} onToggle={onToggleSkipVictory} />
-                                            </div>
+                                            <>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap }}>
+                                                    <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Gameplay</h3>
+                                                    <ToggleRow title="快速开局抽卡" desc="换牌后直接获得卡牌，跳过抽卡动画" enabled={skipStartDrawAnimation} onToggle={onToggleSkipDraw} />
+                                                    <ToggleRow title="默认跳过升级影片" desc="英雄升级时自动跳过动画影片" enabled={skipLevelupMovie} onToggle={onToggleSkipLevelup} />
+                                                    <ToggleRow title="默认跳过胜利影片" desc="对局胜利时自动跳过胜利动画影片" enabled={skipVictoryMovie} onToggle={onToggleSkipVictory} />
+                                                </div>
+
+                                                {/* ── [2026-10-20 莉莉子 · 触屏震动] 触感反馈（**仅手机端**）──
+                                                    程的原话：「震得太频繁太吵了……给点按和长按的震动增加开关，
+                                                    并且新增两处：敌方打击我方水晶 / 我方打击敌方水晶，同样要能关」
+                                                    ⇒ 四个开关一一对应 `utils/haptics.ts` 的四个通道，一个不少、一个不多。
+                                                    ⚠️ 开关只是"允许震动"，真正触发在 TouchFeedbackLayer（点按/长按）
+                                                       与 HapticsBridge（水晶受击），两处都走同一个总闸。 */}
+                                                {showHaptics && (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: SETTINGS_UI.sectionGap, paddingTop: SETTINGS_UI.sectionPadTop }}>
+                                                        <h3 className="font-bold text-gray-500 uppercase tracking-widest" style={{ fontSize: SETTINGS_UI.sectionTitleFontSize }}>Haptics · 触感反馈</h3>
+                                                        <ToggleRow
+                                                            title="点按震动"
+                                                            desc={`手指按下时的轻微短震（${HAPTICS_MS.tap} 毫秒）—— 涟漪已经有视觉反馈，嫌吵可以关掉`}
+                                                            enabled={hapticsTap}
+                                                            onToggle={onToggleHapticsTap}
+                                                        />
+                                                        <ToggleRow
+                                                            title="长按震动"
+                                                            desc={`长按进入预览时的震动（${HAPTICS_MS.longPress} 毫秒）—— 代表"这次按压成功了"`}
+                                                            enabled={hapticsLongPress}
+                                                            onToggle={onToggleHapticsLongPress}
+                                                        />
+                                                        <ToggleRow
+                                                            title="我方水晶受击"
+                                                            // [2026-10-20 审查修正] 措辞由「敌方打到」改为「我方水晶受到伤害」：
+                                                            //   `target==='player'` 只说明**谁的水晶被打**，不区分打它的是不是敌人
+                                                            //   （例：`effectProcessor.ts:4866` 亡语分摊会把伤害转到自家水晶）。
+                                                            //   标题本来就是"受击"，描述跟着对齐才不会自相矛盾。
+                                                            desc={`我方水晶受到伤害时震动（${HAPTICS_MS.nexusIn} 毫秒，偏重）—— 战局警告`}
+                                                            enabled={hapticsNexusIn}
+                                                            onToggle={onToggleHapticsNexusIn}
+                                                        />
+                                                        <ToggleRow
+                                                            title="敌方水晶受击"
+                                                            desc={`敌方水晶受到伤害时震动（${HAPTICS_MS.nexusOut} 毫秒）—— 命中反馈`}
+                                                            enabled={hapticsNexusOut}
+                                                            onToggle={onToggleHapticsNexusOut}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
 
                                         {/* ========== 系统标签 ========== */}
@@ -557,6 +721,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, v
                                     >
                                         <Home size={SETTINGS_UI.footBtnIconSize} className="group-hover:scale-110 transition-transform" />
                                         返回大厅
+                                    </button>
+                                )}
+                                {/* [2026-10-24 莉莉子] 返回标题界面（回主菜单）
+                                    ── 与上面两个按钮不同，它**不限于对局中**：在大厅、备战、抽卡时都想直接回标题。
+                                    ── 但标题界面本身不显示 → App 那边在 `appState === 'title'` 时不传这个回调，
+                                       组件就用"有没有回调"决定渲不渲染，不需要再加一个开关。
+                                    ── 颜色刻意用中性灰：它比"重开对局"（黄）和"返回大厅"（蓝）更"退"，不抢视觉。 */}
+                                {onReturnToTitle && (
+                                    <button
+                                        onClick={() => { eventBus.emit(GameEvents.UI_CLICK); onReturnToTitle(); }}
+                                        title="返回标题界面"
+                                        className="flex items-center bg-slate-700/50 hover:bg-slate-600 border-slate-600 hover:border-slate-400 text-gray-300 hover:text-white rounded-full transition-all font-bold tracking-wider group" style={{ gap: SETTINGS_UI.footBtnGap, paddingLeft: SETTINGS_UI.footBtnPadX, paddingRight: SETTINGS_UI.footBtnPadX, paddingTop: SETTINGS_UI.footBtnPadY, paddingBottom: SETTINGS_UI.footBtnPadY, fontSize: SETTINGS_UI.footBtnFontSize, borderWidth: SETTINGS_UI.footBtnBorderWidth, borderStyle: 'solid' }}
+                                    >
+                                        <LogOut size={SETTINGS_UI.footBtnIconSize} className="group-hover:scale-110 transition-transform" />
+                                        返回标题
                                     </button>
                                 )}
                             </div>

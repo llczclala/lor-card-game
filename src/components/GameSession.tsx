@@ -15,10 +15,11 @@ import { UltimateStrikeLayer } from './UltimateStrikeLayer'; // [2026-09-19 1.0.
 import { CostReduceVFXLayer } from './CostReduceVFXLayer'; // [2026-10-08 莉莉子] 减费特效层「绿潮降临」（P1）
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
-import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason, canPlayerRetractBlocker, getChoiceCardCost } from '../utils/gameRules'; // [2026-10-12] + getChoiceCardCost（抉择三价同源）
+import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason, canPlayerRetractBlocker, getChoiceCardCost, sideOfLevelUpTicket, getEffectiveSpellCost } from '../utils/gameRules'; // [2026-10-12] + getChoiceCardCost（抉择三价同源）· [2026-10-18] + sideOfLevelUpTicket（出队兜底去重）· [2026-10-24] + getEffectiveSpellCost（悬停预览走同一算价口径）
 import { Battlefield } from './Battlefield';
 import { CARD_DB, createCard } from '../data/cards';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
+import { shouldEscapeExitFullscreen, leaveFullscreen, UI_CONTROL_DEFAULT } from '../utils/fullscreen'; // [2026-10-24 莉莉子] ESC 归属权：全屏时 ESC 先归游戏（判据/动作/默认值唯一真源）
 import { gameLogger } from '../utils/gameLogger'; // [2026-09-04 莉莉子] 真实对局开始清空黑匣子（沙盒污染防御）
 import { useVoice } from '../hooks/useVoice';
 import { useStableCallback, useStableCallbackR } from '../hooks/useStableCallback'; // [2026-10-02 莉莉子 性能] 稳定回调：让 React.memo 在热路径上真正生效
@@ -33,6 +34,7 @@ import { applyMauxirProgress } from '../utils/mauxirProgress';
 //   理由见下方升级仲裁 effect 的注释：法术路径（单挑/王见王）打死人**不写** `animState='dying'`，只看 animState 判不出来。
 import { isStrikeTargetAlive } from '../logic/rogueBattle';
 import { getCardBackUrl} from '../utils/styleUtils';
+import { getGameScale } from '../utils/gameScale'; // [2026-10-17 莉莉子 BUG修复] 备战席拖拽阈值按画面缩放补偿（见 BENCH_DRAG_THRESHOLD）
 import { getCardBackVideo } from '../data/cardBackVideos'; // [2026-08-23 莉莉子] 动态卡背视频
 // [修改] 引用新的 Hook
 import { PlayerHand, EnemyHand, OpeningMulligan, CalibratePanel, HandAnimOverlay, DrawAnimOverlay, DeckInsertOverlay } from './CardAnimations';
@@ -41,6 +43,7 @@ import { RecordPanel } from './RecordPanel';
 import { GameAnnouncement } from './GameAnnouncement';
 import { useGameAnnouncer } from '../hooks/useGameAnnouncer';
 import { useSpellSystem, waitForStrikeComplete } from '../hooks/useSpellSystem'; // [新增]
+import { bumpAnimProgress } from '../utils/animGuard'; // [2026-10-17 莉莉子] 教程开场秀看门狗心跳
 import { useGameButton } from '../hooks/useGameButton'; // [新增]
 import { useMulligan } from '../hooks/useMulligan';
 import { useCursor } from '../hooks/useCursor'; // [新增] 引入全局指针控制器
@@ -163,6 +166,12 @@ interface GameSessionProps {
     onOpenSettings?: () => void; // [2026-08-30 莉莉子] 暂停层齿轮按钮 → 打开设置面板
     onQuitGame?: () => void; // [2026-08-30 莉莉子] 暂停层关机按钮 → 退出并关闭游戏
     isSettingsOpen?: boolean; // [2026-08-30 莉莉子] 设置面板开合状态（暂停 ESC 协调用：面板开着时放行让它自己关）
+    // [2026-10-24 莉莉子 · ESC 归属权] 玩家偏好：全屏下按 ESC 是否**优先退出全屏**
+    //   · 关闭（默认，方案 A）：ESC 一律归游戏 → 全屏中也直接暂停
+    //   · 开启（老习惯逃生舱）：先退全屏，再按一次才暂停
+    //   ⚠️ 参数默认值刻意是 `false`，但**真正生效的值**由 App 从 settings 传入；
+    //      `undefined` 也必须按 false 处理（= 方案 A），见 `UI_CONTROL_DEFAULT`。
+    escExitFullscreenFirst?: boolean;
     // [2026-09-04 账号等级/战绩] 真实对局模式标识 + 结算上抛（由 wrapper/App 接线，GameOverScreen 一次性入账）
     matchMode?: 'pve' | 'tutorial' | 'rogue';
     onAccountSettle?: (payload: { result: 'victory' | 'defeat'; mode: 'pve' | 'tutorial' | 'rogue'; heroKeys: string[] }) => void;
@@ -201,6 +210,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
     onOpenSettings, // [2026-08-30 莉莉子] 暂停层齿轮 → 打开设置
     onQuitGame, // [2026-08-30 莉莉子] 暂停层关机 → 退出游戏
     isSettingsOpen = false, // [2026-08-30 莉莉子] 设置面板开合状态
+    escExitFullscreenFirst = UI_CONTROL_DEFAULT.escExitFullscreenFirst, // [2026-10-24 莉莉子] 全屏下 ESC 是否优先退出全屏（默认走唯一真源 = ESC 归游戏）
     matchMode, // [2026-09-04 账号等级/战绩] 真实对局模式
     onAccountSettle, // [2026-09-04 账号等级/战绩] 结算上抛回调
 }) => {
@@ -253,13 +263,70 @@ export const GameSession: React.FC<GameSessionProps> = ({
             if (e.key !== 'Escape') return;
             if (game.gameResult) return; // 游戏已结束，不暂停
             if (isSettingsOpen) return; // 设置面板开着：放行，让 SettingsModal 自己关
+
+            // ── [2026-10-24 莉莉子 · ESC 归属权改造] 语义仲裁，顺序即优先级 ──────────
+            //  ① **暂停中** → ESC 一定是「继续」，不参与全屏仲裁
+            //     （否则开了"ESC 优先退全屏"的玩家，在暂停层里按 ESC 会去退全屏，很怪）
+            //  ② **全屏 + 偏好「ESC 优先退全屏」** → 只退全屏，本次**不暂停**
+            //     （= 老习惯：第一下掉全屏、第二下才暂停；对局在中间那段是活的，这是玩家自己选的）
+            //  ③ 其余 → **暂停**（方案 A 的默认口径：全屏下 ESC 也归游戏）
+            //  ⚠️ 三步都必须 stopImmediatePropagation + preventDefault：
+            //     否则 ESC 还会继续冒泡到 App 的全局 handler（打开设置 / 返回上一级），
+            //     出现"按一下既暂停又开设置"的双触发。
+            // ────────────────────────────────────────────────────────────────
             e.stopImmediatePropagation(); // 拦截 App 全局 ESC，对局内不再呼出设置菜单
             e.preventDefault();
-            setIsPaused(p => !p);
+
+            if (isPaused) {
+                setIsPaused(false);
+                return;
+            }
+            if (shouldEscapeExitFullscreen(escExitFullscreenFirst)) {
+                void leaveFullscreen(); // 退出全屏后 ESC 仍归游戏 → 再按一次才走 ③
+                return;
+            }
+            setIsPaused(true);
         };
         window.addEventListener('keydown', handlePauseKey, true); // capture 阶段先于 App 的 bubble 监听
         return () => window.removeEventListener('keydown', handlePauseKey, true);
+        // ⚠️ `isPaused` 必须进依赖：handler 里要读它做 ① 的判据（读闭包旧值会错判）
+    }, [game.gameResult, isSettingsOpen, isPaused, escExitFullscreenFirst]);
+
+    // ==========================================
+    // [2026-10-24 莉莉子 · ESC 归属权改造] 右上角「暂停」按钮 → 本组件
+    // ── 按钮画在 App 的全局悬浮层（`TopRightControls`），跨标准/教程/肉鸽三个
+    //    Wrapper 都要生效 ⇒ 走事件而不再加一层 prop 穿透。
+    // ── 守卫**必须**与上面 ESC 那条完全一致：已结算不响应、设置面板开着不响应。
+    //    否则会出现"结算界面点暂停按钮没反应但按钮图标已经变成播放"的错位。
+    // ==========================================
+    useEffect(() => {
+        const handleTogglePause = () => {
+            if (game.gameResult) return;
+            if (isSettingsOpen) return;
+            setIsPaused(p => !p);
+        };
+        eventBus.on(GameEvents.GAME_TOGGLE_PAUSE, handleTogglePause);
+        return () => eventBus.off(GameEvents.GAME_TOGGLE_PAUSE, handleTogglePause);
     }, [game.gameResult, isSettingsOpen]);
+
+    // ==========================================
+    // [2026-10-24 莉莉子 · ESC 归属权改造] 结算时收口暂停态 + 广播"暂停入口失效"
+    // ── 两件事一起做，都有具体病根（2026-10-24 独立审查抓出）：
+    //   ① 结算后 `appState` 仍是 'game'/'rogue_game'，App 侧无法判断"这局已经打完了"
+    //      ⇒ 右上角暂停按钮会留在屏幕上，但 `handleTogglePause` 因 `gameResult` 直接 return
+    //      = **死按钮**。这里广播 `GAME_PAUSE_AVAILABLE: false`，按钮随之隐藏。
+    //   ② 若结算时 `isPaused` 还残留为 true，`.game-paused` 会继续冻结根容器内**一切 CSS 动效**，
+    //      而结算界面就挂在根容器内 ⇒ 入场动画被冻在初始态（opacity 0）。
+    //      这正是本文件上方 234 行注释记录过的"看不到结算内容、但按钮仍可点"那个坑，
+    //      这里顺手把同一类残留一并收掉。
+    // ── 卸载时也广播 false（回大厅/换关），避免按钮状态跨对局残留。
+    // ==========================================
+    useEffect(() => {
+        const available = !game.gameResult;
+        eventBus.emit(GameEvents.GAME_PAUSE_AVAILABLE, available);
+        if (!available) setIsPaused(false); // 解冻：让结算动画正常播
+        return () => eventBus.emit(GameEvents.GAME_PAUSE_AVAILABLE, false);
+    }, [game.gameResult]);
 
     // ==========================================
     // [2026-09-19 莉莉子] 局内暂停 · 全局冻结收口（视觉 / 音频 / 动效一次管住）
@@ -390,11 +457,42 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 return;
             }
 
-            setGame(prev => ({
-                ...prev,
-                phase: 'animating', // 霸道锁死底层舞台，禁止任何操作
-                levelUpCard: nextHero // 触发全屏视频
-            }));
+            // ══════════════════════════════════════════════════════════════════
+            // [2026-10-18 莉莉子 BUG修复 · 独立审查第 2 条：**出队兜底去重**]
+            //   ── 为什么入队侧都修了还要这一道：三处入队口（全场扫描 / 微队列结算 / `queueLevelUp`）
+            //      加上朔望之期，只能保证"**不再往队里塞重复票**"。而**已经在队里的**重复票
+            //      （历史遗留 / 别的路径塞进来的 / 将来新增入队口忘了去重）没有任何东西清理
+            //      ⇒ 出队口一次只取 `[0]`、播完 `slice(1)` 再取下一位 ⇒ **照样播两遍**。
+            //   ── 本道 = **不管是谁漏的，到了放映机前一律按同一口径收口**（唯一出口原则）。
+            //   ── 口径与入队侧完全一致：**同一侧、同一个天启者只播一次**；敌我同名**各播各的**。
+            //      归属查不到（`null`）⇒ **不清理**（宁可不合并，也绝不误吞敌方那一份）。
+            //   ── ⚠️ 只清"**队首之后**"的重复票：队首那位正是本次要播的，**永不丢弃**
+            //      （出队口设 `levelUpCard` 时并不立刻出队，真正的 `slice(1)` 在 `popLevelUp`）。
+            // ══════════════════════════════════════════════════════════════════
+            setGame(prev => {
+                const head = prev.pendingLevelUps[0];
+                const rest = prev.pendingLevelUps.slice(1);
+                const ticketOf = (c: CardData): string | null => {
+                    const s = sideOfLevelUpTicket(c.id, {
+                        playerBench, enemyBench, playerHand, enemyHand,
+                        playerDeck, enemyDeck: enemyDeckState, combatField,
+                        playerGraveyard: game.playerGraveyard, enemyGraveyard: game.enemyGraveyard,
+                    });
+                    return s ? `${s}|${c.key}` : null;
+                };
+                const headTicket = head ? ticketOf(head) : null;
+                const kept = headTicket ? rest.filter(p => ticketOf(p) !== headTicket) : rest;
+                const dropped = rest.length - kept.length;
+                if (dropped > 0) {
+                    console.log(`[LevelUp System] 出队兜底：清掉 ${dropped} 张同侧同名重复升级票（${headTicket}），避免升级影片重复播放。`);
+                }
+                return {
+                    ...prev,
+                    phase: 'animating', // 霸道锁死底层舞台，禁止任何操作
+                    levelUpCard: nextHero, // 触发全屏视频
+                    pendingLevelUps: head ? [head, ...kept] : prev.pendingLevelUps,
+                };
+            });
         }
     }, [game.pendingLevelUps, game.levelUpCard, game.playerGraveyard, game.enemyGraveyard, playerBench, enemyBench, combatField, setGame, tutorialUpgradeTrigger]);
 
@@ -756,7 +854,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
     let isHoveringPlayableUnit = false; // [新增] 预判手牌单位是否可部署
 
     if (hoveredCard && game.phase === 'main' && game.turnOwner === 'player') {
-        const cost = hoveredCard.cost;
+        // [2026-10-24 莉莉子 · 费用修饰器] 悬停预览必须走**与实扣同一个算价口径**：
+        //   原来读裸 `hoveredCard.cost` ⇒ 手牌显示 5 费、宝石预览只掉 3 费（预览价/实扣分叉）。
+        const cost = getEffectiveSpellCost(hoveredCard, playerBench, game.playerMaxMana, 'player');
         const currentMana = game.playerMana;
         const currentSpellMana = game.playerSpellMana;
         const isUnit = hoveredCard.type.includes('unit');
@@ -768,7 +868,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
         // [新增] 如果是单位牌、法力值足够、且备战席未满（满员时走替换打出，不显示部署位）
         // [2026-10-13 F2] 悬停单位＝玩家侧
-        if (isUnit && canAffordCard(hoveredCard, game.playerMana, game.playerSpellMana, undefined, 'player') && playerBench.length < 6) {
+        if (isUnit && canAffordCard(hoveredCard, game.playerMana, game.playerSpellMana, playerBench, 'player') && playerBench.length < 6) {
             isHoveringPlayableUnit = true;
         }
     }
@@ -801,9 +901,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 return;
             }
             if (payload.action === 'enemy_attack') {
+                // [2026-10-16 莉莉子] 新增 `params.attackerKeys`：只派指定单位进攻。
+                //   ── 为什么必须可筛：教程「施法的速度」里敌方有【隐秘】安蒂娜（无法被格挡）+
+                //      焰心（可被格挡）。若按旧行为"全体压上"，安蒂娜会直击我方 1 血枢纽 ⇒ 立即败北。
+                //      不传该参数时行为与旧版完全一致（全体可攻击单位）。
+                const wantedKeys: string[] | undefined = payload.params?.attackerKeys;
                 const attackers = enemyBench.filter(c =>
                     !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying' &&
-                    (c.power || 0) > 0 && !c.keywords.includes('CantAttack')
+                    (c.power || 0) > 0 && !c.keywords.includes('CantAttack') &&
+                    (!wantedKeys || wantedKeys.includes(c.key))
                 );
                 if (attackers.length > 0 && actions.commitAttack) {
                     const remainingBench = enemyBench.filter(b => !attackers.some(a => a.id === b.id));
@@ -813,12 +919,38 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         ...attackers.map(c => ({ attacker: c, blocker: null, owner: 'enemy' as const }))
                     ]);
                     setTimeout(() => actions.commitAttack(), 100);
+                } else {
+                    // [2026-10-16 莉莉子] 兜底可见化：`attackerKeys` 一个都没匹配上时，
+                    //   此前整块静默跳过 ⇒ 阶段不推进、教程后续依赖"该单位正在进攻"的步骤无法达成，
+                    //   而现场却没有任何线索。剧本写错 key / 单位已提前离场都会走到这里。
+                    console.warn('[Tutorial] enemy_attack 没有可进攻的敌人，已跳过', {
+                        wantedKeys,
+                        enemyBench: enemyBench.map(c => c.key),
+                        hasCommitAttack: !!actions.commitAttack,
+                    });
                 }
+            }
+            // [2026-10-16 莉莉子] 教程：敌方自动打出一张法术（如「单挑」），
+            //   由剧本指定"施法者 / 我方目标 / 敌方目标"三张卡 —— 因为敌方没有手牌，只能代打。
+            //   演出结束后 turnOwner 交给玩家，玩家的极速法术（暗箭）即可抢先反制。
+            //   ⚠️ 必须走 `actions.autoCastEnemySpell`（useGameState 的**完整实例**）：
+            //      本文件 627 行的 `spellSystem` 是"UI 层简版"，没有 stateRef / createFullCard，
+            //      在那边调用会在首句 TypeError，且被 `as Parameters<...>` 断言掩盖、tsc 看不见。
+            if (payload.action === 'single_combat') {
+                const params = (payload.params || {}) as {
+                    spellKey?: string; allyKey?: string; targetKey?: string;
+                };
+                actions.autoCastEnemySpell?.(
+                    params.spellKey || 'single_combat',
+                    params.allyKey || 'Typhoon_Squad_Flameheart',
+                    params.targetKey || 'lyfe',
+                )?.catch?.((err: unknown) => console.error('[Tutorial] 敌方自动施法失败', err));
+                return;
             }
         };
         eventBus.on('TUTORIAL_AUTO_ACTION', handleTutorialAction);
         return () => { eventBus.off('TUTORIAL_AUTO_ACTION', handleTutorialAction); };
-    }, [enemyBench, actions, setEnemyBench, setCombatField]);
+    }, [enemyBench, actions, setEnemyBench, setCombatField, spellSystem]);
 
     // ─── 教程法术演出 ──────────────────────────────────────────
     // Ref：缓存最新 bench 状态供异步法术秀使用
@@ -875,6 +1007,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
             // Phase 1: 保存原始 phase，全部入栈（画面中央显示所有暗箭 + 瞄准线）
             // 保存当前 game phase（从闭包游戏状态读取）
+            // [2026-10-17 莉莉子 · 教程开场秀 BUG3 修复] 进入 animating 前先打一次看门狗心跳。
+            //   本段把 phase 钉在 'animating' 上连跑 ≈13.8s（2s 静置 + 6 发 ×(1.568s 弹道 + 400ms)），
+            //   而本项目 animating 长链都必须 bumpAnimProgress 打点（见 animGuard.ts:8 的约定）。
+            //   此前本段一次都没打 ⇒ animGuard.lastBump 还停在**页面加载**时刻，
+            //   一旦陈旧 ≥ ANIM_STALL_MS(25s)，useGameState 的停滞看门狗（useGameState.ts:6707-6719）
+            //   就会判"演出卡死"，**原子清空 spellStack** ⇒ 画面中间所有暗箭图标一起消失
+            //   （程实测症状：播放到第 3 发时全没）。
+            bumpAnimProgress();
             setGame(prev => ({ ...prev, spellStack: stackItems, phase: 'animating' }));
             // [2026-10-05 莉莉子] 暗箭的**中央播报已移除** ——
             //   本段下一句就把 phase 设为 `'animating'`（`:827`），而 `useGameAnnouncer`
@@ -887,6 +1027,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
             // Phase 2: 逐发开火
             for (const item of stackItems) {
+                // [2026-10-17 莉莉子 · 教程开场秀 BUG3 修复] 每发都是"可观测推进点" ⇒ 继续喂心跳，
+                //   保证演出再长也不会出现 ≥25s 的心跳空窗被看门狗强拆。
+                bumpAnimProgress();
                 // [2026-10-05 莉莉子] 逐发归属**刻意不播报**：
                 //   中央播报是「立即替换」语义（`useGameAnnouncer.setMsg` 每次都先 clearTimeout 上一条再覆盖），
                 //   而这里是**每 400ms 一发**（见下方 await）⇒ 播了只会快速闪动，
@@ -911,20 +1054,44 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 await waitForStrikeComplete();
 
                 // 造成 1 点伤害
+                // [2026-10-17 莉莉子 · 教程开场秀 BUG1/BUG2 修复]
+                //   BUG1（命中无音效）：受击音/飘字/卡面抖动**唯一**由 `unit_damage` 驱动
+                //     （useSfx.ts:419 → onUnitDamage → playDefaultHit；Card.tsx:742 接飘字与震荡）。
+                //     本段此前只改 damageTaken、从不发这个事件 ⇒ 六发全程静音。
+                //   BUG2（屏障不消失）：本段此前无脑 +1，绕过了权威破盾结算
+                //     （法术口径 effectProcessor.ts:1120；战斗口径 keywords.ts:404 + combat.ts:497）。
+                //     ⚠️ 这里**刻意取战斗口径**（把 Barrier 从 keywords 里移除），而不是法术口径的
+                //     `depletedKeywords` 黯淡写法：后者引擎仍认屏障存在，而本关随后里芙要格挡盖弥尔
+                //     （tutorialScript.ts:545），届时 keywords.ts:404 只看 keywords.includes('Barrier')
+                //     ⇒ 会把里芙那 2 点反击也吸掉，第 11 步"扣除了2点生命值"的教学文本当场变假。
                 const targetId = item.targets[0]?.id;
                 if (targetId) {
-                    setPlayerBench(prev =>
-                        prev.map(c => c.id === targetId
-                            ? { ...c, damageTaken: (c.damageTaken || 0) + 1, animState: 'hit' as const }
-                            : c
-                        )
-                    );
-                    setEnemyBench(prev =>
-                        prev.map(c => c.id === targetId
-                            ? { ...c, damageTaken: (c.damageTaken || 0) + 1, animState: 'hit' as const }
-                            : c
-                        )
-                    );
+                    // 从 ref 读**当前**卡面状态（本 effect 闭包里的 bench 是挂载时快照，不能用）
+                    const liveTarget =
+                        playerBenchRef.current.find(c => c.id === targetId) ||
+                        enemyBenchRef.current.find(c => c.id === targetId);
+                    const barrierActive = (liveTarget?.keywords || []).includes('Barrier');
+
+                    if (barrierActive) {
+                        // 屏障吃下这一发：破盾、**不扣血**（伤害被整个吸收）
+                        const popBarrier = (c: CardData): CardData => ({
+                            ...c,
+                            keywords: (c.keywords || []).filter(k => k !== 'Barrier'),
+                            animState: 'hit' as const,
+                        });
+                        setPlayerBench(prev => prev.map(c => c.id === targetId ? popBarrier(c) : c));
+                        setEnemyBench(prev => prev.map(c => c.id === targetId ? popBarrier(c) : c));
+                    } else {
+                        const takeDamage = (c: CardData): CardData => ({
+                            ...c,
+                            damageTaken: (c.damageTaken || 0) + 1,
+                            animState: 'hit' as const,
+                        });
+                        setPlayerBench(prev => prev.map(c => c.id === targetId ? takeDamage(c) : c));
+                        setEnemyBench(prev => prev.map(c => c.id === targetId ? takeDamage(c) : c));
+                        // 与引擎同口径：只有真实落地的伤害才发受击事件（屏障吸收时不发，避免 0 伤害飘字）
+                        eventBus.emit('unit_damage', { id: targetId, amount: 1 });
+                    }
                 }
 
                 // 从堆叠移除已结算的卡
@@ -963,10 +1130,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     // ★ 教程交互模式：当前子任务期望的操作类型（'click_target'/'drag_target' 有拦截效果，其他值不拦截）
     const tutorialInteractionMode = useRef<string | null>(null);
+    // [2026-10-16 莉莉子] 教程要求"必须点这张卡"时的白名单 key（undefined = 不限制）
+    const tutorialRequiredCardKey = useRef<string | null>(null);
     useEffect(() => {
-        const handler = (payload: { mode: string | null }) => {
+        const handler = (payload: { mode: string | null; requireCardKey?: string }) => {
             // 'click_target' / 'drag_target' / null 有实际拦截效果，其他值不拦截
             tutorialInteractionMode.current = payload.mode as any;
+            tutorialRequiredCardKey.current = payload.requireCardKey ?? null;
         };
         eventBus.on(GameEvents.TUTORIAL_SET_INTERACTION_MODE, handler);
         return () => eventBus.off(GameEvents.TUTORIAL_SET_INTERACTION_MODE, handler);
@@ -1052,7 +1222,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
     /** 🔧 程调这个！拖拽时 GhostCard 的缩放比 */
     const GHOST_CARD_SCALE = 1.5;
     /** 🔧 程调这个！向上拖动多少像素算"拖入战场"（Y 轴阈值） */
-    const BENCH_DRAG_THRESHOLD = 120;
+    // [2026-10-17 莉莉子 BUG修复] 阈值改为按画面缩放补偿：
+    //   120 是照 1680×1050 设计画布、s=1 调出来的手感值，但此前写成绝对视口像素
+    //   ⇒ s 越小实际越难拖（手机横屏 s≈0.37 时等效 321 设计像素，撤回方向物理上凑不够 120，功能失效）。
+    //   乘 s 后等价于「恒定 120 设计像素」，各分辨率手感一致（PC s≈1.03 时 124，几乎无感）。
+    const BENCH_DRAG_THRESHOLD = 120 * getGameScale();
     /** 🔧 程调这个！战场拖拽时 GhostCard 的缩放比 */
     const COMBAT_GHOST_SCALE = 1;
 
@@ -2142,6 +2316,33 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     announce('战斗阶段无法打出单位！', 'PHASE LOCKED', 'phase_hint', 2000);
                     return false;
                 }
+
+                // =====================================
+                // [2026-10-23 莉莉子 BUG修复 · 程拍板] 「同名卡每方上限」（`maxPerSide`）通用拦截
+                // ── 程的口径：真正该拦的是**"场上已经满了，还从手牌打出第 N+1 个"这个动作**，
+                //    而不是在"复制到手里"或"选目标"那一步提前拦 ——
+                //    后者每出一张复制类法术就得补一次，且复制本身并无问题（能不能落地是**打出时**才该判的事）。
+                // ── 判据与 `effectProcessor.enforceMaxPerSide`（:5246-5259）**逐字同源**：
+                //    只数**备战席**里同名 key 的现存数量，上限取卡自己的 `maxPerSide`。
+                //    （不数交战区 —— 那边收束层也不数，两处必须同源。）
+                // ── 通用写法：**按卡的 `maxPerSide` 字段**，不认任何具体 key ⇒
+                //    将来任何带该字段的卡自动获得同样保护，无需再补。
+                // ── 无该字段的卡（目前除「臆莲基座」外全是）一律放行 ⇒ 零行为变化。
+                // =====================================
+                {
+                    const sideLimit = card.maxPerSide;
+                    if (sideLimit !== undefined && sideLimit > 0) {
+                        const occupied = playerBench.filter(c => c.key === card.key).length;
+                        if (occupied >= sideLimit) {
+                            announce(
+                                `「${card.name}」每方最多只能有 ${sideLimit} 个，已达上限！`,
+                                'SIDE LIMIT', 'phase_hint', 2000,
+                            );
+                            return false;
+                        }
+                    }
+                }
+
                 actions.playCard(card, 'player');
                 return true; // [关键] 判定：单位出牌成功！
             } else {
@@ -2150,6 +2351,34 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 if (isCombatPhase && card.type === 'spell-slow') {
                     announce('战斗阶段无法施放慢速法术！', 'PHASE LOCKED', 'phase_hint', 2000);
                     return false;
+                }
+
+                // =====================================
+                // [2026-10-23 莉莉子 BUG修复 · 慢速法术「可连打 / 可越权」]
+                // ── 程实测暴露的两个口子：
+                //   ① **待确认窗口全开**：第一张慢速法术打出后只写进 `pendingSpell`，
+                //      **没有进 `spellStack`**（`useSpellSystem.ts:1309-1316`，真正入栈在 `confirmPendingSpell:1675`）。
+                //      而全项目所有判据（含手牌高亮）都只认 `spellStack.length` ⇒ 读到 0
+                //      ⇒ 第二张照样能打，且**手牌还是亮的**。
+                //   ② **在栈上只拦一半**：敌方慢速法术直接入栈（`spellStack.length===1`，
+                //      `useSpellSystem.ts:1324`），不需要选目标的会被 `playCard` 的守卫挡下，
+                //      但**需要选目标的走 `startCasting → finalizeSpell(=commitSpell)`**，
+                //      一条都不经过 `playCard` ⇒ 照样能打出去。
+                // ── 收口口径：慢速法术「不能再打」= **堆栈非空 或 有未确认法术**。
+                // ── 挡在"点击手牌"这一步：此时卡还没移出手牌、费还没扣，拦下来零副作用；
+                //      而这也是玩家出牌的唯一入口（点击 / 拖拽松手都汇到本函数）。
+                // ── 只针对 `spell-slow`：程拍板「快速/极速的待确认连罗」是合理设计，此处一字不动。
+                // =====================================
+                if (card.type === 'spell-slow') {
+                    const stackN = game.spellStack.length;
+                    const hasPending = !!game.pendingSpell;
+                    if (stackN > 0 || hasPending) {
+                        const why = hasPending
+                            ? '上一张法术还在等你确认'
+                            : (stackN === 1 ? '场上已有一张待结算的法术' : `场上已有 ${stackN} 张待结算的法术`);
+                        announce(`慢速法术无法再打出：${why}`, 'SLOW SPELL BLOCKED', 'phase_hint', 2000);
+                        return false;
+                    }
                 }
 
                 // [2026-09-19 BUG修复] 法术的「场上条件」拦截（卡面写着却从未实装）：
@@ -2214,6 +2443,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
             // ★ 教程：如果期望拖拽操作，屏蔽点击选格挡者
             if (tutorialInteractionMode.current === 'drag_target') {
                 announce('请使用拖拽来完成格挡', 'USE DRAG', 'phase_hint', 2000);
+                return false;
+            }
+            // ★ 教程：要求"必须用指定单位格挡"时，点错单位直接拦下（如「必须用里芙格挡焰心」）
+            if (tutorialRequiredCardKey.current && card.key !== tutorialRequiredCardKey.current) {
+                announce('请用【里芙】来完成这次格挡', 'USE LYFE', 'phase_hint', 2000);
                 return false;
             }
             eventBus.emit(GameEvents.UI_CLICK);
@@ -2556,7 +2790,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         game.phase,
                         // [2026-10-05 莉莉子 BUG修复 · 20261005-01] AI 侧同样受慢速时机枷锁约束
                         //   （越权施放对 AI 一样不合法；全不可选时走下方 cancelChoice 正常撤回）
-                        { owner: 'enemy', turnOwner: game.turnOwner, stackLength: game.spellStack.length }
+                        { owner: 'enemy', turnOwner: game.turnOwner, stackLength: game.spellStack.length },
+                        // [2026-10-23 莉莉子] 棋盘上下文 —— 枷锁 5（千汐尔 AI 的千莲叠绽也不会白花 2 费）
+                        { playerBench, enemyBench, combatField }
                     );
                     if (canPlay) {
                         pickedKey = key;
@@ -2817,7 +3053,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         isEnemyChoice ? 'enemy' : 'player', choiceFsTotal,
                                     ),
                                 };
-                                const isCostDiscounted = displayChoiceData.cost !== (choiceData.cost || 0);
+                                // [2026-10-24 莉莉子 · 独立审查修复] 用 `<` 而不是 `!==`：
+                                //   费用被"税"抬高时 `!==` 会把它误判成减费 ⇒ 抉择卡显示**绿色**费用数字。
+                                const isCostDiscounted = displayChoiceData.cost < (choiceData.cost || 0);
 
                                 // 呼叫法务和裁判：这个卡能不能放？
                                 const { canPlay, lockedMessage } = evaluateChoiceCondition(
@@ -2833,6 +3071,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         owner: isEnemyChoice ? 'enemy' : 'player',
                                         turnOwner: game.turnOwner,
                                         stackLength: game.spellStack.length,
+                                    },
+                                    // [2026-10-23 莉莉子] 棋盘上下文 —— 枷锁 5（千莲叠绽的召唤分支上限）
+                                    //   必须喂**活体 bench**：`enemyBench`/`playerBench` 是本组件的 state，
+                                    //   比 `game.*` 快照新一帧（同上方 AI 自动抉择那处的理由）。
+                                    {
+                                        playerBench,
+                                        enemyBench,
+                                        combatField,
                                     }
                                 );
 
@@ -3009,7 +3255,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         const cardToReturn = card.parentCard || card;
                                         setPlayerHand(prev => [...prev, cardToReturn]);
                                         if (card.parentCard) {
-                                            const cost = card.cost;
+                                            const cost = card.paidCost ?? card.cost;
                                             setGame(prev => {
                                                 let newMana = prev.playerMana + cost;
                                                 let newSpellMana = prev.playerSpellMana;
