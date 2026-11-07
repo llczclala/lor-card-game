@@ -189,6 +189,15 @@ const SQUAD_MEMBERS: Record<string, string[]> = (() => {
     }
     return map;
 })();
+
+// [2026-11-07 程拍板 · 整队召唤的"要么全落地、要么不召唤"]
+//   备战席容量 6：与 `useGameState:958` / `effectProcessor:4646,4676,5113` 里各处的
+//   `bench.length >= 6` 同口径（项目内没有这个常量，这里只为整队召唤收敛一份）。
+const BENCH_SIZE = 6;
+// 程的原话：「如果备战席不足以放下三个人，则不进行召唤」。
+//   绝大多数后勤小队正好 3 人，但 `Green_Spirit_Squad` 是 4 人
+//   ⇒ 消费处取 `max(SQUAD_MIN_BENCH, 该队人数)`，四人也必须整队放得下。
+const SQUAD_MIN_BENCH = 3;
 // [2026-10-24 莉莉子] 新增 `rarity` 过滤：只从该品质的候选里挑（`EQUIP_ALL_CARDS` 用）。
 //   不传 ⇒ 行为与改前**逐字一致**（世纪和解的兜底仍是"全池随机 3 件"，不设品质上限）。
 const attachRandomEquipments = (card: CardData, n: number, rarity?: EquipmentRarity): CardData => {
@@ -900,18 +909,25 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         flashRogueBuff(def);
     },
 
-    // ---- [2026-10-24 程拍板 · 第 19 条] 回合开始：随机召唤一整支后勤小队的全部成员 ----
-    //   程口径：「回合开始，随机召唤一整个小队」。
+    // ---- [2026-10-24 程拍板 · 第 19 条] 随机召唤一整支后勤小队的全部成员 ----
+    //   程口径：「回合开始，随机召唤一整个小队」（红色「整队集结」= round_start）。
+    //   [2026-11-07 程拍板] 新增金色「开阵集结」（game_start，整局一次）**复用本 handler** ——
+    //   两者只有触发点不同，召唤逻辑与守卫必须是同一份，否则容易出现"一个能截断、一个不能"。
     //   ⚠️ 名单来自上方 `SQUAD_MEMBERS`（按命名约定自动聚类）⇒ 新增小队成员时无需改这里。
-    //   ⚠️ 备战席上限 6：3 人小队能整队落地；若已接近满员，多出的成员被截断（不做"放不下就换一队"）。
+    //   ⚠️ [2026-11-07] **放不下整队就不召唤**（旧实现是"能塞几个塞几个"的截断）：
+    //      截断出来的半队既不符合卡面承诺，观感也会变成"随机召唤 1~3 个"。
     SUMMON_RANDOM_SQUAD: (def, ctx) => {
         const squads = Object.entries(SQUAD_MEMBERS).filter(([, members]) => members.length >= 2);
         if (!squads.length) return;
         const [, members] = squads[Math.floor(Math.random() * squads.length)];
         const bench = sideBench(ctx, ctx.owner);
+        // 需要的空位 = max(3, 该队实际人数)：三人队要 3 个空位（程的口径），
+        // 唯一的四人队（Green_Spirit_Squad）要 4 个，否则同样会被截断。
+        const required = Math.max(SQUAD_MIN_BENCH, members.length);
+        if (BENCH_SIZE - bench.length < required) return;
         const placedIds: string[] = [];
         for (const key of members) {
-            if (bench.length >= 6) break;
+            if (bench.length >= BENCH_SIZE) break; // 上面的守卫已保证不会走到；留作兜底
             const card = ctx.createFullCard(key, ctx.owner);
             if (!card) continue;
             const summoned = { ...card, animState: 'summoning' as const };
@@ -1015,8 +1031,16 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         if (!last) return;
         const target = ctx.info.playedCard ?? benchLast(ctx, ctx.owner);
         if (!target) return;
-        const p = (last.power ?? 0) + (last.buffs?.power ?? 0);
-        const h = (last.health ?? 0) + (last.buffs?.health ?? 0);
+        // [2026-10-26 莉莉子 · 程拍板「两处旁支一起修」] 攻血口径收口
+        // ── 攻击力：改走唯一口径 `getPower`（`power + buffs + roundBuffs`，含 `maxPower` 钳制与 0 下限）。
+        //    原先手算漏了 **`roundBuffs.power`（本回合临时攻击力）** 与 `maxPower` 钳制 ——
+        //    与同日的「献祭回响」(`DEATH_STRIKE_RANDOM_ENEMY`) 是同一类毛病。
+        // ── 生命：**仍取身材、不含致死伤害** —— 绝不能改用 `getHealth`：对一具尸体它必然 ≤0
+        //    （常常是负数），那会把"继承"变成"倒扣血"（`DEATH_GIFT` 那边 2026-10-03 踩过这个坑）。
+        //    但 `roundBuffs.health` 该算进来：墓地快照 `makeGraveSnapshot` 是 `{ ...u }` 全字段复制，
+        //    这个字段一直就在，只是原先没读。
+        const p = getPower(last);
+        const h = Math.max(0, (last.health || 0) + (last.buffs?.health || 0) + (last.roundBuffs?.health || 0));
         if (p === 0 && h === 0) return;
         updateUnitById(ctx, target.id, c => applyPermanentBuff(c, p, h));
         flashRogueBuff(def);
@@ -1160,7 +1184,15 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         // 献祭回响：我方单位阵亡时，对敌方随机单位造成等于其攻击力的伤害（亡语炸弹）
         const dead = ctx.info.deadUnit;
         if (!dead) return;
-        const dmg = Math.max(0, (dead.power ?? 0) + (dead.buffs?.power ?? 0)); // 取身材，不含致死伤害
+        // [2026-10-26 莉莉子 BUG修复 · 粉丝反映「献祭回响只算基础攻击力、不算 BUFF 攻击力」]
+        // ── 病根：手算 `power + buffs.power`，**漏了 `roundBuffs.power`（本回合临时攻击力）**，
+        //    也漏了 `maxPower` 钳制 —— 而全项目「真实攻击力」的唯一口径是 `getPower`（`logic/keywords.ts:89`）。
+        //    粉丝那句"不算 BUFF"其实指的就是这一项：永久 buff（buffs）是算了，**本回合那层没算**。
+        // ── 同族对照：`DEATH_GIFT`（英魂传承）一直用的就是 `getPower(dead)`（见本文件 unit_die 段）
+        //    ⇒ 这两条同族效果原本口径不一致，本次收口到同一处。
+        // ── 原注释「取身材，不含致死伤害」仍然成立：`getPower` 只读攻击力三件套（+钳制/0下限），
+        //    与 `health` / `damageTaken` 无关 ⇒ 也因此不再需要外层的 `Math.max(0, …)`。
+        const dmg = getPower(dead);
         if (dmg <= 0) return;
         const foeSide: Side = ctx.owner === 'player' ? 'enemy' : 'player';
         const foes = sideBench(ctx, foeSide);
@@ -1372,9 +1404,10 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
         if (!ctx.game.rogueFirstSummonDone?.[ctx.owner] && bench.length < 6) {
             const card = ctx.info.playedCard ?? benchLast(ctx, ctx.owner);
             if (card) {
+                const cloneId = Math.random().toString(36).substr(2, 9);
                 bench.push({
                     ...card,
-                    id: Math.random().toString(36).substr(2, 9),
+                    id: cloneId,
                     keywords: [...(card.keywords || []), 'Ephemeral' as any],
                     animState: 'summoning' as const,
                 });
@@ -1382,6 +1415,43 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
                 ctx.dirty.bench.add(ctx.owner);
                 ctx.dirty.game = true;
                 eventBus.emit(GameEvents.SFX_SUMMON);
+                // =====================================
+                // [2026-10-26 莉莉子 BUG修复 · 粉丝报「暗影双生的复制体不触发入场效果」]
+                // ── 病根：原实现只 `bench.push(...)` 就收工，**没走「入场」门铃** ⇒
+                //    复制体的卡牌入场战吼（`ON_PLAY`）与所有 `on_summon` 类强化**全部不登记**。
+                //    这与本文件上方「幽灵行动 / 精锐动员」2026-10-06 那次修复是**同一类问题**；
+                //    本文件其余 5 处召唤 handler 早已全部走门铃，**只有这里漏了**。
+                // ── 修法：照抄本文件既有的 `runSummonEntry` 写法（依赖由 `effectProcessor` 注入，不成环）。
+                //    ⚠️ 递归有护栏：门铃自己限深 4（`MAX_SUMMON_ENTRY_DEPTH`）⇒ 复制体的入场效果再召唤也不会打转。
+                // =====================================
+                const entry = runSummonEntry(cloneId, ctx.owner, {
+                    game: ctx.game,
+                    playerBench: ctx.playerBench,
+                    enemyBench: ctx.enemyBench,
+                    playerHand: ctx.playerHand,
+                    enemyHand: ctx.enemyHand,
+                    playerDeck: ctx.playerDeck,
+                    enemyDeck: ctx.enemyDeck,
+                    combatField: ctx.combatField,
+                }, ctx.createFullCard);
+                if (entry.applied) {
+                    ctx.game = entry.game;
+                    ctx.playerBench = entry.playerBench;
+                    ctx.enemyBench = entry.enemyBench;
+                    ctx.playerHand = entry.playerHand;
+                    ctx.enemyHand = entry.enemyHand;
+                    if (entry.playerDeck) ctx.playerDeck = entry.playerDeck;
+                    if (entry.enemyDeck) ctx.enemyDeck = entry.enemyDeck;
+                    if (entry.combatField) { ctx.combatField = entry.combatField; ctx.dirty.field = true; }
+                    // 保守起见全量标脏（同一数组重复提交无害；漏标才会丢改动）
+                    ctx.dirty.game = true;
+                    ctx.dirty.bench.add('player');
+                    ctx.dirty.bench.add('enemy');
+                    ctx.dirty.hand.add('player');
+                    ctx.dirty.hand.add('enemy');
+                    ctx.dirty.deck.add('player');
+                    ctx.dirty.deck.add('enemy');
+                }
             }
         }
         // 保持旧语义：每张召唤动作都闪一次图标（含非首次召唤时）
@@ -1962,12 +2032,34 @@ export const getSpellCostUpAll = (enhIds: string[] | undefined): number => {
     return n;
 };
 
-/** 6/7「费用税」：该侧是否持有，以及它的清零模式（`round` = 回合末清，`run` = 跨回合保留）。 */
-export const getCostTaxMode = (enhIds: string[] | undefined): 'round' | 'run' | null => {
+/**
+ * 6~9「费用税」：该侧持有哪一条，以及它的参数。
+ *
+ * [2026-10-26 莉莉子 · 程拍板] 从"只认 `mode`"扩成 `{ from, to, mode }`：
+ *   · `from` = 敌方要打出**哪一类**才触发（`'unit'` / `'spell'`）
+ *   · `to`   = 我方手牌里**哪一类**跟着涨价 —— 恒与 `from` 相反（"打某类涨另一类"是本机制的定义式，
+ *     故不落参数，避免两处漂移）
+ *   · `mode` = 清零时机：`'round'` 回合末清 / `'run'` 跨回合累积
+ *
+ * ⚠️ 仍是"只认第一个"：四条费用税互相之间由 `ENEMY_BUFF_CONFLICTS` 保证不会同时出现
+ *   （与 `getChainPlayTaxConfig` 同款写法）。
+ * ⚠️ 兼容旧数据形状：老参数只有 `mode`、没有 `from` ⇒ 默认按「打单位 → 涨法术」解释。
+ */
+export interface CostTaxConfig {
+    from: 'unit' | 'spell';
+    to: 'unit' | 'spell';
+    mode: 'round' | 'run';
+}
+export const getCostTaxConfig = (enhIds: string[] | undefined): CostTaxConfig | null => {
     for (const def of getRogueDefs(enhIds, 'game_start')) {
         for (const be of getBattleEffects(def)) {
             if (be.effectClass === 'COST_TAX') {
-                return (be.params?.mode as 'round' | 'run') === 'run' ? 'run' : 'round';
+                const from: 'unit' | 'spell' = be.params?.from === 'spell' ? 'spell' : 'unit';
+                return {
+                    from,
+                    to: from === 'unit' ? 'spell' : 'unit',
+                    mode: be.params?.mode === 'run' ? 'run' : 'round',
+                };
             }
         }
     }

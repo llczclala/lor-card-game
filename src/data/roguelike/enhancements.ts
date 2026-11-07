@@ -5,7 +5,7 @@
 // 既有消费方（RogueMapScreen / NodeEventModal / EnhancementCard / EnhancementPreview / RogueDrawer / useRoguelikeRun / RarityIcon）零改动。
 // ==========================================
 
-import { MAZE_BUFFS, type MazeBuff, type EnhancementEffect, type EnhancementRarity } from './buffs';
+import { MAZE_BUFFS, getBuffById, type MazeBuff, type EnhancementEffect, type EnhancementRarity } from './buffs';
 import { PASS_UNLOCK_ENHANCEMENTS } from './analystProgression'; // [2026-08-29 通行证] 通行证解锁的强化
 import type { RogueDifficulty } from './difficulties'; // [2026-10-08 难度分层]
 import { enhWeightsFor } from './difficultyTiers'; // [2026-10-08 难度分层] 强化品质权重唯一真源
@@ -22,6 +22,26 @@ export const PASS_LOCKED_ENHANCEMENT_IDS = new Set<string>(Object.values(PASS_UN
 export const MAZE_ENHANCEMENTS: MazeEnhancement[] = MAZE_BUFFS
     .filter(b => b.playerEligible && !PASS_LOCKED_ENHANCEMENT_IDS.has(b.id))
     .map(b => ({ id: b.id, name: b.name, description: b.description, rarity: b.rarity, icon: b.icon, effect: b.effect! }));
+
+/**
+ * [2026-11-03 莉莉子 BUG修复] **强化 id → 定义（含"池外条目"）**
+ *
+ * ⚠️ 与 `MAZE_ENHANCEMENTS` 的分工必须分清：
+ *   · `MAZE_ENHANCEMENTS` = **基础可刷取池**，只用于"抽选"；
+ *   · 本函数 = **id → 卡面**，用于一切"把 id 渲染成强化卡 / 名字"的地方。
+ *
+ * 病根（程实测：商店"迷宫强化"页签里没有任何强化在售卖）：
+ *   6 条通行证专属强化被 `PASS_LOCKED_ENHANCEMENT_IDS` **永久剔出基础池**（:22-24），
+ *   却被 `buildPool` 按"已解锁"**加回抽选池**（:31-37）⇒ **抽得出来、显示不出来**。
+ *   旧代码在显示端只 `MAZE_ENHANCEMENTS.find(...)` ⇒ 命中通行证强化时查不到 ⇒ 兜底成"暂无强化出售"，
+ *   玩家看着像"商店空了"，其实商品就在那儿、只是页签认不出它。
+ *   （`useRoguelikeRun.applyEnhancement` 早就在用三段回落做同一件事，只有显示端漏了这层。）
+ */
+export const getEnhancementById = (id: string): MazeEnhancement | undefined => {
+    const buf = getBuffById(id);
+    if (!buf?.effect) return undefined;
+    return { id: buf.id, name: buf.name, description: buf.description, rarity: buf.rarity, icon: buf.icon, effect: buf.effect };
+};
 
 /** [2026-08-29 通行证] 构建可抽选池：基础池 + 已解锁的通行证强化（unlockedPass 传已解锁 id 列表）
  *  [2026-09-25 莉莉子 强化不叠加] owned 传本局已拥有（run.enhancements）→ 直接从池中剔除：

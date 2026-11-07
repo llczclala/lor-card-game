@@ -3,7 +3,7 @@
 // 绝对定位在画布内（坐标基于地图原始尺寸），随画布 transform 统一缩放
 // ==========================================
 import React from 'react';
-import { Sword, Skull, Crown, Flame, ShoppingBag, HelpCircle, Gem, Flag, Sparkles, X, Lock } from 'lucide-react'; // [2026-08-10] X：击败红叉；[2026-08-27] Lock：未抵达节点锁
+import { Sword, Skull, Crown, Flame, ShoppingBag, HelpCircle, Gem, Flag, Sparkles, Check, Lock } from 'lucide-react'; // [2026-08-10] · [2026-11-07] X（击败红叉）已弃用 ⇒ 改 Check（中央对勾）；Lock：未抵达节点锁
 import type { RogueNodeType } from '../../data/roguelike/mapLayout';
 import { CroppedAvatar } from '../CroppedAvatar'; // [2026-08-10] 当前节点头像读取 avatar 裁剪配置
 import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 节点点击音效
@@ -61,6 +61,25 @@ export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate,
     // [2026-08-26 莉莉子] 当前节点：蓝色高光包裹白色核心——白色描边 + 外层蓝色光晕（霓虹管效果）
     const nodeStyle = isCurrent ? { boxShadow: '0 0 22px rgba(59,130,246,0.85)' } : undefined;
 
+    // ==========================================
+    // [2026-11-07 莉莉子 · 程反馈「精英/Boss/普通战斗外观上看不出区别」]
+    //   ── 病根（3 条，都在本文件）：
+    //      ① 战斗节点**优先显示敌人头像**（`showEnemyAvatar`）⇒ 头像把整个圆填满，
+    //         `NODE_META` 里配的底色（战斗蓝 / 精英红 / Boss 紫）几乎看不见；
+    //      ② 同理 `NODE_META` 里的 `Skull` / `Crown` **图标永远不显示**
+    //         （只要节点有 enemyKey 就走不到图标分支）—— 王冠其实代码里早就有，只是被头像顶掉了；
+    //      ③ 尺寸数据不统一（`mapLayout` 里 Boss 有 76 / 100 / 75，精英有 44 / 76）
+    //         ⇒ 连"大小"这条线也不可靠。
+    //   ── 结论：分级特征**必须画在圆的外面**，不能跟头像抢内部空间。
+    //   ── 本实现只用 CSS 几何（外扩环 / clip-path 尖角与王冠 / 锥形光弧），**零新增美术资源**；
+    //      全部 `pointer-events-none`，不影响点击与右键预览；靠 `filter` 继承父级
+    //      ⇒ `done` / `missed` / `locked` 的变灰会**连带装饰一起变灰**，不用另写状态分支。
+    //   ⚠️ `unrevealed`（未揭示的随机节点）一律不挂装饰 —— 否则角标就直接泄露了真身。
+    // ==========================================
+    const isEliteNode = !unrevealed && renderedType === 'elite';
+    const isBossNode = !unrevealed && renderedType === 'boss';
+    const showRankDeco = isEliteNode || isBossNode;
+
     return (
         <button
             onClick={() => { if (isClickable) { eventBus.emit(GameEvents.UI_CLICK); onActivate(); } }}
@@ -90,7 +109,9 @@ export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate,
                         : state === 'missed'
                             ? 'cursor-default grayscale brightness-[0.55]' // 错过：灰色实心
                             : state === 'done'
-                                ? 'cursor-default brightness-[0.7]' // [2026-08-25] 已击败：适度暗（红叉保留）
+                                // [2026-08-25] 已击败 · [2026-11-07] 红叉改为"中央对勾 + 暗罩"承担，
+                                //   这里只留轻微压暗（0.7 → 0.9），避免与暗罩叠加成"糊成一团黑"
+                                ? 'cursor-default brightness-[0.9]'
                                 : 'cursor-default grayscale brightness-[0.5]'}`} // [2026-08-27] locked：完全灰色（未抵达）
         >
             {/* [当前节点] 蓝色脉冲；节点本体保留类型图标，天启者头像圆悬于节点上方 */}
@@ -101,6 +122,91 @@ export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate,
                     <span className="absolute -inset-4 rounded-full border border-blue-200/40 animate-ping" style={{ animationDelay: '0.8s' }} />
                 </>
             )}
+            {/* ===== [2026-11-07 莉莉子] 战斗节点分级外观（全部画在圆外 ⇒ 不与敌人头像抢空间） ===== */}
+            {showRankDeco && (
+                <>
+                    {/* ① 外扩环：精英 = 细环 / Boss = 粗环 */}
+                    <span
+                        className="absolute rounded-full pointer-events-none"
+                        style={{
+                            inset: isBossNode ? -5 : -4,
+                            border: `${isBossNode ? 3 : 2}px solid ${isBossNode ? 'rgba(192,132,252,0.92)' : 'rgba(248,113,113,0.82)'}`,
+                            boxShadow: isBossNode
+                                ? '0 0 14px rgba(168,85,247,0.6)'
+                                : '0 0 10px rgba(239,68,68,0.45)',
+                        }}
+                    />
+
+                    {/* ② Boss 专属：缓速旋转的锥形光弧（径向遮罩只留外圈一道光；全场通常仅 1 个，性能可忽略） */}
+                    {isBossNode && (
+                        <span
+                            className="absolute rounded-full pointer-events-none animate-spin"
+                            style={{
+                                inset: -10,
+                                animationDuration: '9s',
+                                background: 'conic-gradient(from 0deg, rgba(168,85,247,0) 0deg, rgba(216,180,254,0.95) 70deg, rgba(168,85,247,0) 150deg, rgba(168,85,247,0) 360deg)',
+                                WebkitMaskImage: 'radial-gradient(circle, transparent 64%, #000 68%, #000 100%)',
+                                maskImage: 'radial-gradient(circle, transparent 64%, #000 68%, #000 100%)',
+                            }}
+                        />
+                    )}
+
+                    {/* ③ 顶部轮廓：精英 = 一对向外倾的尖角（恶魔角）/ Boss = 单顶王冠 */}
+                    {isBossNode ? (
+                        <span
+                            className="absolute pointer-events-none"
+                            style={{
+                                left: '50%', top: -12, transform: 'translateX(-50%)',
+                                width: 28, height: 15,
+                                background: 'linear-gradient(180deg, #fde68a 0%, #facc15 55%, #eab308 100%)',
+                                clipPath: 'polygon(0% 100%, 10% 26%, 32% 62%, 50% 0%, 68% 62%, 90% 26%, 100% 100%)',
+                                filter: 'drop-shadow(0 0 5px rgba(250,204,21,0.95))',
+                            }}
+                        />
+                    ) : (
+                        <>
+                            {/* 角必须**尖到环外**、且用浅→深的对比色，否则会和红色外环糊成一片
+                                （第一版就栽在这：角与外环同为红系，44px 下基本看不出角形） */}
+                            <span
+                                className="absolute pointer-events-none"
+                                style={{
+                                    left: '8%', top: -14, width: 11, height: 20,
+                                    background: 'linear-gradient(180deg, #fee2e2 0%, #ef4444 52%, #7f1d1d 100%)',
+                                    clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)',
+                                    transform: 'rotate(-26deg)',
+                                    filter: 'drop-shadow(0 0 4px rgba(255,255,255,0.55))',
+                                }}
+                            />
+                            <span
+                                className="absolute pointer-events-none"
+                                style={{
+                                    right: '8%', top: -14, width: 11, height: 20,
+                                    background: 'linear-gradient(180deg, #fee2e2 0%, #ef4444 52%, #7f1d1d 100%)',
+                                    clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)',
+                                    transform: 'rotate(26deg)',
+                                    filter: 'drop-shadow(0 0 4px rgba(255,255,255,0.55))',
+                                }}
+                            />
+                        </>
+                    )}
+
+                    {/* ④ [2026-11-07 莉莉子 · 程反馈「角徽丑爆了，左上右上角徽都不要」]
+                        ⇒ **不再有任何角落小圆徽**。精英的身份只靠「顶部双角 + 外扩细环」承担
+                        （这两样是**形状**，不是贴上去的章，44px 下也不会显廉价）。
+                        原先这里有一个左上角骷髅徽，已删。 */}
+
+                    {/* ⑤ Boss 下方文字标签 */}
+                    {isBossNode && (
+                        <span
+                            className="absolute left-1/2 -translate-x-1/2 pointer-events-none font-black tracking-[0.18em] text-yellow-300"
+                            style={{ bottom: -17, fontSize: 10, whiteSpace: 'nowrap', textShadow: '0 0 6px rgba(0,0,0,0.95), 0 0 2px #000' }}
+                        >
+                            BOSS
+                        </span>
+                    )}
+                </>
+            )}
+
             {/* 节点本体：[2026-08-27] 未抵达=整个节点被灰色锁替代；战斗节点显示敌人头像，其余显示类型图标（菱形节点反旋转保持正立） */}
             {state === 'locked' ? (
                 <Lock size={nodeSize * 0.42} className="text-gray-400" strokeWidth={2.5} />
@@ -109,10 +215,27 @@ export const MapNode: React.FC<MapNodeProps> = ({ type, x, y, state, onActivate,
             ) : (
                 <span className={isDiamond ? '-rotate-45' : ''}>{meta.icon}</span>
             )}
+            {/* ==========================================
+                [2026-11-07 莉莉子 · 程反馈「右上角的角徽也不要」]
+                ── 原实现是右上角一枚「红底白叉」小圆章。它和刚删掉的左上角徽是同一类问题：
+                   在 44px 节点上它比头像本身还抢眼，两枚角章还会互相打架。
+                ── 改成**本体状态表达**：整圆压一层暗罩 + 正中一枚对勾 —— 覆盖头像、不侵占任何角落。
+                   「已通过」最直白的语义就是打勾，居中之后也不会产生"角落堆章"的杂乱。
+                ── 与 missed / locked 的区分：done 仍保留类型装饰（角 / 王冠）与对勾，
+                   只是整体压暗；那两档是**去色**（missed）或**去色 + 锁**（locked）。
+                ========================================== */}
             {state === 'done' && (
-                // [2026-08-10] 击败红叉：保留敌人头像（彩色）+ 红色叉叉标记
-                <span className={`absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-600 border-2 border-white flex items-center justify-center z-30 shadow-[0_0_10px_rgba(239,68,68,0.9)] ${isDiamond ? '-rotate-45' : ''}`}>
-                    <X size={12} className="text-white" strokeWidth={4} />
+                <span
+                    className="absolute inset-0 rounded-full flex items-center justify-center pointer-events-none z-30"
+                    style={{ background: 'rgba(6, 10, 20, 0.42)' }}
+                >
+                    <Check
+                        size={nodeSize * 0.52}
+                        // 菱形节点（强化）本体被 rotate-45 过，对勾要反向转回来才正立
+                        className={`text-emerald-300 ${isDiamond ? '-rotate-45' : ''}`}
+                        strokeWidth={4}
+                        style={{ filter: 'drop-shadow(0 0 5px rgba(0,0,0,0.95)) drop-shadow(0 0 3px rgba(16,185,129,0.85))' }}
+                    />
                 </span>
             )}
         </button>

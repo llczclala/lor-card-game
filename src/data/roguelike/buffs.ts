@@ -306,27 +306,34 @@ export const MAZE_BUFFS: MazeBuff[] = [
 
     // ── [2026-10-24 程拍板 · 装备三档] 开局给**手牌 + 牌库**每张卡随机挂一件指定品质的装备 ──
     //   三条共用同一个 handler（`EQUIP_ALL_CARDS`），差别只有 `params.rarity`。
-    //   📌 品质映射按项目六档：`common` 白 / `rare` 蓝 / `epic` 紫。
+    //   📌 品质映射按项目六档：`common` 白 / `uncommon` 绿 / `rare` 蓝 / `epic` 紫 / `legendary` 金 / `mythic` 红。
     //   📌 图标暂用 `abc_spell` 占位（与库内其余 20+ 条同款），待美术出装备主题图。
+    //   🔧 [2026-10-26 程拍板 · 整体上调] 两件事：
+    //     ① 三条的**强化档位**（`rarity`，决定它多稀有 / 多贵）集体 +1 档：
+    //        绿 uncommon → 蓝 rare ／ 蓝 rare → 紫 epic ／ 紫 epic → 金 legendary。
+    //     ② 「粗制配给」给的装备原先错标成白色，更正为**绿色**（`uncommon`）。
+    //   ⚠️ 档位刻意只到 `legendary`：`difficultyTiers.ts:41` 的 `ENH_CAP.normal = 'legendary'`，
+    //      而普通难度 mythic 权重为 0 ⇒ 标成 mythic 等于普通难度永远抽不到。
+    //   ⚠️ 三个 `id` 一律保持原样（含 "common" 的那条现在给绿装）：id 是存档键，改名会让旧存档失效。
     {
         id: 'enhance_equip_all_epic', name: '秘藏武装',
         description: '开局时，我方手牌与牌库中的所有卡牌各随机获得一件紫色装备。',
-        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        rarity: 'legendary', icon: abc_spell, effect: { type: 'passive' },
         battleEffect: { trigger: 'game_start', effectClass: 'EQUIP_ALL_CARDS', params: { rarity: 'epic' } },
         playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_equip_all_rare', name: '精良行装',
         description: '开局时，我方手牌与牌库中的所有卡牌各随机获得一件蓝色装备。',
-        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
         battleEffect: { trigger: 'game_start', effectClass: 'EQUIP_ALL_CARDS', params: { rarity: 'rare' } },
         playerEligible: true, enemyEligible: true,
     },
     {
         id: 'enhance_equip_all_common', name: '粗制配给',
-        description: '开局时，我方手牌与牌库中的所有卡牌各随机获得一件白色装备。',
-        rarity: 'uncommon', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'game_start', effectClass: 'EQUIP_ALL_CARDS', params: { rarity: 'common' } },
+        description: '开局时，我方手牌与牌库中的所有卡牌各随机获得一件绿色装备。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'EQUIP_ALL_CARDS', params: { rarity: 'uncommon' } },
         playerEligible: true, enemyEligible: true,
     },
 
@@ -383,18 +390,44 @@ export const MAZE_BUFFS: MazeBuff[] = [
         battleEffect: { trigger: 'game_start', effectClass: 'SPELL_COST_UP_ALL', params: { amount: 2 } },
         playerEligible: true, enemyEligible: true,
     },
+    // ── [2026-10-26 程拍板 · 费用税拆四条] 原「步步加价 / 积重难返」两条 → A/B/C/D 四条 ──
+    //   A = 打【单位】→ 涨【法术】，回合末清　　　B = 打【法术】→ 涨【单位】，回合末清
+    //   C = 打【单位】→ 涨【法术】，跨回合累积　　D = 打【法术】→ 涨【单位】，跨回合累积
+    //
+    //   🔴 为什么必须拆（程 2026-10-26 原话）：
+    //     原实现「每方一个税池、加税与清零都**不分类别**」⇒ 打任何一张牌都把自己那份清零
+    //     ⇒ 税永远最多 +1，玩家怎么打都只有 +1，**完全没有"积重难返"的压迫感**。
+    //     拆成"打某类 → 涨另一类"之后，玩家**盯着一类打**，另一类才会一路涨上去。
+    //
+    //   清零时机（程拍板）：**用掉被加价的那一类时才清** ——
+    //     打单位只涨法术、单位税不动；一打法术，法术税才归零。
+    //   ⚠️ `params.to` 刻意不写：它恒与 `from` 相反，由 `getCostTaxConfig` 推导（避免两处漂移）。
     {
-        id: 'enhance_cost_tax_round', name: '步步加价',
-        description: '敌方每打出一张卡牌，我方所有手牌费用 +1；我方打出一张卡牌后清零，回合结束时清零。',
+        id: 'enhance_cost_tax_unit_to_spell_round', name: '步步加价',
+        description: '敌方每打出一张单位卡牌，我方所有法术费用 +1；我方打出一张法术后清零，回合结束时清零。',
         rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { mode: 'round' } },
+        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { from: 'unit', mode: 'round' } },
         playerEligible: false, enemyEligible: true,
     },
     {
-        id: 'enhance_cost_tax_run', name: '积重难返',
-        description: '敌方每打出一张卡牌，我方所有手牌费用 +1；我方打出一张卡牌后清零（跨回合累积）。',
+        id: 'enhance_cost_tax_spell_to_unit_round', name: '术法掣肘',
+        description: '敌方每打出一张法术卡牌，我方所有单位费用 +1；我方打出一张单位后清零，回合结束时清零。',
+        rarity: 'rare', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { from: 'spell', mode: 'round' } },
+        playerEligible: false, enemyEligible: true,
+    },
+    {
+        id: 'enhance_cost_tax_unit_to_spell_run', name: '积重难返',
+        description: '敌方每打出一张单位卡牌，我方所有法术费用 +1；我方打出一张法术后清零（跨回合累积）。',
         rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { mode: 'run' } },
+        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { from: 'unit', mode: 'run' } },
+        playerEligible: false, enemyEligible: true,
+    },
+    {
+        id: 'enhance_cost_tax_spell_to_unit_run', name: '积弊缠身',
+        description: '敌方每打出一张法术卡牌，我方所有单位费用 +1；我方打出一张单位后清零（跨回合累积）。',
+        rarity: 'epic', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'COST_TAX', params: { from: 'spell', mode: 'run' } },
         playerEligible: false, enemyEligible: true,
     },
     {
@@ -417,11 +450,29 @@ export const MAZE_BUFFS: MazeBuff[] = [
         playerEligible: true, enemyEligible: true,
     },
     {
+        // [2026-11-07 程拍板] 品质 **金 → 红**，并改为「**放不下整队就不召唤**」（旧实现是截断成半队）。
+        //   ⚠️ 升红后的抽选后果（`difficultyTiers.ts:41-46`）：
+        //      `ENH_WEIGHTS.normal.mythic = 0` + `ENH_CAP.normal = 'legendary'`
+        //      ⇒ **普通难度永远抽不到它**（机密权重 1 / 绝密权重 5）。
+        //      这是"红色"该有的稀有度；普通难度想要同类收益请走下面的金色「开阵集结」。
+        //   ⚠️ `id` 保持不变（存档键，改名会让旧存档里的这条强化失效）。
         id: 'enhance_random_squad', name: '整队集结',
-        description: '回合开始时，随机召唤一整支后勤小队的全部成员。',
-        rarity: 'legendary', icon: abc_spell, effect: { type: 'passive' },
+        description: '回合开始时，随机召唤一整支后勤小队的全部成员。备战席放不下整队时不会召唤。',
+        rarity: 'mythic', icon: abc_spell, effect: { type: 'passive' },
         // 小队名单由 `rogueTrigger` 的 `SQUAD_MEMBERS` 按 key 命名约定自动聚类（不是手抄表）
         battleEffect: { trigger: 'round_start', effectClass: 'SUMMON_RANDOM_SQUAD' },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        // [2026-11-07 程拍板] 「整队集结」的**开局一次**版：
+        //   同一套召唤逻辑 + 同一份"放不下整队就不召"的守卫（共用 `SUMMON_RANDOM_SQUAD`），
+        //   唯一差别是触发点从 `round_start`（每回合）换成 `game_start`（**整局一次**）。
+        //   定位为金色档：`ENH_WEIGHTS.normal.legendary = 3` ⇒ 普通难度也能抽到，
+        //   与升红后的「整队集结」（普通难度不可得）正好互补。
+        id: 'enhance_random_squad_opening', name: '开阵集结',
+        description: '开局时，随机召唤一整支后勤小队的全部成员（每局一次）。备战席放不下整队时不会召唤。',
+        rarity: 'legendary', icon: abc_spell, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_RANDOM_SQUAD' },
         playerEligible: true, enemyEligible: true,
     },
     {
@@ -774,21 +825,29 @@ export const MAZE_BUFFS: MazeBuff[] = [
         battleEffect: { trigger: 'unit_die', effectClass: 'RESURRECT', params: { all: false } },
         playerEligible: true, enemyEligible: true,
     },
+    // ── [2026-10-26 程拍板 · 拆分] 原「不死之身」（mythic 三合一）拆成两条**金色**强化，并删除原条目 ──
+    //   拆的理由与切法：原来那条把"打不动"和"清不掉"绑在一起，只能整体判"没法玩"；
+    //   拆开之后每条单独都**有解**，也就都能作为独立强化出现。
     {
-        // [2026-09-29 程拍板] 由「水晶回血」重做为**敌方专属**的"时间压力"型强化：
-        //   · 免疫任何伤害 → 玩家打不动它的水晶，只能靠它每回合自扣熬死它
-        //   · 全体 幻象+吸血 → 它的场面极难清理
-        //   · 回合结束自扣 5 → 唯一的败因，给玩家一个可数的倒计时
-        //   描述按**玩家视角**写（敌方…），与其余 enemy_* 条目一致
-        id: 'immortal_body', name: '不死之身',
-        description: '敌方水晶免疫任何伤害；敌方所有单位获得【幻象】与【吸血】；每回合结束时，敌方水晶生命值 -5。',
-        rarity: 'mythic', icon: SPELL_IMAGES.vitality_regen, effect: { type: 'passive' },
-        // 一个强化多个效果（一条数据，不是多条）——面板/抽屉里只出现「不死之身」一项
+        // 【水晶向】打不动它，只能靠它每回合自扣熬死。
+        // ⚠️ 这两个效果**必须成对保留**：只免疫不自扣 = 永远打不死的无解局，故不单独拆开。
+        id: 'immortal_core', name: '不灭之核',
+        description: '敌方水晶免疫任何伤害；每回合结束时，敌方水晶生命值 -5。',
+        rarity: 'legendary', icon: SPELL_IMAGES.vitality_regen, effect: { type: 'passive' },
         battleEffects: [
             { trigger: 'game_start', effectClass: 'NEXUS_IMMUNE' },
+            { trigger: 'round_end', effectClass: 'NEXUS_SELF_DAMAGE', params: { value: 5 } },
+        ],
+        playerEligible: false, enemyEligible: true,
+    },
+    {
+        // 【场面向】场面极难清理。**不含**水晶免疫 ⇒ 玩家仍能正常打脸，是"难清"不是"无解"。
+        id: 'immortal_swarm', name: '不灭之群',
+        description: '敌方所有单位获得【幻象】与【吸血】。',
+        rarity: 'legendary', icon: SPELL_IMAGES.ghostly_shadows, effect: { type: 'passive' },
+        battleEffects: [
             { trigger: 'game_start', effectClass: 'ALL_UNITS_GRANT_KEYWORD', params: { keywords: ['Ephemeral', 'Lifesteal'] } },
             { trigger: 'on_summon', effectClass: 'ALL_UNITS_GRANT_KEYWORD', params: { keywords: ['Ephemeral', 'Lifesteal'] } },
-            { trigger: 'round_end', effectClass: 'NEXUS_SELF_DAMAGE', params: { value: 5 } },
         ],
         playerEligible: false, enemyEligible: true,
     },
@@ -1151,6 +1210,15 @@ if (import.meta.env?.DEV) {
 // ── 派生视图 ──
 export const PLAYER_ENHANCEMENTS = MAZE_BUFFS.filter(b => b.playerEligible);
 export const ENEMY_ELIGIBLE_BUFFS = MAZE_BUFFS.filter(b => b.enemyEligible);
+/**
+ * [2026-10-26 莉莉子 · 程报「图鉴看不到敌方强化」] 敌方**专属**强化（玩家永远拿不到的那批）。
+ * 数据源 = 逻辑研习图鉴新增的「敌方强化」页签。
+ * ⚠️ 与 `PLAYER_ENHANCEMENTS` **互补而非包含**：这里刻意取 `enemyEligible && !playerEligible`，
+ *    双方通用的那些已经在「强化图鉴」页签里，不在这里重复列出。
+ * ⚠️ 该页签**不做解锁门槛**（`unlockedRogueEnhancements`）：玩家永远不会"获得"这些强化，
+ *    沿用解锁判定只会让整页变成"？？？未解锁"，那就失去"查看敌方会拿到什么"的意义了。
+ */
+export const ENEMY_ONLY_ENHANCEMENTS = MAZE_BUFFS.filter(b => b.enemyEligible && !b.playerEligible);
 export const MAZE_BUFF_BY_ID: Record<string, MazeBuff> = Object.fromEntries(MAZE_BUFFS.map(b => [b.id, b]));
 export const getBuffById = (id: string): MazeBuff | undefined => MAZE_BUFF_BY_ID[id];
 
@@ -1255,10 +1323,35 @@ export interface EnemyBuffConflict {
     b: string;
 }
 
+// [2026-10-26 莉莉子 · 费用税拆四条] 四条费用税（A/B/C/D）之间的互斥**生成而非手抄**：
+//   · 它们共用同一个查询入口 `getCostTaxConfig`（只认第一个）⇒ 任意两条同时持有，后一条必然完全白带；
+//   · 与另外两个「加费」池子（连番施压 / 万法难行）叠加后的后果也各不相同，逐个写明。
+//   4 条两两 = 6 对 + 各 4 对 = 共 14 条，手写必漏项，故在此生成。
+const COST_TAX_IDS = [
+    'enhance_cost_tax_unit_to_spell_round',
+    'enhance_cost_tax_spell_to_unit_round',
+    'enhance_cost_tax_unit_to_spell_run',
+    'enhance_cost_tax_spell_to_unit_run',
+] as const;
+const COST_TAX_CONFLICTS: EnemyBuffConflict[] = COST_TAX_IDS.flatMap((id, i) => [
+    ...COST_TAX_IDS.slice(i + 1).map(other => ({
+        reason: '四条费用税共用同一个查询入口（`getCostTaxConfig` 只认第一个）⇒ 同时持有后一条**完全白带**（不是太强，是浪费一个携带位）',
+        a: id as string, b: other as string,
+    })),
+    {
+        reason: '费用税（`run` 版会跨回合一路滚）叠「连番施压」= 两个**独立**加费池真叠加，手牌很快全变死牌',
+        a: id as string, b: 'enhance_chain_play_tax',
+    },
+    {
+        reason: '手牌加费之上，法术再单独 +2 ⇒ 出牌与施法两条路同时被堵',
+        a: id as string, b: 'enhance_spell_cost_up_2',
+    },
+]);
+
 export const ENEMY_BUFF_CONFLICTS: EnemyBuffConflict[] = [
     {
         reason: '水晶限伤 + 水晶免疫 ⇒ 玩家的两种破防手段同时被堵死，只剩"等它每回合自扣"一条路，而限伤还可能连自扣一起削',
-        a: 'enhance_nexus_damage_cap', b: 'immortal_body',
+        a: 'enhance_nexus_damage_cap', b: 'immortal_core',
     },
     {
         reason: '回合末处决 + 全员复活 ⇒ 杀了复活、复活了再杀，回合末反复空转（有 20 步护栏，但会明显拖长）',
@@ -1272,29 +1365,26 @@ export const ENEMY_BUFF_CONFLICTS: EnemyBuffConflict[] = [
         reason: '回合末处决 + 回合开始整队召唤 ⇒ 每回合白送一整队单位再全部处决，等于免费刷一串亡语',
         a: 'enhance_massacre', b: 'enhance_random_squad',
     },
-    {
-        reason: '两条是同一种 COST_TAX 的两种 mode，`getCostTaxMode` 只认第一个 ⇒ 后一条**完全白带**（不是太强，是浪费一个携带位）',
-        a: 'enhance_cost_tax_round', b: 'enhance_cost_tax_run',
-    },
+    // ↓ 四条费用税的互斥（两两 + 与另两个加费池）由上方 `COST_TAX_CONFLICTS` 统一生成
+    ...COST_TAX_CONFLICTS,
 
     // ── [2026-10-24 第二批 · 程拍板「只 BAN 真·没法玩的组合」] ──
     //   判定标准（程的口径）：**某一条通关路径被完全封死**，而不只是"很强/很恶心"。
     //   第二梯队（战争领主+钢铁洪流 / 冰封+衰弱 / 双复活）刻意**不入表**——那些是"很难"不是"没法玩"。
     {
         reason: '水晶免疫（玩家打脸这条路彻底关闭）+ 我方全场每回合 +2/+2 且备战 ⇒ 玩家只能等它自扣 5，但场面撑不到那时候',
-        a: 'immortal_body', b: 'war_lord',
+        a: 'immortal_core', b: 'war_lord',
     },
     {
         reason: '全员【幻象】+【吸血】之上再叠"阵亡立即复活并获幻象" ⇒ **清场这件事不存在**：杀一个立刻回来一个，回合末才消散，等于每回合多挨一轮',
-        a: 'immortal_body', b: 'undying_host',
+        a: 'immortal_swarm', b: 'undying_host',
     },
     {
-        reason: '两个**独立**税池真叠加：AI 出 3 张 ⇒ 玩家手牌 +3（跨回合累积、打牌不清零）+3（连出）= +6，且越滚越高 ⇒ 多数手牌直接变死牌',
-        a: 'enhance_cost_tax_run', b: 'enhance_chain_play_tax',
-    },
-    {
-        reason: '手牌全体加费之上，法术再单独 +2 ⇒ 出牌与施法**两条路同时被堵**',
-        a: 'enhance_cost_tax_run', b: 'enhance_spell_cost_up_2',
+        // [2026-10-26 程拍板 · 拆分后新增] 拆出来的两条**不共存** ——
+        //   它们合起来正好还原成原来那个三合一的「不死之身」（水晶免疫 + 全员幻象吸血），
+        //   而"打不动 + 清不掉"的双保险正是这次拆分要消灭的形态。
+        reason: '两条同时出现 = 还原成原来的「不死之身」（水晶免疫 + 全员幻象吸血）⇒ 打不动又清不掉，玩家只剩等死',
+        a: 'immortal_core', b: 'immortal_swarm',
     },
 ];
 
