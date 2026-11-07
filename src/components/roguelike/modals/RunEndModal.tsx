@@ -25,7 +25,7 @@ import { useArmamentConfig } from '../../../hooks/useArmamentConfig'; // [2026-0
 // [2026-10-04 独立审查 #10] 移除 `useUserSystem` 导入 —— 本组件不再自带实例（批量 API 改由 props 注入）
 import { PackOpenModal } from '../PackOpenModal'; // [2026-09-04] 通关卡包·完整滚轮开箱演出
 import { ChestOpenModal, type ChestOpenResult } from '../ChestOpenModal'; // [2026-09-29 程拍板] 打开匣子 → 得道具
-import type { ChestInstance } from '../../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
+import type { ChestInstance, ChestKind } from '../../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣 · [2026-11-07] +ChestKind（定向开包）
 // [2026-10-20 莉莉子 🎨 视觉层优化] 匣子插画唯一真源（UI 侧不出现裸图片路径）
 import { getChestArt } from '../../../data/roguelike/chestArt';
 import { RunEnhancementsModal } from './RunEnhancementsModal';
@@ -47,7 +47,7 @@ interface RunEndModalProps {
     run: RoguelikeRunState;
     runEnd: RunEndInfo;
     pendingPacks?: number; // [2026-08-29] 通关待打开卡包
-    onOpenPack?: () => ChestInstance | null; // [2026-09-29 程拍板] 开包 → 抽到一个奖励匣（原为返回武装 id）
+    onOpenPack?: (anchor?: ChestKind) => ChestInstance | null; // [2026-09-29 程拍板] 开包 → 抽到一个奖励匣（原为返回武装 id）· [2026-11-07] +anchor（花 2 个定向大类）
     // [2026-09-29 程拍板] 通关结算也能直接开匣（卡包抽到的匣子）
     pendingChests?: ChestInstance[];
     onOpenChest?: (index: number) => any;
@@ -500,7 +500,7 @@ export const RunEndModal: React.FC<RunEndModalProps> = ({ run, runEnd, pendingPa
             <PackOpenModal
                 isOpen={packOpen}
                 pendingPacks={pendingPacks}
-                onOpenPack={() => onOpenPack?.() ?? null}
+                onOpenPack={(anchor?: ChestKind) => onOpenPack?.(anchor) ?? null}
                 onClose={() => setPackOpen(false)}
                 onOpenChest={() => setChestOpen(true)} // [2026-09-29] 抽到匣子后可直接去开
             />

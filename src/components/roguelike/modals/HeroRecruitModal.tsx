@@ -197,7 +197,13 @@ export const HeroRecruitModal: React.FC<HeroRecruitModalProps> = ({ options, sub
                                     <div style={{ width: HERO_CARD_W, height: HERO_CARD_H }}>
                                         <div style={{ transform: `scale(${HAND_CARD_SCALE})`, transformOrigin: 'top left' }}>
                                             {/* [2026-09-04] 机密以上：英雄本体卡直接穿戴态渲染（装备品质 pips 自带）；普通裸卡 */}
-                                            <Card data={o.equipId ? attachEquipment(heroDef, o.equipId) : heroDef} location="hand" isFaceUp={true} skinId={0} />
+                                            {/* [2026-10-26 莉莉子 BUG修复] 补 `onViewArt`：右键（PC）/ 长按（触屏）打开卡牌详情。
+                                                此前只有下方列表**悬停大图**（`FloatingCardPreview`）上能右键，直接点候选大卡毫无反应。 */}
+                                            <Card
+                                                data={o.equipId ? attachEquipment(heroDef, o.equipId) : heroDef}
+                                                location="hand" isFaceUp={true} skinId={0}
+                                                onViewArt={(c) => { dismissGaze(); setViewCard(c); }}
+                                            />
                                         </div>
                                     </div>
                                 </div>

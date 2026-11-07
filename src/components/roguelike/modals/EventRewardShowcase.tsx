@@ -25,9 +25,9 @@
 //
 // ⚠️ 本组件**只读**：奖励的发放早在 `App.handleRogueEvent` 里由注册表完成了。
 // ==========================================
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { eventBus, GameEvents } from '../../../utils/eventBus'; // [2026-10-14 莉莉子] 交互音效
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, ArrowRight, RotateCcw, RefreshCw, HeartCrack } from 'lucide-react';
 import type { CardData } from '../../../types';
 import { CARD_DB } from '../../../data/cards';
@@ -177,6 +177,23 @@ const EVENT_REWARD_UI_MOBILE = {
     btnPadY: 14,
     /** 圆角 px（原 rounded-xl = 12） */
     btnRadius: 12,
+
+    // ══ ⑧ [2026-11-07 程拍板] 分步展示（一次只出现一项） ═══════════════
+    //   病根：深层回响一次能给「4 张卡 + 4 件装备 + 1 个生命代价」共 9 项，
+    //   全部并排铺开 ⇒ 卡面被压扁、装备挤到看不见、代价数字被挤出视野（程的截图）。
+    //   现在改为**一次一项、逐项推进**，这些尺寸只服务于「进度点 + 第 n/N + 跳过」那一行。
+    /** 「第 n / N 项」字号 px */
+    stepTextFontSize: 22,
+    /** 步骤圆点直径 px */
+    stepDotSize: 10,
+    /** 步骤圆点间距 px */
+    stepDotGap: 8,
+    /** 「跳过」与主按钮的间距 px */
+    skipGap: 22,
+    /** 「跳过」字号 px */
+    skipFontSize: 20,
+    /** 主按钮字号 px（原按钮没写 text-* ⇒ 继承；分步后为了和「跳过」拉开层级，显式给一个） */
+    mainBtnFontSize: 24,
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -460,7 +477,30 @@ export const EventRewardShowcase: React.FC<EventRewardShowcaseProps> = ({ result
             return true;
         });
     }, [results]);
-    const hasCost = items.some(r => r.kind === 'cost');
+    // ==========================================
+    // [2026-11-07 程拍板 · **分步依次展示**]
+    //   ── 病根：本组件原来把 `items` **全部并排**铺在一个 flex-wrap 容器里。
+    //      「屏息的黑市」这种 1 代价 + 1 奖励还能看；但「深层回响」一次给
+    //      4 张卡 + 4 件装备 + 1 个生命代价（共 9 项）⇒ 卡面被压扁、装备挤成一条、
+    //      代价数字被顶出视野（程的截图就是那样）。
+    //   ── 现在：**一次只渲染一项**，点「下一个」推进；进度用圆点 + `第 n / N` 表达。
+    //   ── 步骤顺序 = `items` 顺序 = 事件注册表返回顺序（代价天然排在奖励之前，不用重排）。
+    // ==========================================
+    const [step, setStep] = useState(0);
+    const total = items.length;
+    const safeStep = total === 0 ? 0 : Math.min(step, total - 1);
+    const isLast = total === 0 || safeStep >= total - 1;
+
+    // [2026-11-07] 标题**跟随当前项**（原来是"只要有一项代价就全程红标题"）。
+    //   分步之后那样会很怪：第 3 步明明是纯奖励，顶上还挂着红色「命运已定」。
+    //   现在：当前项是代价 → 红「命运已定」；否则 → 绿「所得入囊」。情绪与内容对齐。
+    const currentIsCost = total > 0 && items[safeStep]?.kind === 'cost';
+
+    const goNext = () => {
+        eventBus.emit(GameEvents.UI_CLICK);
+        if (isLast) { onClose(); return; }
+        setStep(s => Math.min(s + 1, total - 1));
+    };
 
     return (
         <motion.div
@@ -479,56 +519,98 @@ export const EventRewardShowcase: React.FC<EventRewardShowcaseProps> = ({ result
                 <motion.h3
                     initial={{ opacity: 0, scale: 0.7 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className={`shrink-0 font-black tracking-[0.3em] ${hasCost ? 'text-red-300' : 'text-emerald-300'}`}
+                    className={`shrink-0 font-black tracking-[0.3em] ${currentIsCost ? 'text-red-300' : 'text-emerald-300'}`}
                     style={{ textShadow: '0 2px 18px rgba(0,0,0,0.9)', fontSize: EVENT_REWARD_UI.titleFontSize }}
                 >
-                    {hasCost ? '命运已定' : '所得入囊'}
+                    {currentIsCost ? '命运已定' : '所得入囊'}
                 </motion.h3>
 
-                {/* 奖励行：[程实测①] **隐藏滚动条**（内容多时仍可用滚轮，但不再冒出一条滑块）
-                    [第 5 轮审查⑦⑧] 补 `pointer-events-auto`（否则滚轮落不到这里、被裁内容不可达），
-                      且 `max-*` 按 `showcaseScale` **反向补偿**（transform 不参与布局）。
-                    [程实测②] 外加左右内边距：`Card` 的装备 pip 绝对定位外扩约 31px，
-                      而 `overflow-y-auto` 会让 overflow-x 也算成 auto（CSS 规范）⇒ 不留够就会裁掉 pip。 */}
-                {items.length === 0 ? (
+                {/* ==========================================
+                    [2026-11-07 程拍板] 分步展示 —— 一次只出现一项
+                    ── 原实现是「一并排 + 可滚轮」的容器（`rowGapX` / `rowPad*` / `rowMax*` 就是给它的）：
+                       9 项时卡面被压扁、装备挤成一条、代价数字被顶出视野。
+                    ── 现在这些常量**不再被读取**（保留在调参区只为不破坏编号与历史），
+                       单步内容天然不会溢出，也就不再需要 `maxWidth/maxHeight` 的反向补偿了。
+                    ========================================== */}
+                {total === 0 ? (
                     <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-gray-400 italic" style={{ fontSize: EVENT_REWARD_UI.emptyFontSize }}>
                         什么也没有发生。
                     </motion.p>
                 ) : (
-                    <div
-                        className="flex items-end justify-center flex-wrap pointer-events-auto overflow-y-auto
-                            [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                        style={{
-                            gap: EVENT_REWARD_UI.rowGapX,
-                            paddingLeft: EVENT_REWARD_UI.rowPadX,
-                            paddingRight: EVENT_REWARD_UI.rowPadX,
-                            paddingTop: EVENT_REWARD_UI.rowPadY,
-                            paddingBottom: EVENT_REWARD_UI.rowPadY,
-                            maxWidth: `calc(${EVENT_REWARD_UI.rowMaxWidthVw}vw / ${EVENT_REWARD_UI.showcaseScale})`,
-                            maxHeight: `calc(${EVENT_REWARD_UI.rowMaxHeightVh}vh / ${EVENT_REWARD_UI.showcaseScale})`,
-                        }}
-                    >
-                        {items.map((r, i) => <RewardItem key={i} result={r} index={i} run={run} />)}
-                    </div>
+                    <>
+                        {/* 进度点：代价用红点、收益用绿点，当前项放大并发光 */}
+                        <div className="flex items-center shrink-0" style={{ gap: EVENT_REWARD_UI.stepDotGap }}>
+                            {items.map((it, i) => {
+                                const active = i === safeStep;
+                                const dotColor = it.kind === 'cost' ? '#f87171' : '#34d399';
+                                return (
+                                    <span
+                                        key={i}
+                                        className="rounded-full transition-all"
+                                        style={{
+                                            width: EVENT_REWARD_UI.stepDotSize,
+                                            height: EVENT_REWARD_UI.stepDotSize,
+                                            background: active ? dotColor : 'rgba(255,255,255,0.22)',
+                                            boxShadow: active ? `0 0 10px ${dotColor}` : undefined,
+                                            transform: active ? 'scale(1.35)' : undefined,
+                                        }}
+                                    />
+                                );
+                            })}
+                        </div>
+
+                        {/* 当前这一项。`AnimatePresence mode="wait"` ⇒ 旧的退场完再进新的，不会两个叠在一起 */}
+                        <div className="relative flex items-center justify-center pointer-events-auto">
+                            <AnimatePresence mode="wait">
+                                <motion.div
+                                    key={safeStep}
+                                    initial={{ opacity: 0, scale: 0.8 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.88 }}
+                                    transition={{ type: 'spring', stiffness: 320, damping: 26 }}
+                                >
+                                    {/* index 恒传 0：一次只有一项，不需要错峰延迟 */}
+                                    <RewardItem result={items[safeStep]} index={0} run={run} />
+                                </motion.div>
+                            </AnimatePresence>
+                        </div>
+
+                        {/* 第 n / N 项 */}
+                        <div className="font-mono tracking-widest text-gray-400 shrink-0" style={{ fontSize: EVENT_REWARD_UI.stepTextFontSize }}>
+                            {safeStep + 1} / {total}
+                        </div>
+                    </>
                 )}
 
-                {/* 收下 */}
-                <motion.button
-                    initial={{ opacity: 0, scale: 0.7 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: 0.12 * items.length + 0.25 }}
-                    onClick={() => {eventBus.emit(GameEvents.UI_BACK); onClose(); }}
-                    className="shrink-0 pointer-events-auto font-black tracking-[0.25em] text-white border border-white/25 bg-white/10 hover:bg-white/20 backdrop-blur-sm transition-all"
-                    style={{
-                        paddingLeft: EVENT_REWARD_UI.btnPadX,
-                        paddingRight: EVENT_REWARD_UI.btnPadX,
-                        paddingTop: EVENT_REWARD_UI.btnPadY,
-                        paddingBottom: EVENT_REWARD_UI.btnPadY,
-                        borderRadius: EVENT_REWARD_UI.btnRadius,
-                    }}
-                >
-                    收下
-                </motion.button>
+                {/* 按钮行：「跳过」只在还没到最后一项时出现；主按钮最后一步才变「收下」 */}
+                <div className="flex items-center shrink-0" style={{ gap: EVENT_REWARD_UI.skipGap }}>
+                    {total > 0 && !isLast && (
+                        <button
+                            onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
+                            className="pointer-events-auto text-gray-400 hover:text-white transition-colors"
+                            style={{ fontSize: EVENT_REWARD_UI.skipFontSize }}
+                        >
+                            跳过
+                        </button>
+                    )}
+                    <motion.button
+                        initial={{ opacity: 0, scale: 0.7 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: 0.2 }}
+                        onClick={goNext}
+                        className="pointer-events-auto font-black tracking-[0.25em] text-white border border-white/25 bg-white/10 hover:bg-white/20 backdrop-blur-sm transition-all"
+                        style={{
+                            paddingLeft: EVENT_REWARD_UI.btnPadX,
+                            paddingRight: EVENT_REWARD_UI.btnPadX,
+                            paddingTop: EVENT_REWARD_UI.btnPadY,
+                            paddingBottom: EVENT_REWARD_UI.btnPadY,
+                            borderRadius: EVENT_REWARD_UI.btnRadius,
+                            fontSize: EVENT_REWARD_UI.mainBtnFontSize,
+                        }}
+                    >
+                        {isLast ? '收下' : '下一个'}
+                    </motion.button>
+                </div>
             </div>
         </motion.div>
     );

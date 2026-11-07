@@ -37,7 +37,7 @@ import type { RandomTreasureResult } from '../../data/roguelike/treasure'; // [2
 import { getHeroLevelBonus } from '../../data/roguelike/heroProgression'; // [2026-08-28] 商店页签位（等级奖励）
 import { rollRogueEvent, ROGUE_EVENTS, ROGUE_EVENT_BY_ID, type RogueEvent } from '../../data/roguelike/events'; // [2026-08-28 事件] · [2026-10-09] +按 id 直取（指定固定事件）· [2026-10-10] +ROGUE_EVENTS（开发者事件审阅台全量列表）
 import type { EnhancementRarity } from '../../data/roguelike/buffs'; // [2026-08-28 事件] 强化品质提升
-import type { ChestInstance } from '../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣
+import type { ChestInstance, ChestKind } from '../../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣 · [2026-11-07] +ChestKind（定向开包）
 import { motion } from 'framer-motion'; // [2026-08-25] 头像平滑移动动画层
 import mapZero from '../../image/map/map_zero.webp';
 
@@ -131,7 +131,7 @@ interface RogueMapScreenProps {
     heroRecruit?: { options: HeroRecruitOption[]; subNote?: string } | null;
     onHeroRecruitPick?: (heroKey: string) => void;
     onHeroRecruitSkip?: () => void;
-    onOpenPack: () => ChestInstance | null; // [2026-09-29 程拍板] 打开卡包（抽到奖励匣）
+    onOpenPack: (anchor?: ChestKind) => ChestInstance | null; // [2026-09-29 程拍板] 打开卡包（抽到奖励匣）· [2026-11-07] +anchor（花 2 个定向大类）
     onDevWin?: (nodeType: RogueNodeType, nodeId: string) => void; // [2026-08-29] 开发者一键胜利
     pendingPacks?: number; // [2026-08-29] 通关结算待打开卡包
     pendingChests?: ChestInstance[]; // [2026-09-29] 通关结算待打开奖励匣

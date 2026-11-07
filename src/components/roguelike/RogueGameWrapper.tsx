@@ -19,12 +19,24 @@ interface RogueGameWrapperProps extends Omit<GameSessionProps, 'enemyDeck' | 'en
     run: RoguelikeRunState;
     onVictory: (playerNexus?: number) => void; // [2026-08-11] 带剩余水晶（真衔接写回）
     onDefeat: (playerNexus?: number) => void; // [2026-08-11] 带剩余水晶（败北不写回）
+    /** [2026-10-26 莉莉子 · 程拍板] 逻辑研习「**遇到过才解锁**」：把**敌方实际带进本场**的强化 id 上报。
+     *  App 侧实现 = `ids.forEach(id => recordCodexUnlock('enhancement', id, /*silent*\/true))`。
+     *  ⚠️ 选"进入战斗"而不是"建图时"：建图只是被安排，真正遭遇了才算数。 */
+    onEnemyBuffsSeen?: (ids: string[]) => void;
 }
 
-export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, run, onVictory, onDefeat, onExit, ...rest }) => {
+export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, run, onVictory, onDefeat, onExit, onEnemyBuffsSeen, ...rest }) => {
     // [2026-08-11] 返回按钮 → 弹确认框，确认后放弃本场回地图（HP 由 App 层回滚）
     const [showExitConfirm, setShowExitConfirm] = useState(false);
     const { getArmament } = useArmamentConfig(); // [2026-08-14 武装] 局外武装配置
+
+    // [2026-10-26 莉莉子] 图鉴「遇到过才解锁」：进入本场战斗时，把敌方携带的强化记为已收录。
+    //   effect 依赖 `encounter`（App 侧是 state ⇒ 对象稳定）⇒ 每场只上报一次。
+    React.useEffect(() => {
+        const ids: string[] | undefined = encounter?.enemyBuffs;
+        if (ids && ids.length > 0) onEnemyBuffsSeen?.(ids);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [encounter]);
 
     // [2026-08-14 武装] 战斗构建合并：局内装备（equippedCards）+ 局外武装（useArmamentConfig）一起挂到对应卡
     // 武装静态修饰（+1/+1 / 费用-2）由 attachEquipment 生效；秘法回响（回合开始恢复法力）由 armamentManaRestore 生效
@@ -62,7 +74,11 @@ export const RogueGameWrapper: React.FC<RogueGameWrapperProps> = ({ encounter, r
                 enemyDeck={encounter.deck}
                 enemyHeroConfig={encounter.heroConfig}
                 // [2026-08-07] 移除 passiveEffects（GameSession 无此 prop，被动效果未接入）
-                aiDifficulty="hard" // [2026-08-06] 肉鸽固定最高 AI 难度
+                // [2026-10-25 莉莉子 · 程拍板] 肉鸽 AI 难度**随本局难度档联动**（原为固定 "hard"）。
+                //   · 普通 → normal：「不犯明显蠢事」档 —— 新手不会在普通档就吃满算力
+                //   · 机密 / 绝密 → hard：算力拉满（含结果校验补漏），但**不给任何信息特权**
+                //   绝密另有资源轴加成（敌方水晶 / 装备 / 强化），见 `difficultyTiers.ts`。
+                aiDifficulty={run.difficulty === 'normal' ? 'normal' : 'hard'}
                 aiPersonality={encounter.aiPersonality ?? 'balanced'} // [2026-08-06] 透传流派性格
                 enemyCardBackIndex={encounter.enemyCardBackIndex ?? 0} // [2026-08-17 莉莉子] 敌方卡背
                 initialPlayerNexus={run.hp} // [2026-08-11] 真衔接：战斗水晶初值 = 全局 HP

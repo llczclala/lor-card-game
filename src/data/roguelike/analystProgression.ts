@@ -106,6 +106,33 @@ export const getAnalystReward = (level: number): AnalystLevelReward | undefined 
     return isAnalystMilestone(level) ? { pack: true } : undefined;
 };
 
+/**
+ * [2026-11-07 莉莉子] **通行证可领取奖励数量**（≤30 逐级数组 + 31+ 水位，两条线合计）。
+ *
+ * 用途：
+ *   · `EvaluationPanel` 顶部的「N 项可领」提示
+ *   · 悖论迷宫大厅「评估嘉勉」入口的**黄点**（程 2026-11-07：有卡包 / 有奖励可领就该亮）
+ *
+ * ⚠️ 这两处的判据必须同源 —— 否则会出现"入口亮着黄点、点进去却领不到"
+ *    （或反过来："明明有东西可领，入口却是灰的"）。
+ * ⚠️ `EvaluationPanel` 里那段等价逻辑（`:497-502`）另算了一份 `claimableCount` / `postCapPending`
+ *    （它还要单独拿 `postCapPending` 控制"领取嘉勉"按钮的 disabled），改动口径时**两处一起改**。
+ */
+export const countClaimablePassRewards = (
+    level: number,
+    claimedLevels: readonly number[] | undefined,
+    claimedUpTo: number | undefined,
+): number => {
+    const claimedSet = new Set(claimedLevels ?? []);
+    // ≤30：逐级数组，凡是"已到达 + 有奖励 + 没领过"的格都算一项
+    const fixedClaimable = Array.from({ length: Math.min(Math.max(0, level), ANALYST_FIXED_REWARD_MAX) }, (_, i) => i + 1)
+        .filter(lv => getAnalystReward(lv) && !claimedSet.has(lv)).length;
+    // 31+：走水位（不许跳级），水位落后于当前等级就还有一批没领
+    const watermark = Math.max(ANALYST_FIXED_REWARD_MAX, claimedUpTo ?? ANALYST_FIXED_REWARD_MAX);
+    const postCapPending = level > watermark ? 1 : 0;
+    return fixedClaimable + postCapPending;
+};
+
 /** 升级跨过的等级奖励（供发放） */
 export interface AnalystLevelupReward {
     level: number;

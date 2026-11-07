@@ -6,12 +6,191 @@
 // ==========================================
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Search, RotateCcw, Sparkles, Swords, Inbox, X, Lock } from 'lucide-react';
-import { PLAYER_ENHANCEMENTS, getBattleEffects, type MazeBuff, type BattleTrigger, type BattleEffectClass } from '../../data/roguelike/buffs';
+import { ArrowLeft, Search, RotateCcw, Sparkles, Swords, Inbox, X, Lock, Skull } from 'lucide-react';
+import { PLAYER_ENHANCEMENTS, ENEMY_ONLY_ENHANCEMENTS, getBattleEffects, type MazeBuff, type BattleTrigger, type BattleEffectClass } from '../../data/roguelike/buffs';
 import type { EnhancementRarity } from '../../data/roguelike/enhancements';
 import { EQUIPMENT_DEFS, type EquipmentDef } from '../../data/equipment';
 import { RARITY_META } from './RarityIcon';
 import { eventBus, GameEvents } from '../../utils/eventBus';
+import { pickTuning } from '../../platform/tuning';
+
+// ══════════════════════════════════════════════════════════════════════
+// 🎛️ 逻辑研习（肉鸽图鉴）· 视觉调参区（**程微调就改这里**）
+// ──────────────────────────────────────────────────────────────────────
+// 坐标系：界面跑在固定 **1680×1050 画布**里，整画布 `transform: scale(s)` 塞进窗口，
+//   `s = min(窗口宽/1680, 窗口高/1050)` ⇒ PC 1920×1080 ≈ 1.03；雷电 1280×720 ≈ 0.686；
+//   **手机横屏 ≈ 0.374**。画布等比缩放 ⇒ 布局比例永不破，问题纯粹是**可读性**
+//   （PC 上 text-sm=14px 好看，手机上 14×0.374 = **5.2 CSS px**，读不了）。
+// 口径 ×1：本表的值一律是**绝对画布 px**，直接进 `style={{}}`。原 Tailwind 类换算：
+//   `text-sm`=14 / `text-xs`=12 / `text-[11px]`=11 / `text-[10px]`=10 / `text-lg`=18。
+// 🔴 行高陷阱：Tailwind 内置行高是**固定 rem**、不随字号走（text-xs=12/16、text-sm=14/20、
+//   text-lg=18/28）⇒ 光放大 fontSize 会挤成一坨。**每个 fontSize 字段都配一个 Line 字段**；
+//   原本**没有行高类**的（`text-[10px]` / `text-[11px]`）**PC 值填 0**，代码写
+//   `lineHeight: lh(CODEX_UI.xLine)` 回落浏览器 `normal`。
+// 双平台：`CODEX_UI_MOBILE` = 手机端（程在雷电里调的就是这份）；
+//   `CODEX_UI_PC_DIFF` = PC 端差异项 —— 只列**与手机不同、且严格等于原 Tailwind 换算值**的项。
+//   ⚠️ 两个来源对象都**不要加 `as const`**（字面量类型会让合并时类型冲突）。
+// ══════════════════════════════════════════════════════════════════════
+const CODEX_UI_MOBILE = {
+    // ══ ① 顶栏（返回 / 标题 / 搜索 / 品质筛选 / 重置）═════════════════
+    topPadX: 34,             // 左右内边距（原 px-6 = 24，手机 ×1.4）
+    topPadTop: 28,           // 上内边距（原 pt-5 = 20）
+    topPadBottom: 22,        // 下内边距（原 pb-4 = 16）
+    topGap: 16,              // 顶栏内元素间距（原 gap-4 = 16，两端相同 ⇒ 不进 PC_DIFF）
+    titleFontSize: 44,       // 「逻辑研习」（原 text-lg = 18）
+    titleLine: 52,           // 行高（原 text-lg = 28）
+    subtitleFontSize: 22,    // 「悖论图鉴 · CODEX」（原 text-[11px] = 11）
+    subtitleLine: 26,        // 行高（原无行高类 ⇒ PC 填 0）
+
+    backIconSize: 30,        // 返回箭头（原 <ArrowLeft size={20} />）
+    backPad: 12,             // 返回键内边距（原 p-2.5 = 10）
+
+    searchFontSize: 32,      // 搜索框文字（原 text-sm = 14）
+    searchLine: 38,          // 行高（原 text-sm = 20）
+    searchWidth: 240,        // 搜索框宽度（原 w-44 = 176）
+    searchPadLeft: 52,       // 左内边距·让开放大镜（原 pl-8 = 32）
+    searchPadRight: 46,      // 右内边距·让开清除键（原 pr-7 = 28）
+    searchPadY: 10,          // 上下内边距（原 py-1.5 = 6）
+    searchIconSize: 26,      // 放大镜图标（原 size={14}）
+    searchIconLeft: 14,      // 放大镜左边距（原 left-3 = 12）
+    searchClearRight: 12,    // 清除键右边距（原 right-2.5 = 10）
+
+    chipFontSize: 32,        // 品质筛选 chip 文字（原 text-xs = 12）
+    chipLine: 38,            // 行高（原 text-xs = 16）
+    chipPadX: 16,            // chip 左右内边距（原 px-2.5 = 10）
+    chipPadY: 10,            // chip 上下内边距（原 py-1.5 = 6）
+    chipIconSize: 22,        // chip 品质图标（原 size={13}）
+    chipGap: 10,             // chip 之间 / chip 内图标与文字 / 重置按钮图标与文字（原 gap-1.5 = 6）
+
+    resetFontSize: 32,       // 「重置」文字（原 text-xs = 12）
+    resetLine: 38,           // 行高（原 text-xs = 16）
+    resetPadX: 20,           // 左右内边距（原 px-3 = 12）
+    resetPadY: 10,           // 上下内边距（原 py-1.5 = 6）
+    resetIconSize: 22,       // 重置图标（原 size={13}）
+
+    // ══ ② 左侧 tab 侧边栏 ═════════════════════════════════════════════
+    sideWidth: 280,          // 左栏宽度（原 w-44 = 176）
+    sidePad: 20,             // 左栏内边距（原 p-3 = 12）
+    sideGap: 12,             // tab 之间间距（原 gap-1.5 = 6）
+    tabFontSize: 32,         // tab 文字（原 text-sm = 14）
+    tabLine: 38,             // 行高（原 text-sm = 20）
+    tabPadX: 20,             // tab 左右内边距（原 px-3 = 12）
+    tabPadY: 20,             // tab 上下内边距（原 py-3 = 12）
+    tabIconSize: 30,         // tab 图标（原 size={16}）
+    tabGap: 18,              // tab 内图标与文字间距（原 gap-2.5 = 10）
+    countFontSize: 20,       // tab 右侧条数（原 text-[10px] = 10）
+    countLine: 24,           // 行高（原无行高类 ⇒ PC 填 0）
+
+    // ══ ③ 右侧网格区 ═════════════════════════════════════════════════
+    gridCols: 3,             // 列数（原 grid-cols-[repeat(auto-fill,minmax(210px,1fr))]，实测 6 列）
+    gridGap: 16,             // 卡片间距（原 gap-3 = 12）
+    gridPadX: 34,            // 网格区左右内边距（原 px-6 = 24）
+    gridPadY: 24,            // 网格区上下内边距（原 py-5 = 20）
+    emptyFontSize: 32,       // 「无匹配条目」（原 text-sm = 14）
+    emptyLine: 38,           // 行高（原 text-sm = 20）
+    emptyIconSize: 64,       // 空态 Inbox 图标（原 size={44}）
+    emptyGap: 12,            // 空态图标与文字间距（原 gap-3 = 12）
+
+    // ══ ④ 三种卡片（强化 / 装备 / 锁定）共用外框 ══════════════════════
+    cardPad: 22,             // 卡片内边距（原 p-4 = 16）
+    cardGap: 16,             // 卡片内纵向间距（原 gap-3 = 12）
+    cardMinH: 560,           // 卡片最小高（原只有锁定卡有 min-h-[190px] ⇒ 现三种共用同一值）
+    iconBoxSize: 96,         // 六边形图标框（原 w-16 h-16 = 64；锁定卡的圆形占位同用此值）
+    nameFontSize: 36,        // 卡片名称（原 text-sm = 14）
+    nameLine: 44,            // 行高（原 text-sm = 20）
+
+    // 小胶囊（品质 / 触发时机 / 效果类 / 装备徽）——原 text-[10px]
+    badgeFontSize: 32,       // 胶囊文字（原 text-[10px] = 10）
+    badgeLine: 38,           // 行高（原无行高类 ⇒ PC 填 0）
+    badgePadY: 4,            // 胶囊上下内边距（原 py-0.5 = 2）
+    badgePadXSm: 10,         // 窄内边距·品质胶囊 / 触发 / 「武装」/「未解锁」（原 px-1.5 = 6）
+    badgePadXMd: 12,         // 宽内边距·效果类 / 装备徽（原 px-2 = 8）
+    badgeGap: 10,            // 胶囊之间间距（原 gap-1.5 = 6）
+
+    // 描述正文 —— 原 `text-xs leading-snug line-clamp-3 min-h-[3rem]`
+    descFontSize: 32,
+    descLine: 44,
+    descMaxLines: 5,         // 原 line-clamp-3
+    descMinH: 220,           // 原 min-h-[3rem] = 48（= descLine × descMaxLines，保证短描述卡片也齐行）
+
+    // NEW 角标 —— 原 `text-[10px] font-black tracking-widest`
+    newFontSize: 20,
+    newLine: 24,
+    newPadX: 10,             // 原 px-1.5 = 6
+    newPadY: 4,              // 原 py-0.5 = 2
+
+    armFontSize: 20,         // 「武装」标记（原 text-[10px] = 10）
+    armLine: 24,             // 行高（原无行高类 ⇒ PC 填 0）
+
+    // 锁定卡内部
+    lockFontSize: 20,        // 「未解锁」（原 text-[10px] = 10）
+    lockLine: 24,            // 行高（原无行高类 ⇒ PC 填 0）
+    lockQFontSize: 36,       // 「？？？」（原 text-sm = 14）
+    lockQLine: 44,           // 行高（原 text-sm = 20）
+    lockIconSize: 40,        // 锁图标（原 <Lock size={22} />）
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// 🖥️ PC 端差异项 —— 只列「与手机不同」的项，且**必须严格等于原 Tailwind 换算值**
+//     （= 改完 PC 端逐像素零变化；改这里 = 改 PC 观感，改上面 = 改手机观感）
+// ══════════════════════════════════════════════════════════════════════
+const CODEX_UI_PC_DIFF = {
+    // 顶栏
+    topPadX: 24, topPadTop: 20, topPadBottom: 16,
+    titleFontSize: 18, titleLine: 28,
+    subtitleFontSize: 11, subtitleLine: 0,
+    backIconSize: 20, backPad: 10,
+    searchFontSize: 14, searchLine: 20, searchWidth: 176, searchPadLeft: 32, searchPadRight: 28,
+    searchPadY: 6, searchIconSize: 14, searchIconLeft: 12, searchClearRight: 10,
+    chipFontSize: 12, chipLine: 16, chipPadX: 10, chipPadY: 6, chipIconSize: 13, chipGap: 6,
+    resetFontSize: 12, resetLine: 16, resetPadX: 12, resetPadY: 6, resetIconSize: 13,
+    // 左栏
+    sideWidth: 176, sidePad: 12, sideGap: 6,
+    tabFontSize: 14, tabLine: 20, tabPadX: 12, tabPadY: 12, tabIconSize: 16, tabGap: 10,
+    countFontSize: 10, countLine: 0,
+    // 网格
+    gridCols: 6, gridGap: 12, gridPadX: 24, gridPadY: 20,
+    emptyFontSize: 14, emptyLine: 20, emptyIconSize: 44, emptyGap: 12,
+    // 卡片
+    cardPad: 16, cardGap: 12, cardMinH: 190, iconBoxSize: 64,
+    nameFontSize: 14, nameLine: 20,
+    badgeFontSize: 10, badgeLine: 0, badgePadY: 2, badgePadXSm: 6, badgePadXMd: 8, badgeGap: 6,
+    descFontSize: 12, descLine: 16.5, descMaxLines: 3, descMinH: 48,
+    newFontSize: 10, newLine: 0, newPadX: 6, newPadY: 2,
+    armFontSize: 10, armLine: 0,
+    lockFontSize: 10, lockLine: 0, lockQFontSize: 14, lockQLine: 20, lockIconSize: 22,
+};
+
+/** PC 端完整值 = 手机值为底 + PC 差异覆盖 */
+const CODEX_UI_PC = { ...CODEX_UI_MOBILE, ...CODEX_UI_PC_DIFF };
+
+/** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定收在 `src/platform/tuning.ts`） */
+export const CODEX_UI = pickTuning(CODEX_UI_PC, CODEX_UI_MOBILE);
+
+/**
+ * 🔴 **行高必须过这一层**（2026-10-28 莉莉子 · 三屏并行改造时踩出来的硬坑）。
+ *
+ * React 把 `lineHeight` 列入 **unitless 属性表** ⇒ `style={{ lineHeight: 44 }}`
+ * 编译出的是 `line-height: 44`，即 **44 倍字号**（32px 字 → 1408px 行高，整屏直接崩）。
+ * 而调参区里的 `xLine` 存的是**画布 px 数字**（如 44 = 44px），语义完全不同。
+ *
+ * ⇒ 凡 Line 字段一律走本函数：`lineHeight: lh(CODEX_UI.descLine)`。
+ * `0` ⇒ `undefined` ⇒ 不设该属性 ⇒ 回落浏览器 `normal`（用于原本无行高类的元素，保 PC 零变化）。
+ *
+ * ⚠️ `tsc` 查不出这个错（number 是 `lineHeight` 的合法类型），只能靠人眼/验证环节发现。
+ */
+const lh = (px: number): string | undefined => (px ? `${px}px` : undefined);
+
+/** 描述正文运行时样式（`line-clamp` 的动态版：行数可调，故不能再用固定 `line-clamp-3` 类） */
+const CODEX_DESC_STYLE: React.CSSProperties = {
+    fontSize: CODEX_UI.descFontSize,
+    lineHeight: lh(CODEX_UI.descLine),
+    minHeight: CODEX_UI.descMinH,
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: CODEX_UI.descMaxLines,
+    overflow: 'hidden',
+};
 
 // [2026-08-27] 六档品质：白/绿/蓝/紫/金/红
 const QUALITY_ORDER: EnhancementRarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
@@ -139,7 +318,8 @@ function getEquipBadges(e: EquipmentDef): string[] {
     return tags;
 }
 
-type CodexTab = 'enhancement' | 'equipment';
+// [2026-10-26 莉莉子] 新增 `'enemy'`：敌方专属强化页签（此前图鉴只能看玩家池，粉丝反馈"看不到敌人能拿到什么"）
+type CodexTab = 'enhancement' | 'equipment' | 'enemy';
 
 interface RogueCodexProps {
     isOpen: boolean;
@@ -191,9 +371,15 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
     // [2026-08-26 莉莉子] 解锁判定：开发者账号全解锁；普通账号按 settings 记录（获得过才解锁）
     const isDev = userSystem?.userId === 'dev_full_admin';
     const unlockedEnhSet = useMemo(() => new Set<string>(userSystem?.settings?.unlockedRogueEnhancements ?? []), [userSystem]);
+    // [2026-10-26 莉莉子 · 程拍板] 已读集：与"已收录"分开 —— NEW 角标 = 收录了但还没在图鉴里看过
+    const seenEnhSet = useMemo(() => new Set<string>(userSystem?.settings?.codexSeenEnhancements ?? []), [userSystem]);
     const unlockedEquipSet = useMemo(() => new Set<string>(userSystem?.settings?.unlockedRogueEquipments ?? []), [userSystem]);
     const isEnhUnlocked = (id: string) => isDev || unlockedEnhSet.has(id);
     const isEquipUnlocked = (id: string) => isDev || unlockedEquipSet.has(id);
+    /** [2026-10-26 莉莉子] 图鉴内的 NEW：**已收录但还没看过**。
+     *  ⚠️ 刻意**不给开发者号特判** —— 它现在也落盘记录（见 `App.recordCodexUnlock`），
+     *    所以程用自己的号就能验收这个角标。 */
+    const isEnhNew = (id: string) => unlockedEnhSet.has(id) && !seenEnhSet.has(id);
 
     // [2026-08-26 莉莉子] 过滤后按品质排序（common→rare→epic→legendary，同品质保持原顺序）
     const enhList = useMemo(() =>
@@ -202,12 +388,18 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
     const equipList = useMemo(() =>
         applyFilter(EQUIPMENT_DEFS).sort((a, b) => QUALITY_RANK[a.rarity] - QUALITY_RANK[b.rarity]),
         [applyFilter]);
+    // [2026-10-26 莉莉子] 敌方专属强化（玩家永远拿不到的那批）—— 与「强化图鉴」互补，不重复列通用的
+    const enemyEnhList = useMemo(() =>
+        applyFilter(ENEMY_ONLY_ENHANCEMENTS).sort((a, b) => QUALITY_RANK[a.rarity] - QUALITY_RANK[b.rarity]),
+        [applyFilter]);
 
-    /** 六边形图标容器（品质色描边发光） */
+    /** 六边形图标容器（品质色描边发光）—— 原 `w-16 h-16 mx-auto` */
     const hexIcon = (icon: string, alt: string, color: string) => (
         <div
-            className="w-16 h-16 mx-auto flex items-center justify-center"
+            className="mx-auto flex items-center justify-center"
             style={{
+                width: CODEX_UI.iconBoxSize,
+                height: CODEX_UI.iconBoxSize,
                 clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
                 background: `${color}18`,
                 border: `1px solid ${color}66`,
@@ -218,43 +410,95 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
         </div>
     );
 
-    /** 品质标签 */
+    /** 品质标签 —— 原 `text-[10px] px-1.5 py-0.5` */
     const rarityBadge = (rarity: EnhancementRarity) => {
         const meta = RARITY_META[rarity];
         return (
-            <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-mono"
-                style={{ color: meta.color, border: `1px solid ${meta.color}44`, background: `${meta.color}11` }}>
+            <span className="shrink-0 rounded font-mono"
+                style={{
+                    color: meta.color,
+                    fontSize: CODEX_UI.badgeFontSize,
+                    lineHeight: lh(CODEX_UI.badgeLine),
+                    paddingLeft: CODEX_UI.badgePadXSm,
+                    paddingRight: CODEX_UI.badgePadXSm,
+                    paddingTop: CODEX_UI.badgePadY,
+                    paddingBottom: CODEX_UI.badgePadY,
+                    border: `1px solid ${meta.color}44`,
+                    background: `${meta.color}11`,
+                }}>
                 {meta.label}
             </span>
         );
     };
 
     /** 强化信息块 */
-    const renderEnhBlock = (e: MazeBuff) => {
+    const renderEnhBlock = (e: MazeBuff, isNew = false) => {
         const meta = RARITY_META[e.rarity];
         const trigger = getBattleEffects(e)[0]?.trigger;
         const effectClass = getBattleEffects(e)[0]?.effectClass;
         return (
             <div
                 key={e.id}
-                className="rounded-2xl border p-4 flex flex-col gap-3 transition-all hover:scale-[1.03] hover:-translate-y-0.5 cursor-pointer"
-                style={{ background: meta.cardBg, borderColor: `${meta.color}55`, boxShadow: `0 0 20px ${meta.color}1f` }}
+                className="relative rounded-2xl border flex flex-col transition-all hover:scale-[1.03] hover:-translate-y-0.5 cursor-pointer"
+                style={{
+                    background: meta.cardBg,
+                    borderColor: `${meta.color}55`,
+                    boxShadow: `0 0 20px ${meta.color}1f`,
+                    padding: CODEX_UI.cardPad,       // 原 p-4
+                    gap: CODEX_UI.cardGap,           // 原 gap-3
+                    minHeight: CODEX_UI.cardMinH,    // 三种卡片统一最小高（缺陷②）
+                }}
             >
+                {/* [2026-10-26 莉莉子] 图鉴内 NEW 角标 —— 收录了但还没看过的那几条（原 text-[10px] + px-1.5 py-0.5） */}
+                {isNew && (
+                    <span className="absolute -top-2 -right-2 z-10 rounded-md font-black tracking-widest text-black bg-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.85)]"
+                        style={{
+                            fontSize: CODEX_UI.newFontSize,
+                            lineHeight: lh(CODEX_UI.newLine),
+                            paddingLeft: CODEX_UI.newPadX,
+                            paddingRight: CODEX_UI.newPadX,
+                            paddingTop: CODEX_UI.newPadY,
+                            paddingBottom: CODEX_UI.newPadY,
+                        }}>
+                        NEW
+                    </span>
+                )}
                 {hexIcon(e.icon, e.name, meta.color)}
-                <div className="text-center text-sm font-bold tracking-wide truncate"
-                    style={{ color: '#fff', textShadow: `0 0 10px ${meta.color}66` }}>{e.name}</div>
-                <div className="flex flex-wrap justify-center gap-1.5">
+                <div className="text-center font-bold tracking-wide truncate"
+                    style={{
+                        color: '#fff',
+                        textShadow: `0 0 10px ${meta.color}66`,
+                        fontSize: CODEX_UI.nameFontSize,          // 原 text-sm
+                        lineHeight: lh(CODEX_UI.nameLine),
+                    }}>{e.name}</div>
+                <div className="flex flex-wrap justify-center" style={{ gap: CODEX_UI.badgeGap }}>
                     {rarityBadge(e.rarity)}
                     {trigger && (
-                        <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-mono text-cyan-300 border border-cyan-400/30 bg-cyan-400/10">
+                        <span className="shrink-0 rounded font-mono text-cyan-300 border border-cyan-400/30 bg-cyan-400/10"
+                            style={{
+                                fontSize: CODEX_UI.badgeFontSize,     // 原 text-[10px] px-1.5 py-0.5
+                                lineHeight: lh(CODEX_UI.badgeLine),
+                                paddingLeft: CODEX_UI.badgePadXSm,
+                                paddingRight: CODEX_UI.badgePadXSm,
+                                paddingTop: CODEX_UI.badgePadY,
+                                paddingBottom: CODEX_UI.badgePadY,
+                            }}>
                             {TRIGGER_LABELS[trigger]}
                         </span>
                     )}
                 </div>
-                <p className="text-gray-400 text-xs leading-snug line-clamp-3 min-h-[3rem]">{e.description}</p>
+                <p className="text-gray-400" style={CODEX_DESC_STYLE}>{e.description}</p>
                 {effectClass && (
                     <div className="mt-auto text-center">
-                        <span className="text-[10px] px-2 py-0.5 rounded-full font-mono text-purple-200 border border-purple-400/30 bg-purple-500/10">
+                        <span className="rounded-full font-mono text-purple-200 border border-purple-400/30 bg-purple-500/10"
+                            style={{
+                                fontSize: CODEX_UI.badgeFontSize,     // 原 text-[10px] px-2 py-0.5
+                                lineHeight: lh(CODEX_UI.badgeLine),
+                                paddingLeft: CODEX_UI.badgePadXMd,
+                                paddingRight: CODEX_UI.badgePadXMd,
+                                paddingTop: CODEX_UI.badgePadY,
+                                paddingBottom: CODEX_UI.badgePadY,
+                            }}>
                             {EFFECT_LABELS[effectClass]}
                         </span>
                     </div>
@@ -270,23 +514,51 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
         return (
             <div
                 key={e.id}
-                className="rounded-2xl border p-4 flex flex-col gap-3 transition-all hover:scale-[1.03] hover:-translate-y-0.5 cursor-pointer"
-                style={{ background: meta.cardBg, borderColor: `${meta.color}55`, boxShadow: `0 0 20px ${meta.color}1f` }}
+                className="rounded-2xl border flex flex-col transition-all hover:scale-[1.03] hover:-translate-y-0.5 cursor-pointer"
+                style={{
+                    background: meta.cardBg,
+                    borderColor: `${meta.color}55`,
+                    boxShadow: `0 0 20px ${meta.color}1f`,
+                    padding: CODEX_UI.cardPad,       // 原 p-4
+                    gap: CODEX_UI.cardGap,           // 原 gap-3
+                    minHeight: CODEX_UI.cardMinH,    // 三种卡片统一最小高（缺陷②）
+                }}
             >
                 {hexIcon(e.icon, e.name, meta.color)}
-                <div className="text-center text-sm font-bold tracking-wide truncate"
-                    style={{ color: '#fff', textShadow: `0 0 10px ${meta.color}66` }}>{e.name}</div>
-                <div className="flex flex-wrap justify-center gap-1.5">
+                <div className="text-center font-bold tracking-wide truncate"
+                    style={{
+                        color: '#fff',
+                        textShadow: `0 0 10px ${meta.color}66`,
+                        fontSize: CODEX_UI.nameFontSize,          // 原 text-sm
+                        lineHeight: lh(CODEX_UI.nameLine),
+                    }}>{e.name}</div>
+                <div className="flex flex-wrap justify-center" style={{ gap: CODEX_UI.badgeGap }}>
                     {rarityBadge(e.rarity)}
                     {e.isArmament && (
-                        <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-mono text-amber-200 border border-amber-300/30 bg-amber-400/10">武装</span>
+                        <span className="shrink-0 rounded font-mono text-amber-200 border border-amber-300/30 bg-amber-400/10"
+                            style={{
+                                fontSize: CODEX_UI.armFontSize,       // 原 text-[10px] px-1.5 py-0.5
+                                lineHeight: lh(CODEX_UI.armLine),
+                                paddingLeft: CODEX_UI.badgePadXSm,
+                                paddingRight: CODEX_UI.badgePadXSm,
+                                paddingTop: CODEX_UI.badgePadY,
+                                paddingBottom: CODEX_UI.badgePadY,
+                            }}>武装</span>
                     )}
                 </div>
-                <p className="text-gray-400 text-xs leading-snug line-clamp-3 min-h-[3rem]">{e.description}</p>
+                <p className="text-gray-400" style={CODEX_DESC_STYLE}>{e.description}</p>
                 {badges.length > 0 && (
-                    <div className="mt-auto flex flex-wrap justify-center gap-1.5">
+                    <div className="mt-auto flex flex-wrap justify-center" style={{ gap: CODEX_UI.badgeGap }}>
                         {badges.map(b => (
-                            <span key={b} className="shrink-0 text-[10px] px-2 py-0.5 rounded-full font-mono text-cyan-200 border border-cyan-400/30 bg-cyan-500/10">{b}</span>
+                            <span key={b} className="shrink-0 rounded-full font-mono text-cyan-200 border border-cyan-400/30 bg-cyan-500/10"
+                                style={{
+                                    fontSize: CODEX_UI.badgeFontSize,   // 原 text-[10px] px-2 py-0.5
+                                    lineHeight: lh(CODEX_UI.badgeLine),
+                                    paddingLeft: CODEX_UI.badgePadXMd,
+                                    paddingRight: CODEX_UI.badgePadXMd,
+                                    paddingTop: CODEX_UI.badgePadY,
+                                    paddingBottom: CODEX_UI.badgePadY,
+                                }}>{b}</span>
                         ))}
                     </div>
                 )}
@@ -294,18 +566,38 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
         );
     };
 
-    /** [2026-08-26 莉莉子] 未解锁占位块：灰块 + 问号 + 锁定（刺激收集，类似遗物收藏） */
+    /** [2026-08-26 莉莉子] 未解锁占位块：灰块 + 问号 + 锁定（刺激收集，类似遗物收藏）
+     *  ⚠️ 原 `min-h-[190px]` 比解锁卡矮约 58px ⇒ 全锁定的一行会跳行高。
+     *     现改用与解锁卡**同一个** `CODEX_UI.cardMinH`（缺陷②）。 */
     const renderLockedBlock = () => (
-        <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 flex flex-col gap-3 items-center justify-center min-h-[190px]">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center bg-white/[0.04] border border-white/10">
-                <Lock size={22} className="text-gray-600" />
+        <div className="rounded-2xl border border-white/10 bg-slate-950/50 flex flex-col items-center justify-center"
+            style={{
+                padding: CODEX_UI.cardPad,       // 原 p-4
+                gap: CODEX_UI.cardGap,           // 原 gap-3
+                minHeight: CODEX_UI.cardMinH,    // 原 min-h-[190px]
+            }}>
+            <div className="rounded-full flex items-center justify-center bg-white/[0.04] border border-white/10"
+                style={{ width: CODEX_UI.iconBoxSize, height: CODEX_UI.iconBoxSize }}>
+                <Lock size={CODEX_UI.lockIconSize} className="text-gray-600" />
             </div>
-            <div className="text-sm font-bold text-gray-600 tracking-widest">？？？</div>
-            <span className="text-[10px] px-1.5 py-0.5 rounded font-mono text-gray-500 border border-white/10 bg-white/[0.04]">未解锁</span>
+            <div className="font-bold text-gray-600 tracking-widest"
+                style={{
+                    fontSize: CODEX_UI.lockQFontSize,          // 原 text-sm
+                    lineHeight: lh(CODEX_UI.lockQLine),
+                }}>？？？</div>
+            <span className="rounded font-mono text-gray-500 border border-white/10 bg-white/[0.04]"
+                style={{
+                    fontSize: CODEX_UI.lockFontSize,           // 原 text-[10px] px-1.5 py-0.5
+                    lineHeight: lh(CODEX_UI.lockLine),
+                    paddingLeft: CODEX_UI.badgePadXSm,
+                    paddingRight: CODEX_UI.badgePadXSm,
+                    paddingTop: CODEX_UI.badgePadY,
+                    paddingBottom: CODEX_UI.badgePadY,
+                }}>未解锁</span>
         </div>
     );
 
-    const currentList = tab === 'enhancement' ? enhList : equipList;
+    const currentList = tab === 'enhancement' ? enhList : tab === 'enemy' ? enemyEnhList : equipList;
 
     return (
         <motion.div
@@ -313,42 +605,69 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute inset-0 z-[1000] bg-gradient-to-br from-slate-950 via-indigo-950/80 to-slate-900 text-white font-sans select-none overflow-hidden"
+            className="absolute inset-0 z-[1000] bg-gradient-to-br from-slate-950 via-indigo-950/80 to-slate-900 text-white font-sans select-none overflow-hidden flex flex-col"
         >
-            {/* 顶部栏：返回 + 标题 + 筛选（搜索 + 品质多选 + 重置） */}
-            <div className="relative z-20 flex items-center gap-4 px-6 pt-5 pb-4 border-b border-white/10 bg-black/30 backdrop-blur-sm">
+            {/* 顶部栏：返回 + 标题 + 筛选（搜索 + 品质多选 + 重置）—— 原 px-6 pt-5 pb-4 gap-4 */}
+            <div className="relative z-20 shrink-0 flex items-center border-b border-white/10 bg-black/30 backdrop-blur-sm"
+                style={{
+                    paddingLeft: CODEX_UI.topPadX,
+                    paddingRight: CODEX_UI.topPadX,
+                    paddingTop: CODEX_UI.topPadTop,
+                    paddingBottom: CODEX_UI.topPadBottom,
+                    gap: CODEX_UI.topGap,
+                }}>
                 <button
                     onClick={() => { eventBus.emit(GameEvents.UI_BACK); onClose(); }}
-                    className="p-2.5 rounded-full bg-white/5 hover:bg-white/20 border border-white/10 hover:border-white/40 transition-all group"
+                    className="rounded-full bg-white/5 hover:bg-white/20 border border-white/10 hover:border-white/40 transition-all group"
+                    style={{ padding: CODEX_UI.backPad }}   // 原 p-2.5
                     title="返回"
                 >
-                    <ArrowLeft size={20} className="text-gray-300 group-hover:text-white transition-colors" />
+                    <ArrowLeft size={CODEX_UI.backIconSize} className="text-gray-300 group-hover:text-white transition-colors" />
                 </button>
                 <div className="flex flex-col">
-                    <span className="text-lg font-black tracking-widest drop-shadow-[0_0_12px_rgba(139,92,246,0.5)]">逻辑研习</span>
-                    <span className="text-[11px] text-gray-400 font-mono tracking-wider">悖论图鉴 · CODEX</span>
+                    <span className="font-black tracking-widest drop-shadow-[0_0_12px_rgba(139,92,246,0.5)]"
+                        style={{
+                            fontSize: CODEX_UI.titleFontSize,          // 原 text-lg
+                            lineHeight: lh(CODEX_UI.titleLine),
+                        }}>逻辑研习</span>
+                    <span className="text-gray-400 font-mono tracking-wider"
+                        style={{
+                            fontSize: CODEX_UI.subtitleFontSize,       // 原 text-[11px]
+                            lineHeight: lh(CODEX_UI.subtitleLine),
+                        }}>悖论图鉴 · CODEX</span>
                 </div>
 
                 {/* 筛选区 */}
                 <div className="ml-auto flex items-center gap-2">
-                    {/* 文字搜索 */}
-                    <div className="relative">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                    {/* 文字搜索 —— 原 w-44 pl-8 pr-7 py-1.5 text-sm */}
+                    <div className="relative" style={{ width: CODEX_UI.searchWidth }}>
+                        <Search size={CODEX_UI.searchIconSize} className="absolute top-1/2 -translate-y-1/2 text-gray-500"
+                            style={{ left: CODEX_UI.searchIconLeft }} />
                         <input
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             placeholder="搜索名称 / 描述…"
-                            className="w-44 pl-8 pr-7 py-1.5 rounded-full bg-white/[0.06] border border-white/15 focus:border-purple-400/60 focus:bg-white/[0.09] outline-none text-sm placeholder-gray-500 transition-all"
+                            className="w-full rounded-full bg-white/[0.06] border border-white/15 focus:border-purple-400/60 focus:bg-white/[0.09] outline-none placeholder-gray-500 transition-all"
+                            style={{
+                                fontSize: CODEX_UI.searchFontSize,
+                                lineHeight: lh(CODEX_UI.searchLine),
+                                paddingLeft: CODEX_UI.searchPadLeft,
+                                paddingRight: CODEX_UI.searchPadRight,
+                                paddingTop: CODEX_UI.searchPadY,
+                                paddingBottom: CODEX_UI.searchPadY,
+                            }}
                         />
                         {search && (
-                            <button onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setSearch(''); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
-                                <X size={14} />
+                            <button onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setSearch(''); }}
+                                className="absolute top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                                style={{ right: CODEX_UI.searchClearRight }}>
+                                <X size={CODEX_UI.searchIconSize} />
                             </button>
                         )}
                     </div>
 
-                    {/* 品质多选 */}
-                    <div className="flex items-center gap-1.5">
+                    {/* 品质多选 —— 原 gap-1.5 px-2.5 py-1.5 text-xs */}
+                    <div className="flex items-center" style={{ gap: CODEX_UI.chipGap }}>
                         {QUALITY_ORDER.map(q => {
                             const meta = RARITY_META[q];
                             const active = qualities.has(q);
@@ -357,75 +676,171 @@ export const RogueCodex: React.FC<RogueCodexProps> = ({ isOpen, onClose, userSys
                                 <button
                                     key={q}
                                     onClick={() => {eventBus.emit(GameEvents.UI_CLICK); toggleQuality(q); }}
-                                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border transition-all text-xs"
+                                    className="flex items-center rounded-full border transition-all"
                                     style={{
+                                        gap: CODEX_UI.chipGap,
+                                        paddingLeft: CODEX_UI.chipPadX,
+                                        paddingRight: CODEX_UI.chipPadX,
+                                        paddingTop: CODEX_UI.chipPadY,
+                                        paddingBottom: CODEX_UI.chipPadY,
+                                        fontSize: CODEX_UI.chipFontSize,
+                                        lineHeight: lh(CODEX_UI.chipLine),
                                         borderColor: active ? `${meta.color}aa` : 'rgba(255,255,255,0.12)',
                                         background: active ? `${meta.color}22` : 'rgba(255,255,255,0.04)',
                                         color: active ? meta.color : '#9ca3af',
                                     }}
                                     title={meta.label}
                                 >
-                                    <Icon size={13} fill={active ? meta.color : 'none'} strokeWidth={1.8} style={{ color: meta.color }} />
+                                    <Icon size={CODEX_UI.chipIconSize} fill={active ? meta.color : 'none'} strokeWidth={1.8} style={{ color: meta.color }} />
                                     {meta.label}
                                 </button>
                             );
                         })}
                     </div>
 
-                    {/* 重置筛选 */}
+                    {/* 重置筛选 —— 原 gap-1.5 px-3 py-1.5 text-xs */}
                     {hasFilter && (
                         <button
                             onClick={() => {eventBus.emit(GameEvents.UI_CLICK); resetFilter(); }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-200 text-xs hover:bg-amber-500/25 transition-all"
+                            className="flex items-center rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-200 hover:bg-amber-500/25 transition-all"
+                            style={{
+                                gap: CODEX_UI.chipGap,
+                                paddingLeft: CODEX_UI.resetPadX,
+                                paddingRight: CODEX_UI.resetPadX,
+                                paddingTop: CODEX_UI.resetPadY,
+                                paddingBottom: CODEX_UI.resetPadY,
+                                fontSize: CODEX_UI.resetFontSize,
+                                lineHeight: lh(CODEX_UI.resetLine),
+                            }}
                         >
-                            <RotateCcw size={13} />
+                            <RotateCcw size={CODEX_UI.resetIconSize} />
                             重置
                         </button>
                     )}
                 </div>
             </div>
 
-            {/* 主体：左侧 tab 侧边栏 + 方块网格 */}
-            <div className="relative h-[calc(100%-80px)] flex">
-                {/* 左侧侧边栏：装备 / 强化 tab */}
-                <div className="w-44 shrink-0 border-r border-white/10 bg-black/20 flex flex-col gap-1.5 p-3">
+            {/* 主体：左侧 tab 侧边栏 + 方块网格
+                🔴 原为 `h-[calc(100%-80px)]`：用硬编码 80 去抵消顶栏高度，而顶栏实际约 77px
+                   ⇒ 字号一放大差值就露出来。现改由 flex 让主体自然 `flex-1` 撑满（缺陷①，无魔法数字）。 */}
+            <div className="relative flex-1 min-h-0 flex">
+                {/* 左侧侧边栏：装备 / 强化 tab —— 原 w-44 gap-1.5 p-3 */}
+                <div className="shrink-0 border-r border-white/10 bg-black/20 flex flex-col"
+                    style={{
+                        width: CODEX_UI.sideWidth,
+                        padding: CODEX_UI.sidePad,
+                        gap: CODEX_UI.sideGap,
+                    }}>
                     <button
                         onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setTab('equipment'); }}
-                        className={`flex items-center gap-2.5 px-3 py-3 rounded-xl border transition-all text-sm
+                        className={`flex items-center rounded-xl border transition-all
                             ${tab === 'equipment'
                                 ? 'bg-purple-500/20 border-purple-400/50 text-white shadow-[0_0_16px_rgba(168,85,247,0.3)]'
                                 : 'border-transparent text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
+                        style={{
+                            gap: CODEX_UI.tabGap,
+                            paddingLeft: CODEX_UI.tabPadX,
+                            paddingRight: CODEX_UI.tabPadX,
+                            paddingTop: CODEX_UI.tabPadY,
+                            paddingBottom: CODEX_UI.tabPadY,
+                            fontSize: CODEX_UI.tabFontSize,        // 原 text-sm
+                            lineHeight: lh(CODEX_UI.tabLine),
+                        }}
                     >
-                        <Swords size={16} className="shrink-0" />
+                        <Swords size={CODEX_UI.tabIconSize} className="shrink-0" />
                         <span className="font-medium">装备图鉴</span>
-                        <span className="ml-auto text-[10px] font-mono opacity-60">{EQUIPMENT_DEFS.length}</span>
+                        <span className="ml-auto font-mono opacity-60"
+                            style={{
+                                fontSize: CODEX_UI.countFontSize,   // 原 text-[10px]
+                                lineHeight: lh(CODEX_UI.countLine),
+                            }}>{EQUIPMENT_DEFS.length}</span>
                     </button>
                     <button
                         onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setTab('enhancement'); }}
-                        className={`flex items-center gap-2.5 px-3 py-3 rounded-xl border transition-all text-sm
+                        className={`flex items-center rounded-xl border transition-all
                             ${tab === 'enhancement'
                                 ? 'bg-purple-500/20 border-purple-400/50 text-white shadow-[0_0_16px_rgba(168,85,247,0.3)]'
                                 : 'border-transparent text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
+                        style={{
+                            gap: CODEX_UI.tabGap,
+                            paddingLeft: CODEX_UI.tabPadX,
+                            paddingRight: CODEX_UI.tabPadX,
+                            paddingTop: CODEX_UI.tabPadY,
+                            paddingBottom: CODEX_UI.tabPadY,
+                            fontSize: CODEX_UI.tabFontSize,        // 原 text-sm
+                            lineHeight: lh(CODEX_UI.tabLine),
+                        }}
                     >
-                        <Sparkles size={16} className="shrink-0" />
+                        <Sparkles size={CODEX_UI.tabIconSize} className="shrink-0" />
                         <span className="font-medium">强化图鉴</span>
-                        <span className="ml-auto text-[10px] font-mono opacity-60">{PLAYER_ENHANCEMENTS.length}</span>
+                        <span className="ml-auto font-mono opacity-60"
+                            style={{
+                                fontSize: CODEX_UI.countFontSize,   // 原 text-[10px]
+                                lineHeight: lh(CODEX_UI.countLine),
+                            }}>{PLAYER_ENHANCEMENTS.length}</span>
+                    </button>
+                    {/* [2026-10-26 莉莉子] 敌方强化页签 —— 程报「只能看到玩家能拿到什么，看不到敌人能拿什么」 */}
+                    <button
+                        onClick={() => {eventBus.emit(GameEvents.UI_CLICK); setTab('enemy'); }}
+                        className={`flex items-center rounded-xl border transition-all
+                            ${tab === 'enemy'
+                                ? 'bg-red-500/20 border-red-400/50 text-white shadow-[0_0_16px_rgba(239,68,68,0.3)]'
+                                : 'border-transparent text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}
+                        style={{
+                            gap: CODEX_UI.tabGap,
+                            paddingLeft: CODEX_UI.tabPadX,
+                            paddingRight: CODEX_UI.tabPadX,
+                            paddingTop: CODEX_UI.tabPadY,
+                            paddingBottom: CODEX_UI.tabPadY,
+                            fontSize: CODEX_UI.tabFontSize,        // 原 text-sm
+                            lineHeight: lh(CODEX_UI.tabLine),
+                        }}
+                    >
+                        <Skull size={CODEX_UI.tabIconSize} className="shrink-0" />
+                        <span className="font-medium">敌方强化</span>
+                        <span className="ml-auto font-mono opacity-60"
+                            style={{
+                                fontSize: CODEX_UI.countFontSize,   // 原 text-[10px]
+                                lineHeight: lh(CODEX_UI.countLine),
+                            }}>{ENEMY_ONLY_ENHANCEMENTS.length}</span>
                     </button>
                 </div>
 
-                {/* 方块网格（[2026-08-26] 隐藏滚动条保留滚轮；未解锁显示锁定块） */}
-                <div className="flex-1 overflow-y-auto px-6 py-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {/* 方块网格（[2026-08-26] 隐藏滚动条保留滚轮；未解锁显示锁定块）—— 原 px-6 py-5 */}
+                <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                    style={{
+                        paddingLeft: CODEX_UI.gridPadX,
+                        paddingRight: CODEX_UI.gridPadX,
+                        paddingTop: CODEX_UI.gridPadY,
+                        paddingBottom: CODEX_UI.gridPadY,
+                    }}>
                     {currentList.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500">
-                            <Inbox size={44} />
-                            <span className="text-sm font-mono">无匹配条目</span>
+                        <div className="h-full flex flex-col items-center justify-center text-gray-500"
+                            style={{ gap: CODEX_UI.emptyGap }}>
+                            <Inbox size={CODEX_UI.emptyIconSize} />
+                            <span className="font-mono"
+                                style={{
+                                    fontSize: CODEX_UI.emptyFontSize,   // 原 text-sm
+                                    lineHeight: lh(CODEX_UI.emptyLine),
+                                }}>无匹配条目</span>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-3">
+                        <div className="grid"
+                            style={{
+                                gridTemplateColumns: `repeat(${CODEX_UI.gridCols}, minmax(0, 1fr))`,  // 原 repeat(auto-fill,minmax(210px,1fr)) = 实测 6 列
+                                gap: CODEX_UI.gridGap,                                              // 原 gap-3
+                            }}>
                             {currentList.map(it => {
                                 if (tab === 'enhancement') {
                                     const e = it as MazeBuff;
-                                    return isEnhUnlocked(e.id) ? renderEnhBlock(e) : renderLockedBlock();
+                                    return isEnhUnlocked(e.id) ? renderEnhBlock(e, isEnhNew(e.id)) : renderLockedBlock();
+                                }
+                                // [2026-10-26 莉莉子 · 程拍板「遇到过才解锁」]
+                                //   敌方强化同样走解锁门槛 —— 进入战斗时敌人携带的强化已被记为已收录，
+                                //   没遭遇过的显示为锁定块（否则"收集图鉴"这件事对敌方那半完全不存在）。
+                                if (tab === 'enemy') {
+                                    const e = it as MazeBuff;
+                                    return isEnhUnlocked(e.id) ? renderEnhBlock(e, isEnhNew(e.id)) : renderLockedBlock();
                                 }
                                 const e = it as EquipmentDef;
                                 return isEquipUnlocked(e.id) ? renderEquipBlock(e) : renderLockedBlock();

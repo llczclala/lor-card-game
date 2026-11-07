@@ -14,7 +14,7 @@ import type { MazeEnhancement } from '../../../data/roguelike/enhancements';
 import { EnhancementCard } from './EnhancementCard';
 import { ConfirmDialog } from '../ConfirmDialog'; // [2026-10-08 交互回响层 批次2] 通用二次确认（净化删卡 / 派卡探路）
 // [2026-10-03 莉莉子] 多卡/多强化并排的**统一间距口径**（唯一出口，见该文件头注释）
-import { GAP_HAND, GAP_ENH_TILTED, CARD_ROW_GAP_Y } from '../uiSpacing';
+import { GAP_HAND, GAP_ENH_TILTED, CARD_ROW_GAP_Y, ENH_UNSELECTED_SCALE } from '../uiSpacing';
 import { ROGUE_EVENT_TYPE_LABELS, ROGUE_EVENT_RARITY_LABELS, rarityOfEvent, resolveChoiceEffects, type RogueEvent, type RogueEventEffect } from '../../../data/roguelike/events'; // [2026-08-28 事件] · [2026-10-05 P2] +稀有度标签 · [2026-10-08 瓦尔基里大赛] +resolveChoiceEffects
 // [2026-10-05 莉莉子 · 方案 P3/P4] 提示与执行**同一份真源**；`apply*` 的返回值用于结果步骤
 import { previewEffects, type EventApplyResult } from '../../../data/roguelike/eventAppliers';
@@ -213,8 +213,13 @@ const EVENT_NODE_UI_MOBILE = {
     pickCardHaloBorderWidth: 2,
     /** 数量徽章上移 px（原 -top-1.5 = -6） */
     pickCardBadgeTop: -6,
-    /** 数量徽章右移 px（原 -right-1.5 = -6） */
-    pickCardBadgeRight: -6,
+    /**
+     * 数量徽章左移 px（原 `-right-1.5` = -6，2026-11-07 由右上**改到左上**）。
+     * 为什么搬：卡面**右上**是装备/武装 pips 的位置（绝对定位外挂），
+     * `×N` 也放右上就会和它们挤成一堆（程的截图里「科尼」那张最明显）。
+     * 左上在卡面之外是空的 ⇒ 两个叠标各自安家，互不遮挡。
+     */
+    pickCardBadgeLeft: -6,
     /** 徽章左右内边距 px（原 px-1.5 = 6） */
     pickCardBadgePadX: 6,
     /** 徽章上下内边距 px（原 py-0.5 = 2） */
@@ -223,9 +228,9 @@ const EVENT_NODE_UI_MOBILE = {
     pickCardBadgeBorderWidth: 1,
     /** 徽章字号 px（原 text-xs = 12） */
     pickCardBadgeFontSize: 12,
-    /** 卡名字号 px（原 text-[11px] = 11） */
+    /** 卡名字号 px —— [2026-11-07 已弃用] 卡名不再重复印在卡面下方（卡面自己就写着），常量保留只为不破坏编号 */
     pickCardNameFontSize: 11,
-    /** 卡名最大宽（原 max-w-[130px] —— **同样被 index.css:56 打死过**，默认 'none' 锁住现状） */
+    /** 卡名最大宽 —— [2026-11-07 已弃用] 同上 */
     pickCardNameMaxWidth: 'none',
 };
 
@@ -412,6 +417,18 @@ interface NodeEventModalProps {
 //   统一升级为完整卡面手牌样式（复用 Card location="hand"，130×202）。
 // ═══════════════════════════════════════════════════════════════
 
+// [2026-11-07 程拍板 · A 方案第②条] **固定列数** —— 让"几行 × 几张"变得可预测。
+//   ── 旧实现是 `flex flex-wrap`：行数随容器宽度浮动、末行张数随机
+//      ⇒ 卡片看起来"塌在左上/正中"、右边空一大块（程的截图 4、5 就是这么来的）。
+//   ── 现在按**张数**定列数：
+//        ≤6 张 → 一行排完（列数 = 张数，整体居中）
+//        >6 张 → 固定 6 列（末行哪怕只剩 1 张，也落在第 1 列，不会整行跟着偏移）
+//   📌 6 列上限的由来：卡面 130 + 右侧外挂装备图标约 31 + 列间距 ⇒ 单列占位约 175，
+//      6 列约 1050；这块是全屏覆盖层（1680 画布减左右留白），放得下且两侧仍有呼吸空间。
+//   ⚠️ 溢出仍走 `overflow-y-auto` 且**滚动条保持隐藏**（程 2026-11-07 明确要求：不要可见滑块）。
+const PICK_GRID_MAX_COLS = 6;
+const pickGridCols = (n: number) => Math.max(1, Math.min(PICK_GRID_MAX_COLS, n));
+
 /** key → 完整 CardData（补全 runtime 字段 + 挂本局装备，装备 pips 随卡面展示） */
 const deckCardToFull = (key: string, run?: RoguelikeRunState): CardData => {
     const base = CARD_DB[key];
@@ -434,7 +451,7 @@ const DeckPickCard: React.FC<{
     const selBorder = accent === 'red'
         ? 'border-red-500 shadow-[0_0_18px_rgba(239,68,68,0.55)]'
         : 'border-yellow-400 shadow-[0_0_18px_rgba(234,179,8,0.55)]';
-    const selText = accent === 'red' ? 'text-red-300' : 'text-yellow-300';
+    // （原 `selText` 是给"卡面下方卡名"上色的；卡名已在 2026-11-07 移除 ⇒ 一并去掉）
     return (
         <button
             type="button"
@@ -464,7 +481,7 @@ const DeckPickCard: React.FC<{
                         className={`absolute z-20 rounded-full bg-slate-900 font-black shadow ${accent === 'red' ? 'border-red-500/70 text-red-300' : 'border-yellow-400/70 text-yellow-300'}`}
                         style={{
                             top: EVENT_NODE_UI.pickCardBadgeTop,
-                            right: EVENT_NODE_UI.pickCardBadgeRight,
+                            left: EVENT_NODE_UI.pickCardBadgeLeft,
                             paddingLeft: EVENT_NODE_UI.pickCardBadgePadX,
                             paddingRight: EVENT_NODE_UI.pickCardBadgePadX,
                             paddingTop: EVENT_NODE_UI.pickCardBadgePadY,
@@ -478,16 +495,10 @@ const DeckPickCard: React.FC<{
                     </span>
                 )}
             </div>
-            {/* 卡名（选中高亮/默认白，鼠标悬停高亮）（尺寸见 🎛️ EVENT_NODE_UI.pickCardName*） */}
-            <span
-                className={`font-bold text-center truncate transition-colors ${isSelected ? selText : 'text-gray-300 group-hover:text-white'}`}
-                style={{
-                    fontSize: EVENT_NODE_UI.pickCardNameFontSize,
-                    maxWidth: EVENT_NODE_UI.pickCardNameMaxWidth,
-                }}
-            >
-                {full.name}
-            </span>
+            {/* [2026-11-07 程拍板 · A 方案第①条] **卡名不再重复印在卡面下方**。
+                卡面自己就写着名字，这一行纯属冗余 —— 而在 10~12 张的界面里，
+                它每张白占 11px 字号 + 6px 间距的纵向空间，正是"三行就滚"的帮凶之一。
+                选中态的高亮反馈已由「光晕 + 卡面放大」承担，不依赖这行文字。 */}
         </button>
     );
 };
@@ -963,7 +974,8 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                             },
                                             select: {
                                                 x: 0, y: isSelected ? -50 : 0,
-                                                scale: isSelected ? 1.0 : 0.88,
+                                                // [2026-10-28] 未选中倍率改为双平台常量：手机端 0.95（卡已放大，别再压回看不清）
+                                                scale: isSelected ? 1.0 : ENH_UNSELECTED_SCALE,
                                                 rotate: isSelected ? 0 : angle,
                                                 opacity: 1,
                                                 transition: { type: 'spring', stiffness: 300 },
@@ -1371,10 +1383,19 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 >牌组没有可删的牌</p>
                             ) : (
                                 /* [2026-10-03 莉莉子 BUG修复] 手牌卡右侧外挂的装备/武装图标是绝对定位（外扩 ~31px），
-                                   原来是 gap-3(12px) ⇒ 图标被邻卡压住。间距改取 uiSpacing 口径 */
+                                   原来是 gap-3(12px) ⇒ 图标被邻卡压住。间距改取 uiSpacing 口径
+                                   [2026-11-07 程拍板 · A 方案] `flex flex-wrap` → **固定列数 grid**（列数见 `pickGridCols`）；
+                                   滑块仍保持隐藏（`[&::-webkit-scrollbar]:hidden`）。 */
                                 <div
-                                    className="flex flex-wrap justify-center overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                                    style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y, maxHeight: EVENT_NODE_UI.removeGridMaxHeight }}
+                                    className="grid justify-center overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                                    style={{
+                                        gridTemplateColumns: `repeat(${pickGridCols(removableDeck.length)}, max-content)`,
+                                        columnGap: GAP_HAND,
+                                        rowGap: CARD_ROW_GAP_Y,
+                                        maxHeight: EVENT_NODE_UI.removeGridMaxHeight,
+                                        alignItems: 'start',
+                                        justifyItems: 'center',
+                                    }}
                                 >
                                     {removableDeck.map(key => {
                                         const isPick = removePicks.includes(key);
@@ -1541,8 +1562,18 @@ export const NodeEventModal: React.FC<NodeEventModalProps> = ({ type, hp, maxHp,
                                 {restFiltered.length === 0 ? (
                                     <p className="text-gray-500 text-center" style={{ fontSize: REST_NODE_UI.emptyFontSize, paddingTop: REST_NODE_UI.emptyPadY, paddingBottom: REST_NODE_UI.emptyPadY }}>牌组没有可选的卡</p>
                                 ) : (
-                                    /* [2026-10-03 莉莉子 BUG修复] 同「事件删卡」：让开卡面右侧外挂的装备/武装图标 */
-                                    <div className="flex flex-wrap justify-center" style={{ columnGap: GAP_HAND, rowGap: CARD_ROW_GAP_Y }}>
+                                    /* [2026-10-03 莉莉子 BUG修复] 同「事件删卡」：让开卡面右侧外挂的装备/武装图标
+                                       [2026-11-07 程拍板 · A 方案] 同样改成**固定列数 grid**（与删卡页共用 `pickGridCols`） */
+                                    <div
+                                        className="grid justify-center"
+                                        style={{
+                                            gridTemplateColumns: `repeat(${pickGridCols(restFiltered.length)}, max-content)`,
+                                            columnGap: GAP_HAND,
+                                            rowGap: CARD_ROW_GAP_Y,
+                                            alignItems: 'start',
+                                            justifyItems: 'center',
+                                        }}
+                                    >
                                         {restFiltered.map(key => (
                                             <DeckPickCard
                                                 key={key}

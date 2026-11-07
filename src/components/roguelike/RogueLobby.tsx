@@ -168,6 +168,16 @@ interface RogueLobbyProps {
     onSettleRun?: () => void;         // [2026-08-28] 结算当前未完成对局（App 弹二次确认）
     onResumeRun?: () => void;         // [2026-08-28] 继续上一局（恢复对局进地图）
     hasRogueClaimableReward?: boolean; // [2026-09-03 BUG修复] 是否有可领取的肉鸽任务奖励（点亮推演任务按钮黄点）
+    /** [2026-10-26 莉莉子 · 程拍板] 逻辑研习是否有"新解锁未查看"的强化 → 点亮该按钮黄点 */
+    hasCodexNew?: boolean;
+    /**
+     * [2026-11-07 程拍板] 评估嘉勉是否有**可领的东西** → 点亮该按钮黄点。
+     * 判据（三选一，任一成立即亮）：
+     *   · 有**待打开卡包**（`pendingPacks > 0`）
+     *   · 有**待打开奖励匣**（`pendingChests.length > 0`）
+     *   · 有**通行证等级奖励没领**（`countClaimablePassRewards(...) > 0`）
+     */
+    hasEvaluationReward?: boolean;
 }
 
 export const RogueLobby: React.FC<RogueLobbyProps> = ({
@@ -183,6 +193,8 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
     onSettleRun,
     onResumeRun,
     hasRogueClaimableReward = false,
+    hasCodexNew = false,
+    hasEvaluationReward = false,
 }) => {
     const selectedHero = selectedHeroKey ? CARD_DB[selectedHeroKey] : null;
     // [2026-08-28] 有未结算对局时不能开新局（前往推演置灰）
@@ -212,7 +224,10 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
             <button
                 onClick={() => {
                     eventBus.emit(GameEvents.UI_CLICK);
-                    placeholderMsg ? setPlaceholder(placeholderMsg) : onClick();
+                    // [2026-11-07 莉莉子] 原写法是「三元表达式当语句用」（`a ? f() : g()`），
+                    //   `@typescript-eslint/no-unused-expressions` 会报错。if/else 完全等价。
+                    if (placeholderMsg) setPlaceholder(placeholderMsg);
+                    else onClick();
                 }}
                 className="group relative flex flex-col items-center"
                 style={{ gap: ROGUE_LOBBY_UI.funcBtnGap }}
@@ -270,8 +285,22 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
             <div className="absolute inset-0 bg-black/20 pointer-events-none" />
 
             {/* 右上角：返回大厅 + 返回模式选择（Home 在返回按钮左侧） */}
+            {/*
+              * 🔴 [2026-10-29 莉莉子 BUG修复] `z-[999]` → `z-[900]`。
+              * ── 病根（程实测·截图）：大厅右上角这组按钮压住了「推演任务 / 评估嘉勉」两个
+              *    全屏面板**自己的关闭按钮**（那两个面板是 `z-[950]`）⇒ 面板开着却关不掉，
+              *    只能用 ESC 或点遮罩。
+              * ── 为什么不是把面板抬到 1000：`RewardClaimPopup`（领奖金光弹窗）是 `z-[999]`，
+              *    面板一旦 ≥1000 就会把**领奖弹窗**压住 ⇒ 改一个坏一个。而它是共用组件
+              *    （大厅 `MissionUI` z-[600] 也在用），不该为这一屏去动它。
+              * ── 定档依据：**大厅常驻控件不该盖住全屏面板**。
+              *    · 高于大厅自身内容（大厅内最高 `z-50`）⇒ 仍能正常悬浮在背景/信息框之上；
+              *    · 低于全屏面板（推演任务/评估嘉勉 `z-[950]`、逻辑研习 `z-[1000]`）⇒ 面板可盖住它；
+              *    · 与地图上的「评估嘉勉」入口按钮（`RogueMapScreen` 的 `z-[900]`）**同档**，口径统一。
+              * ⚠️ 别再改回 999：那会让下面两个面板的关闭按钮再次失效。
+              */}
             <div
-                className="absolute z-[999] flex items-center"
+                className="absolute z-[900] flex items-center"
                 style={{
                     top: ROGUE_LOBBY_UI.backGroupTop,
                     right: ROGUE_LOBBY_UI.backGroupRight,
@@ -356,8 +385,8 @@ export const RogueLobby: React.FC<RogueLobbyProps> = ({
                 {/* 功能入口：从左到右横排一行 */}
                 <div className="flex items-end" style={{ gap: ROGUE_LOBBY_UI.funcRowGap }}>
                     {funcBtn(rogueIcon1, '推演任务', onOpenMission, { showDot: hasRogueClaimableReward })}
-                    {funcBtn(rogueIcon2, '评估嘉勉', onOpenEvaluation)} {/* [2026-08-29] 移除占位，接评估嘉勉面板 */}
-                    {funcBtn(rogueIcon3, '逻辑研习', onOpenCodex)}
+                    {funcBtn(rogueIcon2, '评估嘉勉', onOpenEvaluation, { showDot: hasEvaluationReward })} {/* [2026-08-29] 移除占位，接评估嘉勉面板 · [2026-11-07] +待领黄点 */}
+                    {funcBtn(rogueIcon3, '逻辑研习', onOpenCodex, { showDot: hasCodexNew })}
                 </div>
             </div>
 
