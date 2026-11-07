@@ -1,6 +1,22 @@
 const { app, BrowserWindow, Menu } = require('electron');
 const path = require('path');
 
+// ══════════════════════════════════════════════════════════════════════════
+// [2026-11-06 莉莉子 · 超元链接打洞] WebRTC 命令行开关
+//
+// ⚠️ 必须在 app.whenReady() 之前调用 —— 命令行开关只在启动阶段生效。
+//
+// 关掉「用 mDNS 随机名隐藏本地 IP」：
+//   Chromium 默认会把 ICE 里的本地地址替换成 `abcd-1234.local` 这种随机名。
+//   对方机器通常解析不了这个域名 ⇒ **同一个局域网内的两台机器也会连不上**，
+//   只能退到 STUN 反射地址；而「从自己家访问自己家的外网映射」很多家用路由器
+//   并不支持（NAT hairpin），于是彻底打不通。
+//   我们是点对点联机应用，需要真实的内网地址，所以关掉它。
+//
+// 注意：`disable-features` 只应在一个地方设置，多个 appendSwitch 会互相覆盖。
+// ══════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+
 // 保持对 window 对象的全局引用，避免被 JS 垃圾回收
 let mainWindow;
 
@@ -35,8 +51,10 @@ function createWindow() {
   // 注意：我们加载的是打包后的 dist 目录下的文件
   mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
 
-  // [调试修改] 强制自动打开控制台，一定要加这一行！
-//   mainWindow.webContents.openDevTools();
+  // [2026-11-07 莉莉子 · 已恢复] 不自动开 DevTools。
+  //   原因：`vite.config.ts` 的 debugProtection 会让一开控制台就撞 debugger 死循环、游戏暂停；
+  //   同时 disableConsoleOutput 会把 console 整个抹掉，开了也看不到东西。
+  // mainWindow.webContents.openDevTools();
 
   // 当窗口关闭时
   mainWindow.on('closed', () => {

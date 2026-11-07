@@ -19,15 +19,23 @@ const config: CapacitorConfig = {
   webDir: 'dist-android',
   android: {
     backgroundColor: '#000000',
+    // [2026-11-07 超元链接] 允许 HTTPS 页面发起非加密的 WebSocket。
+    //
+    // 安卓壳用 `https://localhost` 加载页面，而 Chrome 内核的混合内容策略禁止
+    // HTTPS 页面连 `ws://`（非加密）⇒ 手机端会直接报：
+    //   "An insecure WebSocket connection may not be initiated from a page loaded over HTTPS"
+    // 自建的信令节点没有 TLS 证书，联机走的就是 ws://，所以必须放开这一条。
+    //
+    // ⚠️ 将来若给信令服务器配上真证书改走 wss://，这一条可以关掉（更安全）。
+    // PC 端不受影响：那边是 file:// 加载 + webSecurity:false。
+    allowMixedContent: true,
   },
-  ...(devServerUrl
-    ? {
-        server: {
-          url: devServerUrl,
-          cleartext: true, // http:// 明文 —— 仅本机调试用
-        },
-      }
-    : {}),
+  server: {
+    // WebSocket 与 http 同属「明文流量」，Android 9+ 默认拦截 ⇒ 需要显式放开。
+    cleartext: true,
+    // 开发用热更新壳：只在设了 CAP_DEV_SERVER 时才有 url
+    ...(devServerUrl ? { url: devServerUrl } : {}),
+  },
 };
 
 export default config;

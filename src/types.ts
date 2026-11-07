@@ -422,6 +422,22 @@ export interface GameState {
   spellCasting: null | {
     cardId: string;
     step: 'select_ally' | 'select_enemy' | 'select_any' | 'choose_mode' | 'select_discard' | 'select_hand_target' | 'select_bench';
+    /**
+     * [2026-11-07 超元链接 · 施法归属] **这张法术是谁在选目标**。
+     *
+     * 病根：`spellCasting` 随快照整份下发给客方，而它此前**没有任何归属字段**
+     *   ⇒ 两端 UI 都只看「非空」就认为「是我在施法」：
+     *     · 客方替房主点亮瞄准线（程实测的现象）
+     *     · 客方点「取消」时 `useSpellSystem:1381` 的 `choiceOwner ?? 'player'`
+     *       恒走 else 分支 ⇒ 客方的卡被塞进**房主手牌**
+     *
+     * 语义与取值：写引擎真实阵营（房主视角）。快照 `SIDE_VALUE_KEYS` 已白名单
+     *   `casterSide`（`net/snapshot.ts:50`）⇒ 到客方手里自动翻成 `'player'`，
+     *   于是「`casterSide === 'player'`」在两端都等价于「我是施法方」。投影层无需改动。
+     *
+     * 缺省（undefined）按 `'player'` 处理，兼容单机既有行为。
+     */
+    casterSide?: 'player' | 'enemy';
     allyId?: string;
     targets: any[];
     isHeroLeveled?: boolean; // [新增] 告知界面：当前施放英雄法术的英雄是否已升级
@@ -574,6 +590,14 @@ export interface UserSettings {
   unlockedDesks: number[];        // 已解锁的牌桌列表
   unlockedRogueDifficulties?: string[]; // [2026-08-07] 肉鸽已解锁难度（normal/secret/topsecret，全卡档视为全解锁）
   unlockedRogueEnhancements?: string[]; // [2026-08-26 逻辑研习] 肉鸽图鉴已解锁强化 id（获得过才解锁；开发者账号全解锁）
+  /**
+   * [2026-10-26 莉莉子 · 程拍板] 逻辑研习：**已经打开图鉴看过**的强化 id。
+   * ⚠️ 与 `unlockedRogueEnhancements`（已收录）是**两件事**：
+   *    · 收录 ← "获得过 / 遭遇过"（写入点 = `App.recordCodexUnlock`）
+   *    · 已读 ← "打开图鉴看过"（图鉴**关闭时**整批写入）
+   * 两者之差 = 图鉴里的 NEW 角标 + 大厅「逻辑研习」按钮的黄点。
+   */
+  codexSeenEnhancements?: string[];
   unlockedRogueEquipments?: string[];   // [2026-08-26 逻辑研习] 肉鸽图鉴已解锁装备 id（获得过才解锁；开发者账号全解锁）
   ownedArmaments?: string[]; // [2026-08-29 评估嘉勉] 已拥有武装 id 的种类名（stock>0 的 id 集合；旧读取兼容，权威请用 armamentStock）
   armamentStock?: Record<string, number>; // [2026-09-07 真数量库存] 每件武装库存数量（普通上限 1【2026-10-20 由 3 改 1】/消耗品不限；占用按天启者独立、消耗品发挥后-1）

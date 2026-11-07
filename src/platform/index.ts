@@ -14,6 +14,16 @@ import { App } from '@capacitor/app';
 export const isNative = (): boolean => Capacitor.isNativePlatform();
 
 /**
+ * 「超元链接」（1V1 联机）在当前平台是否可用。
+ *
+ * [2026-11-08 莉莉子] 安卓端暂不支持联机 —— `src/net/` 的传输层依赖 WebRTC 打洞 +
+ * 明文 `ws://` 自建信令，在 WebView 里既没验证过、也会被 mixed-content 拦。
+ * 所以安卓壳里把入口锁死（灰置 + 文案说明），避免玩家点进去卡在「连不上」。
+ * 判定收在这一层，组件只接收 `onlineLocked` 这个 boolean（合 `./index.ts` 铁律）。
+ */
+export const canPlayOnline = (): boolean => !isNative();
+
+/**
  * 初始化平台差异。PC 版是空操作，安卓壳才生效。
  * 在 React 挂载之前调用一次即可。
  */
