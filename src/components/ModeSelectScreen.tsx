@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sword, Dices, Swords, Skull, BookOpen, ArrowLeft } from 'lucide-react';
+import { Sword, Dices, Swords, Skull, BookOpen, ArrowLeft, Lock } from 'lucide-react';
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { pickTuning } from '../platform/tuning';
 
@@ -175,13 +175,21 @@ interface ModeSelectScreenProps {
     onBack: () => void;
     onTutorialSelect?: () => void; // [新增] 教程模式入口
     onRogueSelect?: () => void; // [新增] 肉鸽模式入口
+    onOnlineSelect?: () => void; // [超元链接 · 联机] 真人对抗入口（1V1 PVP）
+    /**
+     * [2026-11-08 莉莉子] 联机入口是否锁死（安卓端暂不支持）。
+     * 由 App 从 `platform/canPlayOnline()` 推导后传入 —— 组件内不出现任何平台判定。
+     */
+    onlineLocked?: boolean;
 }
 
 export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
     onPvESelect,
     onBack,
     onTutorialSelect,
-    onRogueSelect
+    onRogueSelect,
+    onOnlineSelect,
+    onlineLocked = false
 }) => {
     // 主旋钮先拓宽成 number 再比较（`as const` 会让它变成字面量类型 ⇒ 程一调就报 TS2367）
     const stageScale = Number(MODE_UI.stageScale);
@@ -268,10 +276,19 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
                     </div>
                 </div>
 
-                {/* 3. 中心: PvP (核心模式) - 占位 */}
+                {/* 3. 中心: PvP 超元链接（真人对抗） */}
                 <div className="col-start-2 row-start-2 w-full h-full flex justify-center items-center z-30">
                     <div
-                        className="group relative bg-gradient-to-b from-red-900/40 to-black/60 border-red-500/30 rounded-full overflow-hidden grayscale opacity-80 hover:opacity-100 hover:border-red-500 transition-all hover:scale-105 cursor-not-allowed shadow-2xl flex flex-col items-center justify-center"
+                        onClick={() => {
+                            // [2026-11-08 莉莉子] 安卓端锁死：点不进去，也不播点击特效
+                            if (onlineLocked) return;
+                            eventBus.emit(GameEvents.UI_CLICK);
+                            onOnlineSelect?.();
+                        }}
+                        className={`group relative bg-gradient-to-b from-red-900/40 to-black/60 border-red-500/30 rounded-full overflow-hidden shadow-2xl flex flex-col items-center justify-center ${onlineLocked
+                            ? 'grayscale opacity-60 cursor-not-allowed'
+                            : 'hover:border-red-400 transition-all hover:scale-105 hover:shadow-[0_0_60px_rgba(220,38,38,0.45)] cursor-pointer'
+                            }`}
                         style={{
                             width: MODE_UI.centerSize,
                             height: MODE_UI.centerSize,
@@ -279,14 +296,21 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
                             gap: MODE_UI.centerGap,
                         }}
                     >
-                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(220,38,38,0.2),transparent)] opacity-50 group-hover:opacity-100 animate-pulse-slow"></div>
-                        <Swords size={MODE_UI.centerIconSize} className="text-red-500 drop-shadow-[0_0_10px_rgba(220,38,38,0.8)]" />
+                        <div className={`absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(220,38,38,0.2),transparent)] animate-pulse-slow ${onlineLocked ? 'opacity-20' : 'opacity-50 group-hover:opacity-100'}`}></div>
+                        {onlineLocked
+                            ? <Lock size={MODE_UI.centerIconSize} className="text-gray-400" />
+                            : <Swords size={MODE_UI.centerIconSize} className="text-red-500 drop-shadow-[0_0_10px_rgba(220,38,38,0.8)]" />}
                         <div className="text-center z-10">
                             <h3 className="font-black tracking-tighter text-red-100 drop-shadow-md" style={{ fontSize: MODE_UI.centerTitleFontSize }}>超元链接</h3>
-                            <p className="font-mono text-red-400/80 tracking-[0.5em]" style={{ fontSize: MODE_UI.centerDescFontSize, marginTop: MODE_UI.centerDescMarginTop }}>开始一场真人对局</p>
+                            <p
+                                className={`font-mono text-red-400/80 ${onlineLocked ? '' : 'tracking-[0.5em]'}`}
+                                style={{ fontSize: MODE_UI.centerDescFontSize, marginTop: MODE_UI.centerDescMarginTop }}
+                            >
+                                {onlineLocked ? '仅电脑端可用' : '开始一场真人对局'}
+                            </p>
                         </div>
                         <div
-                            className="absolute bg-black/60 rounded-full border border-white/10 text-gray-400 font-mono"
+                            className="absolute bg-red-950/70 rounded-full border border-red-400/30 text-red-200/80 font-mono"
                             style={{
                                 bottom: MODE_UI.badgeBottom,
                                 paddingLeft: MODE_UI.badgePadX,
@@ -296,7 +320,7 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
                                 fontSize: MODE_UI.badgeFontSize,
                             }}
                         >
-                            绝赞开发中。。。
+                            {onlineLocked ? '手机端暂不支持' : '创建或加入房间'}
                         </div>
                     </div>
                 </div>

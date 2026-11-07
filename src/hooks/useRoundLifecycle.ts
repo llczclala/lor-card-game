@@ -17,7 +17,7 @@ import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating
 import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
 // [2026-10-05 莉莉子 BUG修复 · 20261005-12] 「unit_die 强化已派发」账本（与 `isDead` 解耦；见 utils/deathLedger.ts 头注释）
 import { markUnitDieDispatched, hasUnitDieDispatched } from '../utils/deathLedger';
-import { runRogueTrigger, commitSlicePatch, getCostTaxMode, hasMassacre, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎（原 rogueBattle 分发已收编）· [2026-10-24] 费用税版本查询 / 第16条处决标记
+import { runRogueTrigger, commitSlicePatch, getCostTaxConfig, hasMassacre, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎（原 rogueBattle 分发已收编）· [2026-10-24] 费用税版本查询 / 第16条处决标记 · [2026-10-26] getCostTaxMode → getCostTaxConfig（费用税拆四条）
 import { findStrongestUnit } from '../logic/rogueBattle'; // [2026-10-24 莉莉子 · 第 16 条] 回合末处决要判"双方各自最强"
 import { runSummonEntry } from '../logic/summonEntry'; // [2026-10-06 程拍板 · A 方案] 「入场」门铃唯一实现
 
@@ -1133,8 +1133,12 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         //      照搬会让"AI 在自己回合攒的税"在玩家看到之前就被清光 ⇒ 整条强化等于空气。
         //      round_end 序列执行时 `turnOwner` 还没切换（切换在末尾的 `startRound()`）⇒ 判据可靠。
         if (stateRef.current.game.turnOwner === 'player') {
-            if (getCostTaxMode(stateRef.current.game.enemyEnhancements) === 'round') clearHandCostTax('player');
-            if (getCostTaxMode(stateRef.current.game.rogueEnhancements) === 'round') clearHandCostTax('enemy');
+            // [2026-10-26 莉莉子 · 费用税拆四条] `round` 模式 ⇒ 只清**被加价的那一类**（由配置的 `to` 决定），
+            //   不再笼统清空整格。`run` 模式则跨回合继续累积。
+            const pTax = getCostTaxConfig(stateRef.current.game.enemyEnhancements);
+            if (pTax?.mode === 'round') clearHandCostTax('player', pTax.to);
+            const eTax = getCostTaxConfig(stateRef.current.game.rogueEnhancements);
+            if (eTax?.mode === 'round') clearHandCostTax('enemy', eTax.to);
         }
         // [SBA] 回合结束效果前先清尸
         judgeLifeAndDeath();
@@ -1822,6 +1826,20 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                 //   （备战席 processDeaths / 交战区 judgeLifeAndDeath 的补派发），这里就不再发 ✗ 防重复；
                 //   发完立刻记账，供那两处反向判重。
                 if (hasUnitDieDispatched(d.card)) return;
+                // =====================================
+                // [2026-10-26 莉莉子 · 程拍板「两处旁支一起修」] **幻象消散也算「单位阵亡」的 quest 进度**
+                // ── 病根：`unit_die` 的 **quest 事件**（武装「亡者低语」的 5 次门槛）此前只在
+                //    `processDeaths`（备战席）派发；本段虽然早就接了 `unit_die` **强化**，
+                //    却同样没派 quest ⇒ 活到回合末才消散的飞剑一把都不计数（战斗中被砍死的已由
+                //    `useGameState` 的交战区补派覆盖）。
+                // ── 与下面 `runRogueTrigger` 刻意分开：强化那边排除 `RESURRECT`（防"飞剑死了又活"），
+                //    但**计数**没有理由排除 —— 幻象消散本来就该算一次阵亡。
+                // ── 放在账本判重**之后**：已经在别处派发过的尸体不再重复计数。
+                // =====================================
+                if (dieSide === 'player') {
+                    eventBus.emit(GameEvents.ROGUE_QUEST_EVENT, { event: 'unit_die' });
+                    if (d.card.isChampion) eventBus.emit(GameEvents.ROGUE_HERO_DIED, { key: d.card.key });
+                }
                 ctx.info.deadUnit = d.card;
                 runRogueTrigger(ctx, dieEnh, 'unit_die', (ec) => ec !== 'RESURRECT');
                 markUnitDieDispatched(d.card);

@@ -780,11 +780,18 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     // [搬迁] 游戏核心法术与堆叠逻辑
     // ==========================================
 
-    const startSpellCasting = (card: CardData) => {
-        setPlayerHand(prev => prev.filter(c => c.id !== card.id));
+    const startSpellCasting = (card: CardData, side: 'player' | 'enemy' = 'player') => {
+        // [2026-11-07 超元链接 · 施法归属] 补 `side` 参数：
+        //   病根（原实现固定动玩家侧）：房主替客方执行 `startSpellCasting` 时，
+        //   `setPlayerHand(filter)` 找不到客方那张卡（id 不在 playerHand）⇒ **删不掉**，
+        //   于是房主引擎里那张法术既留在 `enemyHand`、又被设成 `activeCard`
+        //   ⇒ 手牌态与施法态自相矛盾（客方手牌不减少、还能再点一次）。
+        //   现在按 side 删对应手牌，并把归属写进 `spellCasting.casterSide`。
+        const setHand = side === 'enemy' ? setEnemyHand : setPlayerHand;
+        setHand(prev => prev.filter(c => c.id !== card.id));
         setGame(prev => ({
             ...prev, activeCard: card,
-            spellCasting: { cardId: card.id, step: 'select_ally', targets: [], allyId: undefined }
+            spellCasting: { cardId: card.id, step: 'select_ally', targets: [], allyId: undefined, casterSide: side }
         }));
         setMessage("选择目标");
     };
@@ -907,13 +914,12 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
     // ── quest 那两条（#4/#5）走 `eventBus` 回抛给 `useGameState` 跑它自己的 `runGearQuest`
     //    （那是 hook 内的局部 `useCallback`，**不能 import、也不该复制第二份**）。
     // ==========================================
-    // [2026-10-13 莉莉子] 形参 `card` → `_card`：本函数体内**从未使用**它
-    //   （`on_cast_spell` 走 ctx、③④ 由 `SPELL_CAST_SETTLED` 回抛，都刻意不读卡本身）。
-    //   ⚠️ 本项由**真类型检查**（`tsc -b`）报出 `TS6133` —— 见本次交接：
-    //   `npx tsc --noEmit` 因 `tsconfig.json` 是 `files: []` 的解决方案式配置而**空转**，
-    //   它会让 `npm run build`（`tsc -b`）失败 ⇒ 项目当时**打不出包**。
-    //   三个调用点仍照旧传卡（保留"将来可能需要"的接口形状，与本仓库 `_enemyBench` 等惯例一致）。
-    const dispatchSpellCastSideEffects = (_card: CardData, owner: 'player' | 'enemy') => {
+    // [2026-10-13 莉莉子] 形参曾因"本函数体内从未使用"而改成 `_card`（`tsc -b` 的 TS6133）。
+    // [2026-10-26 莉莉子 BUG修复] **Echo 回响段搬进来后它重新被使用** ⇒ 改回 `card`，
+    //   同时消掉那个"刻意为满足类型检查而冷藏接口"的怪状态。
+    //   ⚠️ 保留这段历史的原因：`npx tsc --noEmit` 在本项目是假绿（`tsconfig.json` 是 `files: []`
+    //   的解决方案式配置，它一个文件都不编译）⇒ 这类未使用形参只会在 `tsc -b` 才暴露。
+    const dispatchSpellCastSideEffects = (card: CardData, owner: 'player' | 'enemy') => {
         // ── ① 迷宫强化 on_cast_spell：随机友军永久 +1/+1（法术共鸣 / 法术渗透）
         if (stateRef.current.game[owner === 'player' ? 'rogueEnhancements' : 'enemyEnhancements']?.length) {
             const enhList = owner === 'player' ? stateRef.current.game.rogueEnhancements : stateRef.current.game.enemyEnhancements;
@@ -944,11 +950,23 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         if (owner === 'player') {
             const isLiveUnit = (c: any): c is CardData =>
                 !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+            // [2026-10-26 莉莉子 BUG修复 · 程报「梅芙的赞美特调在天启者于战场时不生效」]
+            // ── 病根：候选池只收「我方战线的 attacker」，**漏了「敌方战线的 blocker」**——
+            //    我方单位去格挡时，那条战线的 `owner` 是 `'enemy'`（owner = 进攻发起方），
+            //    她的卡挂在 `f.blocker` 上 ⇒ 她既不参与自身装备查询（永不触发），
+            //    也不在 random_ally 的随机池里（永远轮不到 +2/+2）。
+            // ── 口径：一条战线的双方归属相反 ⇒「我方在场单位」
+            //    = 我方战线的 attacker + 敌方战线的 blocker。
             const fieldUnits: CardData[] = [
                 ...stateRef.current.playerBench.filter(isLiveUnit),
+                // 我方战线 → 我方单位是 attacker
                 ...stateRef.current.combatField
                     .filter((f: any) => f.owner === 'player' && isLiveUnit(f.attacker))
                     .map((f: any) => f.attacker as CardData),
+                // 敌方战线 → 我方单位是 blocker（此前完全没有收进来）
+                ...stateRef.current.combatField
+                    .filter((f: any) => f.owner === 'enemy' && isLiveUnit(f.blocker))
+                    .map((f: any) => f.blocker as CardData),
             ];
             if (fieldUnits.length) {
                 const growth: { id: string; buffed: CardData }[] = [];
@@ -983,8 +1001,14 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                         return changed ? next : prev; // 无变化则原样返回（React 直接 bail out）
                     });
                     setCombatField(prev => prev.map(f => {
-                        const hit = growth.find(x => x.id === f.attacker?.id);
-                        return hit && f.owner === 'player' ? { ...f, attacker: hit.buffed } : f;
+                        // [2026-10-26 莉莉子] 写回同样按归属分两侧 —— 只写 attacker 的话，
+                        //   上面把格挡者收进候选池也只是「算得出、写不回去」，等于没修。
+                        if (f.owner === 'player') {
+                            const hit = growth.find(x => x.id === f.attacker?.id);
+                            return hit ? { ...f, attacker: hit.buffed } : f;
+                        }
+                        const hit = growth.find(x => x.id === f.blocker?.id);
+                        return hit ? { ...f, blocker: hit.buffed } : f;
                     }));
                 }
             }
@@ -997,6 +1021,39 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         //    （不复制实现、也不改 `useSpellSystem` 的入参签名）。
         if (owner === 'player') {
             eventBus.emit('SPELL_CAST_SETTLED', { owner });
+        }
+
+        // ── ⑤ [2026-10-26 莉莉子 BUG修复 · 粉丝实测「安卡 2 费飞刀能刷出一手」] Echo 回响
+        //   ── 病根：本段原先长在 `commitSpell` 的**最开头**（扣费之前，且仍在"可撤回窗口"之内），
+        //      而 `cancelPendingSpell` 只退**本体** + 全额退费，**不退这个副本**
+        //      ⇒ 同一回合「打出 → 取消」N 次即可攒 N 张瞬逝飞刀（都带瞬逝，但回合内随便用）。
+        //   ── 定义本来就写着"打出**并结算**时"（`logic/keywords.ts:504`）⇒ 挪到这里才是它的本意。
+        //      与上面 ①② 同批落点（2026-10-12 那轮「施法侧时机太早族」修复漏掉了 Echo 这一段）。
+        //   ── 被反制的法术同样会走到这里（`:1849` 的 NEGATE 分支在 `continue` **之前**调用）——
+        //      与程 2026-10-12 的口径一致：「被反制掉的法术**算施放过**」。
+        if (card.keywords.includes('Echo')) {
+            const echoOwnerHand = owner === 'player'
+                ? stateRef.current.playerHand
+                : stateRef.current.enemyHand;
+            // 传本体装备表 ⇒ 复制品继承装备（G1 防递归在 applyEchoOnPlay 内）
+            const echoResult = applyEchoOnPlay(card, echoOwnerHand, owner, (owner === 'player' ? playerEquipments : enemyEquipments)?.[card.key]);
+            if (echoResult.echoedCards.length > 0) {
+                if (owner === 'player') {
+                    setPlayerHand(echoResult.hand);
+                    stateRef.current.playerHand = echoResult.hand;
+                } else {
+                    setEnemyHand(echoResult.hand);
+                    stateRef.current.enemyHand = echoResult.hand;
+                }
+                echoResult.echoedCards.forEach(echoCard => {
+                    const animId = nextAnimId('echo', echoCard.id);
+                    eventBus.emit(GameEvents.DRAW_START, {
+                        animId, card: echoCard, owner,
+                        skipHandAdd: true,
+                        skipDeckAnim: true,
+                    });
+                });
+            }
         }
     };
 
@@ -1033,31 +1090,10 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         // 一旦异常/中途退出，phase 会残留 animating → 对局死锁。finally 兜底恢复。
         // 刻意不清 spellStack（敌方慢速法术需留在堆叠交玩家响应）。
         try {
-        // [2026-08-06 莉莉子 Echo 回响] 法术打出并结算后：在手牌生成一张该牌的瞬逝复制品
-        if (card.keywords.includes('Echo')) {
-            const echoOwnerHand = owner === 'player'
-                ? stateRef.current.playerHand
-                : stateRef.current.enemyHand;
-            // [2026-10-08 第二波 · Q5] 传本体装备表 ⇒ 复制品继承装备（G1 防递归在 applyEchoOnPlay 内）
-            const echoResult = applyEchoOnPlay(card, echoOwnerHand, owner, (owner === 'player' ? playerEquipments : enemyEquipments)?.[card.key]);
-            if (echoResult.echoedCards.length > 0) {
-                if (owner === 'player') {
-                    setPlayerHand(echoResult.hand);
-                    stateRef.current.playerHand = echoResult.hand;
-                } else {
-                    setEnemyHand(echoResult.hand);
-                    stateRef.current.enemyHand = echoResult.hand;
-                }
-                echoResult.echoedCards.forEach(echoCard => {
-                    const animId = nextAnimId('echo', echoCard.id);
-                    eventBus.emit(GameEvents.DRAW_START, {
-                        animId, card: echoCard, owner,
-                        skipHandAdd: true,
-                        skipDeckAnim: true,
-                    });
-                });
-            }
-        }
+        // [2026-10-26 莉莉子 BUG修复] **Echo 回响段已从本处搬走** ——
+        //   这个位置在扣费之前、且仍在"可撤回窗口"之内（正与 `:1041-1043` 注释里
+        //   `on_cast_spell` / `player_cast_spell` 的老位置同源），会导致「打出 → 取消」白刷副本。
+        //   现统一在 `dispatchSpellCastSideEffects()` 的 ⑤ 段兑现（法术真正结算之后，含被反制的那一支）。
 
         if (card.type === 'spell-burst') {
             if (!card.parentCard) {
@@ -1083,7 +1119,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 // [2026-10-24 莉莉子 · 独立审查修复] 记下**实扣量**，供取消/退款原额退回。
                 //   ⚠️ 退款若读裸 `card.cost`，含税那部分就白扣了 ⇒ 每次「打出→取消」净亏税点。
                 card.paidCost = effectiveCost;
-                clearHandCostTax(owner);
+                // [2026-10-26 莉莉子 · 费用税拆四条] 只清「法术」那一格 —— 用掉被加价的那一类才归零
+                clearHandCostTax(owner, 'spell');
             }
 
             setGame(cleanSnapshot);
@@ -1252,7 +1289,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 // [2026-10-24 莉莉子 · 独立审查修复] 记下**实扣量**，供取消/退款原额退回。
                 //   ⚠️ 退款若读裸 `card.cost`，含税那部分就白扣了 ⇒ 每次「打出→取消」净亏税点。
                 card.paidCost = effectiveCost;
-                clearHandCostTax(owner);
+                // [2026-10-26 莉莉子 · 费用税拆四条] 只清「法术」那一格 —— 用掉被加价的那一类才归零
+                clearHandCostTax(owner, 'spell');
             }
 
             cleanSnapshot.spellCasting = null;
@@ -1347,7 +1385,12 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         // [2026-10-04 莉莉子 BUG修复 · 审计 #4] 退卡必须按**抉择归属方**分派 ——
         //   原实现固定 `setPlayerHand(...)` ⇒ AI 的抉择法术被取消时，卡会"传送"到**玩家手牌**
         //   （玩家还能再把它打出来）。归属以 `spellCasting.choiceOwner`（10-02 引入的显式字段）为准。
-        const choiceOwner = sc?.choiceOwner ?? 'player';
+        // [2026-11-07 超元链接] 兜底链补 `casterSide`。
+        //   病根：`startSpellCasting` 建的 `spellCasting` **从不写 `choiceOwner`**
+        //   ⇒ 客方取消施法时 `?? 'player'` 恒走 else ⇒ 客方的卡被塞进**房主手牌**
+        //     （房主手牌无端多出对面的卡，客方自己手牌不增不减）。
+        //   现在归属优先取 `choiceOwner`（抉择弹窗用），其次 `casterSide`（施法通用），最后才回退 player。
+        const choiceOwner = sc?.choiceOwner ?? sc?.casterSide ?? 'player';
         if (currentActive) {
             const cardToReturn = currentActive.parentCard || currentActive;
             if (choiceOwner === 'enemy') {
@@ -1536,7 +1579,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             if (stateRef) stateRef.current.game = { ...stateRef.current.game, enemyMana: nextMana, enemySpellMana: nextSpellMana };
         }
         // [2026-10-24 莉莉子 · 费用修饰器] 抉择子卡实扣完成 ⇒ 该侧费用税清零（与上面两处同口径）
-        clearHandCostTax(choiceOwner);
+        // [2026-10-26 莉莉子 · 费用税拆四条] 抉择分支同样只清「法术」那一格
+        clearHandCostTax(choiceOwner, 'spell');
 
         const effectId = transformed.effects && transformed.effects.length > 0 ? transformed.effects[0] : null;
         const effectDef = effectId ? EFFECT_DB[effectId] : null;

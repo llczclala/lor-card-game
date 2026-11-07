@@ -817,8 +817,8 @@ interface DeckBuilderProps {
     onStartGame: (deck: string[]) => void;
     userSystem: ReturnType<typeof useUserSystem>;
     onBack?: () => void;
-    // [新增] 接收来源属性（[2026-08-13] 含肉鸽编辑来源）
-    fromSource: 'lobby' | 'mode_select' | 'rogue_edit';
+    // [新增] 接收来源属性（[2026-08-13] 含肉鸽编辑来源；[2026-11-07] 加联机备战）
+    fromSource: 'lobby' | 'mode_select' | 'rogue_edit' | 'online';
     // [2026-08-02] 卡牌详情页"前往卡池"回调
     onGachaNav?: (poolId: PoolId) => void;
     // [2026-08-06] 标准对战 AI 难度选择回调
@@ -829,6 +829,14 @@ interface DeckBuilderProps {
     initialEditDeckId?: string | null;
     // [2026-10-24 莉莉子 · 卡组码] 「去抽卡」：走大厅那条「加载界面 → 共鸣抽卡」入口
     onGoGacha?: () => void;
+    /**
+     * [2026-11-07 超元链接] 联机备战：把「开始游戏」换成「创建房间 / 加入房间」。
+     *
+     * 两个按钮共用一个回调，`action` 只用来告诉 App「进房后是建房还是加入」。
+     * 将来如果改成一键匹配（走中继服务器），把 `action` 扩成 `'match'` 即可，
+     * 这里的分支结构不用再动。
+     */
+    onOnlineStart?: (deck: string[], action: 'create' | 'join') => void;
 }
 
 // 转全量卡牌数据
@@ -1031,6 +1039,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     onBackToLobby, // [2026-08-07] 解构
     initialEditDeckId, // [2026-08-13] 解构
     onGoGacha, // [2026-10-24 莉莉子 · 卡组码] 「去抽卡」
+    onOnlineStart, // [2026-11-07 超元链接] 联机：创建 / 加入房间
 }) => {
 
     const [localDeck, setLocalDeck] = useState<Record<string, number>>({});
@@ -1785,6 +1794,19 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         onStartGame(finalDeck);
     };
 
+    /**
+     * [2026-11-07 超元链接] 编辑器视图里的「创建房间 / 加入房间」。
+     * 与 `handleStart` 只差最后一跳：不开始对局，而是把卡组交给联机入口。
+     */
+    const handleEditorOnlineStart = (action: 'create' | 'join') => {
+        if (stats.total !== 40 || !deckPlayable) return;
+        if (isDirty) handleSaveDeck();
+        onOnlineStart?.(
+            Object.entries(localDeck).flatMap(([key, count]) => Array(count).fill(key)),
+            action,
+        );
+    };
+
     // ==========================================================
     // [2026-10-15 莉莉子 · 程提需求] 中间整片牌组的**整体缩放**（主旋钮 `DECK_UI.deckScale`）
     // ── 为什么不能只放大 `DIORAMA_SIZE` 里的数值：牌组方框**内部**的偏移 / 位移 / 旋转是
@@ -2251,7 +2273,9 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                     <DeckDiorama deck={hubDeck} covers={getDeckCovers(hubDeck.cards, hubDeck.skinOverrides)} cardBackImg={PERSONALIZATION_ASSETS.cardBacks[hubDeck.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex]} boardImg={PERSONALIZATION_ASSETS.desks[hubDeck.boardIndex ?? userSystem.settings.customization.currentDeskIndex]} isHub={true} />
                                 </div>
 
-                                {/* [2026-08-06 莉莉子] AI 难度选择：三选一互斥 */}
+                                {/* [2026-08-06 莉莉子] AI 难度选择：三选一互斥
+                                    [2026-11-07 超元链接] 联机对手是真人，这套 AI 难度没有意义 ⇒ 整块不渲染 */}
+                                {fromSource !== 'online' && (
                                 <div className="flex items-center" style={{ gap: HUB_UI.diffGap }}>
                                     <span className="text-gray-400 font-bold tracking-[0.25em]" style={{ fontSize: HUB_UI.diffLabelFontSize, marginRight: HUB_UI.diffLabelMarginRight }}>AI 难度</span>
                                     {([
@@ -2278,12 +2302,46 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                         </button>
                                     ))}
                                 </div>
+                                )}
 
                                 {/* [修正] 根据来源区分发车/完成构筑按钮（尺寸来自 🎛️ HUB_UI.startBtn*）*/}
                                 {/* [2026-10-24 莉莉子 · 卡组码] 「开始游戏」多一道**卡齐**校验：
                                     导入的卡组可能缺卡（程的口径：缺卡就不许开局）。
                                     这道闸门只对"含未拥有卡"的卡组生效，玩家自己的卡组恒为 true、零影响。 */}
-                                {fromSource === 'mode_select' ? (
+                                {fromSource === 'online' ? (
+                                    /* [2026-11-07 超元链接] 联机备战：一个「开始游戏」拆成两个入口。
+                                       ⚠️ 将来若验证了中继服务器、改成一键匹配，这里换成一个按钮、
+                                          action 传 'match' 即可，结构不用动。 */
+                                    <div className="flex items-center" style={{ gap: 12, width: HUB_UI.startBtnWidth }}>
+                                        {([
+                                            { action: 'create' as const, label: '创建房间', primary: true },
+                                            { action: 'join' as const, label: '加入房间', primary: false },
+                                        ]).map(({ action, label, primary }) => (
+                                            <button
+                                                key={action}
+                                                onClick={() => {
+                                                    eventBus.emit(GameEvents.UI_CLICK);
+                                                    if (!isFull || !hubPlayable) return;
+                                                    // 顺手同步编队 ⇒ 退出联机回到大厅时看到的也是这副牌
+                                                    userSystem.selectDeck(hubDeckId!);
+                                                    onOnlineStart?.(
+                                                        Object.entries(hubDeck.cards).flatMap(([k, c]: any) => Array(c).fill(k)),
+                                                        action,
+                                                    );
+                                                }}
+                                                disabled={!isFull || !hubPlayable}
+                                                className={`flex-1 rounded-2xl font-black tracking-[0.2em] flex items-center justify-center transition-all border ${(isFull && hubPlayable)
+                                                    ? (primary
+                                                        ? 'bg-gradient-to-r from-blue-600 to-cyan-400 text-white hover:scale-110 shadow-[0_10px_40px_rgba(59,130,246,0.6)] border-cyan-300/20'
+                                                        : 'bg-white/5 text-white/80 hover:bg-white/10 border-white/15')
+                                                    : 'bg-gray-900/80 text-gray-500 cursor-not-allowed border-gray-700/60'}`}
+                                                style={{ paddingTop: HUB_UI.startBtnPadY, paddingBottom: HUB_UI.startBtnPadY, fontSize: HUB_UI.startBtnFontSize, gap: HUB_UI.startBtnGap }}
+                                            >
+                                                <Play fill="currentColor" size={HUB_UI.startBtnIconSize} /> {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : fromSource === 'mode_select' ? (
                                     <button
                                         onClick={() => {
                                             eventBus.emit(GameEvents.UI_CLICK);
@@ -3119,6 +3177,31 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                             <Save fill="currentColor" size={EDITOR_UI.saveMainIconSize} />
                             {stats.total === 40 ? '完成构筑' : `还需 ${40 - stats.total} 张`}
                         </button>
+                    ) : fromSource === 'online' ? (
+                        // === 场景 C: 联机备战（[2026-11-07]）===
+                        // 与枢纽那一处保持一致：两个按钮，卡组随着动作一起交出去。
+                        // ⚠️ 将来改成一键匹配时，这里换成一个按钮即可。
+                        <div className="flex w-full" style={{ gap: 12 }}>
+                            {([
+                                { action: 'create' as const, label: '创建房间', primary: true },
+                                { action: 'join' as const, label: '加入房间', primary: false },
+                            ]).map(({ action, label, primary }) => (
+                                <button
+                                    key={action}
+                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleEditorOnlineStart(action); }}
+                                    disabled={stats.total !== 40 || !deckPlayable}
+                                    style={{ paddingTop: EDITOR_UI.mainBtnPadY, paddingBottom: EDITOR_UI.mainBtnPadY, borderRadius: EDITOR_UI.mainBtnRadius, fontSize: EDITOR_UI.mainBtnFontSize, gap: EDITOR_UI.mainBtnGap }}
+                                    className={`flex-1 font-black tracking-widest flex items-center justify-center shadow-lg transition-all border ${(stats.total === 40 && deckPlayable)
+                                        ? (primary
+                                            ? 'bg-gradient-to-r from-blue-600 to-cyan-500 hover:scale-105 text-white shadow-blue-500/30 border-cyan-300/20'
+                                            : 'bg-white/5 text-white/80 hover:bg-white/10 border-white/15')
+                                        : 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700'}
+                                    `}
+                                >
+                                    <Play fill="currentColor" size={EDITOR_UI.playMainIconSize} /> {label}
+                                </button>
+                            ))}
+                        </div>
                     ) : (
                         // === 场景 B: 从模式选择进入 (备战模式) ===
                         // 逻辑：必须满编 -> 开始游戏

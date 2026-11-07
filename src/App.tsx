@@ -3,6 +3,10 @@ import { SkipForward } from 'lucide-react'; // [2026-10-03 莉莉子] 胜利影�
 import { TitleScreen } from './components/TitleScreen';
 import { SplashScreen } from './components/SplashScreen'; // [哨兵] 免责启动画面
 import { ModeSelectScreen } from './components/ModeSelectScreen'; // [新增]
+import { OnlineRoomScreen } from './components/modes/OnlineRoomScreen'; // [超元链接 · 联机] 房间界面
+import { OnlineGameWrapper } from './components/modes/OnlineGameWrapper'; // [超元链接 · 联机] 对局包装器
+import type { Room as NetRoom } from './net/room'; // [超元链接 · 联机] 房间对象类型
+import { canPlayOnline } from './platform'; // [2026-11-08 莉莉子] 联机可用性（安卓壳里锁死入口）
 import { DeckBuilder } from './components/DeckBuilder';
 import { useAudio } from './hooks/useAudio';
 import { useSfx } from './hooks/useSfx';
@@ -85,9 +89,10 @@ import { EvaluationPanel } from './components/roguelike/EvaluationPanel'; // [20
 import { RogueMissionPanel } from './components/roguelike/RogueMissionPanel'; // [2026-08-29] 肉鸽专属任务面板
 import { useArmamentConfig } from './hooks/useArmamentConfig'; // [2026-08-29] 碳原子板武装快照
 import { useHeroDivinity } from './hooks/useHeroDivinity'; // [2026-09-28 神格神经] 节点解锁 + [2026-09-29] 神格碎片钱包
-import { computeRunShards, type ChestInstance } from './data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣 · [2026-10-03] 结算碎片改走 divinity.grantUniversalShard · [2026-10-04] +computeRunShards（结算现算，不再回读 state）
+import { computeRunShards, clearPacksOf, type ChestInstance, type ChestKind } from './data/roguelike/divinityShards'; // [2026-09-29 程拍板] 奖励匣 · [2026-10-03] 结算碎片改走 divinity.grantUniversalShard · [2026-10-04] +computeRunShards（结算现算，不再回读 state）· [2026-11-07] +clearPacksOf（通关卡包按难度分档）+ChestKind（定向开包）
 import { LevelUpToast } from './components/roguelike/LevelUpToast'; // [2026-08-12 天启者养成] 升级弹窗
 import { SACRIFICE_MAX_HP, type RandomTreasureResult } from './data/roguelike/treasure'; // [2026-08-12 宝箱节点]
+import { countClaimablePassRewards } from './data/roguelike/analystProgression'; // [2026-11-07] 评估嘉勉入口黄点：可领奖励数（与面板同源）
 import { getHallBgmByIndex, getHallBgmByVideoUrl, getHallMoviePoster } from './data/movieData'; // [核心重构] 新增视频 URL 直查 BGM · [2026-10-15 莉莉子 · 安卓] +getHallMoviePoster（自定义背景 poster 兜底）
 import { getCompletedStages, isGuidanceDismissed, dismissGuidance } from './utils/tutorialProgress'; // [新增] 引导层状态
 import { motion, AnimatePresence } from 'framer-motion';
@@ -107,6 +112,7 @@ type RogueRunEndInfo = {
 // [核心修复] AppState 增加 'shop' 状态
 type AppState = 'splash' | 'title' | 'system_loading' | 'lobby' | 'mode_select' | 'deck_builder' | 'loading' | 'game' | 'gacha'
     | 'tutorial_mode_select' | 'tutorial_stage_select' | 'tutorial_game' | 'shop'
+    | 'online_room' | 'online_game' // [超元链接 · 联机] 房间界面 / 联机对局
     | 'rogue_hero_select' | 'rogue_lobby' | 'rogue_stage_select' | 'rogue_map' | 'rogue_game';
 export default function App() {
   const [appState, setAppState] = useState<AppState>('splash'); // [哨兵] 初始状态改为 splash
@@ -146,13 +152,27 @@ export default function App() {
   const [isMissionOpen, setIsMissionOpen] = useState(false); // [新增] 军需面板开关状态
   const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false); // [2026-08-09] 公告中心开关状态
   const [gameId, setGameId] = useState(0);
-  const [deckBuilderSource, setDeckBuilderSource] = useState<'lobby' | 'mode_select' | 'rogue_edit'>('mode_select');
+  const [deckBuilderSource, setDeckBuilderSource] = useState<'lobby' | 'mode_select' | 'rogue_edit' | 'online'>('mode_select');
   const [rogueEditDeckId, setRogueEditDeckId] = useState<string | null>(null); // [2026-08-13] 肉鸽初始牌组编辑目标
   const [gachaInitPool, setGachaInitPool] = useState<PoolId | undefined>(undefined); // [2026-08-02] 抽卡界面初始卡池（备战详情跳转用）
   const [tutorialCategoryId, setTutorialCategoryId] = useState<ExamCategoryId | null>(null);
   const [tutorialStageId, setTutorialStageId] = useState<string | null>(null);
   const [previewStageId, setPreviewStageId] = useState<string | null>(null);
   const [standardEncounter, setStandardEncounter] = useState<any>(null); // [新增] 提前缓存标准模式的敌人数据
+
+  // [超元链接 · 联机] 备战界面交出来的卡组 + 进房后要做的动作（建房 / 加入）
+  // [2026-11-07] 流程改成「先选卡组再进房」，卡组在这里中转一次
+  const [onlinePreparedDeck, setOnlinePreparedDeck] = useState<string[] | null>(null);
+  const [onlineEntryAction, setOnlineEntryAction] = useState<'create' | 'join'>('create');
+
+  // [超元链接 · 联机] 房间对象与开局数据（房间在「房间界面 ↔ 对局」之间要一直活着）
+  const [onlineRoom, setOnlineRoom] = useState<NetRoom | null>(null);
+  const [onlineBattle, setOnlineBattle] = useState<{
+    myDeck: string[];
+    opponentDeck: string[];
+    firstAttacker: 'player' | 'enemy';
+    gameKey: number;
+  } | null>(null);
   const [standardDifficulty, setStandardDifficulty] = useState<'easy' | 'normal' | 'hard'>('normal'); // [2026-08-06] 标准对战 AI 难度
   // ★ PVE 模式：每局随机决定谁先手
   const [firstAttacker, setFirstAttacker] = useState<'player' | 'enemy'>('player');
@@ -429,6 +449,72 @@ export default function App() {
     setPendingAppState('tutorial_mode_select');
     setAppState('system_loading');
   };
+
+  // [超元链接 · 联机] 模式选择 -> 备战界面
+  // [2026-11-07] 对齐地下清理：先进备战选卡组，再决定建房还是加入
+  const handleOnlineSelect = () => {
+    stopMovie();
+    stopBgm();
+    setDeckBuilderSource('online');
+    setPendingAppState('deck_builder');
+    setAppState('system_loading');
+  };
+
+  /**
+   * [超元链接 · 联机] 备战界面点「创建房间 / 加入房间」—— 带着选好的卡组进房间。
+   *
+   * 为什么要中转一次卡组：`OnlineRoomScreen` 原本读的是 `userSystem.activeDeck`，
+   * 而编辑器视图里玩家可能还没把改动保存进 activeDeck。走一遍 state 更可靠。
+   */
+  const handleOnlineStart = (deck: string[], action: 'create' | 'join') => {
+    setOnlinePreparedDeck(deck);
+    setOnlineEntryAction(action);
+    stopMovie();
+    setPendingAppState('online_room');
+    setAppState('system_loading');
+  };
+
+  // [超元链接 · 联机] 房间内开局 -> 进入对局
+  const handleOnlineStartBattle = (payload: {
+    room: NetRoom;
+    myDeck: string[];
+    opponentDeck: string[];
+    firstAttacker: 'player' | 'enemy';
+  }) => {
+    stopMovie();
+    setOnlineRoom(payload.room);
+    setOnlineBattle({
+      myDeck: payload.myDeck,
+      opponentDeck: payload.opponentDeck,
+      firstAttacker: payload.firstAttacker,
+      gameKey: Date.now(),
+    });
+    // [2026-11-07] 加一个加载过渡 —— 与 PVE 一致：先走 system_loading，loading 结束再进对局。
+    //   原来直接 setAppState('online_game')，玩家会看到一瞬间黑屏直接跳进战场。
+    setPendingAppState('online_game');
+    setAppState('system_loading');
+  };
+
+  // [超元链接 · 联机] 对局结束 -> 回房间。
+  // 必须先把房间的 phase 从 'battle' 拨回 'lobby' —— 房间界面的操作区只在 lobby 渲染，
+  // 不拨回来的话回去是一个空界面，一个按钮都没有，只能双方退出重进。
+  const handleExitOnlineGame = () => {
+    try { onlineRoom?.finishBattle(); } catch { /* 连接可能已断，忽略 */ }
+    setAppState('online_room');
+  };
+
+  /**
+   * [2026-11-07] 对方投降 / 掉线时，房间 phase 会被拨回 'lobby'。
+   * 本端如果还停在 `online_game`，必须跟着回房间 —— 否则会挂在战场上，
+   * 既收不到新快照也没有任何出口（对方已经不在对局里了）。
+   */
+  useEffect(() => {
+    if (appState !== 'online_game' || !onlineRoom) return;
+    const off = onlineRoom.on('state', (s: { phase?: string }) => {
+      if (s?.phase === 'lobby') setAppState('online_room');
+    });
+    return off;
+  }, [appState, onlineRoom]);
 
   // [新增] 教程分类选择 -> 关卡选择
   const handleSelectCategory = (id: ExamCategoryId) => {
@@ -1018,6 +1104,31 @@ export default function App() {
   };
 
   /**
+   * [2026-11-03 莉莉子 BUG修复] **事件战斗 · 第二段（卡牌三选一）—— 唯一出口**
+   *
+   * 病根（程实测：迎战胜利后弹出一个只有「（本次没有强化奖励）」的空窗）：
+   *   `ev_arena`「震耳的看台」是 `fight: { reward: 'choose2' }`（`events.ts:380`），
+   *   但它**没有任何 deferred 战斗奖励**（既无 `addEnhancementFrom` 也无 `grantHeroCard`）
+   *   ⇒ `deferredRewards` 空 ⇒ 随机强化那个分支又要求 `reward === 'enhancement'`（见下方 ③）
+   *   ⇒ 第一段强化清单必空，而弹窗照弹 ⇒ 玩家看到一句"本次没有强化奖励"。
+   *
+   * 现在「第二段」的构造只此一处，由**弹窗 onClose** 与**跳过第一段**共用 ——
+   * 不抄第二份（本项目反复踩过"两处各写一套 ⇒ 漂移"的病）。
+   */
+  const openEventBattleCardReward = () => {
+    if (!rogue.run) return;
+    // 事件战斗不发金币 ⇒ gold 0；走现有的 BattleRewardModal
+    const options = generateRewardOptions(rogue.run.act, 3, {
+      difficulty: rogue.run.difficulty,
+      equipRarityBonus: rogue.run.equipRarityBonus ?? 0,
+      equippedCards: rogue.run.equippedCards,
+      // [2026-10-10 程拍板 ②③] 事件战斗的第二段三选一同口径
+      deckKeys: rogue.run.deck,
+    });
+    setRogueReward({ gold: 0, options });
+  };
+
+  /**
    * [2026-10-10 莉莉子 · 收口] **事件战斗（待战）胜利结算 —— 唯一出口**
    *   两条路都走这里：① 真打赢（`handleRogueVictory` 的 `rogueEventBattle` 分支）
    *   ② 开发者「一键通过」（在地图节点面板上直接把这场仗按"打赢"结算，不必先进战斗）。
@@ -1070,8 +1181,19 @@ export default function App() {
     setRogueBattleNodeId(null);
     setRogueEncounter(null);
     setAppState('rogue_map');
-    // ③ 弹**第一段**：强化奖励（`choose2` 时关掉它再弹卡牌三选一）
-    setEventBattleReward({ results: rewardResults, thenCards: reward === 'choose2' });
+    // ③ 两段式奖励分发 —— **第一段没内容就不弹空窗**
+    //   [2026-11-03 莉莉子 BUG修复] 程实测「迎战胜利 ·（本次没有强化奖励）」空窗：
+    //     `ev_arena` 的 `reward` 是 `choose2` 且无任何 deferred 奖励 ⇒ `rewardResults` 必空，
+    //     旧写法仍然把空清单塞进弹窗 ⇒ 玩家点了「确定」才看到卡牌三选一，中间白弹一屏。
+    const thenCards = reward === 'choose2';
+    const hasFirstStage = rewardResults.some(r => r.kind === 'gain');
+    if (hasFirstStage) {
+      setEventBattleReward({ results: rewardResults, thenCards });
+    } else if (thenCards) {
+      // 没有强化/天启者卡可展示 ⇒ 跳过第一段，直接发卡牌三选一（少点一次「确定」，也不误导）
+      openEventBattleCardReward();
+    }
+    // 两者皆无（`reward === 'enhancement'` 但随机池抽空）⇒ 不弹空窗，直接回地图
   };
 
   const handleRogueVictory = (playerNexus?: number, ovType?: RogueNodeType, ovNodeId?: string) => {
@@ -1134,7 +1256,9 @@ export default function App() {
       if (leveled) setLevelUpInfo({ heroKey, fromLevel: leveled.fromLevel, toLevel: leveled.toLevel });
       setExpToast({ heroKey, amount: gained });
       // [2026-08-29 程拍板] 仅最终 Boss 通关给卡包（通关结算界面可打开随机武装）
-      userSystem.grantPendingPack();
+      // [2026-11-07 程拍板] **按难度分档**：普通 1 / 机密 2 / 绝密 3（`RUN_CLEAR_PACKS`）。
+      //   旧实现无差别给 1 个 ⇒ 打绝密（地图约普通 2.7 倍长）与打普通回报一样。
+      userSystem.grantPendingPack(clearPacksOf(rogue.run.difficulty));
       // [2026-08-12 商店经济] Boss 通关大额金币（LOR 参考 Boss +200）
       rogue.addGold(200);
     } else {
@@ -1331,7 +1455,10 @@ export default function App() {
   //   （12 条获得路径全经过它）⇒ 首次收录时在这里发右上角 NEW!! 提示。
   //   ⚠️ 顺序铁律：**先判定，后写入**。写完再判 `includes` 就永远是 false（一条提示都不会有）。
   //   ⚠️ [2026-10-20] 开发者账号**也记录**了（原来对他早退）—— 理由见上方 `newUnlockFeed` 的注释。
-  const recordCodexUnlock = (type: 'enhancement' | 'equipment', id: string) => {
+  // [2026-10-26 莉莉子 · 程拍板「敌方强化遇到过才解锁」] 新增 `silent`：
+  //   敌方遭遇记账走静默（一场战斗可能一次冒出 3~5 条敌方强化，全弹右上角 NEW!! 会刷屏）；
+  //   "这是图鉴里的新东西"改由**图鉴内的 NEW 标识**承担 —— 玩家打开图鉴才看到。
+  const recordCodexUnlock = (type: 'enhancement' | 'equipment', id: string, silent = false) => {
     if (!id) return;
     const fromSettings = type === 'enhancement'
       ? (userSystem.settings?.unlockedRogueEnhancements ?? [])
@@ -1347,7 +1474,7 @@ export default function App() {
     markCodexUnlocked(type, id);
 
     // ③ 首次收录 ⇒ 右上角「NEW!!」（名字走 App 的统一取法：查不到就退回 id 原文）
-    if (firstTime) {
+    if (firstTime && !silent) {
       pushNewUnlock(type, type === 'enhancement' ? nameOfEnh(id) : nameOfEquip(id));
     }
 
@@ -1421,9 +1548,10 @@ export default function App() {
     if (!rogue.useRefresh()) return false;
     return true;
   };
-  /** [2026-09-29 程拍板] 三选一/通关界面开包：**抽到一个奖励匣**（先看到匣子，随后开匣子得道具） */
-  const handleRewardOpenPack = (): ChestInstance | null => {
-    const chest = userSystem.openPack?.();
+  /** [2026-09-29 程拍板] 三选一/通关界面开包：**抽到一个奖励匣**（先看到匣子，随后开匣子得道具）
+   *  [2026-11-07] 透传 `anchor`：不传 = 花 1 个随机大类；传 = 花 2 个定向大类（品质仍随机） */
+  const handleRewardOpenPack = (anchor?: ChestKind): ChestInstance | null => {
+    const chest = userSystem.openPack?.(anchor);
     return chest ?? null;
   };
 
@@ -2174,6 +2302,62 @@ export default function App() {
             onBack={handleBackToLobby}
             onTutorialSelect={handleTutorialSelect} // [新增] 教程入口
             onRogueSelect={handleRogueSelect} // [新增] 悖论迷宫入口
+            onOnlineSelect={handleOnlineSelect} // [超元链接 · 联机] 真人对抗入口
+            onlineLocked={!canPlayOnline()} // [2026-11-08 莉莉子] 安卓端锁死：只有 PC/浏览器能进联机
+        />
+      )}
+
+      {/* [超元链接 · 联机] 房间界面
+          进入对局时**保持挂载、只隐藏**（suspended）。卸载会触发 OnlineRoomScreen 的清理逻辑
+          `room.leave() → peer.close() → bus.clear()`，而这条 TCP 连接是与对局共用的同一个，
+          一卸载就两端同时断线（对局里既收不到意图也收不到快照）。
+
+          [2026-11-07 修复] 开局加载过渡（system_loading + pendingAppState==='online_game'）
+          期间**也必须保持挂载**：`handleOnlineStartBattle` 走的是 pendingAppState 机制，
+          那 ~2 秒里 appState 是 `system_loading`，若闸门只认 online_room/online_game，
+          房间界面会被卸载 ⇒ peer 被 close ⇒ 之后 publish 全是静默 no-op（客方永远停在开局状态）。 */}
+      {(appState === 'online_room'
+        || appState === 'online_game'
+        || (appState === 'system_loading' && pendingAppState === 'online_game')) && (
+        <OnlineRoomScreen
+            onBack={handleBackToModeSelect}
+            onStartBattle={handleOnlineStartBattle}
+            playerName={(userSystem as any).profile?.displayName || (userSystem as any).userName || '玩家'}
+            activeDeck={userSystem.activeDeck ?? null}
+            suspended={appState === 'online_game'
+              || (appState === 'system_loading' && pendingAppState === 'online_game')}
+            // [2026-11-07] 备战界面选好的卡组 + 进房后要做的动作
+            preparedDeck={onlinePreparedDeck ?? undefined}
+            initialAction={onlineEntryAction}
+        />
+      )}
+
+      {/* [超元链接 · 联机] 对局 */}
+      {appState === 'online_game' && onlineRoom && onlineBattle && (
+        <OnlineGameWrapper
+            key={`online_${onlineBattle.gameKey}`}
+            room={onlineRoom}
+            myDeck={onlineBattle.myDeck}
+            opponentDeck={onlineBattle.opponentDeck}
+            firstAttacker={onlineBattle.firstAttacker}
+            onExitGame={handleExitOnlineGame}
+            playBgm={playBgm}
+            playLevelUpMovie={playLevelUpMovie}
+            prepareLevelUpMovie={prepareLevelUpMovie}
+            playVictoryMovie={playVictoryMovie}
+            prepareVictoryMovie={prepareVictoryMovie}
+            stopMovie={stopMovie}
+            deskIndex={userSystem.activeDeck?.boardIndex ?? userSystem.settings.customization.currentDeskIndex}
+            cardBackIndex={userSystem.activeDeck?.cardBackIndex ?? userSystem.settings.customization.currentCardBackIndex}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onQuitGame={handleQuitGame}
+            isSettingsOpen={isSettingsOpen}
+            escExitFullscreenFirst={escExitFullscreenFirst}
+            // [2026-11-07] 联机投降：ESC 菜单里的「投降」走与 PVE 同一条路 ——
+            //   递增 surrenderSignal ⇒ GameSession 把本场水晶清零 ⇒ 走既有战败结算 ⇒ onExitGame 回房间。
+            onSurrender={handleSurrender}
+            surrenderSignal={surrenderSignal}
+            surrenderNote="投降后本场判负，双方返回房间"
         />
       )}
 
@@ -2267,6 +2451,8 @@ export default function App() {
             //   ⚠️ 用 `handleLobbyGacha`（不带池，走常驻池）而不是 `handleDeckToGacha`：
             //      后者需要具体池 id，而缺卡弹窗不知道玩家缺的卡在哪个池里。
             onGoGacha={handleLobbyGacha}
+            // [2026-11-07 超元链接] 联机备战：把「开始游戏」换成「创建房间 / 加入房间」
+            onOnlineStart={handleOnlineStart}
         />
       )}
 
@@ -2355,6 +2541,25 @@ export default function App() {
               onSettleRun={() => { leaveSourceRef.current = 'lobby'; openRogueLeaveConfirm(); }} // 大厅结算 → 二次确认
               onResumeRun={handleRogueResume} // 继续上一局
               hasRogueClaimableReward={missionSystem.hasRogueClaimableReward} // [2026-09-03 BUG修复] 肉鸽任务可领 → 推演任务按钮黄点
+              // [2026-10-26 莉莉子 · 程拍板] 逻辑研习黄点：有"已收录但还没在图鉴里看过"的强化
+              hasCodexNew={(() => {
+                  const un = new Set(userSystem.settings?.unlockedRogueEnhancements ?? []);
+                  const sn = new Set(userSystem.settings?.codexSeenEnhancements ?? []);
+                  for (const id of un) if (!sn.has(id)) return true;
+                  return false;
+              })()}
+              // [2026-11-07 程拍板] 评估嘉勉黄点：有**待开卡包 / 待开匣子 / 通行证奖励没领**就亮。
+              //   ⚠️ 通行证那一路必须走 `countClaimablePassRewards`（与面板「N 项可领」同源），
+              //      否则会出现"黄点亮着、点进去却领不到"或反过来。
+              hasEvaluationReward={
+                  (userSystem.settings?.pendingPacks ?? 0) > 0
+                  || (userSystem.settings?.pendingChests?.length ?? 0) > 0
+                  || countClaimablePassRewards(
+                      userSystem.analystPass?.level ?? 1,
+                      userSystem.settings?.passClaimedRewards as number[] | undefined,
+                      userSystem.passClaimedUpTo,
+                  ) > 0
+              }
           />
       )}
 
@@ -2387,15 +2592,8 @@ export default function App() {
                   const thenCards = eventBattleReward.thenCards;
                   setEventBattleReward(null);
                   if (!thenCards) return;
-                  // 第二段：卡牌三选一（事件战斗不发金币 ⇒ gold 0；走现有的 BattleRewardModal）
-                  const options = generateRewardOptions(rogue.run!.act, 3, {
-                      difficulty: rogue.run!.difficulty,
-                      equipRarityBonus: rogue.run!.equipRarityBonus ?? 0,
-                      equippedCards: rogue.run!.equippedCards,
-                      // [2026-10-10 程拍板 ②③] 事件战斗的第二段三选一同口径
-                      deckKeys: rogue.run!.deck,
-                  });
-                  setRogueReward({ gold: 0, options });
+                  // 第二段：卡牌三选一 —— 走唯一出口（[2026-11-03] 抽出，与"跳过第一段"共用同一份构造）
+                  openEventBattleCardReward();
               }}
           />
       )}
@@ -2482,6 +2680,8 @@ export default function App() {
               onVictory={handleRogueVictory}
               onDefeat={handleRogueDefeat}
               onExit={handleRogueBattleExit} // [2026-08-11] 中途退出 → 放弃本场回地图 + HP 回滚
+              // [2026-10-26 莉莉子] 图鉴「遇到过才解锁」：敌方带进本场的强化静默记入图鉴（不弹右上角提示）
+              onEnemyBuffsSeen={(ids) => ids.forEach(id => recordCodexUnlock('enhancement', id, true))}
               playBgm={playBgm}
               playLevelUpMovie={playLevelUpMovie}
               prepareLevelUpMovie={prepareLevelUpMovie}
@@ -2609,7 +2809,13 @@ export default function App() {
       {/* [2026-08-20 逻辑研习] 悖论迷宫·肉鸽图鉴（强化/装备图鉴 + 右侧抽屉筛选） */}
       <AnimatePresence>
           {rogueCodexOpen && (
-              <RogueCodex isOpen={rogueCodexOpen} onClose={() => setRogueCodexOpen(false)} userSystem={userSystem} />
+              <RogueCodex isOpen={rogueCodexOpen} onClose={() => {
+                  // [2026-10-26 莉莉子] **关闭图鉴时**把当前已收录的强化整批标成"已读" ⇒
+                  //   清掉大厅黄点与图鉴内 NEW 角标。
+                  //   ⚠️ 刻意放在**关闭**而不是打开：一进去就清的话，NEW 角标根本没机会被看到。
+                  userSystem.updateSettings({ codexSeenEnhancements: [...(userSystem.settings?.unlockedRogueEnhancements ?? [])] });
+                  setRogueCodexOpen(false);
+              }} userSystem={userSystem} />
           )}
       </AnimatePresence>
 

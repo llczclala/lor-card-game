@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef,useMemo } from 'react';
 import { Clock } from 'lucide-react'; // [2026-09-25 莉莉子] 移除左上退出按钮后 Home 不再使用
-import type { CardData, SpellStackItem } from '../types';
+import type { CardData, SpellStackItem, GameState } from '../types';
+import type { NetIntentChannel, PlayerIntent, TargetRef } from '../net/intent'; // [超元链接 · 联机] 玩家意图通道
+// [2026-11-07 联机诊断] 引擎侧埋点：publish 出没出去、快照进没进来，只看这两条。
+import { nlog, nlogChanged, ncount, ntime } from '../net/audit';
 import { Card, HeroCardMediaContext, SpellCardMediaContext } from './Card';
 import { CardFaceVideo } from './CardFaceVideo'; // [2026-09-26 莉莉子] 法术圆盘动态卡面播放器
 import { getSpellVideo } from '../data/spellVideos'; // [2026-09-26 莉莉子] 法术动态卡面视频
@@ -19,12 +22,15 @@ import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, get
 import { Battlefield } from './Battlefield';
 import { CARD_DB, createCard } from '../data/cards';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
+import { canBlockAttacker, getBlockRejectReason, BLOCK_REJECT_TEXT } from '../logic/blockRules'; // [2026-10-26 莉莉子] 格挡合法性唯一门卫（无法格挡/隐秘/凶恶）
+import type { BlockRejectReason } from '../logic/blockRules';
 import { shouldEscapeExitFullscreen, leaveFullscreen, UI_CONTROL_DEFAULT } from '../utils/fullscreen'; // [2026-10-24 莉莉子] ESC 归属权：全屏时 ESC 先归游戏（判据/动作/默认值唯一真源）
 import { gameLogger } from '../utils/gameLogger'; // [2026-09-04 莉莉子] 真实对局开始清空黑匣子（沙盒污染防御）
 import { useVoice } from '../hooks/useVoice';
 import { useStableCallback, useStableCallbackR } from '../hooks/useStableCallback'; // [2026-10-02 莉莉子 性能] 稳定回调：让 React.memo 在热路径上真正生效
 // [核心引入] 引入 LEVELUP_ICONS
-import { UI_IMAGES, PERSONALIZATION_ASSETS, getSkinImage, LEVELUP_ICONS } from '../data/imageData';
+// [2026-11-07 联机] + HERO_IMAGES：左右两侧「玩家名字 + 卡组图标」用主英雄 1 级卡面当图标（现成资源，不新增图）
+import { UI_IMAGES, PERSONALIZATION_ASSETS, getSkinImage, LEVELUP_ICONS, HERO_IMAGES } from '../data/imageData';
 import { DeskMedia } from './DeskMedia'; // [2026-08-13] 动态牌桌媒体组件（兜底静态图 + 日志）
 import { ManaGemSystem } from './ManaGemSystem';
 import { calculateNewMana } from '../utils/gameRules';
@@ -62,6 +68,87 @@ import type { EnemyHeroConfig } from '../types/gameModeTypes'; // [新增] 引�
 import { AttackToken } from './AttackToken';
 import { DragGhostCard } from './DragGhostCard'; // [新增] 备战席替身拖拽
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// [2026-11-07 联机] 左右两侧「玩家名字 + 卡组图标」视觉调参区
+// ══════════════════════════════════════════════════════════════════════════
+// 只在对局内左侧信息带（水晶 / 牌库那一条）补一行「谁在对面」，不重排既有布局：
+// 标签挂在牌库容器的**左侧**（right: 100%），绝对定位 + pointer-events-none，不占文档流、不改任何既有元素尺寸。
+// ⚠️ 本层跑在 ScaleWrapper 的 1680×1050 画布内 ⇒ 一律绝对 px，禁 vh/vw。
+const LINK_PLAYER_UI = {
+    iconSize: 26,
+    iconRadius: 5,
+    gap: 8,
+    offsetX: 12,
+    nameFontSize: 13,
+    nameMaxWidth: 150,
+    nameTracking: '0.08em',
+};
+
+/**
+ * [2026-11-07 联机] 把「卡组图标」解析成一张图。
+ * 传进来的是主英雄 key（联机 wrapper 从卡组里认出来的那张 isChampion 卡），解析得到 1 级卡面；
+ * 英雄表里没有这个 key（测试卡组 / 新英雄未入表）就退回该玩家的卡背 —— 两者都是仓库现成资源，不新增图。
+ */
+function resolveDeckIcon(icon: string | undefined, cardBackIdx: number): string | undefined {
+    if (!icon) return undefined;
+    return HERO_IMAGES[icon]?.base ?? getCardBackUrl(cardBackIdx);
+}
+
+/**
+ * [2026-11-07 联机] 牌库旁的「玩家名字 + 卡组图标」小标签。
+ *
+ * 挂在牌库容器**左侧**（`right: 100%`）+ 绝对定位 + `pointer-events-none`：
+ *   · 不占文档流 ⇒ 不会把牌库、水晶、手牌、备战席挤动一像素
+ *   · 不接收鼠标事件 ⇒ 不影响牌库 hover 面板、拖拽、悬停大图
+ * 单机不传名字 ⇒ 调用点整块不渲染（见两处 `!== undefined` 判断）。
+ */
+const LinkPlayerBadge = ({ name, iconSrc, tone }: { name: string; iconSrc?: string; tone: 'self' | 'enemy' }) => (
+    <div
+        className="absolute flex items-center font-mono pointer-events-none"
+        style={{
+            // [2026-11-08 超元链接 · 名字被牌库挡住] 原来是 `right: '100%'`（挂在牌库**左侧**）。
+            //   牌库本身定位在 `left: 14%`，左侧只剩 0~14% 那点空间，且水晶就在 5% 附近
+            //   ⇒ 徽章被挤到牌库的投影/卡背下面，实测就是「名字被牌库挡住、只剩一小截」。
+            //   改挂**右侧**（`left: 100%`）：那一侧是空场地，既不撞水晶也不撞手牌。
+            left: '100%',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            marginLeft: LINK_PLAYER_UI.offsetX,
+            gap: LINK_PLAYER_UI.gap,
+            // 徽章与 `<Deck>` 同级且渲染在它之前 ⇒ 会被牌库的 drop-shadow 压暗；
+            // 抬一层 z 保证文字清晰。`pointer-events-none` 已保证不吃点击。
+            zIndex: 10,
+        }}
+    >
+        {iconSrc && (
+            <img
+                src={iconSrc}
+                alt=""
+                className="object-cover shrink-0"
+                style={{
+                    width: LINK_PLAYER_UI.iconSize,
+                    height: LINK_PLAYER_UI.iconSize,
+                    borderRadius: LINK_PLAYER_UI.iconRadius,
+                    border: `1px solid ${tone === 'self' ? 'rgba(253,224,71,0.55)' : 'rgba(248,113,113,0.5)'}`,
+                    boxShadow: '0 0 10px rgba(0,0,0,0.75)',
+                }}
+            />
+        )}
+        <span
+            className="truncate"
+            style={{
+                fontSize: LINK_PLAYER_UI.nameFontSize,
+                letterSpacing: LINK_PLAYER_UI.nameTracking,
+                maxWidth: LINK_PLAYER_UI.nameMaxWidth,
+                color: tone === 'self' ? 'rgba(254,243,199,0.92)' : 'rgba(254,202,202,0.92)',
+                textShadow: '0 2px 6px rgba(0,0,0,0.9)',
+            }}
+        >
+            {name}
+        </span>
+    </div>
+);
 
 // [修正] 专用的 Mana 计数动画 Hook (Drain -> Fill 模式)
 const useManaTicker = (target: number, round: number) => {
@@ -175,6 +262,56 @@ interface GameSessionProps {
     // [2026-09-04 账号等级/战绩] 真实对局模式标识 + 结算上抛（由 wrapper/App 接线，GameOverScreen 一次性入账）
     matchMode?: 'pve' | 'tutorial' | 'rogue';
     onAccountSettle?: (payload: { result: 'victory' | 'defeat'; mode: 'pve' | 'tutorial' | 'rogue'; heroKeys: string[] }) => void;
+    /**
+     * [超元链接 · 联机] 玩家意图通道。
+     *
+     * **不传 = 单机模式，所有行为与改动前逐字一致。**
+     * 传了之后：玩家操作会先经过 `fireNetIntent`，由它决定「本地是否执行」。
+     *   · 主机（`authoritative: true`）→ 照常本地执行，结果由快照同步给客方
+     *   · 客方（`authoritative: false`）→ 只上报，不执行，等房主算完发状态回来
+     *
+     * ⚠️ 只拦「玩家意图」这几个入口（出牌 / 让过 / 进攻 / 格挡 / 结算 / 选人），
+     *    引擎内部流程（抽牌 / 结算 / 升级 / 交战动画）**一律不碰** ——
+     *    粉丝 MOD v11 就是笼统包装了整个 actions，把引擎自己收尾时调的
+     *    `commitAttack` 也拦了，导致攻击动画永远结束不了、全局卡死。
+     */
+    netIntent?: NetIntentChannel;
+    /**
+     * [超元链接 · 联机] 权威状态快照订阅（**仅客方需要**）。
+     *
+     * 客方不跑逻辑，它的 `game` 完全来自房主。收到快照就整体覆盖本地状态，
+     * 因此客方显示的**一定是房主那份真值** —— 不存在"两端各算一套、越跑越偏"。
+     *
+     * 不传 = 单机 / 主机（主机自己就是权威，不需要覆盖）。
+     */
+    netSnapshot?: {
+        /** 订阅快照，返回取消订阅函数。 */
+        subscribe: (cb: (snap: GameState) => void) => () => void;
+    };
+    /**
+     * [超元链接 · 联机] 联机对局标记（透传给 `useGameState`）。
+     *
+     * **不传 = 单机 ⇒ false ⇒ 所有既有模式的行为逐字不变。**
+     * 打开后引擎会：给敌方也切 4 张起手（敌方是真人，不是 AI），
+     * 并在换牌结束时把敌方手牌一并收回牌库。
+     */
+    onlineMode?: boolean;
+    /**
+     * [2026-11-07 联机] 我的名字（单机不传则不显示）。
+     *
+     * **不传 = 一像素都不渲染**：左右两侧的「玩家名字 + 卡组图标」整块都以它为开关，
+     * 所以单机（PVE / 教程 / 肉鸽）即使内部数据结构完备也不会多出任何东西。
+     */
+    myPlayerName?: string;
+    /** [2026-11-07 联机] 对手的名字（同上：不传则不显示） */
+    enemyPlayerName?: string;
+    /**
+     * [2026-11-07 联机] 我的卡组图标 —— 传**主英雄 key**（如 `lyfe` / `fenny`），
+     * 内部解析成 `HERO_IMAGES[key].base`（1 级卡面）；解析不到就退回我这边的卡背。
+     */
+    myDeckIcon?: string;
+    /** [2026-11-07 联机] 对手的卡组图标（同上口径，退回时用的是 `enemyCardBackIndex`） */
+    enemyDeckIcon?: string;
 }
 
 export const GameSession: React.FC<GameSessionProps> = ({
@@ -213,6 +350,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
     escExitFullscreenFirst = UI_CONTROL_DEFAULT.escExitFullscreenFirst, // [2026-10-24 莉莉子] 全屏下 ESC 是否优先退出全屏（默认走唯一真源 = ESC 归游戏）
     matchMode, // [2026-09-04 账号等级/战绩] 真实对局模式
     onAccountSettle, // [2026-09-04 账号等级/战绩] 结算上抛回调
+    netIntent, // [超元链接 · 联机] 玩家意图通道（不传 = 单机）
+    netSnapshot, // [超元链接 · 联机] 客方的权威快照来源（主机不传）
+    onlineMode = false, // [超元链接 · 联机] 联机对局标记（透传给 useGameState，默认单机）
+    myPlayerName, // [2026-11-07 联机] 我的名字（不传 = 不渲染）
+    enemyPlayerName, // [2026-11-07 联机] 对手的名字（不传 = 不渲染）
+    myDeckIcon, // [2026-11-07 联机] 我的卡组图标（主英雄 key）
+    enemyDeckIcon, // [2026-11-07 联机] 对手的卡组图标（主英雄 key）
 }) => {
 
     const {
@@ -225,11 +369,411 @@ export const GameSession: React.FC<GameSessionProps> = ({
         setMessage, winningHeroKeys,
         // 👇 新增：从useGameState解构初始卡组信息
         playerDeck,
+        setPlayerDeck, // [超元链接 · 联机] 客方用快照覆盖本地牌库
         enemyDeckState, // ✅ 正确获取敌方牌库
+        setEnemyDeckState, // [超元链接 · 联机] 客方用快照覆盖本地敌方牌库
         playerInitialDeckInfo,
         enemyInitialDeckInfo,
         onHandAnimComplete
-    } = useGameState(deck, enemyDeck, false, disableMulligan, tutorialInit, firstAttacker, initialPlayerNexus, playerNexusMax, rogueEnhancements, rogueEquipments, enemyEnhancements, initialEnemyNexus, enemyEquipments);
+    } = useGameState(deck, enemyDeck, false, disableMulligan, tutorialInit, firstAttacker, initialPlayerNexus, playerNexusMax, rogueEnhancements, rogueEquipments, enemyEnhancements, initialEnemyNexus, enemyEquipments, onlineMode,
+        // [2026-11-07 超元链接] 权威位：单机恒为 true；联机时房主 true、客方 false。
+        //   客方为 false ⇒ 引擎内部**不做任何本地自动推进**（自动让过/自动格挡那一类），
+        //   一切以房主快照为准。此前缺少这个开关，客方会与房主各跑一套引擎并互相覆盖。
+        netIntent?.authoritative ?? true);
+
+    /**
+     * [超元链接 · 联机] 上报一条玩家意图，并决定本地是否继续执行。
+     *
+     * @returns true  = 本地执行（主机 / 单机）
+     *          false = 跳过本地执行（客方：等房主算完，把状态快照发回来）
+     *
+     * 单机（未传 `netIntent`）**永远返回 true** ⇒ 与改动前行为逐字一致。
+     */
+    const fireNetIntent = (intent: PlayerIntent): boolean => {
+        if (!netIntent) return true;
+        // [2026-11-07 联机计时] 起点：意图产生的墙钟时刻（Date.now 可跨页对齐）
+        ntime(netIntent.authoritative ? '房主·意图' : '客方·意图', intent.op);
+        try {
+            netIntent.emit(intent);
+        } catch {
+            // 上报失败不影响本地表现：主机下一份快照会把状态纠正回来
+        }
+        return netIntent.authoritative;
+    };
+
+    // [超元链接 · 联机] 客方：收到房主的权威快照后整体覆盖本地状态。
+    // 只覆盖 `game` 与五个区域，其余本地 UI 状态（弹窗/悬停/动画）保持不动，
+    // 否则客方正在选目标时会被快照打断。
+    // 依赖刻意只写 netSnapshot：setter 来自 useGameState，列进来会导致反复订阅。
+    useEffect(() => {
+        nlog('effect.subscribe注册', { hasNetSnapshot: !!netSnapshot }); // [联机诊断] 客方走到这里说明订阅真的挂上了
+        if (!netSnapshot) return;
+        return netSnapshot.subscribe((snap) => {
+            nlogChanged('客方setGame', { round: (snap as any)?.round, turnOwner: (snap as any)?.turnOwner }); // [联机诊断]
+            ntime('客方·收到', { round: (snap as any)?.round }); // [联机计时] 快照到达客方的墙钟时刻
+            // [2026-11-07 超元链接] 逐字段兜底：任何一项缺失都不能把 undefined 塞进 useState，
+            // 否则下游 `xxx.length` 会立刻抛 TypeError 把客方整屏打黑。
+            const arr = <T,>(v: T[] | undefined): T[] => (Array.isArray(v) ? v : []);
+            // [2026-11-07 超元链接 · 任务4 机械枚举] `game` 内部那些被下游直接读
+            //   `.length` / `.map` 的数组字段同样要兜底：快照走 JSON 通道，而
+            //   `JSON.stringify` 会**丢掉值为 undefined 的键** ⇒ 房主那侧没赋过值的
+            //   可选数组到客方就是「键不存在」⇒ `undefined.length` 立刻抛。
+            //   （只列 game 内的数组型字段；带阵营语义的 `playerXxx/enemyXxx` 配对
+            //    由 `snapshot.ts` 的 flipSide 程序化翻转，这里不需要逐个列举。）
+            const withGameArrayDefaults = (g: GameState): GameState => ({
+                ...g,
+                spellStack: arr(g.spellStack),
+                pendingLevelUps: arr(g.pendingLevelUps),
+                gameRecords: arr(g.gameRecords),
+                playerGraveyard: arr(g.playerGraveyard),
+                enemyGraveyard: arr(g.enemyGraveyard),
+                leveledChampions: arr(g.leveledChampions),
+                rogueEnhancements: arr(g.rogueEnhancements),
+                enemyEnhancements: arr(g.enemyEnhancements),
+            } as GameState);
+            // [2026-11-08 超元链接 · 瞄准线颜色反了] `spellStack` / `pendingSpell` 里的
+            //   `targets[].type` 用的是**施法者视角**的相对类型（`useSpellSystem.ts:618`
+            //   产出 `ally` / `enemy`），而 `snapshot.ts` 的 `flipSideValue` 只翻
+            //   `'player'` ↔ `'enemy'` 两个值、且叶子白名单里没有 `type` 这个键
+            //   ⇒ 客方收到的目标阵营**原样保留的是房主视角**。
+            //   后果：`getLineColor`（`VFXLayer.tsx:56`）按 `type.includes('ally')` 取色，
+            //   于是"房主打房主自己人"在客方被画成蓝色（应为红色），反之亦然。
+            //   这里在客方应用快照时把这两处 targets 的阵营翻回来。
+            //   ⚠️ 只动客方（本 effect 只有非权威方会订阅），房主侧本就是权威视角。
+            const flipTargetSide = (t: unknown) => {
+                if (!t || typeof t !== 'object') return t;
+                const o = t as { type?: unknown };
+                if (o.type === 'ally') return { ...(t as object), type: 'enemy' };
+                if (o.type === 'enemy') return { ...(t as object), type: 'ally' };
+                return t;
+            };
+            const flipTargetsOf = (list: unknown): unknown => {
+                if (!Array.isArray(list)) return list;
+                return list.map((s) => {
+                    if (!s || typeof s !== 'object') return s;
+                    const o = s as { targets?: unknown };
+                    if (!Array.isArray(o.targets)) return s;
+                    return { ...(s as object), targets: o.targets.map(flipTargetSide) };
+                });
+            };
+            const rawPending = (snap as { pendingSpell?: unknown }).pendingSpell;
+            setGame({
+                ...withGameArrayDefaults(snap),
+                spellStack: flipTargetsOf(arr(snap.spellStack)) as typeof snap.spellStack,
+                pendingSpell: rawPending
+                    ? (flipTargetsOf([rawPending]) as unknown[])[0]
+                    : (snap.pendingSpell as typeof snap.pendingSpell),
+            } as typeof snap);
+            setPlayerHand(arr(snap.playerHand));
+            setEnemyHand(arr(snap.enemyHand));
+            setPlayerBench(arr(snap.playerBench));
+            setEnemyBench(arr(snap.enemyBench));
+            setCombatField(arr(snap.combatField));
+            // [超元链接 · 联机] 牌库同样要覆盖：否则客方的牌库张数永远停在本地自己那副牌上，
+            //   而房主那边已经抽/洗过很多次了 —— 两边牌库张数对不上，客方看到的"还剩几张"是假的。
+            //   ⚠️ 快照里牌库内容是**占位卡**（`snapshot.ts: redactForViewer` 按张数裁剪），
+            //      客方拿到的是"数量正确、内容未知"，正是应有的信息边界。
+            setPlayerDeck(arr(snap.playerDeck));
+            setEnemyDeckState(arr(snap.enemyDeck));
+            // [2026-11-07 联机计时] 这里只代表「所有 setState 都已提交」；
+            //   真正的渲染落地要等下一帧，补一个 rAF 标记才能把「提交」和「渲染」分开算。
+            ntime('客方·应用', { round: (snap as any)?.round });
+            requestAnimationFrame(() => ntime('客方·渲染完成', { round: (snap as any)?.round }));
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [netSnapshot]);
+
+    // [超元链接 · 联机] 房主侧：客方是否已经把换牌做完了。
+    //   换牌后的开局 `drawCards(4)` 必须等它 —— 否则客方那 4 张会在换牌结果到达之前
+    //   就被重新发掉（客方"换了等于白换"）。
+    const peerMulliganDoneRef = useRef(false);
+
+    // [超元链接 · 联机] 房主：开局那次「统一收回手牌 → 统一发牌」是否已经做过。
+    //   放在 `drawCards` 包装里做（等客方换完再收），这道 ref 防重入（抽牌可能被重试）。
+    const hostRequeuedRef = useRef(false);
+
+    // ══════════════════════════════════════════════════════════════════════
+    // [超元链接 · 联机 BUG修复 · 远端意图的陈旧闭包]
+    //   `subscribeRemote` 的 effect 依赖只有 `[netIntent]` ⇒ **整局只订阅一次**。
+    //   回调里若直接读 `enemyHand` / `enemyBench`，读到的是**挂载首帧**的那两个空数组
+    //   ⇒ `find()` 永远返回 undefined ⇒ `playCard` / `startSpell` / `toggleAttacker`
+    //   / `selectBlocker` 四条意图**全部静默失效**（不报错、只是什么都不做）。
+    //   `actions` 同理：它是 `useGameState` 每次渲染**新建**的对象（`useGameState.ts:7196`），
+    //   首帧那一份里的函数引用锁着当时的内部闭包，故一并走 ref 取最新。
+    //   ⇒ 一律在回调里读 `xxxRef.current`，别再在回调里直接读 state / actions。
+    // ══════════════════════════════════════════════════════════════════════
+    const netEnemyHandRef = useRef(enemyHand);
+    netEnemyHandRef.current = enemyHand;
+    const netEnemyBenchRef = useRef(enemyBench);
+    netEnemyBenchRef.current = enemyBench;
+    const netActionsRef = useRef(actions);
+    netActionsRef.current = actions;
+    // [2026-11-07 超元链接 · castSpellAt] 目标解析 / 法术定位都要读这些。
+    //   同上：`subscribeRemote` 的 effect 整局只订阅一次，回调里直接读 state 会锁死在首帧空数组上。
+    const netPlayerHandRef = useRef(playerHand);
+    netPlayerHandRef.current = playerHand;
+    const netPlayerBenchRef = useRef(playerBench);
+    netPlayerBenchRef.current = playerBench;
+    const netCombatFieldRef = useRef(combatField);
+    netCombatFieldRef.current = combatField;
+    const netSpellStackRef = useRef(game.spellStack);
+    netSpellStackRef.current = game.spellStack;
+    // 客方施法时 `startSpellCasting` 已把那张牌从 `enemyHand` 移走、挂到 `activeCard` 上
+    // ⇒ 最终结算要认的是 `activeCard`，不是手牌。
+    const netActiveCardRef = useRef(game.activeCard);
+    netActiveCardRef.current = game.activeCard;
+
+    /**
+     * [2026-11-07 超元链接 · 施法归属] 客方上报用：把引擎目标 `{ type, id }` 翻成跨端可寻址的 `TargetRef`。
+     *
+     * 目标阵营语义见 `useSpellSystem.ts:614-618`：`ally` = 目标在**接收者自己**那侧，
+     * `enemy` = 目标在对手那侧。客方视角下"自己"就是 player 侧 ⇒ 直接映射成 `side`。
+     * 任一项解析不出来就整体返 null —— 宁可让房主拒绝，也不要发一条半对的意图。
+     */
+    const targetsToRefs = (targets: any[]): TargetRef[] | null => {
+        const fieldAll = (netCombatFieldRef.current || [])
+            .flatMap(f => [f.attacker, f.blocker])
+            .filter(Boolean) as CardData[];
+        const out: TargetRef[] = [];
+        for (const t of targets) {
+            if (!t) return null;
+            if (t.type === 'player_nexus') { out.push({ kind: 'nexus', side: 'self' }); continue; }
+            if (t.type === 'enemy_nexus') { out.push({ kind: 'nexus', side: 'opponent' }); continue; }
+            if (t.type === 'spell_on_stack') {
+                const id = t.spellId ?? t.id;
+                const s = (netSpellStackRef.current || []).find(x => x.card.id === id);
+                if (!s) return null;
+                out.push({ kind: 'stack', cardKey: s.card.key });
+                continue;
+            }
+            const side: 'self' | 'opponent' = t.type === 'ally' ? 'self' : 'opponent';
+            const bench = side === 'self' ? netPlayerBenchRef.current : netEnemyBenchRef.current;
+            const hand = side === 'self' ? netPlayerHandRef.current : netEnemyHandRef.current;
+            const c = [...(bench || []), ...fieldAll, ...(hand || [])].find(x => x.id === t.id);
+            if (!c) return null;
+            out.push({ kind: 'unit', side, cardKey: c.key });
+        }
+        return out;
+    };
+
+    /**
+     * [2026-11-07 超元链接 · 施法归属] 房主解析用：把客方发来的 `TargetRef` 还原成**引擎内的** `{ type, id }`。
+     *
+     * 拼出来的结构与房主**自己点同一个目标**时逐字一致（含水晶那两个虚拟 DOM 锚点 id），
+     * 于是 `commitSpell` 拿到的入参与单机完全相同 ⇒ 引擎行为必然相同。
+     * 客方在房主引擎里是 enemy 侧 ⇒ `side:'self'` 映射到 enemy、`'opponent'` 映射到 player。
+     */
+    const resolveTargetRefsInEngine = (refs: TargetRef[]): any[] | null => {
+        const fieldAll = (netCombatFieldRef.current || [])
+            .flatMap(f => [f.attacker, f.blocker])
+            .filter(Boolean) as CardData[];
+        const out: any[] = [];
+        for (const r of refs) {
+            if (r.kind === 'nexus') {
+                const engineSide: 'player' | 'enemy' = r.side === 'self' ? 'enemy' : 'player';
+                out.push(engineSide === 'player'
+                    ? { type: 'player_nexus', id: 'nexus_player' }
+                    : { type: 'enemy_nexus', id: 'nexus_enemy' });
+                continue;
+            }
+            if (r.kind === 'stack') {
+                const s = (netSpellStackRef.current || []).find(x => x.card.key === r.cardKey);
+                if (!s) return null;
+                out.push({ type: 'spell_on_stack', spellId: s.card.id, id: s.card.id });
+                continue;
+            }
+            const engineSide: 'player' | 'enemy' = r.side === 'self' ? 'enemy' : 'player';
+            const bench = engineSide === 'player' ? netPlayerBenchRef.current : netEnemyBenchRef.current;
+            const hand = engineSide === 'player' ? netPlayerHandRef.current : netEnemyHandRef.current;
+            const sameKey = [...(bench || []), ...fieldAll, ...(hand || [])].filter(c => c && c.key === r.cardKey);
+            const pick = sameKey[r.index ?? 0];
+            if (!pick) return null;
+            out.push({ type: engineSide === 'player' ? 'ally' : 'enemy', id: pick.id });
+        }
+        return out;
+    };
+
+    // [超元链接 · 联机] 主机：执行客方发来的意图。
+    // 对主机的引擎而言，客方就是 `enemy` 侧 —— 所以统一落到 enemy 上执行。
+    // ⚠️ 这里调用的都是**原始 actions**（不是包过的版本），否则会把自己再广播一遍。
+    // ⚠️ 执行前不过滤合法性：引擎自身的守卫（回合归属/费用/目标）就是权威校验，
+    //    这里再挡一次反而容易把引擎自己的流程挡坏（MOD v11 的教训）。
+    useEffect(() => {
+        const subscribeRemote = netIntent?.subscribeRemote;
+        if (!subscribeRemote) return;
+        return subscribeRemote((intent) => {
+            try {
+                // ⚠️ 全部读 `xxxRef.current`（见上方镜像块）：本回调整局只订阅一次，
+                //    直接读 state / actions 会锁死在首帧的闭包上。
+                const act = netActionsRef.current;
+                switch (intent.op) {
+                    case 'playCard': {
+                        const card = netEnemyHandRef.current.find(c => c.key === intent.cardKey);
+                        nlog('远端·playCard', { cardKey: intent.cardKey, found: !!card, handKeys: netEnemyHandRef.current.map(c => c.key) });
+                        if (card) act.playCard(card, 'enemy');
+                        break;
+                    }
+                    case 'startSpell': {
+                        const card = netEnemyHandRef.current.find(c => c.key === intent.cardKey);
+                        // [2026-11-07 超元链接 · 施法归属] 必须传 'enemy'：
+                        //   否则 `startSpellCasting` 会去删 `playerHand`（删不掉客方那张卡），
+                        //   且 `spellCasting.casterSide` 会缺省成 'player' ⇒ 两端都以为自己在施法。
+                        if (card) act.startSpellCasting(card, 'enemy');
+                        break;
+                    }
+                    case 'toggleAttacker': {
+                        const card = netEnemyBenchRef.current.find(c => c.key === intent.cardKey);
+                        // [2026-11-07 联机诊断 · 进攻被撤回] 远端意图是「按 key 反查 + if 静默跳过」，
+                        //   找不到卡就什么都不做，客方那边看起来就是"刚上阵就被撤回"。
+                        //   这里把 bench 实际内容一并打出来，才能区分「ref 陈旧」和「key 对不上」。
+                        nlog('远端·toggleAttacker', { cardKey: intent.cardKey, on: intent.on, found: !!card, benchKeys: netEnemyBenchRef.current.map(c => c.key) });
+                        if (card) act.toggleAttacker(card, intent.on, 'enemy');
+                        break;
+                    }
+                    case 'selectBlocker': {
+                        const card = netEnemyBenchRef.current.find(c => c.key === intent.cardKey);
+                        // [超元链接] 第 2 参 owner='enemy'：`selectBlocker` 只拿它决定提示文案
+                        //   （`useGameState.ts:6020`），不传也"能用"，但会让客方看到我方视角的措辞。
+                        if (card) act.selectBlocker(card.id, 'enemy');
+                        break;
+                    }
+                    case 'assignBlocker': {
+                        // [超元链接] 第 2 参是 `blockerId`，引擎内部 `ownerBench.find(c => c.id === blockerId)`
+                        //   （`useGameState.ts:6033`）⇒ 传 `card.id`，不是 key。
+                        const card = netEnemyBenchRef.current.find(c => c.key === intent.cardKey);
+                        if (card) act.assignBlocker(intent.fightIndex, card.id, 'enemy');
+                        break;
+                    }
+                    case 'initiateAttack': act.initiateAttack('enemy'); break;
+                    case 'passTurn': act.passTurn(); break;
+                    case 'commitAttack': act.commitAttack(); break;
+                    case 'confirmBlock': act.confirmBlock(); break;
+                    case 'resolveStack': act.resolveStack(); break;
+                    case 'confirmChoice': act.resolveChoice(intent.choiceKey); break;
+                    case 'cancelChoice': act.cancelChoice(); break;
+                    case 'confirmPendingSpell': act.confirmPendingSpell(); break;
+                    case 'cancelPendingSpell': act.cancelPendingSpell(); break;
+                    case 'surrender': {
+                        // [2026-11-07 超元链接 · 客方投降] 客方投降 → 房主清**客方那侧**水晶
+                        //   （对房主引擎而言客方就是 enemy）⇒ finalResult='victory' ⇒
+                        //   快照带 gameResult='victory'，客方经 MIRRORED_VALUE_MAPS 镜像成 'defeat'。
+                        act.surrenderGame?.('enemy');
+                        break;
+                    }
+                    case 'challengeEnemy': {
+                        // [2026-11-08 超元链接 · 挑战者失效] 客方发起挑战 → 房主以 enemy 侧执行。
+                        //   语义严格对称：客方的攻击者 = 房主引擎的 **enemy** 单位；
+                        //   客方要拉的 = 房主的 **player** 单位
+                        //   ⇒ 直接复用 `aiChallengeUnit`（它本来就是「enemy 攻击者 + player 目标」）。
+                        const field = netCombatFieldRef.current || [];
+                        const attacker = field.map(f => f && f.attacker).find(x => x && x.key === intent.attackerKey);
+                        const target = netPlayerBenchRef.current.find(x => x.key === intent.targetKey);
+                        if (!attacker || !target) {
+                            nlog('远端·challengeEnemy 未找到', { attackerKey: intent.attackerKey, targetKey: intent.targetKey });
+                            break;
+                        }
+                        act.aiChallengeUnit(attacker.id, target.id);
+                        break;
+                    }
+                    case 'castSpellAt': {
+                        // [2026-11-07 超元链接 · 施法归属] 客方选完目标 → 房主以 'enemy' 身份真正结算。
+                        //   卡从 `activeCard` 取：客方发 `startSpell` 时房主的 `startSpellCasting`
+                        //   已把那张牌从 `enemyHand` 摘掉并挂成 `activeCard`（见 useSpellSystem:783）。
+                        const active = netActiveCardRef.current;
+                        if (!active || active.key !== intent.spellCardKey) {
+                            nlog('远端·castSpellAt 与 activeCard 不匹配', {
+                                expect: intent.spellCardKey,
+                                got: active ? active.key : null,
+                            });
+                            break;
+                        }
+                        const resolved = resolveTargetRefsInEngine(intent.targets);
+                        if (!resolved) {
+                            nlog('远端·castSpellAt 目标解析失败', intent.targets);
+                            break;
+                        }
+                        act.finalizeSpell(active, 'enemy', resolved);
+                        break;
+                    }
+                    case 'mulliganDone': {
+                        void act.replaceEnemyOpeningHand(intent.indices);
+                        peerMulliganDoneRef.current = true;
+                        break;
+                    }
+                    default: break;
+                }
+            } catch (e) {
+                console.warn('[net] 执行远端意图失败：', intent, e);
+            }
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [netIntent]);
+
+    // [超元链接 · 联机] 主机：把权威状态发布给客方（客方不传 publish，此 effect 空转）。
+    // 防抖 200ms —— 一局里 `game` 会因动画/结算连续变化，每条都发会把通道打满。
+    // [2026-11-07 防抖饥饿修复] 原实现是纯防抖：每次依赖变化都 clearTimeout + setTimeout(200)，
+    //   且 cleanup 里还会再清一次 ⇒ 只要状态变化间隔 < 200ms（动画/结算期很常见），
+    //   定时器**永远跑不到 publish**，客方一帧快照都收不到。
+    //   现在补「距上次成功发布 > NET_PUBLISH_MAX_DELAY 就立刻同步发」的兜底：
+    //   高频变化时最坏也只是 500ms 发一次，而不是永远不发。
+    const NET_PUBLISH_DEBOUNCE_MS = 200;
+    const NET_PUBLISH_MAX_DELAY_MS = 500;
+    const netPublishTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const netLastPublishAt = useRef(0);
+    useEffect(() => {
+        // [联机诊断] 只在 round / turnOwner / 权威位变化时打，等于「房主引擎的回合推进节拍」。
+        nlogChanged('effect.publish', { round: game.round, turnOwner: game.turnOwner, authoritative: netIntent?.authoritative });
+        const publish = netIntent?.publish;
+        if (!publish) return;
+        // [联机诊断 · 增益] 防抖饥饿判据：本计数在涨、而 `effect.publish执行` 不涨 ⇒ 定时器被反复清掉。
+        //   放在 `if (!publish) return` 之后 ⇒ 只有房主会产生这个计数，客方不会污染。
+        ncount('effect.publish重跑', 20);
+
+        const doPublish = () => {
+            netPublishTimer.current = null;
+            netLastPublishAt.current = Date.now();
+            ncount('effect.publish执行', 5); // [联机诊断 · 增益] 真正跑到这里才算「准备发」
+            ntime('房主·发布', { round: game.round, turnOwner: game.turnOwner }); // [联机计时] 真正 publish 的墙钟时刻
+            // [2026-11-07 超元链接 · 客方黑屏根因]
+            // `playerHand` / `enemyHand` / `playerBench` / `enemyBench` / `combatField` 全部是
+            // useGameState 里的**独立 state**（useGameState.ts:136 一带），**都不在 `game` 里**。
+            // 只发 `game` 的话，客方这五个字段全是 undefined，
+            // setXxx(undefined) 之后下游 `xxx.length` 立刻崩 ⇒ 客方整屏黑。
+            // 所以必须逐个并进快照；`toGuestView` 的 flipSide 会按 `player*`/`enemy*` 命名正确翻转。
+            publish({
+                ...game,
+                playerHand,
+                enemyHand,
+                playerBench,
+                enemyBench,
+                combatField,
+                // [超元链接 · 联机] 牌库也并进来。
+                //   字段名必须是 `playerDeck` / `enemyDeck`（`GameState` 的既有命名）：
+                //   `toGuestView` 的 flipSide 靠 `playerXxx` ↔ `enemyXxx` 配对自动翻转，
+                //   redactForViewer 也按这个名字裁剪牌序 —— 写成 `enemyDeckState`
+                //   会让敌人的牌库**既不翻转也不裁剪**，等于把牌序白送出去。
+                playerDeck,
+                enemyDeck: enemyDeckState,
+            } as typeof game);
+        };
+
+        // ★ 兜底：太久没发就立刻发，不再排队等防抖
+        if (Date.now() - netLastPublishAt.current > NET_PUBLISH_MAX_DELAY_MS) {
+            if (netPublishTimer.current) {
+                clearTimeout(netPublishTimer.current);
+                netPublishTimer.current = null;
+            }
+            doPublish();
+            return;
+        }
+
+        if (netPublishTimer.current) clearTimeout(netPublishTimer.current);
+        netPublishTimer.current = setTimeout(doPublish, NET_PUBLISH_DEBOUNCE_MS);
+        return () => {
+            if (netPublishTimer.current) clearTimeout(netPublishTimer.current);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [game, playerHand, enemyHand, playerBench, enemyBench, combatField, playerDeck, enemyDeckState, netIntent]);
 
     // [2026-09-25 莉莉子 投降] 标准 / 地下清理模式：App 递增 surrenderSignal = 请求本场以战败收场。
     //   实现只需把玩家水晶清零 → 命中既有的 playerNexus <= 0 战败判定（useGameState 1105 行）→
@@ -248,6 +792,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
         //    而结算界面就挂在根容器内 → 入场动画被冻在初始态（opacity 0）
         //    →「看不到结算内容、但按钮仍然可点」正是这个现象
         setIsPaused(false);
+        // [2026-11-07 超元链接 · 客方投降没有意图通道（P1）]
+        //   病根：投降走的是 App 的 `surrenderSignal`（递增 → 本 effect → `surrenderGame()`），
+        //     是**纯本地行为**。客方 `authoritative:false` 时引擎不推进胜负 ⇒
+        //     客方自己没判负，房主也完全不知道 ⇒ 快照回传把水晶又填回来，表现为
+        //     "我投了，对方没赢，我还在打"。
+        //   修法：先上报 `surrender` 意图（房主会清掉客方那侧水晶并发快照回来）；
+        //     上报成功（= 客方）就不再本地执行。
+        //   ⚠️ 单机（无 `netIntent`）与房主都返回 true ⇒ 仍是原来的本地清水晶，行为不变。
+        if (!fireNetIntent({ op: 'surrender' })) return;
         actions.surrenderGame?.();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [surrenderSignal, isRogueMode]);
@@ -497,13 +1050,51 @@ export const GameSession: React.FC<GameSessionProps> = ({
     }, [game.pendingLevelUps, game.levelUpCard, game.playerGraveyard, game.enemyGraveyard, playerBench, enemyBench, combatField, setGame, tutorialUpgradeTrigger]);
 
     // [新增] 使用 Mulligan Hook 接管换牌逻辑
+    // [超元链接 · 联机] 客方换了哪几张，要等「换牌动画播完」（onComplete）才发出去，
+    //   所以先在 onReplace 里记下来 —— 客方本地不做替换，手牌由房主改。
+    const mulliganIndicesRef = useRef<number[]>([]);
+
     const mulligan = useMulligan({
         initialHand: playerHand,
         onReplace: async (indices) => {
+            // 客方：只记录，不本地执行 —— 手牌由房主改，快照回来即生效
+            if (netIntent && !netIntent.authoritative) {
+                mulliganIndicesRef.current = indices;
+                return;
+            }
             await actions.replaceOpeningHand(indices);
         },
         onComplete: () => {
-            actions.requeueHandToDeck();
+            // 客方：发一条「换牌完成」，然后跳过所有本地动作（发牌/洗牌都由房主做）
+            if (netIntent && !netIntent.authoritative) {
+                try {
+                    netIntent.emit({ op: 'mulliganDone', indices: mulliganIndicesRef.current });
+                } catch { /* 忽略发送失败 */ }
+                setMulliganDrawLock(false);
+                setPostMulliganLock(false);
+                return;
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // [超元链接 · 联机 BUG修复 · 换牌竞态：房主把客方手牌提前收走了]
+            //   ── 病根：房主换完**自己**的牌就 `requeueHandToDeck(true)`，而它连
+            //      **客方尚未换的那 4 张起手**一起收回牌库并清空 `enemyHand`。
+            //      客方的 `mulliganDone` 稍后到达时，`replaceEnemyOpeningHand` 读到的
+            //      手牌已是空数组（`useGameState.ts:6320` 的 `validIndices.length === 0`
+            //      直接 return）⇒ 客方**换了等于白换**。
+            //   ── 修法：房主这里**只上锁、不收牌**。收回动作统一挪到
+            //      `drawCards` 包装的「等客方换完」之后（下方 `hostRequeuedRef` 那段），
+            //      顺序变成「双方都换完 → 统一收回 → 统一发牌」。
+            //   ── 单机（`netIntent` 为空）走最后一个分支，与改动前逐字一致。
+            // ══════════════════════════════════════════════════════════════════
+            if (netIntent && netIntent.authoritative) {
+                // [2026-07-07 换牌锁定] 用独立状态锁按钮，不碰 game.phase（理由见下方单机分支）
+                setMulliganDrawLock(true);
+                setPostMulliganLock(true);
+                return;
+            }
+
+            actions.requeueHandToDeck(!!netIntent);
 
             // [2026-07-07 换牌锁定] 用独立状态锁按钮，不碰 game.phase
             // 防误触 drawCards(4) 执行前窗口内点"结束回合"
@@ -619,9 +1210,39 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // 新增的代码内容
     const currentCardBackUrl = getCardBackUrl(cardBackIndex);
 
+    // [2026-11-07 联机] 左右两侧身份标识的图标 src。单机两个入参都是 undefined ⇒ 两个 src 也是 undefined ⇒ 图标不渲染
+    const myDeckIconSrc = useMemo(() => resolveDeckIcon(myDeckIcon, cardBackIndex), [myDeckIcon, cardBackIndex]);
+    const enemyDeckIconSrc = useMemo(() => resolveDeckIcon(enemyDeckIcon, enemyCardBackIndex), [enemyDeckIcon, enemyCardBackIndex]);
+
 
 
     const isMulliganPhase = mulligan.isActive;
+
+    // =====================================
+    // [2026-11-08 超元链接 · 换牌阶段混乱] 客方兜底收尾。
+    // ── 现象（程实测）：客方先完成换牌 → 牌进手；房主随后完成换牌时，
+    //   客方**又重播一遍换牌动画**，而且手牌变成了另一批。
+    // ── 机制：换牌 UI 的开关只有 `mulligan.isActive`，而它**只在** `finishMulligan`
+    //   里被置 false，`finishMulligan` 又要等换牌组件的 exit 动画播完才被调用。
+    //   客方在 exit 期间收到房主快照 → 快照整体覆盖 `game` + 五区域 → 换牌组件被
+    //   重渲染/打断 ⇒ `finishMulligan` 可能永远不被调用 ⇒ `isActive` 恒为 true，
+    //   于是每份快照回来都看起来"又播了一遍换牌"。
+    // ── 处置：客方一旦「已确认换牌」而 UI 仍挂着，且 1.2s 内自己没关掉，
+    //   就补一次 `finishMulligan()`。重复调用是安全的：
+    //     · `finishMulligan` 首次会把 `isActive` 置 false，守卫随即拦住后续；
+    //     · 重复的 `mulliganDone` 到房主侧走 `validIndices.length === 0` 直接 return。
+    // ⚠️ 这是**防御性兜底**，不是根因修复：真正的时序问题（exit 动画被快照打断）
+    //    需要在客方把换牌动画跑完再应用快照，属第二批。若实测仍有重播，请以本注释定位。
+    // =====================================
+    useEffect(() => {
+        if (!netIntent || netIntent.authoritative) return;
+        if (!mulligan.isActive || !mulligan.isConfirmed) return;
+        const t = setTimeout(() => {
+            if (mulligan.isActive) mulligan.finishMulligan();
+        }, 1200);
+        return () => clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [netIntent, mulligan.isActive, mulligan.isConfirmed]);
 
     // [新增] 移动到这里：控制开局动画显示时机
     const [showMulliganUI, setShowMulliganUI] = useState(false);
@@ -650,31 +1271,50 @@ export const GameSession: React.FC<GameSessionProps> = ({
         return () => clearTimeout(timer);
     }, []);
 
-    // ⚠️ [2026-09-04 临时探针 · 排查双剑空 key 警告] 定位后删除
-    useEffect(() => {
-        if (!import.meta.env.DEV) return;
-        const probe = (label: string, arr?: any[]) => {
-            if (!arr || arr.length < 2) return;
-            const ids = arr.map(c => (c as any)?.id);
-            const empty = ids.filter(i => !i).length;
-            const dup = ids.filter((v, i) => v && ids.indexOf(v) !== i);
-            if (empty > 0 || dup.length > 0) {
-                console.warn(`[key-probe] ${label} 空id=${empty} 重复id=${dup.length}`, arr.map(c => ({ key: (c as any)?.key, id: (c as any)?.id })));
-            }
-        };
-        probe('playerHand', playerHand);
-        probe('enemyHand', enemyHand);
-        probe('playerBench', playerBench);
-        probe('enemyBench', enemyBench);
-        probe('combatField', combatField.flatMap((f: any) => [f?.attacker, f?.blocker].filter(Boolean)));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [playerHand, enemyHand, playerBench, enemyBench, combatField]);
+    // [2026-11-07 莉莉子] 已删除 2026-09-04 的 `[key-probe]` 临时探针（原注释："定位后删除"）。
+    //   它的依赖是 playerHand/enemyHand/playerBench/enemyBench/combatField —— 联机下每份快照都会
+    //   换新数组，于是 **每一帧都跑一次 probe、每一帧都 warn 一次**，直接刷屏把主线程拖死。
+    //   它当初报的问题（`enemyHand` 里 9 个 id 都是 `__hidden__`）是真的，但那要在
+    //   snapshot 的 redactForViewer 侧修 key 唯一性，不是在渲染侧打日志。
 
     // [修改] 挂载信息播报 Hook (传入 isMulliganPhase)
     // [2026-08-20 莉莉子] 解构出 announce，供格挡拒绝等事件主动触发中央播报
     const { announcement, announce } = useGameAnnouncer({
         game,
         drawCards: async (count, reason) => { // [2026-09-19] reason 透传给底层以区分「换牌开局抽卡」
+            // [超元链接 · 联机] 客方不本地抽牌：牌由房主抽、结果随快照回来。
+            //   若本地也抽一遍，会和房主的抽牌叠加 ⇒ 客方手牌/牌库数量双倍增长。
+            if (netIntent && !netIntent.authoritative) return;
+
+            // [超元链接 · 联机] 房主：换牌后的开局抽牌（count >= 2）要等客方换完牌。
+            //   · 只等开局那次（每回合的 drawCards(1) 不等，否则客方掉线会拖死整局）
+            //   · 最多 22 秒（换牌倒计时 20 秒 + 网络余量），超时照常发牌，宁可少一张换牌也不卡死
+            if (netIntent && netIntent.authoritative && count >= 2) {
+                const deadline = Date.now() + 22000;
+                while (!peerMulliganDoneRef.current && Date.now() < deadline) {
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                console.log(`[DrawCards] 房主开局抽牌 — 客方换牌${peerMulliganDoneRef.current ? '已完成' : '超时未完成'}`);
+
+                // ══════════════════════════════════════════════════════════════
+                // [超元链接 · 联机 BUG修复 · 换牌竞态] 收回手牌的唯一时机。
+                //   只有**双方都换完**（或客方超时）才能把两边手牌收回牌库 ——
+                //   原先这一步在房主的 `onComplete` 里就做了，会把客方还没换的 4 张
+                //   一起收走 ⇒ 客方换牌白做（详见 `useMulligan.onComplete` 上方注释）。
+                //   ⚠️ `count >= 2` 只在开局那次成立：每回合的 `drawCards(1)` 不进本分支，
+                //      所以 ref 一旦置位就永不再触发，不会把后续回合的手牌误收。
+                //   ⚠️ 超时分支也收牌：宁可让客方那一次换牌落空，也不能卡死开局。
+                // ══════════════════════════════════════════════════════════════
+                if (!hostRequeuedRef.current) {
+                    hostRequeuedRef.current = true;
+                    // ⚠️ 走 `netActionsRef.current` 而不是本包装闭包里的 `actions`：
+                    //   `useGameAnnouncer` 的 drawCards 是在 `isMulliganPhase` 变化时被
+                    //   **捕获进 effect 闭包**的，取最新引用才能保证 `requeueHandToDeck`
+                    //   内部读到的 `playerHand` 是当前这一帧的手牌（而不是更早那一帧）。
+                    netActionsRef.current.requeueHandToDeck(true);
+                }
+            }
+
             const skipAnim = (userSystem.settings as any)?.skipGameStartDrawAnimation;
             if (skipAnim) {
                 console.log(`[DrawCards] ⚡ 快速模式：跳过抽卡动画`);
@@ -723,7 +1363,24 @@ export const GameSession: React.FC<GameSessionProps> = ({
     });
     const spellSystem = useSpellSystem({
         onComplete: (card, targets) => {
-            // 当目标选择完成后，调用游戏状态的 finalizeSpell
+            // [2026-11-07 超元链接 · 施法归属] 客方在这里**只上报、不本地结算**。
+            //   病根（原实现）：无条件 `actions.finalizeSpell(card, 'player', targets)` ——
+            //     ① 不走意图 ⇒ 房主永远收不到"打的是谁"，`spellCasting` 停在等目标
+            //     ② owner 写死 'player' ⇒ 即使客方本地跑，跑的也是错阵营的引擎
+            //     ⇒ 玩家看到"闪一下回滚"，两边都坏。
+            //   现在：非权威方把目标翻成跨端可寻址的 `TargetRef` 发 `castSpellAt`，本地什么都不做；
+            //         房主结算完的快照回来时 `spellCasting` 变空 ⇒ 上方同步 effect 自动 cancelCasting。
+            if (netIntent && !netIntent.authoritative) {
+                const refs = targetsToRefs(targets);
+                if (refs) {
+                    fireNetIntent({ op: 'castSpellAt', spellCardKey: card.key, targets: refs });
+                } else {
+                    // 目标翻不出来（理论上不该发生）：保持瞄准态让玩家重选，别把脏意图发给房主
+                    announce('目标同步失败，请重新选择', 'SYNC FAILED', 'phase_hint', 2000);
+                }
+                return;
+            }
+            // 单机 / 房主：照旧本地结算
             actions.finalizeSpell(card, 'player', targets);
         },
         // [2026-10-02 莉莉子 BUG修复] 补传棋盘快照读器。
@@ -753,6 +1410,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // 实时查阅当前生效法术的效果基因库，判断其是否有针对手牌（HAND_CARD）的战术契约
     // ==========================================
     const isCastingForHand = useMemo(() => {
+        // [2026-11-07 超元链接 · 施法归属] 对方在施法时，我方手牌不该进入「可被选中」的高亮态
+        //   （`game.spellCasting` 是从快照里来的，不看归属就会把对方的手牌索敌目标高亮到我这边）。
+        if ((game.spellCasting?.casterSide ?? 'player') !== 'player') return false;
         // [2026-06-27] 同时检查 spellSystem 和 game.spellCasting，消除一帧延迟
         const isActive = spellSystem.isCasting || !!game.spellCasting;
         if (!isActive) return false;
@@ -796,8 +1456,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
     //    未来: select_enemy_bench | select_enemy_hand
     // ============================================================
     useEffect(() => {
+        // [2026-11-07 超元链接 · 施法归属] 只有「我才是施法方」才允许点亮本地瞄准 UI。
+        //   病根：本 effect 此前只看 `game.spellCasting` 非空 ⇒ 客方会替房主点亮瞄准线
+        //   （程实测的现象）。`casterSide` 是引擎真实阵营，快照 `SIDE_VALUE_KEYS` 已白名单它
+        //   ⇒ 翻到客方手里自动变 `'player'`，于是本条判断在两端都等价于「我是施法方」。
+        //   缺省 undefined 按 `'player'` 处理：单机与旧入口行为逐字不变。
+        const isMyCasting = (game.spellCasting?.casterSide ?? 'player') === 'player';
+
         // 0. [2026-07-09 瓦莱莉] 弃牌选择模式：激活 spellSystem 让视觉层工作
-        if (game.spellCasting?.step === 'select_discard' && !spellSystem.isCasting) {
+        if (isMyCasting && game.spellCasting?.step === 'select_discard' && !spellSystem.isCasting) {
             const targetCard = game.activeCard;
             if (targetCard) {
                 spellSystem.startCasting(targetCard, true); // skipAutoComplete
@@ -806,7 +1473,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
 
         // [2026-07-14 通用] 手牌选择模式：激活 spellSystem 让视觉层工作
-        if (game.spellCasting?.step === 'select_hand_target' && !spellSystem.isCasting) {
+        if (isMyCasting && game.spellCasting?.step === 'select_hand_target' && !spellSystem.isCasting) {
             const targetCard = game.activeCard;
             if (targetCard) {
                 spellSystem.startCasting(targetCard, true); // skipAutoComplete
@@ -815,7 +1482,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
 
         // [2026-07-20 替换打出] 激活瞄准线视觉层
-        if (game.spellCasting?.step === 'select_bench' && !spellSystem.isCasting) {
+        if (isMyCasting && game.spellCasting?.step === 'select_bench' && !spellSystem.isCasting) {
             const targetCard = game.activeCard;
             if (targetCard) {
                 spellSystem.startCasting(targetCard, true);
@@ -827,7 +1494,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
         // [占位] 未来 select_enemy_hand：选择敌方手牌
 
         // 1. 如果底层要求选目标，且前台还没开始瞄准
-        if (game.spellCasting && game.spellCasting.step !== 'choose_mode' && !spellSystem.isCasting) {
+        if (isMyCasting && game.spellCasting && game.spellCasting.step !== 'choose_mode' && !spellSystem.isCasting) {
             // [SBA] 如果 spellCasting 已预填目标 → 敌方自动施法，不启动玩家瞄准 UI
             if (game.spellCasting.targets && game.spellCasting.targets.length > 0) return;
             // 这张法术可能在 activeCard 里 (英雄法术变身而来)，也可能在手牌里
@@ -1333,11 +2000,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
             const fightIndex = payload?.fightIndex;
             if (!blocker || typeof fightIndex !== 'number') return;
             // 1. 中央播报
+            // [2026-10-26 莉莉子] 文案统一取自 `blockRules.BLOCK_REJECT_TEXT`，并补上【无法格挡】第三态 ——
+            //   此前这里是二元三元表达式，CantBlock 被拒会误报成「隐秘」那句。
+            const rejectText = payload.reason
+                ? BLOCK_REJECT_TEXT[payload.reason as BlockRejectReason]
+                : undefined;
             announce(
-                payload.reason === 'fearsome'
-                    ? '必须用攻击力大于3的单位阻挡【凶恶】单位'
-                    : '必须用【隐秘】单位阻挡【隐秘】单位',
-                'BLOCK REJECTED',
+                rejectText?.text ?? BLOCK_REJECT_TEXT.elusive.text,
+                rejectText?.title ?? 'BLOCK REJECTED',
                 'phase_hint',
                 2000,
             );
@@ -1546,9 +2216,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 const checkIdx = (dropStartIndex + offset) % totalSlots;
                                 const f = combatFieldRef.current[checkIdx];
                                 if (f.blocker !== null || usedSlots.has(checkIdx)) continue;
-                                if (f.attacker.keywords.includes('Elusive') && !c.keywords.includes('Elusive')) continue;
-                                const cPower = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
-                                if (f.attacker.keywords.includes('Fearsome') && cPower < 3) continue;
+                                // [2026-10-26 莉莉子] 预瞄高亮与落点提交是**两套并列**的环形查找，
+                                //   判据必须同源 —— 否则会出现「槽位亮了却放不进去」或反过来的观感错位。
+                                //   顺带收掉内联手算攻击力（漏 maxPower 钳制与 0 下限）。
+                                if (!canBlockAttacker(c, f.attacker)) continue;
                                 foundIdx = checkIdx;
                                 break;
                             }
@@ -1646,12 +2317,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         if (p === 'main') {
                             // main 阶段：先发起进攻宣言，再逐个上场
                             eventBus.emit(GameEvents.UI_CLICK);
-                            actions.initiateAttack();
+                            // [2026-11-07 超元链接 · 拖拽路径漏接线] 原来直接调引擎 ⇒ 客方只本地执行、
+                            //   意图从没发给房主，快照一回传就被清掉，表现是"派出单位后被撤回"。
+                            if (fireNetIntent({ op: 'initiateAttack' })) actions.initiateAttack();
                             requestAnimationFrame(() => {
                                 // [错频优化] 每张卡间隔 60ms 依次发起冲锋，避免音效炸耳
                                 groupCards.forEach((c, index) => {
                                     setTimeout(() => {
-                                        actions.toggleAttacker(c, true);
+                                        // [2026-11-07 超元链接 · 拖拽路径漏接线] 见上，必须走意图通道
+                                        if (fireNetIntent({ op: 'toggleAttacker', cardKey: c.key, on: true })) actions.toggleAttacker(c, true);
                                     }, index * 60);
                                 });
                             });
@@ -1660,7 +2334,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             eventBus.emit(GameEvents.UI_CLICK);
                             groupCards.forEach((c, index) => {
                                 setTimeout(() => {
-                                    actions.toggleAttacker(c, true);
+                                    // [2026-11-07 超元链接 · 拖拽路径漏接线] attack_declare 阶段同样要走意图通道
+                                    if (fireNetIntent({ op: 'toggleAttacker', cardKey: c.key, on: true })) actions.toggleAttacker(c, true);
                                 }, index * 60);
                             });
                         } else if (p === 'block_declare') {
@@ -1692,10 +2367,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     const f = combatFieldRef.current[checkIdx];
 
                                     if (f.blocker !== null || usedSlots.has(checkIdx)) continue;
-                                    if (f.attacker.keywords.includes('Elusive') && !c.keywords.includes('Elusive')) continue;
-
-                                    const cPower = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
-                                    if (f.attacker.keywords.includes('Fearsome') && cPower < 3) continue;
+                                    // [2026-10-26 莉莉子] 合法性统一走门卫 —— 原先是手抄条件 + **内联手算攻击力**，
+                                    //   与 `getPower` 不同源（漏 maxPower 钳制与 0 下限），此处一并收口。
+                                    if (!canBlockAttacker(c, f.attacker)) continue;
 
                                     foundIdx = checkIdx;
                                     break; // 找到了最近的合法空位
@@ -1705,7 +2379,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     usedSlots.add(foundIdx);
                                     // [错频优化] 计算依然是瞬间同步完成的，但是执行上阵动作带上了级联延迟！
                                     setTimeout(() => {
-                                        actions.assignBlocker(foundIdx, c.id);
+                                        // [超元链接 · 联机] 客方只上报意图（跨端寻址必须用 key，id 两端不同）；
+                                        //   房主 / 单机 fireNetIntent 恒返回 true ⇒ 本地照常执行，行为不变。
+                                        if (fireNetIntent({ op: 'assignBlocker', fightIndex: foundIdx, cardKey: c.key })) {
+                                            actions.assignBlocker(foundIdx, c.id);
+                                        }
                                     }, index * 60);
                                     // [核心推进] 下一张拖拽队列中的卡，默认顺延到刚刚填入槽位的下一个位置
                                     dropStartIndex = (foundIdx + 1) % totalSlots;
@@ -1716,13 +2394,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     const targetFight = combatFieldRef.current[dropStartIndex];
                                     if (targetFight && targetFight.owner === 'enemy' && targetFight.blocker === null) {
                                         const attacker = targetFight.attacker;
-                                        let rejectReason: 'elusive' | 'fearsome' | null = null;
-                                        if (attacker.keywords.includes('Elusive') && !c.keywords.includes('Elusive')) {
-                                            rejectReason = 'elusive';
-                                        } else {
-                                            const cPower = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
-                                            if (attacker.keywords.includes('Fearsome') && cPower < 3) rejectReason = 'fearsome';
-                                        }
+                                        // [2026-10-26 莉莉子] 同上一并收口（原先是同一套条件的手抄第三份）
+                                        const rejectReason = getBlockRejectReason(c, attacker);
                                         if (rejectReason) {
                                             eventBus.emit(GameEvents.BLOCK_REJECTED, { blocker: c, fightIndex: dropStartIndex, reason: rejectReason, attackerId: attacker.id });
                                         }
@@ -1939,7 +2612,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         setTimeout(() => {
                             if (roleType === 'attacker' && phase === 'attack_declare') {
                                 eventBus.emit(GameEvents.RECALL_UNIT);
-                                actions.toggleAttacker(item.card, false);
+                                // [2026-11-07 超元链接 · 拖拽路径漏接线] 撤回同样要走意图通道，否则客方撤不回去
+                                if (fireNetIntent({ op: 'toggleAttacker', cardKey: item.card.key, on: false })) actions.toggleAttacker(item.card, false);
                             } else if (roleType === 'blocker' && phase === 'block_declare') {
                                 eventBus.emit(GameEvents.RECALL_UNIT);
                                 actions.recallBlocker(item.idx);
@@ -2002,11 +2676,60 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     const firstId = dragGroupRef.current[0];
                                     const srcIdx = newField.findIndex(f => f.blocker?.id === firstId);
                                     if (srcIdx !== -1 && srcIdx !== targetSlot) {
-                                        const temp = newField[targetSlot].blocker;
-                                        newField[targetSlot].blocker = newField[srcIdx].blocker;
-                                        newField[srcIdx].blocker = temp;
-                                        setCombatField(newField);
-                                        console.log(`[CombatDrag] 🔄 格挡者交换: 槽位 ${srcIdx} ↔ ${targetSlot}`);
+                                        // ============================================================
+                                        // [2026-10-26 莉莉子 BUG修复 · 程报「战场内挪位可绕过隐秘/凶恶」]
+                                        // ── 病根：本分支原先只校验两个索引（`targetSlot !== sourceSlot`、
+                                        //    `srcIdx !== targetSlot`），**一格关键词判据都没有** ⇒
+                                        //    玩家可以先把单位拖到普通战线（合法放行），再从战场把它挪到
+                                        //    【隐秘】战线上 —— 整条规则被绕过（程 2026-10-26 提出）。
+                                        // ── 互换是**双向**的：A ↔ B 之后，B 也会被送到 A 原来的位置，
+                                        //    所以两个方向都要过门卫 —— 只查"搬过去"会漏掉"被换回来"那一半。
+                                        // ── 被拒时故意**不复用** `assignBlocker`：那个函数只认备战席
+                                        //    （`useGameState` 里是 `playerBench.find`），战场上的 blocker 进不去。
+                                        //    改为发既有的 BLOCK_REJECTED，让现成的「冲过去→撞墙→弹回」演出 + 中央播报接管，
+                                        //    视觉层一行新代码都不用写（战场格挡槽位与备战席落点是同一套 DOM 结构）。
+                                        // ============================================================
+                                        const movingBlocker = newField[srcIdx].blocker!;
+                                        const sourceAttacker = newField[srcIdx].attacker;
+                                        const targetAttacker = newField[targetSlot].attacker;
+                                        const swappedBlocker = newField[targetSlot].blocker; // 交换后会被送到 srcIdx 的那个（可能为空）
+
+                                        // 方向一：搬过去的这个，能不能挡住目标战线
+                                        const forwardReject = targetAttacker
+                                            ? getBlockRejectReason(movingBlocker, targetAttacker)
+                                            : null;
+                                        if (forwardReject) {
+                                            eventBus.emit(GameEvents.BLOCK_REJECTED, {
+                                                blocker: movingBlocker,
+                                                fightIndex: targetSlot, // 演出落点＝它想去的那个格子
+                                                reason: forwardReject,
+                                                attackerId: targetAttacker!.id,
+                                            });
+                                            console.log(`[CombatDrag] ⛔ 战场内挪位被拒(${forwardReject}): 槽位 ${srcIdx} → ${targetSlot}`);
+                                        }
+
+                                        // 方向二：原本在目标槽位的那个，会不会被换到一条它挡不了的战线上
+                                        const backwardReject = swappedBlocker && sourceAttacker
+                                            ? getBlockRejectReason(swappedBlocker, sourceAttacker)
+                                            : null;
+                                        if (!forwardReject && backwardReject) {
+                                            eventBus.emit(GameEvents.BLOCK_REJECTED, {
+                                                blocker: swappedBlocker!,
+                                                fightIndex: srcIdx, // 演出落点＝它会被送去的那个格子
+                                                reason: backwardReject,
+                                                attackerId: sourceAttacker!.id,
+                                            });
+                                            console.log(`[CombatDrag] ⛔ 战场内挪位被拒(${backwardReject}): 反向 槽位 ${targetSlot} → ${srcIdx}`);
+                                        }
+
+                                        // 两个方向都合法才真正交换
+                                        if (!forwardReject && !backwardReject) {
+                                            const temp = newField[targetSlot].blocker;
+                                            newField[targetSlot].blocker = newField[srcIdx].blocker;
+                                            newField[srcIdx].blocker = temp;
+                                            setCombatField(newField);
+                                            console.log(`[CombatDrag] 🔄 格挡者交换: 槽位 ${srcIdx} ↔ ${targetSlot}`);
+                                        }
                                     }
                                 }
                             }
@@ -2170,10 +2893,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 }
             }
             // [修复 1] 在法术响应阶段超时，等同于放弃响应 (passTurn)
-            if (game.phase === 'main' || game.phase === 'react_to_block') actions.passTurn();
-            else if (game.phase === 'attack_declare') actions.commitAttack();
+            // [超元链接 · 联机] 超时也走意图通道：客方只上报，由房主裁决后同步回来
+            if (game.phase === 'main' || game.phase === 'react_to_block') {
+                if (fireNetIntent({ op: 'passTurn' })) actions.passTurn();
+            }
+            else if (game.phase === 'attack_declare') {
+                if (fireNetIntent({ op: 'commitAttack' })) actions.commitAttack();
+            }
             // [修复 2] 防守方超时，应视为确认当前格挡方案，进入响应博弈，而非强制物理结算
-            else if (game.phase === 'block_declare') actions.confirmBlock();
+            else if (game.phase === 'block_declare') {
+                if (fireNetIntent({ op: 'confirmBlock' })) actions.confirmBlock();
+            }
             return;
         }
         const timer = setTimeout(() => setTimeLeft(p => p - 1), 1000);
@@ -2184,6 +2914,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
     // [新增] 格挡阶段会自动从敌方备战席分配格挡者
     useEffect(() => {
         if (!disableAI) return;
+        // [超元链接 · 联机] 对手是真人 —— 本地绝不能替对手行动。
+        // 粉丝 MOD v4 踩过：联机时忘了短路这条"敌方自动让过"，两边互相替对方出牌。
+        if (netIntent) return;
         if (game.turnOwner !== 'enemy') return;
         if (game.gameResult || game.phase === 'animating') return;
 
@@ -2219,6 +2952,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
     }, [disableAI, game.turnOwner, game.phase, game.gameResult, actions, combatField, enemyBench, setEnemyBench, setCombatField]);
 
     const handleCardClick = (card: CardData, location: string, owner: string): boolean => {
+        // [联机诊断] 手牌/战场点击的总入口。客方「点了没反应」时先看这条有没有出现：
+        //   没出现 ⇒ 点击事件根本没到达（被遮挡 / 卡牌不可点）；
+        //   出现了但后面没打出 ⇒ 被下面的守卫拦了（phase / turnOwner / 费用 / 战斗阶段）。
+        nlog('handleCardClick', { location, owner, phase: game.phase, turnOwner: game.turnOwner, cardKey: card.key, paused: isPaused,
+            gameResult: game.gameResult ?? null,
+            spellStep: game.spellCasting?.step ?? null, pendingSpell: !!game.pendingSpell, stackLen: game.spellStack.length });
         if (game.phase === 'animating' || game.gameResult || isPaused) return false;
 
         // [2026-07-09 瓦莱莉 优先] 弃牌选择模式：先于 spellSystem.isCasting 拦截
@@ -2272,6 +3011,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
 
         if (spellSystem.isCasting) {
+            // [联机诊断] 施法态与 game.spellCasting 是两套状态；卡在 true 会把所有手牌点击吞成「选目标」。
+            nlog('点击被施法态拦截', { location, isCasting: spellSystem.isCasting, requirement: spellSystem.currentRequirement?.type ?? null, activeCard: spellSystem.activeCard?.key ?? null, gameSpellStep: game.spellCasting?.step ?? null });
             // [2026-08-08 莉莉子修复] HAND_CARD 施法瞄准：类型/费用过滤拦截（战术闪击等只能选指定类型与费用上限的手牌）
             if (spellSystem.currentRequirement?.type === 'HAND_CARD' && location === 'hand') {
                 const req = spellSystem.currentRequirement;
@@ -2300,6 +3041,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
             if (owner !== 'player') return false;
 
             if (game.turnOwner !== 'player') return false;
+
+            nlog('手牌通过归属守卫', { cardKey: card.key, type: card.type, cost: card.cost, phase: game.phase });
 
             eventBus.emit(GameEvents.PLAY_CARD);
 
@@ -2343,7 +3086,12 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     }
                 }
 
-                actions.playCard(card, 'player');
+                if (fireNetIntent({ op: 'playCard', cardKey: card.key })) {
+                    nlog('打出单位(本地执行)', { cardKey: card.key, cost: card.cost, mana: game.playerMana, benchLen: playerBench.length });
+                    actions.playCard(card, 'player');
+                } else {
+                    nlog('打出单位(客方仅上报)', { cardKey: card.key });
+                }
                 return true; // [关键] 判定：单位出牌成功！
             } else {
                 // [2026-07-27 莉莉子] 战斗阶段不能打出慢速法术（isPlayable 已拦截高光，点击也要拦住）
@@ -2399,11 +3147,18 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 const needsTarget = effectDef && effectDef.targetRequirements.some(req => req.count > 0);
 
                 if (needsTarget) {
-                    spellSystem.startCasting(card);
-                    actions.startSpellCasting(card);
+                    // [2026-11-07 超元链接 · 施法归属] 本机玩家打出的法术 ⇒ 权威位本地执行时 side='player'；
+                    //   客方 `fireNetIntent` 返回 false，本地不建 spellCasting，
+                    //   改由「房主执行 → 快照回传（casterSide 翻成 player）」驱动 UI（见 :1284 的归属门）。
+                    if (fireNetIntent({ op: 'startSpell', cardKey: card.key })) {
+                        spellSystem.startCasting(card);
+                        actions.startSpellCasting(card, 'player');
+                    }
                     return true; // [关键] 判定：法术出牌成功并进入选目标阶段！
                 } else {
-                    actions.playCard(card, 'player');
+                    if (fireNetIntent({ op: 'playCard', cardKey: card.key })) {
+                        actions.playCard(card, 'player');
+                    }
                     return true; // [关键] 判定：直接法术出牌成功！
                 }
             }
@@ -2421,11 +3176,15 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     return false;
                 }
                 eventBus.emit(GameEvents.UI_CLICK);
-                actions.toggleAttacker(card, true);
+                if (fireNetIntent({ op: 'toggleAttacker', cardKey: card.key, on: true })) {
+                    actions.toggleAttacker(card, true);
+                }
             }
             else if (location === 'combat') {
                 eventBus.emit(GameEvents.RECALL_UNIT);
-                actions.toggleAttacker(card, false);
+                if (fireNetIntent({ op: 'toggleAttacker', cardKey: card.key, on: false })) {
+                    actions.toggleAttacker(card, false);
+                }
             }
         }
         else if (game.phase === 'block_declare' && game.turnOwner === 'player' && location === 'bench') {
@@ -2451,6 +3210,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 return false;
             }
             eventBus.emit(GameEvents.UI_CLICK);
+            // [2026-11-07 超元链接 · 格挡者选不中（P0）] `selectBlocker` 只写本地 `selectedBlockerId`，
+            //   那是**纯 UI 选中态**，不该走意图通道：
+            //     客方 `fireNetIntent` 返回 false ⇒ `actions.selectBlocker` 根本执行不到 ⇒
+            //     `selectedBlockerId` 永远为空 ⇒ 随后点战槽时 `handleCombatSlotClick` 的
+            //     `if (game.phase === 'block_declare' && game.selectedBlockerId)` 直接为假 ⇒
+            //     **整个格挡静默失效**，最后以「无人格挡」提交，表现为"点了人、点了槽，什么也没发生"。
+            //   真正需要同步的是随后点槽位发出的 `assignBlocker`（它自带 cardKey，房主能自己找卡），
+            //   所以选中态两端各自维护即可。
             actions.selectBlocker(card.id);
         }
 
@@ -2522,10 +3289,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
         disabled: isPostMulliganLock,
 
         actions: {
-            onPass: actions.passTurn,
-            onAttack: actions.commitAttack,
-            onBlock: actions.confirmBlock,
-            onResolveStack: actions.resolveStack,
+            // [超元链接 · 联机] 按钮操作同样走意图通道（客方只上报，由房主执行）
+            onPass: () => { if (fireNetIntent({ op: 'passTurn' })) actions.passTurn(); },
+            onAttack: () => { if (fireNetIntent({ op: 'commitAttack' })) actions.commitAttack(); },
+            onBlock: () => { if (fireNetIntent({ op: 'confirmBlock' })) actions.confirmBlock(); },
+            onResolveStack: () => { if (fireNetIntent({ op: 'resolveStack' })) actions.resolveStack(); },
             onCancelAttack: handleCancelAttack,
             onMulliganReplace: mulligan.confirmMulligan,
             onMulliganConfirm: mulligan.confirmMulligan,
@@ -2623,6 +3391,17 @@ export const GameSession: React.FC<GameSessionProps> = ({
         }
         if (game.phase === 'attack_declare' && game.selectedChallengerId) {
             eventBus.emit(GameEvents.UI_CLICK);
+            // [2026-11-08 超元链接 · 挑战者失效] 客方必须**上报**：
+            //   此前直接 `actions.challengeEnemy(...)` ⇒ 只改本地那份 `combatField`，
+            //   房主引擎的战线从未被挑战过 ⇒ 客方一提交进攻，房主按"没有挑战目标"
+            //   的正常逻辑收掉战线 ⇒ 玩家看到「单位被撤回」。
+            //   协议用 key 寻址（id 两端各不相同，见 `net/intent.ts` 头注释），
+            //   这里先把 `selectedChallengerId` 换回它所属那张卡的 key。
+            const attacker = combatField
+                .flatMap(f => [f && f.attacker, f && f.blocker])
+                .find(x => x && x.id === game.selectedChallengerId)
+                ?? playerBench.find(x => x.id === game.selectedChallengerId);
+            if (attacker && !fireNetIntent({ op: 'challengeEnemy', attackerKey: attacker.key, targetKey: c.key })) return;
             actions.challengeEnemy(game.selectedChallengerId, c.id);
             return;
         }
@@ -2637,6 +3416,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
         // 1. 格挡宣言阶段且已选中备战席单位 → 点击槽位 = 分配阻挡
         if (game.phase === 'block_declare' && game.selectedBlockerId) {
             eventBus.emit(GameEvents.UI_CLICK);
+            // [超元链接 · 联机] 意图协议用 cardKey 寻址（id 两端各不相同，见 `net/intent.ts` 头注释），
+            //   所以先把 `selectedBlockerId` 换回它所属那张卡的 key。
+            //   选中态两侧共用同一个槽位（`useGameState.ts:6021`）⇒ 两侧备战席都查一遍。
+            const sel = playerBench.find(c => c.id === game.selectedBlockerId)
+                ?? enemyBench.find(c => c.id === game.selectedBlockerId);
+            // 客方：已上报，本地不执行（等房主把算完的快照发回来）
+            if (sel && !fireNetIntent({ op: 'assignBlocker', fightIndex: i, cardKey: sel.key })) return;
             actions.assignBlocker(i, game.selectedBlockerId);
         }
         // 2. 未选中人但点了已有阻挡者 → 撤回
@@ -2732,6 +3518,23 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
     /** 手牌卡牌点击 */
     const handleHandCardClick = useStableCallback((c: CardData) => {
+        // =====================================
+        // [2026-11-08 超元链接 · 备战席无上限] 客方补一道"满员"守卫。
+        // ── 病根（两处，都是 `owner === 'player'` 写死）：
+        //    ① `useGameState.ts:5310`「备战席满 → 进 `select_bench` 替换」分支只对 player 生效；
+        //    ② `confirmReplacePlay`（`:6454`）整段写死 `playerBench` + `owner:'player'`。
+        //    ⇒ 客方（房主引擎的 enemy 侧）打出单位时**既不进替换、也没有任何上限**，
+        //      备战席可以无限堆。
+        // ── 本轮取舍：完整替换交互的镜像属于第二批（要动确认端 + 意图协议 + UI），
+        //    这里先恢复"数量限制"本身 —— 客方满 6 时拒绝出单位。
+        //    ⚠️ 单机与 AI 完全不受影响：`netIntent` 为空时第一项判断即为 false。
+        // =====================================
+        if (netIntent && !netIntent.authoritative
+            && c.type?.includes('unit')
+            && playerBench.length >= 6) {
+            announce('备战席已满（6/6）', 'BENCH FULL', 'phase_hint', 2200);
+            return;
+        }
         handleCardClick(c, 'hand', 'player');
     });
 
@@ -2753,7 +3556,14 @@ export const GameSession: React.FC<GameSessionProps> = ({
         } else {
             setShowPlayAnimation(false);
         }
-    }, [game.activeCard, game.spellCasting?.step]);
+        // [2026-11-07 超元链接 · 大图反复重播] 依赖从 `game.activeCard`（对象引用）改为 `?.id`。
+        //   病根：客方每份快照都是 JSON 反序列化出来的**新对象**，引用必然不同 ⇒ 每份快照都重跑
+        //   本 effect ⇒ `setShowPlayAnimation(true)` ⇒ 大图重播一次；而房主在演出期 300~900ms
+        //   就发一份，客方看起来就是"一直反复播打出单位的大图"。
+        //   按 id 判重后，同一张卡只播一次。单机不受影响（每次打出本就是不同卡、不同 id）。
+        //   ⚠️ 治标：`activeCard` 在两侧都会**永久残留**（实测 round 4 仍为打出过的卡），
+        //   根治要在 useGameState 里补清空，见 `测试-联机用例.md` §13。
+    }, [game.activeCard?.id, game.spellCasting?.step]);
 
     // [2026-07-18] AI抉择：自动选择（延迟让玩家看到过程）
     // [2026-07-20 修复] 移除 turnOwner 依赖，防止 AI 被暂停前 timer 被清除导致卡死
@@ -2838,14 +3648,25 @@ export const GameSession: React.FC<GameSessionProps> = ({
             <VFXLayer
                 isCasting={spellSystem.isCasting}
                 showMousePreview={spellSystem.isCasting && (game.spellCasting?.step === 'select_discard' || (game.spellCasting?.step === 'select_bench' && (!game.spellCasting?.targets?.length)) || !spellSystem.isSelectionComplete) && !(game.spellCasting?.step === 'select_hand_target' && (game.spellCasting as any).mode === 'single' && (game.spellCasting?.targets?.length || 0) > 0)}
-                selectedTargets={[...spellSystem.selectedTargets, ...(game.spellCasting?.targets || [])]}
+                // [2026-11-07 超元链接 · 施法归属] 已选目标只在我才是施法方时传给瞄准层。
+                //   对方那份 `spellCasting.targets` 是**对方端内 id**，跨端本来也定位不到 DOM；
+                //   更重要的是程的规格：点「确定」前，对手不该知道这个法术打的是谁。
+                selectedTargets={[
+                    ...spellSystem.selectedTargets,
+                    ...(((game.spellCasting?.casterSide ?? 'player') === 'player') ? (game.spellCasting?.targets || []) : []),
+                ]}
                 castingSpellRef={spellSystem.activeCard ? spellCenterRef as React.RefObject<HTMLElement> : undefined}
                 // [2026-08-15 莉莉子] 抵抗/抗拒（反制堆叠法术）启用回力镖瞄准：先下坠再水平指向目标（敌方目标）
                 boomerang={(spellSystem.activeCard?.key === 'temp_spell_06' || spellSystem.activeCard?.key === 'temp_spell_07') ? 'down' : undefined}
                 // [核心修复] 将所有堆叠区的法术及其目标传入特效层，用于绘制持久化连线
                 persistentLines={[
+                    // [2026-11-07 超元链接 · 施法归属] 待确认法术（pendingSpell）的**目标连线只画给我自己**。
+                    //   程的规格：选完目标但没点「确定」之前，对手只该看到中央那个法术图标。
+                    //   点了「确定」→ `confirmPendingSpell` 把它挪进 `spellStack` ⇒ 下面那行自然画出来。
+                    //   判据用 `owner === 'player'`：`owner` 在 `SIDE_VALUE_KEYS` 里，快照翻转后
+                    //   在两端都等价于「这是接收者自己的法术」。
                     // [修正] 直接提取卡牌底层的原生 id 作为起点定位符，不搞花里胡哨的自定义前缀
-                    ...(game.pendingSpell ? [{ sourceId: game.pendingSpell.card.id, targets: game.pendingSpell.targets, owner: game.pendingSpell.owner }] : []),
+                    ...(game.pendingSpell && game.pendingSpell.owner === 'player' ? [{ sourceId: game.pendingSpell.card.id, targets: game.pendingSpell.targets, owner: game.pendingSpell.owner }] : []),
                     ...game.spellStack.map(s => ({ sourceId: s.card.id, targets: s.targets, owner: s.owner }))
                 ]}
             />
@@ -3179,12 +4000,25 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     game.spellStack.forEach((s, idx) => activeSpells.push({ card: s.card, mode: 'stack', owner: s.owner, index: idx, hasNoTargets: s.targets.length === 0 }));
                     if (game.pendingSpell) activeSpells.push({ card: game.pendingSpell.card, mode: 'pending', owner: 'player', index: 0 });
                     if (spellSystem.isCasting && spellSystem.activeCard && !isDiscardSelectMode && !isHandTargetMode) activeSpells.push({ card: spellSystem.activeCard, mode: 'casting', owner: 'player', index: 0 });
+                    // [2026-11-07 超元链接 · 远端施法] 对方正在选目标 ⇒ 我方**只看到中央那个法术图标**。
+                    //   程的规格：选目标中 / 选完但没点「确定」之前，对手都不该知道打的是谁；
+                    //   点「确定」后进入 `spellStack`，`persistentLines` 才会把目标连线画出来。
+                    //   注意这里只加"图标"，不碰 `spellSystem.isCasting`（那条才是瞄准线）。
+                    const isRemoteCasting = !!game.spellCasting
+                        && (game.spellCasting.casterSide ?? 'player') !== 'player'
+                        && game.spellCasting.step !== 'choose_mode'
+                        && !spellSystem.isCasting
+                        && !!game.activeCard;
+                    if (isRemoteCasting) activeSpells.push({ card: game.activeCard!, mode: 'remote_casting', owner: 'enemy', index: 0 });
                     if (isDiscardSelectMode && game.activeCard) activeSpells.push({ card: game.activeCard, mode: 'discard_select', owner: 'player', index: 0 });
                     if (isHandTargetMode && game.activeCard) activeSpells.push({ card: game.activeCard, mode: 'hand_target_select', owner: 'player', index: 0 });
                     if (isBenchSelectMode && game.activeCard) activeSpells.push({ card: game.activeCard, mode: 'bench_select', owner: 'player', index: 0 });
 
                     return activeSpells.map(({ card, mode, owner, index: _index, hasNoTargets = false }) => {
                         const isCasting = mode === 'casting' || mode === 'discard_select' || mode === 'hand_target_select' || mode === 'bench_select';
+                        // [2026-11-07 超元链接] 远端施法：复用"施法中"的居中大图标，但**不可点击**
+                        //   （对方的法术图标不该给己方任何操作入口）。
+                        const isRemoteCastingMode = mode === 'remote_casting';
                         const isPending = mode === 'pending';
                         const isDiscardSelect = mode === 'discard_select';
                         const isHandTargetSelect = mode === 'hand_target_select';
@@ -3201,7 +4035,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
 
                         // 动态计算目标位置与缩放（交给 Framer Motion 自动补间飞行路线）
                         // [2026-07-07] 无目标阶段放大圆盘（AI 施法悬念期）
-                        const scale = isCasting || (mode === 'stack' && hasNoTargets) ? 1 : 0.8;
+                        const scale = isCasting || isRemoteCastingMode || (mode === 'stack' && hasNoTargets) ? 1 : 0.8;
                         const yOffset = isCasting ? 0 : 0; // 预提交靠下，入栈居中
 
                         // ★ 筹码式堆叠：入栈时确定 x 位置并锁定，结算后剩余卡牌不移动
@@ -3209,7 +4043,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                         // 防止 NEGATE 类选目标法术盖住栈上目标导致无法点选。
                         // 顺序 = LIFO 生效顺序：施法中/待确认（最新、最先生效）→ 栈上法术（新→旧）
                         const fanGroup = [
-                            ...activeSpells.filter(s => s.mode === 'casting' || s.mode === 'pending'),
+                            ...activeSpells.filter(s => s.mode === 'casting' || s.mode === 'pending' || s.mode === 'remote_casting'),
                             ...activeSpells.filter(s => s.mode === 'stack'),
                         ];
                         const fanTotal = fanGroup.length;
@@ -3228,7 +4062,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                             if (mode === 'stack') spellStackXPositions.current.set(cardId, x);
                             return x;
                         };
-                        const xOffset = mode === 'stack' || mode === 'casting' || mode === 'pending'
+                        const xOffset = mode === 'stack' || mode === 'casting' || mode === 'pending' || isRemoteCastingMode
                             ? getStackXOffset(card.id, mode)
                             : 0;
 
@@ -3238,11 +4072,13 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                 initial={isCasting ? { scale: 0, opacity: 0 } : false}
                                 animate={{ scale, x: xOffset, y: yOffset, opacity: 1 }}
                                 transition={{ type: "spring", stiffness: 350, damping: 25 }}
-                                className={`absolute pointer-events-auto cursor-pointer group ${isCasting ? 'z-[105]' : 'z-[30]'}`}
+                                className={`absolute group ${(isCasting || isRemoteCastingMode) ? 'z-[105]' : 'z-[30]'} ${isRemoteCastingMode ? 'pointer-events-none' : 'pointer-events-auto cursor-pointer'}`}
                                 // ★ 选择模式接入点 ⑥ — 中间卡牌点击取消路由到 cancelPendingSpell
                                 //    已实现: discard_select | hand_target_select | bench_select
                                 //    未来: enemy_bench_select | enemy_hand_select
                                 onClick={() => {
+                                    // [2026-11-07 超元链接] 对方的施法图标：纯展示，不接受任何操作
+                                    if (isRemoteCastingMode) return;
                                     if (isDiscardSelect || isHandTargetSelect || isBenchSelect) {
                                         actions.cancelPendingSpell();
                                     } else if (spellSystem.isCasting && spellSystem.currentRequirement?.type === 'SPELL_ON_STACK' && mode === 'stack') {
@@ -3252,6 +4088,18 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                         spellSystem.handleTargetClick(card, owner as 'player' | 'enemy', 'stack');
                                     } else if (isCasting) {
                                         eventBus.emit(GameEvents.UI_BACK);
+                                        // [2026-11-07 超元链接 · 取消施法] 客方**必须走意图**。
+                                        //   病根（本次实测踩到）：客方本地清掉 `spellCasting` 后，
+                                        //   房主那边仍停在 `select_ally` 等目标；而房主状态**没有任何变化**
+                                        //   ⇒ `publish` 不触发 ⇒ **不会发新快照来纠正** ⇒ 两边永久分叉，
+                                        //   房主卡在"等目标"、客方以为自己取消了，对局直接死锁。
+                                        //   走 `cancelChoice`：房主按 `casterSide` 把卡还回 `enemyHand`
+                                        //   （顺带把「取消施法卡牌塞进对手手牌」的 P0-2 一起修掉）。
+                                        if (!fireNetIntent({ op: 'cancelChoice' })) {
+                                            // 客方：只关本地瞄准层，游戏状态等房主快照统一回来
+                                            spellSystem.cancelCasting();
+                                            return;
+                                        }
                                         const cardToReturn = card.parentCard || card;
                                         setPlayerHand(prev => [...prev, cardToReturn]);
                                         if (card.parentCard) {
@@ -3372,6 +4220,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     className="absolute z-40 hover:z-[60] origin-center drop-shadow-2xl transition-all"
                     style={{ top: '10%', left: '14%' }}
                 >
+                    {/* [2026-11-07 联机] 对手身份：名字 + 卡组图标。绝对定位挂在牌库左侧，不动布局（单机不传名字 ⇒ 不渲染） */}
+                    {enemyPlayerName !== undefined && (
+                        <LinkPlayerBadge name={enemyPlayerName} iconSrc={enemyDeckIconSrc} tone="enemy" />
+                    )}
                     <Deck
                         isEnemy={true}
                         cardBackIndex={enemyCardBackIndex}
@@ -3453,6 +4305,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                     className="absolute z-40 hover:z-[60] origin-center drop-shadow-2xl transition-all"
                     style={{ bottom: '10%', left: '14%' }}
                 >
+                    {/* [2026-11-07 联机] 自己这一侧身份：名字 + 卡组图标。绝对定位挂在牌库左侧，不动布局（单机不传名字 ⇒ 不渲染） */}
+                    {myPlayerName !== undefined && (
+                        <LinkPlayerBadge name={myPlayerName} iconSrc={myDeckIconSrc} tone="self" />
+                    )}
                     <Deck
                         isEnemy={false}
                         cardBackIndex={cardBackIndex}
@@ -3618,7 +4474,9 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     data-action="attack"
                                     onClick={() => {
                                         eventBus.emit(GameEvents.ATTACK_DECLARE);
-                                        actions.initiateAttack();
+                                        // [超元链接 · 联机] 客方只上报，由房主引擎把阶段推到 `attack_declare`。
+                                        //   单机 / 房主：`fireNetIntent` 返回 true ⇒ 与改动前逐字一致。
+                                        if (fireNetIntent({ op: 'initiateAttack' })) actions.initiateAttack();
                                     }}
                                     className="flex-1 w-full bg-gradient-to-b from-orange-500 to-red-600 border-x-4 border-t-4 border-orange-300 flex items-center justify-center relative hover:brightness-110 active:scale-95 transition-all z-20"
                                 >
@@ -3631,7 +4489,10 @@ export const GameSession: React.FC<GameSessionProps> = ({
                                     data-action="skip"
                                     onClick={() => {
                                         eventBus.emit(GameEvents.UI_CLICK);
-                                        actions.passTurn();
+                                        // [超元链接 · 联机] 客方只上报；房主引擎里此时 `turnOwner` 就是
+                                        //   `'enemy'`（轮到客方），`passTurn` 是"当前行动方让过"，
+                                        //   不区分视角 ⇒ 房主侧直接执行即为正确语义。
+                                        if (fireNetIntent({ op: 'passTurn' })) actions.passTurn();
                                     }}
                                     className={`flex-1 w-full border-x-4 border-b-4 flex items-center justify-center relative transition-all z-10 ${
                                         tutorialLockSkip
