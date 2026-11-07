@@ -54,20 +54,186 @@ export interface MissionUpdateResult {
 // ==========================================
 // 辅助工具：逻辑时间戳计算 (以 06:00 AM 为界)
 // ==========================================
+// [2026-11-07 莉莉子 BUG修复 · 日常任务不刷新]
+//   ── 病根：`Math.floor(d.getTime() / 86400000)` 取的是「UTC 绝对天」，
+//      getTime() 恒为 UTC 毫秒 ⇒ 换日分界被钉在 **UTC 00:00**，
+//      再叠加前面 `setHours(-6)` 的偏移，UTC+8 下的实际跨天点变成**本地 14:00**。
+//   ── 后果链：面板倒计时按本地 06:00 算（MissionUI.tsx:822）⇒ 06:00 归零后
+//      玩家进面板看不到任务翻页（粉丝侧观感就是"日常没刷新"），
+//      真正重置要拖到当天 14:00。
+//   ── 修法：先取**本地日历日**（y/m/d），再用 Date.UTC 归一成日序号 ——
+//      与 getLogicalWeek 同口径，不受运行时时区影响，跨天点精确落在本地 06:00。
+//      （按 y/m/d 归一后，跨时区/夏令时也不会把序号算歪。）
 const getLogicalDay = (timestamp: number): number => {
     const d = new Date(timestamp);
-    d.setHours(d.getHours() - 6); // 将时钟拨回 6 小时，让凌晨 6 点成为跨天分界线
-    return Math.floor(d.getTime() / 86400000); // 绝对天数
+    d.setHours(d.getHours() - 6); // 拨回 6 小时：本地 00:00~06:00 归入「前一天」
+    return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
 };
 
+// 每周：返回「该逻辑周周一那一天」的日序号（与 getLogicalDay 同量纲）。
+// 跨周点 = 本地周一 06:00。
 const getLogicalWeek = (timestamp: number): number => {
     const d = new Date(timestamp);
     d.setHours(d.getHours() - 6);
     const dayOfWeek = (d.getDay() + 6) % 7; // 让周一成为 0，周日成为 6
-    const startOfWeek = new Date(d);
-    startOfWeek.setDate(d.getDate() - dayOfWeek);
-    startOfWeek.setHours(0, 0, 0, 0); // 截断到该周周一的 00:00:00 (即原时间的 06:00:00)
-    return startOfWeek.getTime();
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - dayOfWeek);
+    return Math.floor(Date.UTC(monday.getFullYear(), monday.getMonth(), monday.getDate()) / 86400000);
+};
+
+// [2026-11-07 莉莉子 · 审查补丁] 周键的**老格式迁移**。
+//   老版本 `getLogicalWeek` 返回的是「该周周一 00:00 的**毫秒时间戳**」（约 1.7e12），
+//   新版本返回「周一那一日**的日序号**」（约 2e4）。两者量级差 8 个数量级 ⇒
+//   直接拿老值做 `lastWeekly < currentLogicalWeek` 恒为假 ⇒ **升级当周会把老玩家的
+//   周任务整周跳过**（要等到下周一才恢复）。
+//   这里把毫秒量级的值先还原成日序号，再走正常比较。
+//   ⚠️ 日键不用迁移：老 `getLogicalDay` 与新的量级相同（都是 ~2e4），且差值至多 1 天，
+//      方向也正确（老值偏小 ⇒ 多触发一次「补发式」重置，正是玩家想要的）。
+const normalizeLegacyWeekKey = (raw: number): number => {
+    if (raw > 1e11) {
+        const d = new Date(raw);
+        return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+    }
+    return raw;
+};
+
+// ==========================================
+// 存档同步（纯函数 · 每次调用都重新读 localStorage，可在任意时机重复执行）
+//   职责：① 把 missionData 的新任务动态合入玩家存档
+//         ② 跨天 / 跨周重置
+//         ③ 补填排序权重
+//   ⚠️ 与旧实现的差别：跨天判定从 `last < current` 改为 `!==`。
+//      旧写法在**系统时钟被拨到未来**后会往 DAILY_KEY 写一个未来的日戳，
+//      之后时钟回到正常也永远满足不了 `last < current` ⇒ 日常任务从此**永久不刷新**
+//      （这也是一条粉丝侧"再也不刷新"的独立病根）。
+//      新写法：日戳向前走 → 正常重置；日戳向后走（时钟回拨/换时区）→ 只纠正日戳、
+//      **不清进度**，既不会让回拨反复刷任务，也不会再死锁。
+// ==========================================
+const STORAGE_KEY_PREFIX = 'sbr_mission_prog_';
+const DAILY_KEY_PREFIX = 'sbr_mission_reset_d_';
+const WEEKLY_KEY_PREFIX = 'sbr_mission_reset_w_';
+
+interface MissionSyncResult {
+    merged: Record<string, MissionProgress>;
+    /** 进度表有实质变更（新任务入槽 / 跨期重置 / 排序刷新）→ 调用方需写回并 setProgress */
+    changed: boolean;
+    /** 本次跨期重置了哪一档（调试用） */
+    reset: 'daily' | 'weekly' | 'both' | null;
+}
+
+const syncMissionStore = (
+    userId: string,
+    registerTime: string | undefined,
+    now: number,
+): MissionSyncResult => {
+    const STORAGE_KEY = STORAGE_KEY_PREFIX + userId;
+    const DAILY_KEY = DAILY_KEY_PREFIX + userId;
+    const WEEKLY_KEY = WEEKLY_KEY_PREFIX + userId;
+
+    const savedStr = localStorage.getItem(STORAGE_KEY);
+    const saved: Record<string, MissionProgress> = savedStr ? JSON.parse(savedStr) : {};
+
+    const merged: Record<string, MissionProgress> = {};
+    let needsSave = false;
+
+    // ── 1. 将新版本 missionData 里的任务动态合入玩家存档 ──
+    MISSIONS.forEach(m => {
+        // 不满足 showCondition 的任务直接跳过，不入 progress
+        if (m.showCondition?.accountCreatedBefore && registerTime) {
+            const regDate = new Date(registerTime);
+            const cutoff = new Date(m.showCondition.accountCreatedBefore);
+            if (regDate >= cutoff) {
+                if (saved[m.id]) needsSave = true; // 清除旧存档中的隐藏任务
+                return;
+            }
+        }
+
+        if (saved[m.id]) {
+            merged[m.id] = saved[m.id];
+            // direct_claim 任务若尚未领取，直接变为已完成。
+            // ⚠️ [2026-11-07 审查补丁] 只在**真的不一致**时才改写并标记变更 ——
+            //    否则下面那个 30s 周期检查每次都会 new 一个对象 + 置 needsSave，
+            //    于是 `setProgress` 每 30 秒空转一次（重渲染 + 写盘），
+            //    `changed` 判空完全失效。
+            if (m.condition.type === 'direct_claim' && saved[m.id].status !== 'claimed') {
+                const alreadyDone =
+                    saved[m.id].status === 'completed' &&
+                    saved[m.id].current >= m.targetCount &&
+                    saved[m.id].target === m.targetCount;
+                if (!alreadyDone) {
+                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed', sort: 0 };
+                    needsSave = true;
+                }
+            }
+        } else {
+            if (m.condition.type === 'direct_claim') {
+                merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed', sort: 0 };
+            } else {
+                merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing', sort: computeSort('ongoing', 0, m.targetCount) };
+            }
+            needsSave = true;
+        }
+    });
+
+    // ── 2. 跨天 / 跨周重置 ──
+    const currentLogicalDay = getLogicalDay(now);
+    const currentLogicalWeek = getLogicalWeek(now);
+    const lastDaily = parseInt(localStorage.getItem(DAILY_KEY) || '0', 10);
+    // 周键可能是老版本的毫秒时间戳 → 先归一成日序号（见 normalizeLegacyWeekKey 注释）
+    const lastWeekly = normalizeLegacyWeekKey(parseInt(localStorage.getItem(WEEKLY_KEY) || '0', 10));
+
+    const resetCategory = (category: 'daily' | 'weekly'): boolean => {
+        let touched = false;
+        MISSIONS.filter(m => m.category === category).forEach(m => {
+            if (!merged[m.id]) return;
+            // [2026-11-07 审查补丁] direct_claim 没有「进度」可归零（它初始化即 completed），
+            //   重置只会把「可直接领取」打回 ongoing/0，要等下一次补水才自愈。
+            //   当前数据里没有 daily/weekly 的 direct_claim（都是 achievement），
+            //   这条是防止将来加「每日签到」类任务时踩进同一个坑。
+            if (m.condition.type === 'direct_claim') return;
+            merged[m.id] = {
+                id: m.id,
+                current: 0,
+                target: m.targetCount,
+                status: 'ongoing',
+                sort: computeSort('ongoing', 0, m.targetCount),
+            };
+            touched = true;
+        });
+        return touched;
+    };
+
+    let didDaily = false;
+    let didWeekly = false;
+
+    if (lastDaily !== currentLogicalDay) {
+        // 只有「日戳向前走」才是真跨天；倒退（时钟回拨）只纠正日戳，保住进度
+        if (lastDaily < currentLogicalDay && resetCategory('daily')) {
+            didDaily = true;
+            needsSave = true;
+        }
+        localStorage.setItem(DAILY_KEY, currentLogicalDay.toString());
+    }
+
+    if (lastWeekly !== currentLogicalWeek) {
+        if (lastWeekly < currentLogicalWeek && resetCategory('weekly')) {
+            didWeekly = true;
+            needsSave = true;
+        }
+        localStorage.setItem(WEEKLY_KEY, currentLogicalWeek.toString());
+    }
+
+    // ── 3. 补填/刷新排序权重（兼容旧存档 + 新任务）──
+    Object.values(merged).forEach(p => {
+        const newSort = computeSort(p.status, p.current, p.target);
+        if (p.sort !== newSort) {
+            p.sort = newSort;
+            needsSave = true;
+        }
+    });
+
+    const reset: MissionSyncResult['reset'] = didDaily && didWeekly ? 'both' : didDaily ? 'daily' : didWeekly ? 'weekly' : null;
+    return { merged, changed: needsSave, reset };
 };
 
 export const useMissionSystem = (userId: string, registerTime?: string) => {
@@ -99,91 +265,47 @@ export const useMissionSystem = (userId: string, registerTime?: string) => {
     useEffect(() => {
         if (!userId) return;
 
-        const STORAGE_KEY = `sbr_mission_prog_${userId}`;
-        const DAILY_KEY = `sbr_mission_reset_d_${userId}`;
-        const WEEKLY_KEY = `sbr_mission_reset_w_${userId}`;
-
-        const savedStr = localStorage.getItem(STORAGE_KEY);
-        const saved: Record<string, MissionProgress> = savedStr ? JSON.parse(savedStr) : {};
-
-        const merged: Record<string, MissionProgress> = {};
-        let needsSave = false;
-
-        // 1. 将新版本 missionData 里的任务动态合入玩家存档
-        MISSIONS.forEach(m => {
-            // [fix] 不满足 showCondition 的任务直接跳过，不入 progress
-            if (m.showCondition?.accountCreatedBefore && registerTime) {
-                const regDate = new Date(registerTime);
-                const cutoff = new Date(m.showCondition.accountCreatedBefore);
-                if (regDate >= cutoff) {
-                    if (saved[m.id]) needsSave = true; // 清除旧存档中的隐藏任务
-                    return; // 跳过此任务，不给它分配 progress 槽位
-                }
-            }
-
-            if (saved[m.id]) {
-                merged[m.id] = saved[m.id];
-                // [fix] 对已有存档也强制修正：direct_claim 任务若尚未领取，直接变为已完成
-                if (m.condition.type === 'direct_claim' && merged[m.id].status !== 'claimed') {
-                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed', sort: 0 };
-                    needsSave = true;
-                }
-            } else {
-                // [fix] direct_claim 任务无需对局，初始化即完成
-                if (m.condition.type === 'direct_claim') {
-                    merged[m.id] = { id: m.id, current: m.targetCount, target: m.targetCount, status: 'completed', sort: 0 };
-                } else {
-                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing', sort: computeSort('ongoing', 0, m.targetCount) };
-                }
-                needsSave = true;
-            }
-        });
-
-        // 2. 检查跨天/跨周重置
-        const now = Date.now();
-        const currentLogicalDay = getLogicalDay(now);
-        const currentLogicalWeek = getLogicalWeek(now);
-
-        const lastDaily = parseInt(localStorage.getItem(DAILY_KEY) || '0');
-        const lastWeekly = parseInt(localStorage.getItem(WEEKLY_KEY) || '0');
-
-        if (lastDaily < currentLogicalDay) {
-            // 执行跨天大重置
-            MISSIONS.filter(m => m.category === 'daily').forEach(m => {
-                if (merged[m.id]) {
-                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing', sort: computeSort('ongoing', 0, m.targetCount) };
-                }
-            });
-            localStorage.setItem(DAILY_KEY, currentLogicalDay.toString());
-            needsSave = true;
-        }
-
-        if (lastWeekly < currentLogicalWeek) {
-            // 执行跨周大重置
-            MISSIONS.filter(m => m.category === 'weekly').forEach(m => {
-                if (merged[m.id]) {
-                    merged[m.id] = { id: m.id, current: 0, target: m.targetCount, status: 'ongoing', sort: computeSort('ongoing', 0, m.targetCount) };
-                }
-            });
-            localStorage.setItem(WEEKLY_KEY, currentLogicalWeek.toString());
-            needsSave = true;
-        }
-
-        // 3. 对所有任务补填/刷新排序权重（兼容旧存档 + 新任务）
-        Object.values(merged).forEach(p => {
-            const newSort = computeSort(p.status, p.current, p.target);
-            if (p.sort !== newSort) {
-                p.sort = newSort;
-                needsSave = true;
-            }
-        });
-
-        if (needsSave) {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        const { merged, changed } = syncMissionStore(userId, registerTime, Date.now());
+        if (changed) {
+            localStorage.setItem(STORAGE_KEY_PREFIX + userId, JSON.stringify(merged));
         }
 
         setProgress(merged);
         setIsReady(true);
+    }, [userId, registerTime]);
+
+    // ==========================================
+    // [2026-11-07 莉莉子 BUG修复 · 常驻不重启也要能翻页]
+    //   旧实现在上面的初始化 effect 里**只做一次**跨期检查（依赖只有 userId/registerTime），
+    //   于是「挂着游戏跨过 06:00」的玩家永远等不到重置 —— 必须重启客户端才会翻页，
+    //   这也是"日常没刷新"反馈的主力来源之一。
+    //   现在补两道闸：
+    //     · 每 30s 轮询（跨天点最多迟 30 秒，对玩家无感）
+    //     · 窗口重新可见 / 重新获得焦点时立刻补检（切回来就是最新的）
+    //   两者都只重读 localStorage 再比对，**没变化就完全不 setProgress**（不产生多余重渲染）。
+    // ==========================================
+    useEffect(() => {
+        if (!userId) return;
+
+        const checkAndApply = () => {
+            const { merged, changed } = syncMissionStore(userId, registerTime, Date.now());
+            if (!changed) return;
+            localStorage.setItem(STORAGE_KEY_PREFIX + userId, JSON.stringify(merged));
+            setProgress(merged);
+        };
+
+        const timer = window.setInterval(checkAndApply, 30_000);
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') checkAndApply();
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        window.addEventListener('focus', checkAndApply);
+
+        return () => {
+            window.clearInterval(timer);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            window.removeEventListener('focus', checkAndApply);
+        };
     }, [userId, registerTime]);
 
     // ==========================================
