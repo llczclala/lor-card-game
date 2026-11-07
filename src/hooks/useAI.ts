@@ -3,6 +3,7 @@ import type { CardData, GameState } from '../types';
 import { canAffordCard } from '../utils/gameRules';
 import { evaluate } from '../logic/aiSpellStrategies';
 import { getPower, getHealth } from '../logic/keywords'; // [2026-08-29 莉莉子] 真实面板数值（含 buffs/roundBuffs/伤害）——AI 攻血判定必须用它，否则 buff 后的单位被当成白板
+import { canBlockAttacker } from '../logic/blockRules'; // [2026-10-26 莉莉子] 格挡合法性唯一门卫（无法格挡/隐秘/凶恶）——玩家侧与 AI 侧共用
 import { resolveAIConfig } from '../data/aiDifficulty';
 import type { AIDifficultyLevel, AIDifficultyConfig } from '../data/aiDifficulty';
 import type { EnemyArchetype } from '../data/enemies/archetypes';
@@ -332,7 +333,9 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 }
 
                 setMessage("敌方正在思考格挡...");
-                const cfg = aiConfigRef.current;
+                // [2026-10-25 批次2] 此处原有一句 `const cfg = aiConfigRef.current;`：
+                //   它的唯一消费者是 `cfg.threatAwareness`（致命兜底的布尔闸门），
+                //   而该闸门已随「致命保护提为全档位底线」被移除 ⇒ 变量一并删除。
 
                 // 1. 获取所有待分配的阻挡者 (复制一份备战席)
                 let availableBlockers = bench.filter((c: CardData) => !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying');
@@ -340,42 +343,180 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 const newCombatField = field.map(f => ({ ...f }));
                 // 3. 玩家备战席 (用于判断威胁? 这里主要是处理 field 里的 attacker)
 
-                // [2026-08-06 莉莉子 格挡增强] 致命伤害预防：
-                // 计算敌方（玩家）本回合总潜在伤害，判断是否对我方水晶构成致命威胁。
-                // 威胁感知高的困难 AI 会优先格挡高攻进攻者防止被杀；
-                // 简单 AI（threatAwareness 低）可能漏判，放血水过去。
-                const lethalThreat = g.enemyNexus <= field.reduce((s, f) => s + (f.attacker ? getPower(f.attacker) : 0), 0); // [2026-08-29] 真实攻血
-                const cfg_threatAware = cfg.threatAwareness >= 0.6;
+                // [2026-08-06 莉莉子 格挡增强] 致命伤害预防（原 `lethalThreat` 一次性快照）。
+                // [2026-10-25 批次2 · 独立审查 #3] 攻力一律走「战斗中的真实值」：
+                //   【无法攻击】在引擎里按 0 结算（`keywords.ts:331-333`），
+                //   按面板算会高估威胁 —— 把垫刀全浪费在 0 伤害的进攻者身上。
+                // [2026-10-25 批次2 · 二轮审查 N2] **原 `lethalThreat` 快照已删除**：
+                //   「本回合是否致命」改由循环内的 `lethalNow = leakDmg() >= g.enemyNexus` 逐战线重算。
+                //   在第一条战线上它就等于"全放行总伤"（与原口径一致），但它会随前面的战线被挡住而下降，
+                //   因此不会像快照那样把整条备战席垫光。
+                const atkPowerForBlock = (atk: CardData) =>
+                    atk.keywords.includes('CantAttack') ? 0 : getPower(atk);
+                // [2026-10-25 批次2] `threatAwareness` **自此不再参与格挡**：
+                //   它原本只控制那条致命兜底，而致命保护现在是**全档位底线**（见下方「致命兜底」）。
+                //   该参数在格挡链上已无消费者，别再拿它当难度依据。
+
+                // ============================================================
+                // [2026-10-25 莉莉子 · 批次2] normal 及以上：威胁排序 + 动态交换阈值
+                //
+                // 病根：本阶段原本直接 `forEach(newCombatField)` ⇒ 唯一的阻挡者被派给
+                //   **数组里的第一个攻击者**，而数组顺序 = 玩家把单位拖进战场的 append 顺序
+                //   （`useGameState.ts:5888`）⇒ 玩家调一下拖拽顺序就能让 AI 少挡一截伤害。
+                //   例：15 攻里芙 + 16 攻芬妮(碾压) 打一个 1/1 —— AI 挡「先拖进来的那个」，
+                //   先拖里芙则脸伤 16，先拖芬妮则脸伤 30（1/1 只吸 1 点，溢出 15 照打）。
+                //
+                // 修法：先算每个攻击者「挡住它能救回多少水晶伤害」，按此降序处理。
+                //   排序只是**处理顺序**，`setCombatField` 仍用原数组 ⇒ 战线显示顺序不变。
+                // ============================================================
+                const caps = aiConfigRef.current.capabilities;
+
+                // ⚠️ [2026-10-25 批次2 · 二轮审查 N8] **easy 档的"零回归"边界，写清楚免得后人误会**：
+                //   easy 保留（与改动前逐字一致）：处理顺序＝战线数组顺序、牺牲闸门恒 2 倍、
+                //   碾压不比较、不补漏。
+                //   但下列**跨档位共享**的修复会一并影响 easy —— 这是刻意的，它们都是口径错：
+                //     · 【屏障】排除 depletedKeywords（C5）
+                //     · 【先攻/连击】下的"能换"判定（C6）
+                //     · 攻力一律走真实值（【无法攻击】按 0）
+                //     · 致命兜底对全档生效（C7，原为死代码）
+                //   另有两处**已知未修**的旧欠债（非本次引入，为免扩大范围先记账）：
+                //     · 【连击】第二击的二次反击未建模 ⇒ 会少算"其实能换掉连击手"的 trader
+                //     · `canSurvive` 对「屏障 + 连击」恒判为能活（屏障只吸一击，第二击照打）
+
+                /** 【屏障】是否还在 —— 必须排除 depletedKeywords（口径见引擎 `keywords.ts:366-369`） */
+                const hasActiveBarrier = (b: CardData) =>
+                    b.keywords.includes('Barrier') && !(b.depletedKeywords || []).includes('Barrier');
+                /** 面板血量（坚韧＝+1），用于排序比较，绝不能参与减法型运算（屏障会算出 Infinity） */
+                const rawHp = (b: CardData) => getHealth(b) + (b.keywords.includes('Tough') ? 1 : 0);
+                /** 有效血量：屏障＝吸收一次（视为无穷），坚韧＝+1 */
+                const effectiveHp = (b: CardData) =>
+                    hasActiveBarrier(b) ? Number.POSITIVE_INFINITY : rawHp(b);
+                /** 对位规则（无法格挡 / 隐秘 / 凶恶）——
+                 *  [2026-10-26 莉莉子] 已抽到 `logic/blockRules.canBlockAttacker`，那是**全项目唯一门卫**
+                 *  （玩家侧点击、玩家侧拖拽、玩家侧战场内挪位、AI 侧全部共用同一份判据）。
+                 *  此处不再保留副本：当初写下这行"避免两套判据分叉"的注释时，
+                 *  玩家侧的战场内挪位其实还没有判据 —— 副本留得越多，补漏就越会漏。 */
+                /**
+                 * 「挡住它能救回多少水晶伤害」—— 排序与碾压比较共用同一本账：
+                 *   · 普通攻击者：伤害全落在阻挡者身上、水晶伤害归零 ⇒ 减伤 = 攻击力（全额）
+                 *   · 【碾压】：溢出照打 ⇒ 减伤 = min(攻击力, 阻挡者的有效血)
+                 *   ⇒ 这就是「派小单位去挡碾压很亏」的算术来源：
+                 *     1/1 去挡 16 攻碾压只救回 1 点，还白死一个单位（引擎公式 `keywords.ts:387-389`）。
+                 */
+                const potentialSave = (atk: CardData, poolHp: number) => {
+                    if (poolHp <= 0) return 0; // 无人可挡 ⇒ 派不出人，救不了
+                    const p = atkPowerForBlock(atk);
+                    return atk.keywords.includes('Overwhelm') ? Math.min(p, poolHp) : p;
+                };
+                /** 某攻击者从我方当前池子里能拿到的最大有效血 */
+                const bestPoolHp = (atk: CardData) => {
+                    const pool = availableBlockers.filter(b => canBlockAttacker(b, atk));
+                    if (pool.length === 0) return 0;
+                    return Math.max(...pool.map(effectiveHp));
+                };
+
+                /**
+                 * 「这条战线当前还会漏多少水晶伤害」—— 与引擎 `keywords.ts:387-389` 同源：
+                 *   · 没被挡住 ⇒ 全额打脸
+                 *   · 被普通攻击者挡住 ⇒ 0
+                 *   · 被挡住但攻击者【碾压】⇒ 溢出 `max(0, 攻击力 − 阻挡者有效血)`
+                 * [2026-10-25 批次2 · 二轮审查 N1] 旧实现把「有 blocker」直接当 0，对碾压完美失明：
+                 *   例：水晶 5、对面一个 10/10【碾压】、我方 1/1 挡上去 —— 引擎算的是
+                 *   `5 − (10 − 1)` 直接死，而校验环节报「漏 0，安全」。
+                 *   这恰恰是 hard「算完再验」最该生效的场面。
+                 */
+                const leakOf = (f: any): number => {
+                    if (!f?.attacker || f.owner !== 'player') return 0;
+                    const p = atkPowerForBlock(f.attacker);
+                    if (!f.blocker) return p;
+                    if (!f.attacker.keywords.includes('Overwhelm')) return 0;
+                    const absorb = hasActiveBarrier(f.blocker) ? p : rawHp(f.blocker);
+                    return Math.max(0, p - absorb);
+                };
+                const leakDmg = () => newCombatField.reduce((s: number, f: any) => s + leakOf(f), 0);
+
+                // [2026-10-25 批次2 · 二轮审查 N3] 已处理过的战线 id：
+                //   `betterElsewhere` 只允许把单位「留给还没轮到的那条」，
+                //   不许认领一条已经跑完、并主动放弃了的战线（那等于凭空放行）。
+                const processedIds = new Set<string>();
+
+                // 按「减伤潜力」降序处理（关掉能力的档位保持原顺序 = 战场顺序）
+                const orderedFights = caps.sortAttackers
+                    ? [...newCombatField].sort((fa, fb) => {
+                        // [2026-10-25 批次2 · 独立审查 #4] 比较器必须反对称：
+                        //   两条空战线互相比较若都返回 1，TimSort 下相对顺序未定义。
+                        if (!fa.attacker && !fb.attacker) return 0;
+                        if (!fa.attacker) return 1;
+                        if (!fb.attacker) return -1;
+                        return potentialSave(fb.attacker, bestPoolHp(fb.attacker))
+                            - potentialSave(fa.attacker, bestPoolHp(fa.attacker));
+                    })
+                    : newCombatField;
 
                 // 遍历每一个战斗槽位进行决策
-                newCombatField.forEach((fight) => {
+                orderedFights.forEach((fight) => {
                     const attacker = fight.attacker;
                     if (!attacker) return;
                     if (fight.isChallenged) return;
-                    // 筛选出所有能阻挡该单位的候选人 (处理隐秘等逻辑)
-                    const validBlockers = availableBlockers.filter(b => {
-                        if (b.keywords.includes('CantBlock')) return false;
-                        // 如果攻击者有隐秘，必须用隐秘阻挡
-                        if (attacker.keywords.includes('Elusive') && !b.keywords.includes('Elusive')) return false;
-                        // [2026-07-08 修复] 凶恶：只能被攻击力3或以上的单位阻挡
-                        const bPower = getPower(b); // [2026-08-29] 真实攻血
-                        if (attacker.keywords.includes('Fearsome') && bPower < 3) return false;
-                        return true;
-                    });
+                    // [2026-10-25 批次2 · 独立审查 #3] 只处理**玩家战线**：格挡是防守行为，
+                    //   不该给 AI 自己的进攻战线下判断（`owner` 语义见 `useGameState.ts:5888`）。
+                    if (fight.owner !== 'player') return;
+                    // [2026-10-25 批次2] 已有 blocker 的战线不重复分配（防重复扣备战席，属改动前的欠债）
+                    if (fight.blocker) return;
+
+                    processedIds.add(attacker.id); // 视为"已轮到"（无论后面是否选得出人）
+                    // [2026-10-25 批次2 · 二轮审查 N2] 「致命」必须在**每条战线**上重算：
+                    //   `lethalThreat` 是循环外的一次性快照，永远不知道"前面挡掉几条之后已经不致命"
+                    //   ⇒ 会把整条备战席垫光（例：水晶 10、对面三条 4/6、我方三个 1/3，旧口径三条全垫；
+                    //   最优只挡一条，剩余 8 < 10）。
+                    const lethalNow = leakDmg() >= g.enemyNexus;
+                    // 交换阈值（牺牲闸门的系数）：水晶越少越愿意「亏着换」；当前仍致命 ⇒ 压到最低档。
+                    // ⚠️ 关掉 `dynamicTradeDiff` 的档位恒为 2（easy 保持原口径），但**致命兜底仍对全档生效**。
+                    const tradeRatio = caps.dynamicTradeDiff
+                        ? (lethalNow ? 0.5 : Math.max(0.5, Math.min(2, g.enemyNexus / 10)))
+                        : 2;
+
+                    // 筛选出所有能阻挡该单位的候选人（对位规则统一走 `canBlockAttacker`，避免分叉）
+                    const validBlockers = availableBlockers.filter(b => canBlockAttacker(b, attacker));
 
                     if (validBlockers.length === 0) return; // 无人可挡
 
                     let chosenBlocker: CardData | null = null;
+                    // [2026-10-25 批次2] 本战线的「真实攻力」（【无法攻击】按 0，与引擎同口径）——
+                    //   后续所有"我能不能扛住 / 能不能换掉"的判据统一吃这一个值，避免多套口径。
+                    const atkPower = atkPowerForBlock(attacker);
 
                     // [2026-07-09] 格挡关键词辅助函数
+                    // [2026-10-25 批次2] `hasActiveBarrier` 已上移到循环外（排序与碾压比较也要用），此处不再重复定义。
                     const canSurvive = (b: CardData, atkPower: number) => {
-                        if (b.keywords.includes('Barrier')) return true;
+                        if (hasActiveBarrier(b)) return true;
                         const hp = getHealth(b) + (b.keywords.includes('Tough') ? 1 : 0); // [2026-08-29] 真实面板
                         return hp > atkPower;
                     };
-                    const canKillAtk = (b: CardData, atkHealth: number) => {
-                        const p = getPower(b) + (b.keywords.includes('Thorns') ? 1 : 0); // [2026-08-29] 真实面板
-                        return p >= atkHealth;
+                    // [2026-10-25 莉莉子 · 批次0 口径修复] 「能换掉对手」必须感知【先攻 / 连击】：
+                    //   ── 引擎侧：先攻且击杀阻挡者时 `attackerDamage = 0`（`keywords.ts:393-404`）
+                    //      ⇒ 阻挡者根本挥不出反击；而【连击】第一击同样强制带先攻（`combat.ts:163`）。
+                    //   ── 旧实现只比「我的攻 ≥ 你的血」⇒ 把"单方面送死"算成"换子"，
+                    //      于是 sacrifice 分支会误把单位派上去白给。
+                    //   ── 【反伤】不随反击失效：Thorns 由"阻挡者是否真的受伤"触发
+                    //      （`keywords.ts:442`），与被先攻打断反击无关，故独立累加。
+                    const canKillAtk = (b: CardData, attacker: CardData) => {
+                        const firstStrikes = attacker.keywords.includes('QuickAttack')
+                            || attacker.keywords.includes('Double Attack');
+                        // [2026-10-25 批次2 · 独立审查 #6] 用「真正落到我身上的伤害」同时算两件事：
+                        //   ① 我是否被先攻一击打死（死则挥不出反击）；
+                        //   ② 【反伤】是否触发 —— 引擎按 `blockerDamage > 0` 判（`keywords.ts:440-443`），
+                        //      屏障把伤害清零时反伤**不会**触发；旧实现无条件 +1 会误判"能换掉"。
+                        //   攻击力取 `atkPowerForBlock`（【无法攻击】按 0），与引擎归零口径一致。
+                        const incoming = hasActiveBarrier(b)
+                            ? 0
+                            : Math.max(0, atkPowerForBlock(attacker) - (b.keywords.includes('Tough') ? 1 : 0));
+                        // 守方同样按引擎归零（`keywords.ts:351-353`）：备战席上的【无法攻击】单位
+                        // 面板攻力已被还原成真值，若不归零会把它判成"能换掉高血攻击者"，进场后引擎给 0 反击。
+                        let counterPower = b.keywords.includes('CantAttack') ? 0 : getPower(b);
+                        if (firstStrikes && getHealth(b) <= incoming) counterPower = 0; // 被先攻打死 ⇒ 无反击
+                        const thorns = (b.keywords.includes('Thorns') && incoming > 0) ? 1 : 0;
+                        return counterPower + thorns >= getHealth(attacker);
                     };
 
                     // --- 决策逻辑 1: 应对碾压 (Overwhelm) ---
@@ -384,45 +525,62 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
 
                     if (hasOverwhelm) {
                         // 1. 屏障 blocker? 完美吸收，最优先派出
-                        const barrierBlockers = validBlockers.filter(b => b.keywords.includes('Barrier'));
+                        const barrierBlockers = validBlockers.filter(hasActiveBarrier); // [2026-10-25 批次0] 排除已弹掉的屏障
                         if (barrierBlockers.length > 0) {
                             chosenBlocker = barrierBlockers.sort((a, b) => a.cost - b.cost)[0];
                         } else {
                             // 尝试找能完美扛住的 (有效HP > Atk)
-                            const survivors = validBlockers.filter(b => canSurvive(b, getPower(attacker)));
+                            const survivors = validBlockers.filter(b => canSurvive(b, atkPower));
                             if (survivors.length > 0) {
                                 chosenBlocker = survivors.sort((a, b) => a.cost - b.cost)[0];
                             } else {
                                 // 没人能抗住，选有效血量最高的当肉盾 (考虑坚韧)
-                                chosenBlocker = validBlockers.sort((a, b) => {
-                                    const hpB = getHealth(b) + (b.keywords.includes('Tough') ? 1 : 0);
-                                    const hpA = getHealth(a) + (a.keywords.includes('Tough') ? 1 : 0);
-                                    return hpB - hpA;
-                                })[0];
+                                const shield = validBlockers.sort((a, b) => rawHp(b) - rawHp(a))[0];
+                                // [2026-10-25 批次2] 碾压比较：派一个扛不住的单位去挡【碾压】，
+                                //   只救回 min(攻击力, 它的血) —— 溢出照打、还白死一个单位。
+                                //   若同一个单位留给「另一个普通攻击者」能救回更多，就让它过去。
+                                const saveHere = shield ? potentialSave(attacker, effectiveHp(shield)) : 0;
+                                // [2026-10-25 批次2 · 独立审查 #1 修复] 必须排除**已经派到阻挡者**的战线：
+                                //   否则会把"更值得"判给一条早已分完人的战线 —— 那个 blocker 已经不在池子里，
+                                //   结果碾压战线整段放行、单位闲置，比改动前净亏（可推演的回归路径）。
+                                const betterElsewhere = !!shield && caps.compareTrampleOpt && orderedFights.some(f => {
+                                    const other = f.attacker;
+                                    if (!other || other.id === attacker.id || f.isChallenged) return false;
+                                    if (f.owner !== 'player') return false; // 只看玩家战线
+                                    if (f.blocker) return false;            // 已分完人 ⇒ 不能算作"留给它"
+                                    if (processedIds.has(other.id)) return false; // 已跑完并放弃 ⇒ 更问不着它
+                                    if (!canBlockAttacker(shield, other)) return false;
+                                    return potentialSave(other, effectiveHp(shield)) > saveHere;
+                                });
+                                if (shield && !betterElsewhere) chosenBlocker = shield;
                             }
                         }
                     }
                     // --- 决策逻辑 2: 智能止损逻辑 (Smart Mitigation) ---
                     else {
                         // 策略A: 完美白吃 (我活，敌死) - 最优解
+                        // [2026-10-25 批次0] canKillAtk 改收 attacker 本体（需要先攻/连击信息）
                         const perfectKillers = validBlockers.filter(b =>
-                            canSurvive(b, getPower(attacker)) && canKillAtk(b, getHealth(attacker))
+                            canSurvive(b, atkPower) && canKillAtk(b, attacker)
                         );
 
                         // 策略B: 免费格挡 (我活，敌不死) - 拖延/蹭血
-                        const survivors = validBlockers.filter(b => canSurvive(b, getPower(attacker)));
+                        const survivors = validBlockers.filter(b => canSurvive(b, atkPower));
 
                         // 策略C: 牺牲格挡 (我死) - 包含互换(Trade)和填旋(Chump Block)
                         // [关键修改] 只有满足特定价值公式，AI 才愿意牺牲单位
                         const sacrificeCandidates = validBlockers.filter(b => {
                             // 能活就不算牺牲
-                            if (canSurvive(b, getPower(attacker))) return false;
+                            if (canSurvive(b, atkPower)) return false;
                             // [2026-07-09] 幻象(Ephemeral)：回合结束必死，无脑填入
                             if (b.keywords.includes('Ephemeral')) return true;
                             // 斩杀保护：如果不挡水晶就炸了
-                            if (g.enemyNexus <= getPower(attacker)) return true;
-                            // 价值公式：挽回的水晶伤害 >= 2倍 损失的单位生命值（[2026-08-29] 均用真实面板）
-                            if (getPower(attacker) >= 2 * getHealth(b)) return true;
+                            if (g.enemyNexus <= atkPower) return true;
+                            // 价值公式：挽回的水晶伤害 >= tradeRatio × 损失的单位生命值
+                            //   [2026-10-25 批次2] 系数随水晶血量浮动（本回合致命时压到 0.5），
+                            //   即「致命保护前置」—— 血少时愿意亏着换，血厚时才惜命。
+                            //   关掉动态阈值（easy）时恒为 2，与该档改动前逐字一致。
+                            if (atkPower >= tradeRatio * getHealth(b)) return true;
                             return false;
                         });
 
@@ -444,7 +602,8 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                         } else if (sacrificeCandidates.length > 0) {
                             // 3. 必须牺牲时，在“愿意牺牲”的名单里挑
                             // 优先选能换掉对手的 (Traders)
-                            const traders = sacrificeCandidates.filter(b => canKillAtk(b, getHealth(attacker)));
+                            // [2026-10-25 批次0] canKillAtk 改收 attacker 本体（需要先攻/连击信息）
+                            const traders = sacrificeCandidates.filter(b => canKillAtk(b, attacker));
 
                             if (traders.length > 0) {
                                 // 能换掉对手，选最便宜的
@@ -454,12 +613,16 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                                 chosenBlocker = sacrificeCandidates.sort((a, b) => a.cost - b.cost || getHealth(a) - getHealth(b))[0];
                             }
                         }
-                        // 4. 如果以上都不满足 (会死，且不满足价值公式)
-                        // [2026-08-06 莉莉子 格挡增强] 致命威胁兜底：若本回合不挡就会水晶被爆，
-                        // 威胁感知高的 AI 即使亏也强行填旋阻挡，保水晶优先
-                        if (!chosenBlocker && lethalThreat && cfg_threatAware) {
-                            // 从牺牲候选人里强制选一个填旋（哪怕纯止损）
-                            const lastResort = [...sacrificeCandidates].sort((a, b) => getHealth(a) - getHealth(b))[0];
+                        // 4. 致命兜底 —— **全档位底线**（easy 同样生效）
+                        // [2026-10-25 批次2 · 独立审查 #2 修复] 旧实现从 `sacrificeCandidates` 里取人，
+                        //   而走到这里的**前提**正是「白吃 / 存活 / 牺牲三个集合全空」
+                        //   ⇒ `lastResort` 恒为 undefined，这条兜底自 2026-08-06 起就是**死代码**，
+                        //   三档难度从没真正生效过（Dan Felder 点名的「该挡致命却不挡」正是这类）。
+                        //   现改为直接从**全部合法候选**里挑「最不心疼」的强制填旋。
+                        //   判据用 `lethalNow`（逐战线重算的剩余漏伤），不是循环外的快照。
+                        if (!chosenBlocker && lethalNow) {
+                            const lastResort = [...validBlockers].sort(
+                                (a, b) => a.cost - b.cost || rawHp(a) - rawHp(b))[0];
                             if (lastResort) chosenBlocker = lastResort;
                         }
                         // 否则不格挡，脸接伤害
@@ -472,6 +635,52 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                         availableBlockers = availableBlockers.filter(b => b.id !== chosenBlocker!.id);
                     }
                 });
+
+                // ============================================================
+                // [2026-10-25 莉莉子 · 批次3] hard 专属：**结果校验 + 补漏**
+                //
+                // 参考 Forge `AiBlockController` 的「算完再验、不合格重排」三档回路
+                // （`assignBlockers` 的 == 1./2./3. == 段）。但那边是**清空全部格挡重来**，
+                // 我们改成**只补漏**：第一轮的 trade / 白吃通常是好配置，清空会把它们一起丢掉。
+                // [2026-10-25 批次2 · 二轮审查 N1] 校验判据改用 `leakDmg()`（**含【碾压】溢出**，
+                //   与引擎 `keywords.ts:387-389` 同源）。原文"与 lethalThreat 同口径"是错的：
+                //   `lethalThreat` 算的是"全不挡"，这里要算的是"已挡了一部分之后还漏多少"。
+                // ============================================================
+                // [2026-10-25 批次2 · 独立审查 #3/#7 修复]
+                //   ① 只统计**玩家战线**、且用战斗中的真实攻力（【无法攻击】按 0）——
+                //      否则一个 0 伤害进攻者会让补漏把整条备战席逐个垫光（`break` 永不满足）；
+                //   ② 水晶 ≤ 0 直接跳过：此时 `leakDmg() < g.enemyNexus` 恒假，循环会退化成
+                //      「每条未挡战线都送一个最便宜的」，备战席一次性清空。
+                // [2026-10-25 批次2 · 二轮审查 N7] 只补**有伤害**的未挡战线：否则会给
+                //   【无法攻击】的战线垫人，真漏点一点没降，`rescued` 却照涨、日志谎报"已填挡"。
+                if (caps.reassignOnLethal && g.enemyNexus > 0) {
+                    if (leakDmg() >= g.enemyNexus) {
+                        const unblocked = newCombatField
+                            .filter(f => f.attacker && f.owner === 'player' && !f.blocker && !f.isChallenged
+                                && atkPowerForBlock(f.attacker) > 0)
+                            .sort((a, b) => atkPowerForBlock(b.attacker) - atkPowerForBlock(a.attacker));
+                        let rescued = 0;
+                        for (const fight of unblocked) {
+                            if (leakDmg() < g.enemyNexus) break; // 已经不漏了，剩下的不必再送
+                            const pool = availableBlockers.filter(b => canBlockAttacker(b, fight.attacker));
+                            if (pool.length === 0) continue;
+                            // 能拦下又不死的先派（不白亏），否则拿最便宜的垫
+                            const survivor = pool
+                                .filter(b => effectiveHp(b) > atkPowerForBlock(fight.attacker))
+                                .sort((a, b) => a.cost - b.cost)[0];
+                            const pick = survivor ?? [...pool].sort((a, b) => a.cost - b.cost || rawHp(a) - rawHp(b))[0];
+                            if (!pick) continue;
+                            fight.blocker = pick;
+                            availableBlockers = availableBlockers.filter(b => b.id !== pick.id);
+                            rescued += 1;
+                        }
+                        if (rescued > 0) {
+                            console.log(
+                                `[AI] 🧮 hard 补漏：格挡后仍有 ${leakDmg()} 点打脸（水晶 ${g.enemyNexus}），` +
+                                `已额外填挡 ${rescued} 个 — 剩余备战席 ${availableBlockers.length}`);
+                        }
+                    }
+                }
 
                 // 应用格挡结果
                 if (actions.setCombatField && actions.setEnemyBench) {
@@ -652,15 +861,11 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                         // [2026-07-09] 幻象(Ephemeral) → 回合结束必死，无脑进攻
                         if (unit.keywords.includes('Ephemeral')) { attackers.push(unit); return; }
 
-                        // 该单位的合法阻挡者（含 Elusive / Fearsome 规则过滤）
-                        const blockers = playerBlockers.filter(b => {
-                            // [2026-07-09] 隐秘(Elusive) → 只有隐秘才能阻挡隐秘
-                            if (unit.keywords.includes('Elusive') && !b.keywords.includes('Elusive')) return false;
-                            // [2026-07-09] 凶恶(Fearsome) → 只有攻击力≥3才能阻挡
-                            const bPower = getPower(b); // [2026-08-29] 真实攻血
-                            if (unit.keywords.includes('Fearsome') && bPower < 3) return false;
-                            return true;
-                        });
+                        // 该单位的合法阻挡者 —— [2026-10-26 莉莉子] 统一走门卫，与分配侧/玩家侧同源。
+                        //   ⚠️ 参数序是 (阻挡者, 攻击者)：本处 `unit` 是攻击者，`b` 是玩家阻挡者。
+                        //   此前这里是隐秘/凶恶的又一套手抄副本（第 3 份），
+                        //   它一旦与门卫分叉，AI 会把"其实挡得住"的当成"必打脸"，收益账全盘算错。
+                        const blockers = playerBlockers.filter(b => canBlockAttacker(b, unit));
                         if (blockers.length === 0) { sureHitUnits.push(unit); return; } // 挡不住 → 必打脸
 
                         const isSuicide = blockers.some(b =>
