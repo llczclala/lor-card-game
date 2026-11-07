@@ -27,7 +27,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Package, X } from 'lucide-react';
 import { RARITY_META } from './RarityIcon';
 import {
-    CHEST_KIND_LABEL, describeChestContent, CHEST_RARITY_ORDER, SHARD_GROUP_SIZE,
+    CHEST_KIND_LABEL, describeChestContent, CHEST_RARITY_ORDER, SHARD_GROUP_SIZE, PACK_ANCHOR_COST,
     type ChestInstance, type ChestKind,
 } from '../../data/roguelike/divinityShards';
 import { getGameScale } from '../../utils/gameScale'; // [2026-09-04] 详情 portal 逃出 scale 容器后按 gameScale 补偿
@@ -132,6 +132,12 @@ const PACK_OPEN_UI_MOBILE = {
     bulkHintFontSize: 12,
     /** 该进度行与上一行的间距 px（原 mt-2 = 8） */
     bulkHintMarginTop: 8,
+    /** [2026-11-07 程拍板 · 定向引导] 「定向开启：消耗 N 个卡包 → …」那一行与上一条提示的间距 px */
+    anchorHintMarginTop: 4,
+    /** 定向按钮内「消耗 N 个卡包」副行字号 px（比主行小一截，避免把主文案挤掉） */
+    anchorCostFontSize: 11,
+    /** 定向按钮内「主行 ↔ 副行」的纵向间距 px */
+    anchorBtnLineGap: 2,
 
     // ══ ⑦ 底部按钮行 ══════════════════════════════════════════════════
     /** 按钮行最小高 px（原 min-h-[64px] = 64）—— 防止三种状态切换时面板跳动 */
@@ -369,8 +375,13 @@ export type PackOpenUi = typeof PACK_OPEN_UI;
 interface PackOpenModalProps {
     isOpen: boolean;
     pendingPacks: number;
-    /** 打开一个卡包 → 返回抽到的**匣子**（[2026-09-29] 原为返回武装 id） */
-    onOpenPack: () => ChestInstance | null;
+    /**
+     * 打开卡包 → 返回抽到的**匣子**（[2026-09-29] 原为返回武装 id）
+     * [2026-11-07 程拍板] 新增可选 `anchor`：
+     *   · 不传 → 花 1 个，大类随机（旧行为）
+     *   · 传 `'armament' | 'shard'` → 花 `PACK_ANCHOR_COST` 个，**大类由玩家指定**，品质仍随机
+     */
+    onOpenPack: (anchor?: ChestKind) => ChestInstance | null;
     onClose: () => void;
     /** 打开背包里的匣子（跳去待打开匣子列表 / 直接开） */
     onOpenChest?: () => void;
@@ -934,9 +945,26 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
         startRoll(pick);
     };
 
+    /**
+     * [2026-11-07 程拍板 · **定向开启**] 花 `PACK_ANCHOR_COST` 个卡包，**大类由玩家指定**
+     * （品质仍按 `CHEST_RARITY_WEIGHT` 随机 —— 那一层刻意保留，让高级匣仍有价值）。
+     * 与 `handleOpen` 的唯一差别是把 `anchor` 透传给 `onOpenPack`，**演出路径完全复用**
+     * （音效时机、单开语义、批量状态复位都照抄，避免另起一条链）。
+     */
+    const handleOpenAnchored = (anchor: ChestKind) => {
+        if (phaseRef.current === 'rolling') return;
+        rollSpeedRef.current = 1;     // 定向：标准速度
+        bulkModeRef.current = false;   // 定向：退出批量模式（与单开同口径）
+        setBulkTotal(0);
+        setBulkDone(0);
+        const pick = onOpenPack?.(anchor);
+        if (!pick) return;            // 额度不够（不足 PACK_ANCHOR_COST）→ 什么都不发，也不响音效
+        eventBus.emit(GameEvents.GACHA_START_SINGLE);
+        startRoll(pick);
+    };
+
     /** 抽**下一发**并开始滚（批量专用）。返回 null 说明真的没包了 ⇒ 收尾出汇总。 */
-    const openNextInBulk = () => {
-        const pick = onOpenPack?.();
+    const openNextInBulk = () => {        const pick = onOpenPack?.();
         if (!pick) { finishBulk(); return; }
         startRoll(pick);
     };
@@ -1248,8 +1276,26 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                             </div>
 
                             <p className="text-gray-500 font-mono tracking-wider pointer-events-none" style={{ fontSize: PACK_OPEN_UI.hintFontSize, marginTop: PACK_OPEN_UI.hintMarginTop }}>
-                                🎁 卡包开出的是**奖励匣** · 停下中间的即为抽中，随后可在「待打开匣子」里开启
+                                🎁 卡包开出的是<span className="text-gray-300 font-black">奖励匣</span> · 停下中间的即为抽中，随后可在「待打开匣子」里开启
                             </p>
+
+                            {/* ==========================================
+                                [2026-11-07 程拍板 · 引导补强]
+                                ── 病根①：定向按钮原来的文案是「🛡 武装匣 ×2」，
+                                   玩家第一眼会读成"**开两个武装匣**"；而实际语义是
+                                   "**消耗 2 个卡包**、稳定开出 **1 个**指定类型的匣子"。
+                                   ⇒ 现在把「消耗几个卡包」和「得到几个」分开写在按钮内外两处。
+                                ── 病根②：上面那条提示里的 `**奖励匣**` 是 **Markdown 语法写进了 JSX**，
+                                   会被原样渲染成星号（程的截图里能看到）。已改成 span 强调。
+                                ⚠️ 这行只在定向可用时出现 —— 卡包不够 2 个时，说"可以定向"等于误导。
+                                ========================================== */}
+                            {pendingPacks >= PACK_ANCHOR_COST && (
+                                <p className="text-gray-500 font-mono tracking-wider pointer-events-none" style={{ fontSize: PACK_OPEN_UI.hintFontSize, marginTop: PACK_OPEN_UI.anchorHintMarginTop }}>
+                                    定向开启：<span className="text-amber-300 font-black">消耗 {PACK_ANCHOR_COST} 个卡包</span>
+                                    {' → '}
+                                    <span className="text-white font-black">稳定得到 1 个指定类型的匣子</span>（匣子品质仍随机）
+                                </p>
+                            )}
 
                             {/* [2026-10-04 程拍板] 一键全开：连播中显示进度（已播 n/总数），全部播完显示汇总
                                 [2026-10-21 架构改造] 「停止开包」后 `bulkDone` 会被拉满（让 bulkBusy 转 false），
@@ -1283,6 +1329,25 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                                                 className="font-black tracking-widest bg-gradient-to-r from-cyan-600 to-teal-400 text-white hover:scale-105 transition-all shadow-[0_0_30px_rgba(34,211,238,0.5)]" style={{ paddingLeft: PACK_OPEN_UI.openAllBtnPadX, paddingRight: PACK_OPEN_UI.openAllBtnPadX, paddingTop: PACK_OPEN_UI.openAllBtnPadY, paddingBottom: PACK_OPEN_UI.openAllBtnPadY, borderRadius: PACK_OPEN_UI.openAllBtnRadius, fontSize: PACK_OPEN_UI.openAllBtnFontSize }}>
                                                 ⚡ 一键全开（×{pendingPacks}）
                                             </button>
+                                        )}
+                                        {/* [2026-11-07 程拍板 · 定向开启] 花 `PACK_ANCHOR_COST` 个卡包**锚定大类**
+                                            （品质仍随机）。放在一键全开之后 —— 它是"更贵、更明确"的选项，
+                                            不该抢主按钮的位置。额度不足时整组不渲染（点不动的东西不出现）。
+                                            ⚠️ 「一键全开」**刻意保持随机**（每发 1 个）：定向是逐次决策，
+                                            混进连播会让"这一批花了多少个"变得无法预期。 */}
+                                        {pendingPacks >= PACK_ANCHOR_COST && (
+                                            <>
+                                                {(['armament', 'shard'] as ChestKind[]).map(kind => (
+                                                    <button key={kind} onClick={() => handleOpenAnchored(kind)}
+                                                        className="font-black tracking-widest bg-white/10 hover:bg-white/20 text-white hover:scale-105 transition-all flex flex-col items-center"
+                                                        style={{ paddingLeft: PACK_OPEN_UI.openAllBtnPadX, paddingRight: PACK_OPEN_UI.openAllBtnPadX, paddingTop: PACK_OPEN_UI.openAllBtnPadY, paddingBottom: PACK_OPEN_UI.openAllBtnPadY, borderRadius: PACK_OPEN_UI.openAllBtnRadius, fontSize: PACK_OPEN_UI.openAllBtnFontSize, gap: PACK_OPEN_UI.anchorBtnLineGap }}>
+                                                        {/* 主行：**做什么**（定向 + 匣子类型）。不再写「×2」—— 那个数字会被读成"开两个" */}
+                                                        <span>{kind === 'armament' ? '🛡' : '💠'} 定向{CHEST_KIND_LABEL[kind]}</span>
+                                                        {/* 副行：**花什么**。这两行必须同时出现，缺一行就会重新变成"×2"那种歧义 */}
+                                                        <span className="text-amber-300/90 font-normal" style={{ fontSize: PACK_OPEN_UI.anchorCostFontSize }}>消耗 {PACK_ANCHOR_COST} 个卡包</span>
+                                                    </button>
+                                                ))}
+                                            </>
                                         )}
                                     </>
                                 )}
@@ -1477,9 +1542,15 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
             )}
             {/* [2026-10-04 程拍板] 一键开包 · **完整结果汇总窗**（连播全部播完后弹出）
                 ⚠️ 必须放在 `</AnimatePresence>` **之内** —— 它是 return 的根元素，
-                   同级并列会破坏 JSX 单根（本次踩过）*/}
+                   同级并列会破坏 JSX 单根（本次踩过）
+                🔴 [2026-10-29 莉莉子 BUG修复] **必须传 `inCanvas={false}`**：
+                   本组件同样是 `createPortal(…, document.body)`（见 `:1111` 注释），整棵子树在画布**之外**，
+                   而 `BulkOpenSummaryModal` 的内层缩放默认走"画布内"版（含 `/s`）⇒ 净放大 1/s 倍。
+                   ⚠️ PC 上 s≈1.03 两式几乎相等 ⇒ **在电脑上完全看不出来**，只有手机/雷电才暴露
+                   （这就是它一直没被发现的原因）。 */}
             <BulkOpenSummaryModal
                 key="bulk-summary"
+                inCanvas={false}
                 open={summaryOpen}
                 title="本次一键开包结果"
                 items={bulkList.map<BulkSummaryItem>(c => ({

@@ -916,9 +916,16 @@ export const ChestOpenModal: React.FC<ChestOpenModalProps> = ({
             )}
 
             {/* [2026-10-04 程拍板] 一键开匣 · **完整结果汇总窗**（连播全部播完后弹出）
-                ⚠️ 必须放在 `</AnimatePresence>` 之内：本组件 return 的是 createPortal(单个根)，同级并列会破坏 JSX 单根 */}
+                ⚠️ 必须放在 `</AnimatePresence>` 之内：本组件 return 的是 createPortal(单个根)，同级并列会破坏 JSX 单根
+                🔴 [2026-10-29 莉莉子 BUG修复] **必须传 `inCanvas={false}`**：
+                   本组件是 `createPortal(…, document.body)` 的，整棵子树在画布**之外**（没有祖先 `scale(s)`），
+                   而 `BulkOpenSummaryModal` 的内层缩放默认走"画布内"版（公式含 `/s`）
+                   ⇒ 这一除没有祖先 s 可抵 ⇒ 净放大 **1/s 倍**（手机 2.67 / 雷电 1.46）
+                   ⇒ 程实测的「开匣结果汇总窗在手机端太大、内容被裁」就是这个。
+                   判据见 `platform/tuning.ts` 的 `pickPortalContainScale` 注释。 */}
             <BulkOpenSummaryModal
                 key="bulk-summary"
+                inCanvas={false}
                 open={summaryOpen}
                 title="本次一键开匣结果"
                 items={bulkList.flatMap<BulkSummaryItem>(r => {

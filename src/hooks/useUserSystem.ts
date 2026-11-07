@@ -28,7 +28,7 @@ import { voucherYieldOf, voucherExchangeCostOf, readVoucher, readVoucherFirstUse
 import { eventBus, GameEvents } from '../utils/eventBus'; // [2026-09-29] 万能碎片广播（解耦 useHeroDivinity）
 // [2026-09-29 程拍板] 奖励匣体系（开包 → 抽匣子 → 开匣子得道具）
 import {
-    rollChest, dropShards, SHARD_CHEST_AMOUNT, type ChestInstance, type ChestKind,
+    rollChest, dropShards, SHARD_CHEST_AMOUNT, PACK_ANCHOR_COST, type ChestInstance, type ChestKind,
 } from '../data/roguelike/divinityShards';
 import { ROGUE_HEROES } from '../data/roguelike/rogueStarterDecks'; // [2026-09-29] 碎片可归属的天启者
 import type { ShardWallet, ShardDropDetail } from '../data/roguelike/divinityShards';
@@ -1124,11 +1124,18 @@ export const useUserSystem = () => {
         return results;
     }, [settings, grantArmament, grantArmamentVoucher, userId]);
 
-    /** [2026-08-29 通行证] 获得一个待打开卡包（打开时才随机武装） */
-    const grantPendingPack = useCallback(() => {
+    /**
+     * 获得待打开卡包。
+     * @param count 发放数量（缺省 1）。
+     *   [2026-11-07 程拍板] 通关卡包改为**按难度分档**（普通 1 / 机密 2 / 绝密 3），
+     *   调用方传 `clearPacksOf(run.difficulty)`；其余来源（通行证里程碑 / 版本福利 / 任务）
+     *   一律不传 ⇒ 仍发 1 个，行为逐字不变。
+     */
+    const grantPendingPack = useCallback((count = 1) => {
+        if (count <= 0) return;
         setSettings(prev => {
             if (!prev) return prev;
-            const newSettings = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) + 1 };
+            const newSettings = { ...prev, pendingPacks: (prev.pendingPacks ?? 0) + count };
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
             return newSettings;
         });
@@ -1147,23 +1154,31 @@ export const useUserSystem = () => {
      *   用同步 ref 而不是 state 做判据，是因为「state 是异步的、读到的可能是旧值」——
      *   这与 BUG-20261002-02（回合末重入）踩的是同一个坑，修法也一致。
      *
-     * @returns 抽到的匣子（供开箱演出展示"先看到匣子"）；**没有可开的卡包时返回 null**
+     * [2026-11-07 程拍板 · 定向开包] 新增 `anchor` 参数：
+     *   · **不传** → 花 1 个，大类 50/50 随机（= 旧行为，所有既有调用点逐字不变）
+     *   · **传** `'armament'` / `'shard'` → 花 `PACK_ANCHOR_COST`(2) 个，**大类由玩家指定**，
+     *     品质仍按 `CHEST_RARITY_WEIGHT` 随机（刻意不给定向品质）
+     *   额度按 `cost` 判定与扣减，两者必须同一个 `cost` 变量 —— 否则会出现
+     *   "判了 1 个却扣 2 个"或反过来的漏扣。
+     *
+     * @returns 抽到的匣子（供开箱演出展示"先看到匣子"）；**额度不够时返回 null**
      */
-    const openPack = useCallback((): ChestInstance | null => {
-        // ① 同步判：无可开卡包 → 什么都不发
-        if (pendingPacksRef.current <= 0) return null;
+    const openPack = useCallback((anchor?: ChestKind): ChestInstance | null => {
+        const cost = anchor ? PACK_ANCHOR_COST : 1;
+        // ① 同步判：额度不够 → 什么都不发
+        if (pendingPacksRef.current < cost) return null;
         // ② 同步预扣：同一帧内即使被连调两次，第二次也读不到额度
-        pendingPacksRef.current -= 1;
+        pendingPacksRef.current -= cost;
 
-        const chest = rollRewardChest();
+        const chest = anchor ? rollChest(anchor) : rollRewardChest();
         setSettings(prev => {
             if (!prev) return prev;
             // 兜底：真被抢光了就不发（入队与扣数在**同一个更新里**完成，不再"先发后扣"）
-            if ((prev.pendingPacks ?? 0) <= 0) return prev;
+            if ((prev.pendingPacks ?? 0) < cost) return prev;
             const newSettings = {
                 ...prev,
                 pendingChests: [...(prev.pendingChests ?? []), chest],
-                pendingPacks: (prev.pendingPacks ?? 0) - 1,
+                pendingPacks: (prev.pendingPacks ?? 0) - cost,
             };
             StorageUtils.save(`${STORAGE_KEYS.USER_SETTINGS}_${userId}`, newSettings);
             return newSettings;

@@ -1,7 +1,7 @@
 // ==========================================
 // 悖论迷宫 · 宝箱弹窗（TreasureModal）
 // [2026-08-12 莉莉子] 进入宝箱节点随机开出一种宝箱：
-//   金币 / 卡牌（6 张带装备六选一）/ 惊喜强化（2普通+1稀有三选一，或牺牲-10生命上限换史诗）/ 随机池
+//   金币 / 卡牌（6 张卡六选一，每张**独立**按难度概率附带装备）/ 惊喜强化（2普通+1稀有三选一，或牺牲-10生命上限换史诗）/ 随机池
 // 复用商店/装备/强化基础。参考 ShopModal 风格。
 // ==========================================
 import React, { useState } from 'react';
@@ -17,7 +17,7 @@ import { generateCardOffers, type ShopCardItem } from '../../../data/roguelike/s
 import { RARITY_META } from '../RarityIcon'; // [2026-09-06 莉莉子] 随机宝箱揭示强化品质色
 // [2026-10-03 莉莉子] 多卡/多强化并排的**统一间距口径**（唯一出口，见文件头注释）
 import { GAP_ENH, ENH_CARD } from '../uiSpacing';
-import { MAZE_ENHANCEMENTS, pickRandomEnhancementByRarity } from '../../../data/roguelike/enhancements';
+import { getEnhancementById, pickRandomEnhancementByRarity } from '../../../data/roguelike/enhancements'; // [2026-11-07 莉莉子 BUG修复] 原用 MAZE_ENHANCEMENTS（只是"基础可刷取池"）查展示 ⇒ 通行证专属强化查不到、直接印内部 id
 import {
     pickTreasureType, pickRandomTreasure, GOLD_TREASURE_AMOUNT,
     CARD_TREASURE_COUNT, SACRIFICE_MAX_HP, SURPRISE_BOX_TIERS, // [2026-10-08 难度分层] 惊喜档位随难度
@@ -128,20 +128,28 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                 );
             }
             case 'enhancement': {
-                const enh = MAZE_ENHANCEMENTS.find(e => e.id === r.enhancementId);
-                const meta = enh ? RARITY_META[enh.rarity] : undefined;
+                // ==========================================
+                // [2026-11-07 莉莉子 BUG修复 · 程实测「随机宝箱这样展示太怪了」]
+                //   ── 病根①（**名字**）：原来用 `MAZE_ENHANCEMENTS.find(...)` 查定义，而它只是
+                //      「基础可刷取池」——通行证专属强化被 `PASS_LOCKED_ENHANCEMENT_IDS` 永久剔除
+                //      （`enhancements.ts:22-24`），却在 `buildPool` 里按"已解锁"被**加回抽选池**。
+                //      ⇒ 宝箱抽得出、展示端查不到 ⇒ 兜底把**内部 id** 印给玩家：
+                //      「迷宫强化 [enhance_fighting_spirit]」（程的截图）。
+                //      这与 2026-11-03 商店"强化页签空白"是**同一个病**（见 `enhancements.ts:26-39`），
+                //      当时只修了商店端，宝箱这处漏了。
+                //   ── 病根②（**观感**）：这里自己画了"圆形图标 + 一行文字"，而本文件其余强化展示
+                //      （惊喜宝箱三选一 `:271`）、以及商店 / 事件奖励 / 强化三选一，全部用
+                //      `EnhancementCard` 那张完整卡面（品质色边框 + 六边形图标 + 名称 + 触发标签 + 描述）
+                //      ⇒ 玩家在 5 个入口里看到的**唯一一张简化脸**就是这里。现在统一成卡面。
+                // ==========================================
+                const enh = getEnhancementById(r.enhancementId);
+                // 真查不到（数据脏了）也不印 id —— 玩家看不懂那个串，对他没有任何帮助
+                if (!enh) {
+                    return <div className="text-lg font-black text-violet-300">迷宫强化 ×1</div>;
+                }
                 return (
-                    <div className="flex flex-col items-center gap-2">
-                        {/* 强化圆形图标（对齐战斗内强化栏观感） */}
-                        {enh && meta && (
-                            <div className="w-20 h-20 rounded-full overflow-hidden border-4 bg-black shadow-lg"
-                                style={{ borderColor: meta.color, boxShadow: `0 0 18px ${meta.color}66` }}>
-                                <img src={enh.icon} alt={enh.name} className="w-full h-full object-cover" />
-                            </div>
-                        )}
-                        <div className="text-lg font-black text-violet-300">
-                            迷宫强化「{enh?.name ?? r.enhancementId}」
-                        </div>
+                    <div className="shrink-0" style={{ width: ENH_CARD.w }}>
+                        <EnhancementCard enhancement={enh} isSelected onClick={() => {}} />
                     </div>
                 );
             }
@@ -193,10 +201,14 @@ export const TreasureModal: React.FC<TreasureModalProps> = ({
                     </div>
                 )}
 
-                {/* ── 卡牌宝箱：6 张带装备卡六选一 ── */}
+                {/* ── 卡牌宝箱：6 张卡六选一（**部分**随难度概率附带装备，不是全都带）── */}
                 {treasureType === 'card' && (
                     <div className="flex flex-col items-center gap-4">
-                        <p className="text-gray-300">从 6 张带装备的卡中选一张（装备附加到该卡所有副本）</p>
+                        {/* [2026-10-26 莉莉子 BUG修复 · 粉丝报「不是所有卡都带装备，文案却写带装备的卡」]
+                            ── 实情：`generateCardOffers`（`shop.ts:96`）是**每张独立** `Math.random() < chance`，
+                               概率由难度决定（`equipChanceFor`）⇒ 6 张里通常只有一部分带装备（界面上带六边形徽章的才是）。
+                            ── 旧文案「从 6 张带装备的卡中选一张」与事实不符，现改为如实描述。 */}
+                        <p className="text-gray-300">从 6 张卡中选一张（部分卡附带装备；若选中带装备的卡，装备会附加到该卡的所有副本）</p>
                         <div className="flex flex-wrap gap-4 justify-center">
                             {cardOffers.map(item => (
                                 <div key={item.cardKey} className="flex flex-col items-center gap-1.5">

@@ -17,7 +17,7 @@ import { EnhancementCard as EnhanceCardBig } from './EnhancementCard'; // 强化
 import { CARD_DB } from '../../../data/cards';
 import { getEquipmentById } from '../../../data/equipment';
 import { generateShopStock, REMOVE_CARD_PRICE, type ShopStock } from '../../../data/roguelike/shop';
-import { MAZE_ENHANCEMENTS } from '../../../data/roguelike/enhancements';
+import { getEnhancementById } from '../../../data/roguelike/enhancements'; // [2026-11-03 BUG修复] 查表含通行证专属强化（原 MAZE_ENHANCEMENTS 查不到 ⇒ 误报"暂无强化出售"）
 import type { RoguelikeRunState } from '../../../hooks/useRoguelikeRun';
 import { eventBus, GameEvents } from '../../../utils/eventBus';
 import { useArmamentConfig } from '../../../hooks/useArmamentConfig'; // [2026-09-10] 局外武装（英雄卡按手牌样式展示武装图标）
@@ -624,7 +624,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                             <div className="min-h-full flex flex-col items-center justify-center" style={{ gap: ROGUE_SHOP_UI.tabContentGap }}>
                                 <SectionTitle>✨ 买迷宫强化</SectionTitle>
                                 {stock.enhancement ? (() => {
-                                    const enh = MAZE_ENHANCEMENTS.find(e => e.id === stock.enhancement!.enhancementId);
+                                    // [2026-11-03 莉莉子 BUG修复] 用 `getEnhancementById`（含池外条目）而不是 `MAZE_ENHANCEMENTS`：
+                                    //   抽选端 `buildPool` 会按"已解锁"把通行证专属强化加回池子，而它们在 `MAZE_ENHANCEMENTS` 里被永久剔除
+                                    //   ⇒ 旧写法抽中时查不到 ⇒ 兜底成"暂无强化出售"，玩家看起来像"商店的迷宫强化页签空了"。
+                                    const enh = getEnhancementById(stock.enhancement!.enhancementId);
                                     if (!enh) return <p className="text-gray-500" style={{ fontSize: ROGUE_SHOP_UI.emptyTextFontSize }}>暂无强化出售</p>;
                                     const sold = purchased.has(`enh_${enh.id}`);
                                     return (

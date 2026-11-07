@@ -1,7 +1,7 @@
 // ==========================================
 // 悖论迷宫 · 宝箱节点（数据层）
 // [2026-08-12 莉莉子] 宝箱节点进入时随机开出一种宝箱：
-//   金币 / 卡牌（6 张带装备六选一）/ 惊喜强化（2普通+1稀有三选一，或牺牲-10生命上限换史诗）/ 随机池
+//   金币 / 卡牌（6 张卡六选一，每张**独立**按难度概率附带装备）/ 惊喜强化（2普通+1稀有三选一，或牺牲-10生命上限换史诗）/ 随机池
 // 复用商店经济基础（卡生成 shop.ts、强化抽选 enhancements.ts）。
 // ==========================================
 import { generateCardOffers } from './shop';
@@ -28,7 +28,7 @@ export const SURPRISE_BOX_TIERS: Record<RogueDifficulty, SurpriseBoxTier> = {
 export type TreasureType = 'gold' | 'card' | 'surprise' | 'random';
 
 export const GOLD_TREASURE_AMOUNT = 60;      // 金币宝箱固定 +60（可调）
-export const CARD_TREASURE_COUNT = 6;        // 卡牌宝箱：6 张带装备的卡六选一
+export const CARD_TREASURE_COUNT = 6;        // 卡牌宝箱：6 张卡六选一（每张**独立**按难度概率附带装备）
 export const MAX_HP_TREASURE_AMOUNT = 5;     // 随机宝箱：生命上限 +5
 export const SACRIFICE_MAX_HP = 10;          // 惊喜宝箱：牺牲 -10 生命上限换史诗强化
 

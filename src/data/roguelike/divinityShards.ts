@@ -346,3 +346,44 @@ export const RUN_SETTLE_UNIVERSAL: Record<RogueDifficulty, number> = {
  */
 export const computeRunShards = (won: boolean, difficulty: RogueDifficulty): number =>
     won ? (RUN_SETTLE_UNIVERSAL[difficulty] ?? 0) : 0;
+
+// ═══════════════════════════════════════════════
+// 五、卡包产出与开包消耗
+// ═══════════════════════════════════════════════
+
+/**
+ * 通关最终 Boss 掉落的**卡包数**（按难度分档）。
+ *
+ * [2026-11-07 程拍板] 病根：粉丝反馈"开包开匣太看脸"。
+ *   旧实现 `App.tsx` 在通关分支里无差别 `grantPendingPack()` ⇒ 三档难度**一律 1 个**，
+ *   打绝密（地图约普通的 2.7 倍长）与打普通拿到的东西一样，高难度毫无额外回报。
+ *   新口径：普通 1 / 机密 2 / 绝密 3。
+ *
+ * 与既有分档口径的一致性（便于将来一起调）：
+ *   · `RUN_SETTLE_UNIVERSAL` 万能碎片 5 / 10 / 15
+ *   · 金币倍率 1 / 1.25 / 1.5 · 经验倍率 1 / 1.5 / 2
+ *   · `ROGUE_MAP_*` 地图长度 约 3 / 6 / 8 战
+ *
+ * [参数可调] 改这三个数即可（⚠️ 改动后同步 `更新公告` 与
+ * `技术手册/设计-神格碎片与奖励匣.md` §5「投放范围」）。
+ */
+export const RUN_CLEAR_PACKS: Record<RogueDifficulty, number> = {
+    normal: 1,
+    secret: 2,
+    topsecret: 3,
+};
+
+/** 某难度的通关卡包数（越界回落到 1，保证"通关至少给 1 个"） */
+export const clearPacksOf = (difficulty: RogueDifficulty | undefined): number =>
+    (difficulty && RUN_CLEAR_PACKS[difficulty]) || 1;
+
+/**
+ * **定向开包**的消耗：不指定大类（随机）= 1 个；指定大类 = 2 个。
+ * [2026-11-07 程拍板] 「通过双倍的消耗开包数量来锚定是开碎片还是开武装匣」。
+ *
+ * 设计意图：把"看脸"的那一半（大类）变成**可付费消除的随机性** ——
+ *   · 想赌品质 → 花 1 个，大类仍 50/50
+ *   · 想攒碎片 / 想要武装 → 花 2 个，大类由你定，**品质仍按 `CHEST_RARITY_WEIGHT` 随机**
+ *     （刻意不给定向品质：那一层保留稀缺感，也让匣券/高级匣仍有价值）
+ */
+export const PACK_ANCHOR_COST = 2;

@@ -16,7 +16,7 @@
 //     （`ChestOpenModal` 的碎片数量就是 cyan-200）
 //   · **品质色** = 稀有度（六档形状图标 + 描边 + 竖条 + 发光，多通道编码）
 // ==========================================
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { eventBus, GameEvents } from '../../utils/eventBus';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Sparkles, Package, Diamond } from 'lucide-react';
@@ -24,7 +24,7 @@ import { RARITY_META } from './RarityIcon';
 import { ShardIcon } from './ShardIcon';
 import { getGameScale } from '../../utils/gameScale';
 // [2026-10-21 手机实测修复] 画布内浮层的手机端缩放（组件里禁写 isNative）
-import { pickTuning, pickCanvasContainScale } from '../../platform/tuning';
+import { pickTuning, pickCanvasContainScale, pickPortalContainScale } from '../../platform/tuning';
 import type { EnhancementRarity } from '../../data/roguelike/enhancements';
 
 // ══════════════════════════════════════════════════════════════════════
@@ -57,10 +57,28 @@ const BULK_UI_MOBILE = {
      * ⚠️ PC 端在 `BULK_UI_PC_DIFF` 里显式保留 880，观感零变化。
      */
     panelMaxHeight: 400,
+    /**
+     * 目标占屏宽 / 占屏高比 —— 内层 contain 缩放的两个旋钮。
+     *
+     * 🔴 [2026-10-29 程实测] 从硬编码（0.88 / 0.82）提进调参区。
+     * ── 关键算式（**理解这个才不会调反**）：
+     *    `k = min(ratioW×屏宽 / panelWidth, ratioH×屏高 / panelMaxHeight)`
+     *    · **视觉高度 = panelMaxHeight × k = ratioH × 屏高**（高度受限时，与 panelMaxHeight 无关！）
+     *    · **字号 = 设计字号 × k** ⇒ panelMaxHeight 越小、k 越大、字越大
+     *    ⇒ **"字大" 与 "一屏装得多" 在本公式里互斥**。
+     *      想装得多只能**压缩每组占用的画布高度**（tileHeight / 组头 / 间距），不能靠加高面板。
+     *
+     * ── 为什么把 ratioH 从 0.82 提到 0.90：程实测"有效高度只能看一行结果"不合格。
+     *    0.82 时视觉高只有 322 CSS px（屏高 393），且内容区仅约 252 画布 px ⇒ 装 1.9 组。
+     *    提到 0.90 后视觉高 354、字号也从 10.5 → 11.5 CSS px（**更大**，不是更小）。
+     * ⚠️ PC 端在 `BULK_UI_PC_DIFF` 里显式保留 0.82 / 0.88，观感零变化。
+     */
+    viewportRatioW: 0.88,
+    viewportRatioH: 0.90,
     /** 面板圆角 px —— 对齐两个父弹窗的 24（原 16，比父窗小一档） */
     panelRadius: 24,
     /** 面板四周内边距 px —— 对齐父窗的 24（原 28） */
-    panelPad: 24,
+    panelPad: 18,
     /** 面板描边 px */
     panelBorderWidth: 1,
 
@@ -78,12 +96,12 @@ const BULK_UI_MOBILE = {
     closeIconSize: 18,
 
     // ── 品质分组 ─────────────────────────────────────────────
-    /** 组与组之间的间距 px */
-    groupGap: 16,
-    /** 组头高 px */
-    groupHeaderHeight: 34,
-    /** 组头与网格的间距 px */
-    groupHeaderMarginBottom: 8,
+    /** 组与组之间的间距 px —— [2026-10-29] 16 → 12 */
+    groupGap: 12,
+    /** 组头高 px —— [2026-10-29] 34 → 28（同 tileHeight 的理由：压纵向、不加字号） */
+    groupHeaderHeight: 28,
+    /** 组头与网格的间距 px —— [2026-10-29] 8 → 6 */
+    groupHeaderMarginBottom: 6,
     /** 组头左侧品质竖条宽 px（普通档 2 → 金色档 4，见 groupBarWidthBoost） */
     groupBarWidth: 2,
     /** 金/红两档的竖条加宽 px（Rare Boost 的一部分） */
@@ -106,8 +124,10 @@ const BULK_UI_MOBILE = {
     gridGap: 12,
     /** 条目卡宽 px */
     tileWidth: 200,
-    /** 条目卡高 px（要容得下「图标 48~64」或「两行名字 + chip 行」，取 88） */
-    tileHeight: 88,
+    /** 条目卡高 px（要容得下「图标 48~64」或「两行名字 + chip 行」）
+     *  [2026-10-29] 88 → **78**：程实测"有效高度只能看一行"，压缩纵向占用是唯一不影响字号的旋钮
+     *  （88 时每组 130 画布 px ⇒ 一屏 1.9 组；78 时每组 112 ⇒ 2.4 组）。 */
+    tileHeight: 78,
     /** 条目卡圆角 / 内边距 px */
     tileRadius: 12,
     tilePad: 10,
@@ -141,8 +161,21 @@ const BULK_UI_MOBILE = {
     heroNoteFontSize: 13,
 
     // ── 底部按钮 ─────────────────────────────────────────────
-    /** 按钮与内容区的间距 px */
-    footerMarginTop: 20,
+    /** 按钮与内容区的间距 px —— [2026-10-29] 20 → 14 */
+    footerMarginTop: 14,
+    /**
+     * 内容区**上下边缘渐隐**的高度 px（0 = 关闭）。
+     *
+     * 🔴 [2026-10-29 程实测] 程反馈「开包/开匣汇总窗很容易让人误会下方没有其他结果了」。
+     *    对齐 `RoguePersonalize` 列表的做法（那里用上下两条 `from-slate-950 via-slate-950/80 to-transparent`
+     *    的绝对定位渐变层，`pointer-events-none`，高度走调参区）。
+     *
+     * ⚠️ 但这里**不能照搬叠层**：本面板底色是「slate-900 → 紫 → slate-950」三段渐变，
+     *    叠纯色遮罩必然出色差。⇒ 改用 `mask-image`（真透明，自动透出面板自身底色）。
+     * ⚠️ 而且**必须按"确实还能滚"条件化**：内容不满一屏时若也虚化，
+     *    最后一条会显得"淡掉"，反而误导成"下面还有"。见组件内 `fade` 状态。
+     */
+    scrollFadeHeight: 40,
     /** 按钮左右/上下内边距 px */
     footerPadX: 56,
     footerPadY: 12,
@@ -162,6 +195,16 @@ const BULK_UI_PC_DIFF = {
     // [2026-10-24] 手机端面板设计高改到 400（见 BULK_UI_MOBILE 的注释）；
     //   PC 端**必须显式保留 880**，否则会被手机值连带改小 ⇒ 观感变化。
     panelMaxHeight: 880,
+    // [2026-10-29 程实测修复] 手机端为"一屏只看得到一行"做了三项压缩 + 占屏比提升，
+    //   PC 端必须逐项回填原值 ⇒ 观感零变化（PC 原本一屏能看到 5 列 × 多组，没问题）。
+    viewportRatioW: 0.88,       // 原值（手机端未改，列出仅为口径完整）
+    viewportRatioH: 0.82,       // 原值（手机端已提到 0.90）
+    panelPad: 24,               // 原值（手机端 18）
+    tileHeight: 88,             // 原值（手机端 78）
+    groupHeaderHeight: 34,      // 原值（手机端 28）
+    groupHeaderMarginBottom: 8, // 原值（手机端 6）
+    groupGap: 16,               // 原值（手机端 12）
+    footerMarginTop: 20,        // 原值（手机端 14）
 };
 
 /** 🖥️ PC / 📱 手机 —— 按运行平台自动二选一（平台判定在 `src/platform/tuning.ts`） */
@@ -229,6 +272,24 @@ interface BulkOpenSummaryModalProps {
     title: string;
     items: BulkSummaryItem[];
     onClose: () => void;
+    /**
+     * 🔴 [2026-10-29 莉莉子 BUG修复] **本窗是否渲染在画布内**（`#game-scale-container` 里）。
+     *
+     * ── 病根（程实测·手机端"一键开匣结果"被放大到溢出裁切）：
+     *    本组件被**两条路**复用，而它们所处的 DOM 环境相反：
+     *      · `PackOpenModal`  —— 在画布**内**（有祖先 `scale(s)`）✅
+     *      · `ChestOpenModal` —— `createPortal(…, document.body)`，在画布**之外**（无祖先 s）
+     *    而本组件原先把内层缩放写死成 `pickCanvasContainScale`（公式**含 `/s`**）。
+     *    对画布外的那条路来说，这一除没有对应的祖先 s 可抵 ⇒ 净放大 **1/s 倍**：
+     *      手机 s≈0.374 → **2.67 倍**、雷电 s≈0.686 → **1.46 倍** ⇒ 面板撑爆屏幕、内容被裁。
+     *    （与 `platform/tuning.ts` 里 `pickCanvasInnerScale` 的注释是同一个病，那次修的是开匣主窗。）
+     *
+     * ── 口径（判据只有一条）：**看它的 DOM 祖先链里有没有 `#game-scale-container`**
+     *    · 有 ⇒ 传 `true`（默认）→ 走 `pickCanvasContainScale`（除 s，抵消祖先缩放）
+     *    · 没有（portal 到 body）⇒ 传 `false` → 走 `pickPortalContainScale`（不除 s）
+     * ⚠️ 传错方向就是 s 或 1/s 的倍数偏差，且**PC 上几乎看不出来**（PC s≈1.03，两个公式结果接近）。
+     */
+    inCanvas?: boolean;
 }
 
 // ── 合并 + 分组（纯函数，组件内 useMemo 兜住）─────────────────────────
@@ -297,7 +358,7 @@ function groupByRarity(merged: MergedItem[]): RarityGroup[] {
     return groups;
 }
 
-export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open, title, items, onClose }) => {
+export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open, title, items, onClose, inCanvas = true }) => {
     const merged = useMemo(() => mergeItems(items), [items]);
     const groups = useMemo(() => groupByRarity(merged), [merged]);
     const totalCount = useMemo(() => merged.reduce((s, x) => s + x.amount, 0), [merged]);
@@ -307,6 +368,47 @@ export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open
     const heroMeta = hero ? RARITY_META[hero.rarity ?? 'common'] : null;
 
     const close = () => { eventBus.emit(GameEvents.UI_BACK); onClose(); };
+
+    // ══════════════════════════════════════════════════════════════════
+    // [2026-10-29 莉莉子 · 程实测] 内容区**上下边缘渐隐**（对齐 `RoguePersonalize` 列表光效）
+    // ── 病根：程反馈「开包/开匣汇总窗很容易让人误会下方没有其他结果了」——
+    //    原滚动区是裸 `overflow-y-auto`，内容在边缘**硬切**，看着就像到底了。
+    // ── 为什么用 `mask` 而不是照搬渐变叠层：本面板底色是
+    //    「slate-900 → 紫 → slate-950」三段渐变，叠纯色遮罩必然出色差；
+    //    mask 是**真透明**，自动透出面板自身底色 ⇒ 零色差，且不动 DOM 结构。
+    // ── 为什么必须条件化：内容不满一屏时若也虚化，最后一条会"淡掉"，
+    //    反而误导成"下面还有"。⇒ 只在 `scrollTop>2` / 未滚到底时才亮对应那一侧。
+    // ══════════════════════════════════════════════════════════════════
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const [fade, setFade] = useState({ top: false, bottom: false });
+    const updateFade = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        const { scrollTop, scrollHeight, clientHeight } = el;
+        const top = scrollTop > 2;
+        const bottom = scrollTop + clientHeight < scrollHeight - 2;
+        setFade(prev => (prev.top === top && prev.bottom === bottom) ? prev : { top, bottom });
+    }, []);
+    /** 打开 / 内容变化后重算一次；`rAF` 兜一拍是因为首帧量不到真实高度 */
+    useEffect(() => {
+        if (!open) return;
+        const id = requestAnimationFrame(updateFade);
+        return () => cancelAnimationFrame(id);
+    }, [open, merged.length, groups.length, updateFade]);
+
+    /** 按「上/下是否还有内容」拼 mask（真透明 ⇒ 无色差） */
+    const fadeMask = useMemo<React.CSSProperties | undefined>(() => {
+        if (BULK_UI.scrollFadeHeight <= 0) return undefined;
+        if (!fade.top && !fade.bottom) return undefined;
+        const h = BULK_UI.scrollFadeHeight;
+        const stops: string[] = [];
+        if (fade.top) stops.push('transparent 0', `#000 ${h}px`);
+        else stops.push('#000 0');
+        if (fade.bottom) stops.push(`#000 calc(100% - ${h}px)`, 'transparent 100%');
+        else stops.push('#000 100%');
+        const g = `linear-gradient(to bottom, ${stops.join(', ')})`;
+        return { WebkitMaskImage: g, maskImage: g };
+    }, [fade.top, fade.bottom]);
 
     /** 条目图标：碎片走 ShardIcon（菱形），有图用图，都没有则品质形状兜底 */
     const renderIcon = (it: MergedItem, size: number) => {
@@ -339,9 +441,15 @@ export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open
                     🔴 [2026-10-24 程实测修复] 上一版**只按宽度**反解（占屏 94%）⇒ 高度被同一个 k 放大到
                         978 CSS px（屏高仅 393）⇒ 窗口铺满整个画面。改成**宽高同时约束**的 contain。
                         手机 0.88/0.82 ⇒ 约 580×322 CSS（屏宽 68% × 屏高 82%）；
-                        **PC 端 legacy 传 1（等于不改，观感零变化）**。 */}
+                        **PC 端 legacy 传 1（等于不改，观感零变化）**。
+                    🔴 [2026-10-29 程实测修复] **两条复用路径的 DOM 环境相反**，必须按 `inCanvas` 分叉：
+                        · 画布内（`PackOpenModal`）→ `pickCanvasContainScale`（除 s）
+                        · portal 到 body（`ChestOpenModal`）→ `pickPortalContainScale`（**不除 s**）
+                        原先写死画布版 ⇒ 开匣那条路净放大 1/s（手机 2.67 倍）⇒ 面板撑爆、内容被裁。 */}
                     <div style={{
-                        transform: `scale(${pickCanvasContainScale(BULK_UI.panelWidth, BULK_UI.panelMaxHeight, 0.88, 0.82, getGameScale(), 1)})`,
+                        transform: `scale(${inCanvas
+                            ? pickCanvasContainScale(BULK_UI.panelWidth, BULK_UI.panelMaxHeight, BULK_UI.viewportRatioW, BULK_UI.viewportRatioH, getGameScale(), 1)
+                            : pickPortalContainScale(BULK_UI.panelWidth, BULK_UI.panelMaxHeight, BULK_UI.viewportRatioW, BULK_UI.viewportRatioH, 1)})`,
                     }}>
                     <motion.div
                         initial={{ opacity: 0, scale: 0.94, y: 14 }}
@@ -379,7 +487,12 @@ export const BulkOpenSummaryModal: React.FC<BulkOpenSummaryModalProps> = ({ open
                         {/* ── 内容区（整体滚动 + sticky 组头；绝不每组独立滚动 = 触屏卡死感）
                             ⚠️ `min-h-0` 是必需的：flex 子项默认 `min-height:auto`，
                                不加它滚动区会被内容撑破、`maxHeight` 失效。 */}
-                        <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+                        <div
+                            ref={scrollRef}
+                            onScroll={updateFade}
+                            className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1"
+                            style={fadeMask}
+                        >
                             {merged.length === 0 ? (
                                 /* 空态（正常路径不可达：两个调用方都在 items 为空时提前 return，
                                    但补上成本极低，免得将来某个入口改动后露出一片空白） */
