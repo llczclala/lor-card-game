@@ -8,6 +8,7 @@ import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] �
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
 import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
 import { isTouchInput, TOUCH_TUNE, markTapActionHandled } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 手牌「防误打」：上浮改由显式状态驱动 · [2026-10-16] 聚焦 + 阈值 · [2026-10-17] +markTapActionHandled（出牌后吃掉补发的 click）
+import { nlog } from '../net/audit'; // [2026-11-07 联机诊断] 手牌点击链路
 // --- 组件 1: 正常游戏时的手牌区域 (从 GameSession 迁移并封装) ---
 interface PlayerHandProps {
     hand: CardData[];
@@ -106,11 +107,9 @@ const AnimatedHandCard = ({
             onPointerUp={onPointerUp}
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
-            drag
-            dragSnapToOrigin={true}
-            dragElastic={0.2}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
+            drag={true}
             // [isNew] 初始 scale:2.5 补偿 preview→hand 的基准尺寸差异
             // [2026-07-07] 用 isAnimating（局部状态）而非 isNew 控制交互：
             // isNew 持久化后始终为 true，但交互锁定只需持续到动画播完。
@@ -536,6 +535,8 @@ export const PlayerHand: React.FC<PlayerHandProps> = ({
                                 const dist = Math.hypot(e.clientX - pointerPos.current.x, e.clientY - pointerPos.current.y);
                                 // [触屏] 点击门限比鼠标宽（见 TOUCH_TAP_SLOP 注释）
                                 const slop = touchMode ? TOUCH_TAP_SLOP : 5;
+                                // [联机诊断] 手牌 pointerup 到达 + 是否满足点击门限
+                                nlog('手牌pointerup', { cardKey: c.key, dist: Math.round(dist * 10) / 10, slop, touchMode });
                                 if (dist < slop) {
                                     // 沉底起手的那一下 ⇒ 只把牌叫起来，不打出（程拍板方案 A）
                                     if (sunkGestureCardIdsRef.current.has(c.id)) {

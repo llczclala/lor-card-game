@@ -23,7 +23,9 @@ export const GameEvents = {
     SFX_SELECT_BLOCKER_UNIT: 'SFX_SELECT_BLOCKER_UNIT', // 选中格挡单位（引导步推进用）
     SFX_CONFIRM_BLOCK: 'SFX_CONFIRM_BLOCK',       // 确认格挡方案（子任务完成用）
     // [2026-08-20 莉莉子] 格挡被拒事件（隐秘/凶恶）：触发吓退动画 + 中央播报 + 关键词闪光
-    // Payload: { blocker: CardData, fightIndex: number, reason: 'elusive' | 'fearsome', attackerId: string }
+    // [2026-10-26 莉莉子] 判据已统一到 `logic/blockRules.getBlockRejectReason`，reason 补第三态 'cantblock'；
+    //   战场内挪位被拒也复用本事件（fightIndex 传"它想去的那个格子"，演出落点才对得上）。
+    // Payload: { blocker: CardData, fightIndex: number, reason: BlockRejectReason, attackerId: string }
     BLOCK_REJECTED: 'block_rejected',
     SFX_CARD_HOVER: 'SFX_CARD_HOVER',             // 卡牌悬停
     SFX_SHUFFLE: 'SFX_SHUFFLE',                   // 洗牌

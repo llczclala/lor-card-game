@@ -319,7 +319,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     ai: { pattern: 'DAMAGE', priority: 2, config: { targetType: 'any', damageValue: 1 } },
   },
   mauxir_lotus_pedestal: {
-    key: 'mauxir_lotus_pedestal', name: '臆莲基座', cost: 0, power: 0, maxPower: 10, health: 3, maxHealth: 3, maxPerSide: 3, buffRules: { power: { allowedTags: ['drone_power'] } },
+    key: 'mauxir_lotus_pedestal', name: '臆莲基座', cost: 1, power: 0, maxPower: 10, health: 3, maxHealth: 3, maxPerSide: 3, buffRules: { power: { allowedTags: ['drone_power'] } },
     isChampion: false, level: 0, region: 'Mauxir',
     description: '受伤时：若“猫汐尔 莲驱”在场，在手牌生成一张“梦莲无人机”。回合结束：对随机敌方单位造成X次1点伤害。【攻击力最多为10】【每方最多3个】',
     type: 'unit', keywords: ['CantAttack'], race: ['summon'],
@@ -375,7 +375,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isCollectible: false,
   },
   acacia_chrono_echo_ultimate: {
-    key: 'acacia_chrono_echo_ultimate', name: '朔望之期', cost: 16, power: 0, health: 0, maxHealth: 0,
+    key: 'acacia_chrono_echo_ultimate', name: '朔望之期', cost: 1, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
     description: '本牌局每召唤过“飞剑”1，此牌魔耗值减1。打出后升级“安卡希雅 时之重奏”，并回复全部费用。',
     type: 'spell-slow', keywords: [],
@@ -456,7 +456,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 安卡希雅 衍生物 ---
 
   'Acacia_Flying_Sword': {
-    key: 'Acacia_Flying_Sword', name: '飞剑', cost: 0, power: 1, health: 1, maxHealth: 1,
+    key: 'Acacia_Flying_Sword', name: '飞剑', cost: 1, power: 1, health: 1, maxHealth: 1,
     isChampion: false, level: 0, region: 'Acacia', race: ['summon'],
     type: 'unit', keywords: ['Ephemeral'],
     description: '',
@@ -465,7 +465,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isCollectible: false,
   },
   'Acacia_Great_Sword': {
-    key: 'Acacia_Great_Sword', name: '大飞剑', cost: 0, power: 2, health: 1, maxHealth: 1,
+    key: 'Acacia_Great_Sword', name: '大飞剑', cost: 1, power: 2, health: 1, maxHealth: 1,
     isChampion: false, level: 0, region: 'Acacia', race: ['summon'],
     type: 'unit', keywords: ['Ephemeral', 'Overwhelm'],
     description: '',
@@ -482,7 +482,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // --- 天启者：茉莉安 · 霄鹰 ---
   marian: {
     key: 'marian', gachaPool: GachaPoolEnum.Zenith, name: '茉莉安 霄鹰', cost: 4, power: 5, health: 5, maxHealth: 5,
-    isChampion: true, level: 1, region: 'Marian',
+    isChampion: true, level: 1, region: 'Marian', race: ['summoner'],
     // [2026-10-02 莉莉子 信标亡语化] 文案与机制同步：贴重生亡语已下放为**等级无关的光环**
     // [2026-10-04 程拍板] 打击伤害由「等同自身攻击力」改为**等级固定值**（Lv1 5 / Lv2 8）：
     //   肉鸽里她能被叠到 20+ 攻击力，原口径会让信标被反复一击打死 ⇒ 无限循环爆炸。
@@ -550,8 +550,8 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // ⚠️ 引擎视角它只是「宿主方的普通单位」：可挡刀、可被法术指定、可吃任何 buff（宿主随便养）
   // ⚠️ 不再自带【暴露】—— 这是 2026-09-14 设计改动的关键一条（原方案作废）
   'Marian_Wolf_Tooth_Beacon': {
-    key: 'Marian_Wolf_Tooth_Beacon', name: '獠牙信标', cost: 0, power: 0, health: 20, maxHealth: 20,
-    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Last Breath','CantAttack'],
+    key: 'Marian_Wolf_Tooth_Beacon', name: '獠牙信标', cost: 1, power: 0, health: 20, maxHealth: 20,
+    isChampion: false, level: 0, region: 'Marian', type: 'unit', keywords: ['Last Breath','CantAttack'], race: ['summon'],
     // [2026-09-28 莉莉子 修复] 数值一致性：卡面原写「8 点」，而效果注册表 params.spreadDamageTotal 实际是 **6**
     //   （注册表注释写着"6 → 8（结掉待复核 TODO）"，但值并没有真的改过）。
     //   程 2026-09-28 拍板：**以当前实际伤害为准** ⇒ 卡面改回 6。（神格神经 ⑥ 的"亡语翻倍"即 6→12）
@@ -881,7 +881,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   temp_spell_20: {
     key: 'temp_spell_20', name: '剑鸣回响', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
-    description: '快速：回响，飞剑2。', type: 'spell-fast', keywords: ['Echo'],
+    description: '慢速：回响，飞剑2。', type: 'spell-slow', keywords: ['Echo'],
     effects: ['effect_temp_spell_20_flying'],
     imageUrl: SPELL_IMAGES.temp_spell_20,
     // [2026-09-27 莉莉子 第二批 ai] 飞剑是「额外出击次数」类资源 —— 场上没有可进攻单位时纯属白扔
@@ -1442,7 +1442,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   The_Forger_Squad_White_Hunt: {
     key: 'The_Forger_Squad_White_Hunt', gachaPool: GachaPoolEnum.Permanent, name: '”锻造者”\n白猎', region: 'Logistics',
     cost: 8, power: 4, health: 5, maxHealth: 5,
-    isChampion: false, level: 0, type: 'unit', keywords: ['Overwhelm','Ability'],
+    isChampion: false, level: 0, type: 'unit', keywords: ['Overwhelm','Ability'], race: ['summoner'],
     description: '打出时，选择一个手牌中费用低于7的单位，赋予他+3/+0和碾压并将他从手牌中召唤。',
     ability: { id: 'forger_white_hunt_summon', label: '神枪手', description: '打出时，选择一个手牌中费用低于7的单位，赋予他+3/+0和碾压并将他从手牌中召唤。', trigger: 'on_play_from_hand', maxCharges: 1, postTriggerState: 'dim' },
     imageUrl: UNIT_IMAGES.white_hunt, effects: ['effect_forger_white_hunt_summon'],
@@ -1455,14 +1455,14 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   SacredChants_Squad_Loka: {
     key: 'SacredChants_Squad_Loka', gachaPool: GachaPoolEnum.Permanent, name: '”梵音”\n洛迦', region: 'Logistics',
     cost: 3, power: 3, health: 2, maxHealth: 2,
-    isChampion: false, level: 0, type: 'unit', keywords: ['Ephemeral','Last Breath'],
+    isChampion: false, level: 0, type: 'unit', keywords: ['Ephemeral','Last Breath'], race: ['summoner'],
     description: '亡语：召唤一个“幻莲音蛇”。',
     imageUrl: UNIT_IMAGES.loka, effects: ['effect_hymn_loka_death_summon'],
   },
   Loka_Phantom_Serpent: {
     key: 'Loka_Phantom_Serpent', name: '幻莲音蛇', region: 'Logistics',
     cost: 1, power: 0, health: 3, maxHealth: 3,
-    isChampion: false, level: 0, type: 'unit', keywords: ['Ability'],
+    isChampion: false, level: 0, type: 'unit', keywords: ['Ability'], race: ['summon'],
     description: '回合开始时，本回合提升1点法力上限。',
     ability: { id: 'loka_serpent_bonus_mana', label: '音律共鸣', description: '回合开始时，本回合提升1点法力上限。', trigger: 'round_start', maxCharges: -1, postTriggerState: 'recharge' },
     imageUrl: UNIT_IMAGES.loka, effects: ['effect_loka_serpent_bonus_mana'],
@@ -1550,7 +1550,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   // 瓦莱莉召唤的猫头鹰
   Night_Owl: {
-    key: 'Night_Owl', name: '夜巡猫头鹰', cost: 0,
+    key: 'Night_Owl', name: '夜巡猫头鹰', cost: 1,
     power: 3, health: 3, maxHealth: 2,
     isChampion: false, level: 0, region: 'Logistics', race: ['summon'],
     description: '“瓦莱莉”弃置的每张手牌使此单位 +1/+1。亡语：抽取（弃置数量-1）张卡牌。',
@@ -1656,7 +1656,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   Tomb_Spider: {
     key: 'Tomb_Spider', name: '墓穴蜘蛛', region: 'Logistics',
     cost: 1, power: 1, health: 1, maxHealth: 1,
-    isChampion: false, level: 0, type: 'unit', keywords: ['Challenger'],
+    isChampion: false, level: 0, type: 'unit', keywords: ['Challenger'], race: ['summon'],
     description: '',
     imageUrl: UNIT_IMAGES.banshee, // 与班西共用卡面
     effects: [], isCollectible: false,
@@ -2171,7 +2171,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: TITAN_IMAGES.gonglu,
   },
   titan_gonglu_drone: {
-    key: 'titan_gonglu_drone', name: '贡露·辅助无人机', cost: 0, power: 1, health: 1, maxHealth: 1, isChampion: false, level: 0, region: 'Titan', race: ['summon'],
+    key: 'titan_gonglu_drone', name: '贡露·辅助无人机', cost: 1, power: 1, health: 1, maxHealth: 1, isChampion: false, level: 0, region: 'Titan', race: ['summon'],
     description: '无法获得除“贡露”以外的任何增益效果。', type: 'unit', keywords: ['Elusive', 'Ephemeral','Scout'],
     imageUrl: TITAN_IMAGES.gonglu_support, // [注] 暂时复用贡露原画，有专图可替换
     isCollectible: false // 衍生卡不可直接放入牌组

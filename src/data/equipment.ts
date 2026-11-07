@@ -9,7 +9,7 @@
 
 import type { CardData, Keyword } from '../types';
 import type { EquipmentQuestReward, QuestSpec } from './questTypes'; // [2026-09-25 莉莉子] 三线任务化框架：任务声明与兑现
-import { getEffectDef } from './effectRegistry'; // [2026-10-08 第二波] 适用性判定要按 effectRegistry.class 认"伤害类法术"
+import { SPELL_DAMAGE_ADD_EFFECTS, SPELL_DAMAGE_MULT_EFFECTS } from './effectRegistry'; // [2026-10-26 结构改进] 增伤适用性改读**显式白名单**（唯一真源在 effectRegistry），不再按 effect class 猜
 import abc_spell from '../image/spells/abc.webp';
 import equipment_resonance from '../image/equipment/equipment00.webp'; // [2026-09-09] 碳原子板专属图（程提供）
 import equipment_retrain from '../image/equipment/equipment01.webp'; // [2026-09-09] 重修申请专属图（程提供）
@@ -992,13 +992,25 @@ export const getSpellResolveGrantEffects = (card?: { equipment?: string[] }): st
     return out;
 };
 
-/** [2026-10-08 第二波] 「伤害类法术」白名单（设计文档 §4.2；与 effectProcessor 的增伤点对齐） */
-const DAMAGE_EFFECT_CLASSES = new Set(['STRIKE', 'SPREAD_DAMAGE', 'CHAIN_STRIKE', 'TITAN_PULSE', 'FLYING_SWORD']);
-const isDamageSpell = (card: { type: string; effects?: string[] }): boolean =>
-    (card.effects ?? []).some(id => {
-        const cls = getEffectDef(id)?.class;
-        return !!cls && DAMAGE_EFFECT_CLASSES.has(cls);
-    });
+/**
+ * [2026-10-08 第二波] 装备「法术增伤」的适用性判定（设计文档 §4.2）。
+ *
+ * [2026-10-26 莉莉子 · 结构改进 · 程拍板] **判据从"按 class 猜"改为"读显式白名单"。**
+ * ── 旧实现是 `DAMAGE_EFFECT_CLASSES` 五类白名单 + 人工特例，而它**必然与实际实现漂移**：
+ *    ① 同一个 class 内部就有吃/不吃两种分支（STRIKE 的 A 分支吃、`strikeMode` 分支不吃）；
+ *    ② 白名单里整整 3 类**根本不读**增伤（SPREAD_DAMAGE / FLYING_SWORD / STRIKE 的互殴与献祭子模式）；
+ *    ③ 连"单向打击（芬妮大招）"都被我想当然地当成了吃增伤 —— 它 `params` 里只有
+ *       `strikeMode: 'ONE_WAY'`、**没有 `value`**，同样走 `getPower(单位)` 那条路。
+ *    程 2026-10-26 报的「单挑给个 +2 伤害没绷住」就是 ① 的产物。
+ * ── 现判据：直接查 `effectRegistry` 的 `SPELL_DAMAGE_ADD_EFFECTS` / `SPELL_DAMAGE_MULT_EFFECTS`
+ *    —— 那是**唯一真源**，注释里写明了登记规则，以及"看着像伤害但不得登记"的三族反例。
+ * ── ⚠️ 两类增伤**生效范围不同**，必须分开判：
+ *    `damageAdd`（伤害 +N）只在 STRIKE 的三个"法术自身直接造伤"分支生效；
+ *    `damageMult`（伤害 ×N）额外还包括 TITAN_PULSE / CHAIN_STRIKE。
+ *    合并成一句判会让"只吃倍率"的法术也能挂 +N —— 又变回空装备。
+ */
+const cardHasEffectIn = (card: { effects?: string[] }, set: ReadonlySet<string>): boolean =>
+    (card.effects ?? []).some(id => set.has(id));
 
 export const isEquipmentApplicable = (
     def: EquipmentDef,
@@ -1025,9 +1037,9 @@ export const isEquipmentApplicable = (
     //   （反例：给纯增益/抽牌/治疗法术挂"伤害 +1" = 占格子的空装备，正是 §四 要灭的）
     if (def.spellResolve) {
         const sr = def.spellResolve;
-        if ((sr.damageAdd ?? 0) !== 0 || (sr.damageMult ?? 1) > 1) {
-            if (!isDamageSpell(card)) return false;
-        }
+        // [2026-10-26 结构改进] 两类增伤**分开判**（生效范围不同，见 `cardHasEffectIn` 上方注释）
+        if ((sr.damageAdd ?? 0) !== 0 && !cardHasEffectIn(card, SPELL_DAMAGE_ADD_EFFECTS)) return false;
+        if ((sr.damageMult ?? 1) > 1 && !cardHasEffectIn(card, SPELL_DAMAGE_MULT_EFFECTS)) return false;
         // 已是极速 ⇒ 速度改写等于没提升（§四 铁律：能给这张卡挂，就必须对它有提升）
         if (sr.speedBurst && card.type === 'spell-burst') return false;
         // 条件减费：费用必须 ≥ 1（0 费卡减不动）；归零型：费用必须 > 0（否则本来就是 0）

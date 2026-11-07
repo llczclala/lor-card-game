@@ -18,7 +18,7 @@ import { applyStrikeEnhancement, isStrikeTargetAlive, findStrongestUnit } from '
 //   此前只"装配战线"、不"报触发"，而触发站点只有 useGameState.challengeEnemy 一处 ⇒ 本条路径永不触发。
 import { runRogueTrigger, type RogueTriggerCtx, type Side } from './rogueTrigger';
 import { runSummonEntry, configureSummonEntryDeps } from './summonEntry'; // [2026-10-06] 「入场」门铃唯一实现（本文件负责注入依赖，见文件尾）
-import { getEquipmentById } from '../data/equipment'; // [2026-10-08 第二波] 卡级结算修饰（读施法那张卡身上的装备）
+import { getEquipmentById, attachEquipment } from '../data/equipment'; // [2026-10-08 第二波] 卡级结算修饰（读施法那张卡身上的装备）· [2026-10-26] +attachEquipment（撤回手牌时重挂装备）
 // [2026-10-08 莉莉子] 减费特效唯一出口 —— ⚠️ 禁止在任何减费点自己 eventBus.emit（见 costReduceVFX.ts 文件头）
 import { emitCostReduceVFX } from './costReduceVFX';
 // [2026-10-09 莉莉子 BUG修复 · BUG-20261009-01] 信标引爆倒计时的唯一实现（与 useGameState.commitAttack 共用）
@@ -2791,9 +2791,19 @@ export const processEffect = (
             });
 
             // [2026-08-05 莉莉子] 撤回回手牌：洗掉所有 BUFF，生成干净模板（保留当前费用）
+            // [2026-10-26 莉莉子 BUG修复 · 程报「世纪和解召出的带装备芬妮，撤回手牌再打出，装备没了」]
+            // ── 病根：`createCard(c.key)` 造的是**卡牌静态定义**的干净模板，而装备是**局内挂上去的持有物**，
+            //    不在这份静态定义里 ⇒ 那句"洗掉所有 BUFF"顺手把 `equipment` 连同它带来的静态修饰
+            //    （+攻血 / 授予关键词 / 减费）一起洗掉了。
+            // ── 修法：逐件重挂 `attachEquipment`（它会一并恢复那些静态修饰）。
+            //    ⚠️ 顺序不能反：先把装备挂上会把 `costMod` 算进基础价，所以最后必须再用**实例价**覆盖 `cost`
+            //    —— 实例上的 cost 已经含局内所有减费，否则减费会被重复扣一遍。
             const toHandCard = (c: CardData): CardData => {
-                const clean = createCard(c.key);
-                return { ...clean, cost: c.cost };
+                let template: CardData = createCard(c.key);
+                if (c.equipment?.length) {
+                    for (const eid of c.equipment) template = attachEquipment(template, eid);
+                }
+                return { ...template, cost: c.cost };
             };
 
             // [2026-08-05 莉莉子] 撤回去向：按目标归属方回对应手牌；手牌满(≥10)视作抽卡爆牌销毁

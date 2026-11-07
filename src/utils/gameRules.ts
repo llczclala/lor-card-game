@@ -84,7 +84,8 @@ export const getEffectiveSpellCost = (
     //   ⚠️ 单位卡的**实扣**不走本函数（`useGameState.ts` 里 `calculateNewMana(card.cost, …)`）
     //      ⇒ 那一处必须单独加税，否则就是"显示涨价、实扣没变"的经典分叉。
     if (!card.type?.startsWith('spell')) {
-        const tax = getCostTaxOf(side);
+        // [2026-10-26 莉莉子] 单位卡只看「单位」那一格税（法术税与它无关）
+        const tax = getCostTaxOf(side, 'unit');
         return Math.min(CARD_COST_CAP, (card.cost || 0) + tax);
     }
 
@@ -112,7 +113,8 @@ export const getEffectiveSpellCost = (
     const condBase = Math.max(0, base + cond.mod);
     // [2026-10-24 莉莉子 · 费用修饰器] 法术额外吃：① 全场法术加费 + ②③ 费用税，最后钳到费用上限。
     //   ⚠️ 上面 `cond.zero`（双生符：本场法术数达标 ⇒ 费用归零）**优先**，不吃这一层 —— 刻意保留。
-    const extra = getSpellCostUpAllValue() + getCostTaxOf(side);
+    // [2026-10-26 莉莉子] 法术卡只看「法术」那一格税（单位税与它无关）
+    const extra = getSpellCostUpAllValue() + getCostTaxOf(side, 'spell');
     // 只有极速(burst)和快速(fast)法术受凯特琳减费影响
     if (card.type === 'spell-burst' || card.type === 'spell-fast') {
         if (hasPoetCaitlinAura(bench)) {
@@ -185,25 +187,46 @@ export const setSpellCostUpAllSnapshot = (v: number): void => {
 /** 读「全场法术加费」当前值 */
 export const getSpellCostUpAllValue = (): number => spellCostUpAllSnapshot.value;
 
-/** ② 费用税：按**承受方**记账（`handCostTax.player` = 玩家要额外付的钱） */
-const handCostTax = { player: 0, enemy: 0 };
+// [2026-10-26 莉莉子 · 程拍板「积重难返要能真的滚起来」] ② 费用税**按「卡牌类别」分格记账**。
+// ── 病根：原实现是「每方一个数，单位卡与法术卡共用」——而加税不分类别、清零也不分类别
+//    （任何一张牌打出去就把自己那份税清零）**⇒ 税永远最多 +1，滚不起来**，
+//    玩家怎么打都只看到 +1，完全没有「积重难返」的压迫感。
+// ── 新口径（程 2026-10-26）：强化按「打某类 → 涨**另一类**」成对生效 ——
+//    A/C = 打【单位】→ 涨【法术】；B/D = 打【法术】→ 涨【单位】。
+//    「回合末清 / 不清」只是 mode（`round` / `run`），与类别正交。
+// ── 清零时机（程拍板）：**用掉被加价的那一类时才清** ——
+//    打单位只涨法术、单位税不动；一打法术，法术税才归零。
+//    这样"盯着一类打"另一类才会真的滚上去，而这正是这套强化的爽点/压迫点所在。
+const handCostTax = {
+    player: { unit: 0, spell: 0 },
+    enemy: { unit: 0, spell: 0 },
+};
 /** ③ 连出税：同样按承受方记账 */
 const chainCostTax = { player: 0, enemy: 0 };
 
 /** 单卡费用上限 —— 与最大法力同值（`logic/core.ts` 两处 `Math.min(10, …)`） */
 export const CARD_COST_CAP = 10;
 
-/** 某方当前要额外付的税（② + ③）。法术与单位卡**共用**这一个数。 */
-export const getCostTaxOf = (side: 'player' | 'enemy'): number =>
-    Math.min(CARD_COST_CAP, (handCostTax[side] ?? 0) + (chainCostTax[side] ?? 0));
+/** 费用税作用的卡牌类别 —— 与 `buffs.ts` 里 `COST_TAX` 的 `from` / `to` 参数同一套取值 */
+export type CostTaxKind = 'unit' | 'spell';
 
-/** ② 累积：`bearer` 是**承受方**（由对手出牌触发） */
-export const addHandCostTax = (bearer: 'player' | 'enemy', amount: number): void => {
-    handCostTax[bearer] = Math.min(CARD_COST_CAP, (handCostTax[bearer] ?? 0) + Math.max(0, amount));
+/** 某方某类别当前要额外付的税（② 费用税 + ③ 连出税）。
+ *  ⚠️ ③ 连出税**不分类别**（它本来就是"每回合从第 N 张起每张 +X"，与类别无关）⇒ 两类都加上。 */
+export const getCostTaxOf = (side: 'player' | 'enemy', kind: CostTaxKind): number =>
+    Math.min(CARD_COST_CAP, (handCostTax[side]?.[kind] ?? 0) + (chainCostTax[side] ?? 0));
+
+/** ② 累积：`bearer` 是**承受方**（被加价的一方），`kind` 是要被加价的那一类。 */
+export const addHandCostTax = (bearer: 'player' | 'enemy', kind: CostTaxKind, amount: number): void => {
+    const cur = handCostTax[bearer] ?? (handCostTax[bearer] = { unit: 0, spell: 0 });
+    cur[kind] = Math.min(CARD_COST_CAP, (cur[kind] ?? 0) + Math.max(0, amount));
 };
-/** ② 清零：承受方打出一张卡后解除（程口径） */
-export const clearHandCostTax = (bearer: 'player' | 'enemy'): void => {
-    handCostTax[bearer] = 0;
+/** ② 清零：**只清被加价的那一类**（程口径：用掉被加价的那一类才归零）。
+ *  `kind` 省略 ⇒ 该方两类全清（建局重设 / 兜底用）。 */
+export const clearHandCostTax = (bearer: 'player' | 'enemy', kind?: CostTaxKind): void => {
+    const cur = handCostTax[bearer];
+    if (!cur) return;
+    if (kind) cur[kind] = 0;
+    else { cur.unit = 0; cur.spell = 0; }
 };
 /** ③ 累积 */
 export const addChainCostTax = (bearer: 'player' | 'enemy', amount: number): void => {
@@ -229,7 +252,7 @@ export const resetRoundPlayCount = (): void => {
 /** 每场开局重设（与 `resetSpellCastState` 同批调用；漏了会跨局残留） */
 export const resetCostModifiers = (): void => {
     spellCostUpAllSnapshot.value = 0;
-    handCostTax.player = 0; handCostTax.enemy = 0;
+    handCostTax.player = { unit: 0, spell: 0 }; handCostTax.enemy = { unit: 0, spell: 0 };
     chainCostTax.player = 0; chainCostTax.enemy = 0;
     roundPlayCount.player = 0; roundPlayCount.enemy = 0;
 };

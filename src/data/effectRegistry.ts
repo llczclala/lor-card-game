@@ -2727,6 +2727,60 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
 
 
 
+// ==========================================
+// [2026-10-26 莉莉子 · 结构改进 · 程拍板]
+// 「装备的法术增伤**真的能生效**」的效果 —— **唯一真源**。
+//
+// ── 为什么需要它：
+//    装备池要靠"这张法术吃不吃法术增伤"来过滤（给纯增益/互殴类法术挂「伤害 +N」= 纯空装备，
+//    程 2026-10-26 报的「单挑给个 +2 伤害没绷住」就是它）。此前的判据是
+//    「`effect.class` 在 5 类伤害白名单里」，而**它与实际实现必然漂移**：
+//      · 同一个 class 内部就有吃/不吃两种分支（STRIKE 的 A 分支吃、strikeMode 分支不吃）；
+//      · 白名单里整整 3 类**根本不读**增伤（SPREAD_DAMAGE / FLYING_SWORD / 以及 STRIKE 的互殴与献祭子模式）。
+//
+// ── 登记规则（新增伤害效果时**必须**遵守）：
+//    只有 `effectProcessor` 里**真的调用**了对应读取点的效果才能登记：
+//      · `SPELL_DAMAGE_ADD_EFFECTS`  → 命中 `getSpellDamageBonus` 的调用点
+//        （STRIKE case 内 `:779` 全屏AOE / `:927` 交战区AOE / `:1173` 直接数值打击）
+//      · `SPELL_DAMAGE_MULT_EFFECTS` → 命中 `getSpellDamageMultiplier` 的调用点
+//        （上述三处 + `:4885` TITAN_PULSE + `:5222` CHAIN_STRIKE）
+//    ⚠️ **保守方向**：漏登记 = 该法术拿不到增伤装备（少给，不会产生空装备）；
+//       误登记 = 玩家挂上一个没用的装备。故**宁可漏，不可错**。
+//
+// ── 已知「看着像伤害、其实吃不到」的三族（**不得**登记）：
+//    ① STRIKE + `strikeMode`：互殴（`MUTUAL` 单挑）与单向（`ONE_WAY` 芬妮大招）都走
+//       `damageToDef = getPower(attacker)` / `damageToAtk = getPower(defender)` —— 伤害是**单位自己的攻击力**；
+//    ② STRIKE + `sacrificeValue`（毁灭仪式）：主伤害读 `params.value`，`applyDmg` 不经过增伤点；
+//    ③ SPREAD_DAMAGE（信标亡语分摊）/ FLYING_SWORD（造飞剑）：整类不读增伤。
+// ==========================================
+export const SPELL_DAMAGE_ADD_EFFECTS: ReadonlySet<string> = new Set([
+    'effect_pupu_specular_soul_rush',
+    'effect_hidden_arrow',
+    'effect_destruction',
+    'effect_shalo_golem_glimpse_strike',
+    'effect_danu_wendy_onplay_ping',
+    'effect_silver_arm_smash',
+    'effect_deliberate_infiltration',
+    'effect_mauxir_lotus_support',
+    'effect_argo_musician_round_start',
+    'effect_acacia_cross_temporal',
+    'effect_acacia_sword_timeline',
+    'effect_acacia_chrono_echo_support',
+    'effect_temp_spell_01',
+    'effect_temp_spell_05',
+    'effect_temp_spell_17',
+    'effect_temp_spell_19_strike',
+    'effect_marian_support_aoe',
+]);
+
+export const SPELL_DAMAGE_MULT_EFFECTS: ReadonlySet<string> = new Set([
+    ...SPELL_DAMAGE_ADD_EFFECTS,
+    'effect_temp_spell_04',   // TITAN_PULSE（`:4885` 只读倍率、不读 +N）
+    'effect_marian_ultimate', // CHAIN_STRIKE（`:5222` 只读倍率、不读 +N）
+]);
+
+
+
 export const getEffectDef = (effectId: string): EffectDefinition | null => {
     return EFFECT_DB[effectId] || null;
 };
