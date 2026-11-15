@@ -99,6 +99,24 @@ import marian_kill_3 from '../music/voice/天启者/茉莉安霄鹰/敌人击败
 import marian_victory_1 from '../music/voice/天启者/茉莉安霄鹰/胜利1.ogg';
 import marian_victory_2 from '../music/voice/天启者/茉莉安霄鹰/胜利2.ogg';
 
+// --- 凯茜娅 狂诗 (Katya Klein Rhapsody) 语音资源 ---
+// [2026-11-14 接入] 素材 15 条（目录：天启者/凯茜娅狂诗），与里芙/芬妮同规格。
+import katya_die from '../music/voice/天启者/凯茜娅狂诗/被击败.ogg';
+import katya_ult_select from '../music/voice/天启者/凯茜娅狂诗/大招.ogg';
+import katya_play_1 from '../music/voice/天启者/凯茜娅狂诗/登场1.ogg';
+import katya_play_2 from '../music/voice/天启者/凯茜娅狂诗/登场2.ogg';
+import katya_attack_block_1 from '../music/voice/天启者/凯茜娅狂诗/进攻或格挡1.ogg';
+import katya_attack_block_2 from '../music/voice/天启者/凯茜娅狂诗/进攻或格挡2.ogg';
+import katya_enemy_spawn_1 from '../music/voice/天启者/凯茜娅狂诗/敌人出现1.ogg';
+import katya_enemy_spawn_2 from '../music/voice/天启者/凯茜娅狂诗/敌人出现2.ogg';
+import katya_kill_1 from '../music/voice/天启者/凯茜娅狂诗/敌人击败1.ogg';
+import katya_kill_2 from '../music/voice/天启者/凯茜娅狂诗/敌人击败2.ogg';
+import katya_kill_3 from '../music/voice/天启者/凯茜娅狂诗/敌人击败3.ogg';
+import katya_victory_1 from '../music/voice/天启者/凯茜娅狂诗/胜利1.ogg';
+import katya_victory_2 from '../music/voice/天启者/凯茜娅狂诗/胜利2.ogg';
+import katya_skill_select_1 from '../music/voice/天启者/凯茜娅狂诗/小技能1.ogg';
+import katya_skill_select_2 from '../music/voice/天启者/凯茜娅狂诗/小技能2.ogg';
+
 // 导出语音事件类型 (关键修复：确保 export 关键字存在)
 export type VoiceEventType =
     | 'die'
@@ -194,5 +212,18 @@ export const VOICE_DB: VoiceRegistry = {
         victory: [marian_victory_1, marian_victory_2],
         spell_small: [marian_skill_select_1],
         spell_ultimate: [marian_ult_select]
+    },
+
+    // 凯茜娅 狂诗
+    // [2026-11-14] 15 条素材全接（含小技能1/2），事件覆盖与里芙/芬妮一致。
+    'katya_klein_rhapsody': {
+        play: [katya_play_1, katya_play_2],
+        attack_block: [katya_attack_block_1, katya_attack_block_2],
+        die: [katya_die],
+        enemy_spawn: [katya_enemy_spawn_1, katya_enemy_spawn_2],
+        kill: [katya_kill_1, katya_kill_2, katya_kill_3],
+        victory: [katya_victory_1, katya_victory_2],
+        spell_small: [katya_skill_select_1, katya_skill_select_2],
+        spell_ultimate: [katya_ult_select]
     },
 };

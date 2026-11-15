@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { PERSONALIZATION_ASSETS } from '../data/imageData';
 import { Card, CardBackVideo } from './Card'; // [2026-08-23] 动态卡背视频组件
 import { eventBus, GameEvents } from '../utils/eventBus';
+// [2026-11-14 莉莉子 ✨ · 倾泻连打段数] 飘字副标注唯一真源（与 `Card.tsx` 共用，禁止各写一份）
+import { formatBarrageHitLabel } from '../utils/damageText';
 
 const useNumberTicker = (targetValue: number, duration: number = 1000) => {
     const [displayValue, setDisplayValue] = useState(targetValue);
@@ -57,7 +59,8 @@ export const SmartNexus = ({
     const displayHealth = useNumberTicker(health, 800);
 
     // 2. 飘字队列：每次独立打击对应一个飘字
-    const [hitQueue, setHitQueue] = useState<{ id: number; amount: number }[]>([]);
+    // [2026-11-14 莉莉子 ✨ · 倾泻连打段数] `hits` / `perHit` 缺省 = 普通单段伤害
+    const [hitQueue, setHitQueue] = useState<{ id: number; amount: number; hits?: number; perHit?: number }[]>([]);
     // [2026-06-27 巴德尔试剂] 回血飘字队列
     const [healQueue, setHealQueue] = useState<{ id: number; amount: number }[]>([]);
     const hitIdRef = useRef(0);
@@ -67,10 +70,16 @@ export const SmartNexus = ({
 
     // 4. 监听 NEXUS_STRIKED 事件驱动独立飘字
     useEffect(() => {
-        const handleNexusHit = (payload: { target: string; amount: number }) => {
+        const handleNexusHit = (payload: { target: string; amount: number; hits?: number; perHit?: number }) => {
             if ((isEnemy && payload.target === 'enemy') || (!isEnemy && payload.target === 'player')) {
                 const newId = hitIdRef.current++;
-                setHitQueue(prev => [...prev, { id: newId, amount: payload.amount }]);
+                // [2026-11-14 莉莉子 ✨ · 倾泻连打] 段数只是元数据，`amount` 仍是真实总伤害
+                setHitQueue(prev => [...prev, {
+                    id: newId,
+                    amount: payload.amount,
+                    hits: payload.hits,
+                    perHit: payload.perHit,
+                }]);
 
                 setShake(true);
                 setTimeout(() => {
@@ -121,7 +130,18 @@ export const SmartNexus = ({
                         : { top: `${-4 - index * 3.5}rem` }  // 玩家水晶在底部，飘字往上
                     }
                 >
-                    -{hit.amount}
+                    {/* [2026-11-14 莉莉子 ✨ · 倾泻连打段数] null（无 hits / hits ≤ 1）⇒ 原样输出旧表达式，
+                        普通水晶伤害的飘字一个字符都不变；倾泻才加「2 × 5」副标注。 */}
+                    {(() => {
+                        const barrageLabel = formatBarrageHitLabel(hit.amount, hit.hits, hit.perHit);
+                        if (!barrageLabel) return `-${hit.amount}`;
+                        return (
+                            <span className="inline-flex items-baseline">
+                                <span>-{hit.amount}</span>
+                                <span className="ml-2 text-[0.42em] font-bold tracking-tight">{barrageLabel}</span>
+                            </span>
+                        );
+                    })()}
                 </div>
             ))}
 

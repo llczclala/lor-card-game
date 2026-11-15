@@ -1,5 +1,9 @@
-import { GachaPoolEnum, type CardData } from '../types';
-import { HERO_IMAGES, TEST_IMAGES, SPELL_IMAGES, UNIT_IMAGES, TITAN_IMAGES } from './imageData'; // [新增] 引入 TITAN_IMAGES
+﻿import { GachaPoolEnum, type CardData } from '../types';
+// [2026-11-14 莉莉子 独立审查 · 漏洞7] 凯茜娅升级阈值的**单一真源** = `utils/katyaProgress.ts`。
+//   依赖方向：cards.ts → katyaProgress.ts → types.ts（`katyaProgress` 只 import 类型，**不 import 本文件**）
+//   ⇒ **无循环依赖**。方向反过来（让 katyaProgress 读 cards.ts）才会成环，故常量留在这边取。
+import { KATYA_UPGRADE_DAMAGE } from '../utils/katyaProgress';
+import { HERO_IMAGES, TEST_IMAGES, SPELL_IMAGES, UNIT_IMAGES, TITAN_IMAGES } from './imageData'; // [2026-11-13] 凯茜娅随从已接入映现小队专属原画，不再需要 PLACEHOLDER_IMAGES
 
 export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'animState' | 'damageTaken' | 'buffs'>> = {
   // --- 英雄：里芙 (Lyfe) ---
@@ -560,6 +564,143 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_marian_beacon_lastbreath'], // [T09 已完成] 亡语分摊伤害（SPREAD_DAMAGE 新建类）
     isCollectible: false,
   },
+  // ===========================================================
+  // [2026-11-13 1.0.23] 天启者：凯茜娅 · 狂诗 (katya_klein_rhapsody)
+  // ⚠️ 第一批只做「卡牌数据注册 + Region 接线」：
+  //    effects 全部留空 = 不实现任何卡牌效果；effectRegistry / effectProcessor 均未改动。
+  //    描述文案取自《1.0.23凯茜娅-数据表》，仅把 key 换成程拍板的最终注册名。
+  // ===========================================================
+  katya_klein_rhapsody: {
+    key: 'katya_klein_rhapsody', gachaPool: GachaPoolEnum.Reflection, name: '凯茜娅·狂诗', cost:6, power: 2, health: 10, maxHealth: 10,
+    isChampion: true, level: 1, region: 'katya_klein_rhapsody',
+    description: '每打出一张法术牌，各处“凯茜娅·狂诗”永久获得 +1/+0。\n入场与回合开始：生成一张“倾泻”。\n参战：变化为“凯茜娅的狂想”。',
+    type: 'unit', keywords: [],
+    imageUrl: HERO_IMAGES.katya_klein_rhapsody.base,
+    level2ImageUrl: HERO_IMAGES.katya_klein_rhapsody.level2,
+    associatedSpellKey: 'katya_rhapsody_choice',
+    // [2026-11-14 莉莉子 ✨新功能 · L3 升级判定] 累计造成 18 点伤害 → Lv2
+    //   判据三处同源（阈值 `utils/katyaProgress.ts` 的 `KATYA_UPGRADE_DAMAGE`）：
+    //     `utils/gameRules.ts` 的 checkCardLevelUp / getChampionUpgradeProgress / checkCardReadyToLevelUp
+    //   进度环显示 `katyaDamage / 18`；伤害口径只算「倾泻 + 她本体进攻」。
+    //   [2026-11-14 莉莉子 独立审查 · 漏洞7] 此前这里**硬写 18**，而 UI 进度环的分母读的正是
+    //     `levelUpTarget`（`Card.tsx:1684 / :2075`、`GameSession.tsx:1164`）⇒ 改常量时两处会各说一套。
+    //     现在 `levelUpTarget` 与文案**都**取自常量，单一真源。
+    levelUpCondition: `累计造成 ${KATYA_UPGRADE_DAMAGE} 点伤害`,
+    levelUpTarget: KATYA_UPGRADE_DAMAGE,
+    // [2026-11-14 莉莉子 ✨新功能 · L4「入场 & 回合开始各生成一张倾泻」]
+    //   效果：`data/effectRegistry.ts` 的 `effect_katya_rhapsody_barrage_generate`
+    //         （GENERATE + `timing: 'ON_PLAY_AND_ROUND_START'`）
+    //   · 入场 → `logic/summonEntry.ts`（isEntryTiming 放行）
+    //   · 回合开始 → `hooks/useRoundLifecycle.ts:564` 的备战席扫描（`includes('ROUND_START')`）
+    //   ⚠️ 生成物**不瞬逝**、**不限囤积**（没有 isVolatile / reduceCostIfDuplicate）
+    //   ⚠️ 手牌上限 10：满手时那张「倾泻」会被销毁 —— 既有行为，本批不改。
+    effects: ['effect_katya_rhapsody_barrage_generate'],
+  },
+  // 凯茜娅的狂想（抉择基牌）
+  katya_rhapsody_choice: {
+    key: 'katya_rhapsody_choice', name: '凯茜娅的狂想', cost: 0, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '抉择：“溯时双翼” 或 “穿云激流”\n使用后，在牌库里生成一张“凯茜娅·狂诗”。', type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_rhapsody_choice,
+    associatedChampionKey: 'katya_klein_rhapsody',
+    isLevel2Choice: true,
+    choices: ['katya_chrono_wing', 'katya_pierce_torrent'],
+    // [2026-11-14 莉莉子 ✨新功能 · 卡 1「狂想」] 照抄现役六位天启者的抉择基牌（最近一处：芬妮 `:115`）。
+    // ① **刻意不写 `effects`** —— 本卡没有"效果类"，"使用后回库生成英雄"是结算管路上的**无条件后置**：
+    //    `hooks/useSpellSystem.ts:1017` 的 `grantChampionSpellCopy`（判据 = `associatedChampionKey` + `choices`，
+    //    需求出处见同处注释 `:1005-1016`），派发点 `:1574`（极速路径）/ `:2351`（快速·慢速堆栈路径）。
+    //    里芙的 `lyfe_spell`（`:23`，本卡形态的直系范本）同样不写 `effects` ⇒ 两边逐字同构。
+    // ② `ai.CHOICE` 必须补 —— AI 的抉择评估按 `ai.pattern` 派单
+    //    （`logic/aiSpellStrategies.ts:1615` 的 `CHOICE: evaluateCHOICE`）；
+    //    缺这一行，这张基牌在 AI 手里永远不会被评估 ⇒ 敌方凯茜娅永远打不出抉择。
+    ai: { pattern: 'CHOICE', priority: 3, config: {} },
+    isCollectible: false,
+  },
+  katya_chrono_wing: {
+    key: 'katya_chrono_wing', gachaPool: GachaPoolEnum.Reflection, name: '溯时双翼', cost: 3, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '给予“凯茜娅·狂诗”+2/+0 与【屏障】（本回合）。\n在手牌生成一张【瞬逝】的“溯时双翼·狂乱”。', type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_chrono_wing,
+    isCollectible: false,
+    // [2026-11-14 程拍板] 费用 **2 → 3**，并新增 **+2/+0**（本回合）：
+    //   整套凯茜娅卡组没有直接加攻的手段，缺一个爆发跳板。
+    //   手感：8 攻 → 打溯时双翼 → 10 攻 → 倾泻 `ceil(10/2)` = 5 发 = 10 点，第 3 发即触发狂乱 AOE。
+    //   ⚠️ `+2/+0` 与【屏障】**合并进同一条效果**（`effect_katya_chrono_wing_barrier`，
+    //      `power: 2 + duration:'ROUND' + keywords:['Barrier']`）⇒ 走 `roundBuffs`，不碰 `buffs.power`。
+    // [2026-11-14 莉莉子 ✨新功能 · 卡 2「溯时双翼」] 两段效果，**顺序即语义**：
+    //   `[0]` 蓄势+屏障 —— **必须在首位**：`hooks/useSpellSystem.ts:239-242` 的 `getEffectDef` **只读 `effects[0]`**
+    //        ⇒ 整张卡的目标需求（选哪一只凯茜娅）只从这一段取；挪到 `[1]` 会变成"没有目标可选"的空打。
+    //   `[1]` 生成【瞬逝】的「溯时双翼·狂乱」—— 无目标需求的 GENERATE，复用同一份 targets、自行忽略。
+    // 链式执行：`logic/spells.ts:74-90` 按数组顺序管道式跑，累加器逐段流转（手牌写入对下一段可见）。
+    effects: ['effect_katya_chrono_wing_barrier', 'effect_katya_chrono_wing_frenzy'],
+  },
+  katya_chrono_frenzy: {
+    key: 'katya_chrono_frenzy', name: '溯时双翼·狂乱', cost: 1, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '本回合内“凯茜娅·狂诗”每倾泻 3 次，对敌方全体造成 1 点伤害。', type: 'spell-slow', keywords: ['Volatile'],
+    imageUrl: SPELL_IMAGES.katya_chrono_frenzy,
+    isCollectible: false,
+    // [2026-11-14 莉莉子 ✨新功能 · 卡 1「溯时双翼·狂乱」]
+    //   效果定义：`data/effectRegistry.ts` 的 `effect_katya_chrono_frenzy_arm`（class `ARM_FRENZY`）
+    //   ⚠️ 本卡**只武装账本**、当场一点伤害都不打：真正的 AOE 埋点挂在
+    //      `logic/effectProcessor.ts` 的 `case 'BARRAGE'` **收尾**（「一次倾泻结算完成」处），
+    //      由那里补 `effect_katya_frenzy_aoe`（STRIKE + targetAllEnemies）。
+    //   ⚠️ 口径（程拍板）：「每倾泻 3 次」= **3 张倾泻卡**，不是 3 发 ⇒ 埋点不在发循环内。
+    //   ⚠️ `keywords: ['Volatile']` 只决定**手牌瞬逝**，与"效果持续到回合末"是两件事
+    //      （寿命由 `utils/katyaFrenzy.ts` 的 `resetFrenzyRound()` 在回合开始清零管）。
+    effects: ['effect_katya_chrono_frenzy_arm'],
+  },
+  katya_pierce_torrent: {
+    key: 'katya_pierce_torrent', gachaPool: GachaPoolEnum.Reflection, name: '穿云激流', cost: 5, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '给予“凯茜娅·狂诗”+4/+0（本回合），随后随机倾泻。\n每击杀一个敌方单位：敌方水晶受到 2 点伤害，她获得 +3/+0（本回合）并继续倾泻。\n结算后，她的攻击力永久减少施法前攻击力的一半。', type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_pierce_torrent,
+    isCollectible: false,
+    // [2026-11-14 莉莉子 ✨新功能 · 卡 2「穿云激流」] 两段链，**顺序即语义**（`logic/spells.ts:74-103` 管道式累加）：
+    //   ① `effect_katya_pierce_grant`   BUFF + `duration:'ROUND'` ⇒ 写 **`roundBuffs.power`**
+    //      ⚠️ **绝不碰 `buffs.power`**：那一格被"养攻"独占（`stampKatyaCard` 每次覆盖成 S−D，
+    //         `utils/katyaProgress.ts:34-40`），直接改它必被静默抹掉。
+    //      ⚠️ 术语：项目里「赋予」= 永久(`buffs`)、「给予」= 本回合(`roundBuffs`)
+    //         （`logic/rogueBattle.ts:29`）—— 卡面写的正是「给予」。
+    //   ② `effect_katya_pierce_barrage` BARRAGE + `pierceLoop` ⇒ 读 `getPower` 拿到**已含 +4** 的攻击力
+    //      （链路证据：`spells.ts:96-98` 把 ① 产出的 bench 写回 `acc`，② 的 context 从 `acc` 组装）。
+    //   ③ [2026-11-14 莉莉子 💡体验优化 · 程拍板] **消耗从「全部·仅本次结算」改为「一半·永久」**：
+    //      结算完成后 `bumpKatyaDrain(side, ceil(N₀ / 2))`，N₀ = `getKatyaStats(side).power` = 2 + S − D
+    //      （**不含** `roundBuffs`，即不含 ① 的 +4 与击杀追加）。
+    //      ⚠️ **不能按峰值扣**：账面 8 → +4 打底 + 每击杀 +3 续打，峰值可到 21；
+    //         按峰值扣 11 ⇒ 账面 8−11 = −3 ⇒ `getPower` 钳到 0 ⇒ 这张卡自废。按 N₀=8 扣 4、账面剩 4 才对。
+    //      ⚠️ 击杀奖励 **+2 → +3**（`params.killGrantPower`，仍写 `roundBuffs` = 本回合临时，不永久滚雪球）。
+    //   ⚠️ 目标需求只读 `effects[0]`（`hooks/useSpellSystem.ts:239-242`）⇒ 选"哪一只凯茜娅"由 ① 提供，
+    //      ② 复用同一份 targets 且不自己选目标（逐发随机重掷）。
+    effects: ['effect_katya_pierce_grant', 'effect_katya_pierce_barrage'],
+  },
+  katya_barrage: {
+    key: 'katya_barrage', name: '倾泻', cost: 4, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    // [2026-11-14 莉莉子 🎨视觉层 · 问题 2-1] 卡面加「共 {shots} 发（预计 {total} 点）」
+    //   `{shots}` / `{total}` 是**动态**占位符，由 `utils/katyaBarragePreview.ts` 按
+    //   「场上凯茜娅的攻击力」实时算（`getBarrageDisplayParams`）：
+    //     · 手牌（`CardAnimations.tsx`）→ 传 bench + combatField，**场上本体优先**（含 roundBuffs 临时加成）
+    //     · 悬停大图 / 其它 `Card`（`Card.tsx` 兜底）→ 无棋盘上下文，退账本口径 `2 + S − D`
+    //   算式与结算侧 `effectProcessor.ts` 的 `case 'BARRAGE'` 逐字对齐（发数 / 每发 / 防爆上限）。
+    description: '对敌方单位倾泻弹药，数量等同于“凯茜娅·狂诗”攻击力一半，每发 2 点伤害，共 {shots} 发，共{total} 点；\n结算后，她的攻击力永久减少（约为本次发数的 2/3）。', type: 'spell-slow', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_barrage,
+    // [2026-11-14 莉莉子 ✨新功能 · L3 倾泻] BARRAGE 类（一次算完 + 合并飘字）
+    //   效果定义：`data/effectRegistry.ts` 的 `effect_katya_barrage`
+    //   结算：`logic/effectProcessor.ts` 的 `case 'BARRAGE'`
+    effects: ['effect_katya_barrage'],
+    isCollectible: false, // 倾泻是生成物，不进卡池与构筑
+  },
+  katya_starfall: {
+    key: 'katya_starfall', gachaPool: GachaPoolEnum.Reflection, name: '滞空碎星', cost: 3, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '【冻结】一个敌方单位，并生成 2 张 0 费“暗箭”。\n若该单位被冻结时已受伤，改为生成 3 张。', type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_starfall,
+    // [2026-11-14 莉莉子 ✨新功能 · L4] 两段链（按数组顺序结算，`logic/spells.ts:75-93` 累加器）：
+    //   ① `effect_katya_starfall_freeze`   BUFF + Frostbite（**必须在首位**：目标需求只读 effects[0]）
+    //   ② `effect_katya_starfall_generate` GENERATE 2 张 0 费「暗箭」，目标已受伤改 3 张
+    effects: ['effect_katya_starfall_freeze', 'effect_katya_starfall_generate'],
+  },
   // --- 新增单位：Logistics (后勤) ---
 
   // --- “重叶”小队 (Chongye Squad) ---
@@ -993,6 +1134,107 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_marian_silent_action'], // [T19 完成]
     // [2026-09-27 莉莉子 第二批 ai] 资源提现：全场【暴露】≥2 个才值得（敌我通用，含自己贴的那些）
     ai: { pattern: 'EXPOSE_CASHOUT', priority: 3, config: { minExposed: 2 } },
+  },
+  Reflection_Squad_Melisande: {
+    // [2026-11-14 程拍板 · 数值调整] ① 触发条件收窄为「打击**敌方水晶**后」② 加【充能】③ 生命 4 → 3。
+    key: 'Reflection_Squad_Melisande', gachaPool: GachaPoolEnum.Reflection, name: '”映现”\n梅莉桑德', cost: 2, power: 1, health: 3, maxHealth: 3,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '每次打击敌方水晶后，“倾泻”的费用永久 −1（最低 0）。', type: 'unit', keywords: ['Elusive', 'Channel'],
+    imageUrl: UNIT_IMAGES.reflection_melisande,
+    // [2026-11-14 莉莉子 ✨新功能 · L4 → 同日 程拍板改口径] 打击**敌方水晶**后「倾泻」永久 −1
+    //   效果：`data/effectRegistry.ts` 的 `effect_melisande_barrage_discount`
+    //         （`KATYA_BARRAGE_COST_DOWN` + `timing: 'ON_NEXUS_STRIKE'`）
+    //   派发：`hooks/useGameState.ts:4408-4452` 的「每次打击水晶雷达」—— 只在
+    //         `result.nexusDamage` 存在（攻击者真的把水晶打掉血）且 `currentFight.attacker` 是她自己时触发。
+    //         **不再**走 `:4461` 的 `triggerStrikeEffects`（那条是 `ON_ATTACK`，打单位 / 被迫格挡都会触发）。
+    //   记账：`utils/katyaProgress.ts` 的 `addKatyaBarrageCostDown(side, 1)`，下限 0 在
+    //         `utils/gameRules.ts:133` 的查询腿钳（不在这里重复钳）
+    effects: ['effect_melisande_barrage_discount'],
+  },
+  Reflection_Squad_Yulalia: {
+    key: 'Reflection_Squad_Yulalia', gachaPool: GachaPoolEnum.Reflection, name: '”映现”\n尤拉莉雅', cost: 3, power: 3, health: 2, maxHealth: 2,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '我方每回合首次打出一张法术牌时，她获得【屏障】。\n每次受伤存活后，“倾泻”多发 1 发（无上限）。', type: 'unit', keywords: ['Tough'],
+    imageUrl: UNIT_IMAGES.reflection_yulalia,
+    // [2026-11-14 莉莉子 ✨新功能 · L4 第三批] 两段**互不相干**的能力，各自一个效果：
+    //   ① `effect_yulalia_spell_barrier`（`KATYA_SPELL_CAST_BARRIER`）
+    //      —— **没有 effectProcessor case**：派发点在 `hooks/useSpellSystem.ts` 的
+    //         `dispatchSpellCastSideEffects` 尾段（法术真正结算后，含极速/堆栈/被反制）。
+    //      节流：卡上 `barrierGrantedRound`（= 上次发放时的 `game.round`，见 types.ts 注释）。
+    //      ⚠️ 这个效果的 `timing` 是 `BURST` —— **不是**触发时机，只是"不参与任何时机扫描"的占位
+    //      （本仓无任何 `timing === 'BURST'` 的派发点，已核）。
+    //   ② `effect_yulalia_barrage_observer`（`KATYA_BARRAGE_OBSERVER` + `ON_DAMAGE_SURVIVE`）
+    //      —— 派发点只有微队列那一路（`useGameState.ts:3015`），代码见 effectProcessor 同名 case。
+    effects: ['effect_yulalia_spell_barrier', 'effect_yulalia_barrage_observer'],
+  },
+  Reflection_Squad_Odnie: {
+    key: 'Reflection_Squad_Odnie', gachaPool: GachaPoolEnum.Reflection, name: '”映现”\n奥德涅', cost: 4, power: 3, health: 6, maxHealth: 6,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '入场与回合开始：若手牌中有“凯茜娅·狂诗”，生成 2 张【瞬逝】的随机低费法术（费用 ≤ 3）。\n我方累计打出 8 张法术牌后，“倾泻”变为快速法术。', type: 'unit', keywords: ['Channel'],
+    imageUrl: UNIT_IMAGES.reflection_odnie,
+    // [2026-11-14 莉莉子 ✨新功能 · L4 第三批]
+    //   ① `effect_odnie_generate_cheap_spells`：`TIMING = ON_PLAY_AND_ROUND_START`
+    //      （入场 + 回合开始双触发，与本体「狂诗·倾泻」同一档）+ GENERATE 的「按费用随机挑」模式。
+    //      ✅ **低费口径 = 费用 ≤ 3**（`randomFromCostAtMost: 3`；[2026-11-14 程拍板] 定稿，
+    //         原保守值 2 已废）。改数字只动那一个参数。
+    //   ② 「我方打出 8 张法术牌后，倾泻提速（慢速→快速）」**本批未实现**（TODO 见
+    //      `data/effectRegistry.ts` 里 `effect_odnie_generate_cheap_spells` 之后的注释块：
+    //      「速度」是静态 `CardType`、无"有效速度"抽象，改动面横跨两个红线文件 + 一个禁改文件）。
+    effects: ['effect_odnie_generate_cheap_spells'],
+  },
+  katya_transcribe: {
+    key: 'katya_transcribe', gachaPool: GachaPoolEnum.Reflection, name: '复调重奏', cost: 1, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '选择一张手牌中的法术牌，赋予其【回响】（已是【回响】的法术不可选）。', type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_transcribe,
+    // [2026-11-14 莉莉子 ✨新功能 · L4 第三批] 「回响」= 关键词字面量 `'Echo'`
+    //   触发判定读**实例**关键词（`hooks/useSpellSystem.ts:1202` 的 `card.keywords.includes('Echo')`），
+    //   所以这里写的是**手牌实例**（`GRANT_HAND_KEYWORD`），**不碰 `CARD_DB`**（模板是模块级常量，
+    //   改了会跨局污染 —— 同 `utils/gameRules.ts:1402` 的警告）。
+    //   「已是【回响】不可选」= `targetRequirements[0].excludeKeywords: ['Echo']`（新字段）。
+    effects: ['effect_katya_transcribe'],
+  },
+  katya_supply: {
+    key: 'katya_supply', gachaPool: GachaPoolEnum.Reflection, name: '稳态奇点', cost: 5, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '抽至多 3 张法术牌，并回满法术法力。', type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_supply,
+    // [2026-11-14 莉莉子 ✨新功能 · L4] 两段链（先抽后回蓝）：
+    //   ① `effect_katya_supply_draw`   DRAW value:3 + drawFilter:'spell' + stopWhenHandFull
+    //   ② `effect_katya_supply_refill` SPELL_MANA_GAIN + fillToCap（= spellManaCapOf）
+    effects: ['effect_katya_supply_draw', 'effect_katya_supply_refill'],
+  },
+  katya_barrage_frost: {
+    // [2026-11-14 莉莉子 · 程拍板] 冻结段已删、费用 2 → 1。
+    //   理由：删掉冻结段后第一发**永不空** —— `RANDOM_ENEMY_OR_NEXUS` 的池子永远含敌方水晶
+    //   （`effectProcessor.ts:626-633` 里水晶是无条件入池的），所以降价 1 点作补偿。
+    key: 'katya_barrage_frost', gachaPool: GachaPoolEnum.Reflection, name: '霜矢标记', cost: 1, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '对一个随机的敌方单位或敌方水晶造成 1 点伤害；\n在手牌生成一张【瞬逝】的“逆境萌生”。', type: 'spell-burst', keywords: [],
+    imageUrl: SPELL_IMAGES.katya_barrage_frost,
+    // [2026-11-14 莉莉子] 两段链：碎冰伤害 → 生成「延续」。按数组顺序结算（spells.ts 累加器）。
+    //   ⚠️ 原首段 `effect_katya_barrage_frost_freeze` 已从链上摘除（效果定义保留在 registry，见其注释）。
+    //   `effects[0]` 现为 STRIKE 且 `targetRequirements: []` ⇒ 施法前**不需要**选目标（与旧版一致）。
+    effects: ['effect_katya_barrage_frost_strike', 'effect_katya_barrage_frost_generate'],
+  },
+  katya_barrage_frost_cont: {
+    key: 'katya_barrage_frost_cont', name: '逆境萌生', cost: 2, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    // [2026-11-14 莉莉子 · 程拍板] 治疗池加兜底：无受伤友军时改治任意存活友军（池子永不空，
+    //   保证玩家稳定拿到第三张）。实现见 `effectRegistry.ts` 的 `fallbackToAny` 与
+    //   `effectProcessor.ts` 的 RANDOM_WOUNDED_ALLY 分支。
+    description: '随机治疗一个受伤的友方单位 2 点（若无人受伤，则改为随机治疗一个友方单位）；\n在手牌生成一张【瞬逝】的“胜负终局”。', type: 'spell-burst', keywords: ['Volatile'],
+    imageUrl: SPELL_IMAGES.katya_barrage_frost_cont,
+    isCollectible: false,
+    effects: ['effect_katya_barrage_frost_cont_heal', 'effect_katya_barrage_frost_cont_generate'],
+  },
+  katya_barrage_frost_end: {
+    key: 'katya_barrage_frost_end', name: '胜负终局', cost: 2, power: 0, health: 0, maxHealth: 0,
+    isChampion: false, level: 0, region: 'katya_klein_rhapsody',
+    description: '随机【冻结】一个敌方单位；\n并随机给予一个友方单位 +0/+3。', type: 'spell-burst', keywords: ['Volatile'],
+    imageUrl: SPELL_IMAGES.katya_barrage_frost_end,
+    isCollectible: false,
+    effects: ['effect_katya_barrage_frost_end_freeze', 'effect_katya_barrage_frost_end_buff'],
   },
 
   // ==========================================

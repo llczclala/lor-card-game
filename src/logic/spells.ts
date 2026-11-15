@@ -46,7 +46,32 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
 
   // 1. 获取卡牌定义 (包含 effects 列表)
   const cardDef = CARD_DB[cardKey];
-  if (!cardDef || !cardDef.effects || cardDef.effects.length === 0) {
+  if (!cardDef) {
+      console.warn(`No effects configured for card: ${cardKey}`);
+      if (setMessage) setMessage(`法术 ${cardKey} 无生效效果！`);
+      return;
+  }
+  if (!cardDef.effects || cardDef.effects.length === 0) {
+      // ==========================================
+      // [2026-11-14 莉莉子 🐛 BUG修复 · 问题 3-1] **抉择基牌不报警**
+      // ── 现状是误报：六位天启者的抉择基牌（里芙的决意 / 芬妮的狂热 / 卜卜的卜卦 /
+      //    猫汐尔的演算 / 安卡希雅的剑舞·重锋 / 凯茜娅的狂想）**数据上刻意不写 effects**
+      //    （`data/cards.ts:609-612` 的注释），因为「使用后在牌库生成一张英雄」不是效果类，
+      //    而是结算管路上的**无条件后置**：`hooks/useSpellSystem.ts:1017` 的
+      //    `grantChampionSpellCopy`，判据 = `associatedChampionKey` + `choices`（`:1019-1021`）。
+      //    ⇒ 这里 warn + setMessage 会让玩家每打一次基牌就吃一条「无生效效果！」的误导提示。
+      // ── 判据与 `grantChampionSpellCopy` **逐字同源**（`associatedChampionKey` + 非空 `choices`），
+      //    不另立新口径。
+      // ── 反例核对（有 `choices` 但**确实**该报警的卡）：`temp_spell_13`「深思熟虑」也有 choices，
+      //    但它带了 `effects: ['effect_temp_spell_13']` ⇒ 早在上面就被放行，根本走不到本分支；
+      //    支援技（冻沙激流等）带 `associatedChampionKey` 但无 `choices` ⇒ 判据为 false，照旧报警。
+      // ==========================================
+      const isChoiceBaseCard = !!cardDef.associatedChampionKey
+          && Array.isArray(cardDef.choices) && cardDef.choices.length > 0;
+      if (isChoiceBaseCard) {
+          console.log(`[Spell] ${cardDef.name}（抉择基牌）无 effects —— 由「回库生成英雄」的后置流程处理，跳过告警`);
+          return;
+      }
       console.warn(`No effects configured for card: ${cardKey}`);
       if (setMessage) setMessage(`法术 ${cardKey} 无生效效果！`);
       return;

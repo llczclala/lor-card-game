@@ -5,6 +5,11 @@ import type { CardData } from '../types';
 import { Card } from './Card';
 import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasForgerTatianaAura, getEffectiveSpellCost } from '../utils/gameRules'; // [2026-10-08 第二波] 显示费用收口（凯特琳光环改由 getEffectiveSpellCost 内部处理）
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
+// [2026-11-14 莉莉子 🎨视觉层 · 问题 2-1] 「倾泻」(BARRAGE) 卡面**预计伤害**
+//   算式单源在 `utils/katyaBarragePreview.ts`（与 effectProcessor 的 BARRAGE case 逐字对齐）；
+//   这里只负责把**棋盘上下文**（playerBench / combatField）喂进去 ⇒ 能实时读场上凯茜娅的攻击力。
+import { getBarrageDisplayParams, estimateBarrage } from '../utils/katyaBarragePreview';
+import { getKatyaStats } from '../utils/katyaProgress';
 import { eventBus, GameEvents } from '../utils/eventBus'; // [新增] 用于手牌动画事件驱动
 import { VolatileFlame, notifyVolatileHand } from './KeywordEffects'; // [瞬逝] 手牌白橙火焰层 + 保险丝计数器
 import { isTouchInput, TOUCH_TUNE, markTapActionHandled } from '../utils/touchGaze'; // [2026-10-15 莉莉子 · 触屏] 手牌「防误打」：上浮改由显式状态驱动 · [2026-10-16] 聚焦 + 阈值 · [2026-10-17] +markTapActionHandled（出牌后吃掉补发的 click）
@@ -189,6 +194,12 @@ const AnimatedHandCard = ({
                     displayParams={(() => {
                         if (!c.type.includes('spell') || !c.effects || c.effects.length === 0) return undefined;
                         const effectDef = EFFECT_DB[c.effects[0]];
+                        // ── [2026-11-14 莉莉子 🎨 · 问题 2-1] 倾泻（BARRAGE）：卡面「共 {shots} 发（预计 {total} 点）」
+                        //   ⚠️ 这里**能拿到棋盘**，所以攻击力按**场上本体**算（getPower 含 roundBuffs 临时加成，
+                        //      例如「穿云激流」的 +4/+0）——与结算侧 effectProcessor:5810 同口径。
+                        if (effectDef?.class === 'BARRAGE') {
+                            return getBarrageDisplayParams(c, { side: 'player', bench: playerBench, field: combatField });
+                        }
                         if (!effectDef || effectDef.class !== 'STRIKE' || !effectDef.params?.value) return undefined;
                         const raw = { ...effectDef.params };
                         const isBoosted = hasForgerTatianaAura(playerBench, combatField);
@@ -201,6 +212,12 @@ const AnimatedHandCard = ({
                     damageColor={(() => {
                         if (!c.type.includes('spell') || !c.effects || c.effects.length === 0) return null;
                         const effectDef = EFFECT_DB[c.effects[0]];
+                        // ── [问题 2-1] 倾泻：预计值高于账本口径 ⇒ 吃了本回合临时加成（roundBuffs）⇒ 绿字
+                        if (effectDef?.class === 'BARRAGE') {
+                            const est = estimateBarrage(c, { side: 'player', bench: playerBench, field: combatField });
+                            if (!est) return null;
+                            return est.fromBoard && est.power > Math.max(0, getKatyaStats('player').power) ? 'boosted' : null;
+                        }
                         if (!effectDef || effectDef.class !== 'STRIKE' || !effectDef.params?.value) return null;
                         return hasForgerTatianaAura(playerBench, combatField) ? 'boosted' : null;
                     })()}

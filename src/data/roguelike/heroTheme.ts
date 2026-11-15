@@ -20,6 +20,9 @@ export const HERO_THEMES: Record<string, HeroTheme> = {
     // [2026-09-16 茉莉安] 品红（fuchsia）—— 取自立绘主色（品红光环 + 紫色能量），
     //   刻意与 Mauxir 的 purple 拉开距离：两个紫阵营同场必须能一眼区分
     marian: { color: '#d946ef', soft: '#4a044e', glow: 'rgba(217,70,239,0.7)' },
+    // [2026-11-13 1.0.23 凯茜娅·狂诗] 黄蓝渐变阵营 —— color 取金黄（强调/描边），
+    //   soft 取深蓝（背景渐变中心，对齐 Card.tsx 的 via-blue-950），glow 用金光的 rgba。
+    katya_klein_rhapsody: { color: '#F5C542', soft: '#1e3a8a', glow: 'rgba(245,197,66,0.7)' },
 };
 
 export const getHeroTheme = (heroKey: string): HeroTheme => HERO_THEMES[heroKey] ?? HERO_THEMES.lyfe;

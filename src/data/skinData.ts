@@ -209,6 +209,15 @@ export const COSMETIC_REGISTRY: CosmeticConfig[] = [
     { type: 'skin', name: '阶段二', cardKey: 'Truffle_Squad_Iris',             skinId: 1, source: 'MISSION', missionId: 'mission_truffle_iris_01' },
     { type: 'skin', name: '休息一刻', cardKey: 'Truffle_Squad_Iris',             skinId: 2, source: 'BOTH', price: 1 },
 
+    // Logistics (后勤) · 映现小队（凯茜娅专属）
+    //   [2026-11-15 1.0.23] 与松露/圣树同规格：阶段二走专属任务，休息一刻上架商店
+    { type: 'skin', name: '阶段二', cardKey: 'Reflection_Squad_Melisande', skinId: 1, source: 'MISSION', missionId: 'mission_reflection_melisande_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Reflection_Squad_Melisande', skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Reflection_Squad_Yulalia',   skinId: 1, source: 'MISSION', missionId: 'mission_reflection_yulalia_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Reflection_Squad_Yulalia',   skinId: 2, source: 'BOTH', price: 1 },
+    { type: 'skin', name: '阶段二', cardKey: 'Reflection_Squad_Odnie',     skinId: 1, source: 'MISSION', missionId: 'mission_reflection_odnie_01' },
+    { type: 'skin', name: '休息一刻', cardKey: 'Reflection_Squad_Odnie',     skinId: 2, source: 'BOTH', price: 1 },
+
     // ==========================================
     // 🎴 饰品资产区 (Cosmetics)
     // ==========================================

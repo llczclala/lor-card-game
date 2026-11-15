@@ -35,7 +35,9 @@ import { getGameScale } from '../../utils/gameScale'; // [2026-09-04] 详情 por
 import { getChestArt, getChestArtName } from '../../data/roguelike/chestArt';
 import { BulkOpenSummaryModal, type BulkSummaryItem } from './BulkOpenSummaryModal'; // [2026-10-04 程拍板] 一键全开的完整结果汇总窗
 import { eventBus, GameEvents } from '../../utils/eventBus'; // [2026-10-14 莉莉子 🖱️] 开卡包 / 关闭 / 详情 音效
-import { pickTuning, pickPortalContainScale, pickPortalScale } from '../../platform/tuning';
+// [2026-11-08 莉莉子 BUG修复] 主面板改回画布内版（`pickCanvasContainScale`）、详情浮窗换 contain 版
+//   ⇒ `pickPortalScale`（宽度版，只约束宽）已无引用，一并摘掉；`pickPortalContainScale` 详情浮窗仍在用。
+import { pickTuning, pickCanvasContainScale, pickPortalContainScale } from '../../platform/tuning';
 // [2026-10-21 莉莉子 🎨 视觉层优化] 匣子档案卡浮窗（取代原生 `title`）+ 武装库存 + 触屏长按浮现延迟归零
 import { PackChestDossier, type PackChestDossierData } from './PackChestDossier';
 import type { ArmStockMap } from '../../data/roguelike/armamentStock';
@@ -69,7 +71,10 @@ const PACK_OPEN_UI_MOBILE = {
      *  ⚠️ 面板在 `flex items-center justify-center` 里是**居中的唯一 in-flow 子元素** ⇒ 缩放朝两侧对称长大，
      *     **不需要补 margin**（同 `MODE_UI.stageScale` 的判据；对照 `HUB_UI.dioramaScale` 那个要补上下各一半）。
      *  ⚠️ 与**定格详情弹窗**共用这一个旋钮（同一个界面的两态一起放大）；不想联动就说一声，删掉 689 行那处即可。
-     *  📐 面板逻辑宽 1180；`1180 × panelScale ≤ 1680`（画布宽）⇒ **实用上限约 1.4**（再大左右会被切）。 */
+     *  📐 面板逻辑宽 1180；`1180 × panelScale ≤ 1680`（画布宽）⇒ **实用上限约 1.4**（再大左右会被切）。
+     *  ⚠️ [2026-11-08 核实] **手机端此值目前不参与计算**：两个 contain helper 在 native 分支
+     *     直接忽略 legacy 参数（`platform/tuning.ts`）⇒ 手机端面板大小由 `panelWidth` 与两条占屏比决定。
+     *     想调手机端大小就改那三个，**拧这里等于白调**；PC 端仍按 `gameScale × panelScale` 走。 */
     panelScale: 1.75,
     panelWidth: 1180,
     /** 面板圆角 px（原 rounded-3xl = 24） */
@@ -439,11 +444,15 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
     const [detailOpen, setDetailOpen] = useState(false);
 
     /**
-     * [2026-10-24 莉莉子 · 手机端「界面很大」修复] 面板**实测高度**，喂给 portal 版 contain 缩放。
-     * ── 病根有两层：① 本组件 `createPortal(…, document.body)` ⇒ **在画布之外**，
-     *    祖先 `scale(s)` 不生效，而此前用的 `pickCanvasInnerScale` 会**除 s** ⇒ 白放大 1/s（手机 ≈2.67 倍）；
-     *    ② 即便公式对了，**只按宽度反解**也会把高度一起抬上去 ⇒ 竖着溢出。
-     * ── 修法：`pickPortalContainScale`（不除 s，且宽高取小者）+ 实测本面板高度。
+     * [2026-10-24 初版 / 2026-11-08 纠正前提] **主面板实测高度**，喂给 contain 缩放。
+     * 🔴 10-24 那版注释断言「本组件 `createPortal(…, document.body)` ⇒ 在画布之外」——**假前提**：
+     *    本文件唯一一次 `createPortal` 在详情浮窗，主面板**从未 portal**。
+     *    它的三条挂载链全部落在 `App.tsx:2274-2966` 的 `ScaleWrapper` 内
+     *    （`EvaluationPanel:943` / `BattleRewardModal:240` / `RunEndModal:500`）。
+     * ── 真实病根（手机端「开包界面缩成一小块」，约 2.67 倍偏小）：
+     *    祖先已经 `scale(s)`，而 portal 版公式**不除 s** ⇒ 无人抵消 ⇒
+     *    视觉尺寸恒为应得值的 `s` 倍（手机 37.4%）。已换回画布内版 `pickCanvasContainScale`。
+     * ── 另一半病根仍在：**只按宽度反解**会把高度一起抬上去 ⇒ 必须宽高取小者（contain）。
      * ── `useLayoutEffect` ⇒ 测量与修正都在**绘制前**完成，不会闪一下大窗；
      *    `ResizeObserver` 兜住阶段切换／资源加载带来的高度变化。
      */
@@ -459,6 +468,30 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
         ro.observe(el);
         return () => ro.disconnect();
     }, []);
+
+    /**
+     * [2026-11-08 莉莉子 BUG修复 · 手机端「获得奖励匣」底部按钮被切] **详情浮窗实测高度**。
+     * ── 病根：详情浮窗用的是**宽度版** `pickPortalScale`（只收宽度 + 一个占屏比），
+     *    它把同一个 k 等比抬到高度上 ⇒ 手机 851×393 下视觉高 708~813 CSS px，而屏高只有 393
+     *    ⇒ 竖向溢出约 1.8~2.1 倍，底部按钮整排被裁掉。
+     *    ⚠️ 本浮窗**确实**是 `createPortal(…, document.body)`（画布外）⇒ 公式方向要"不除 s"，
+     *       这一点 10-21 那版是对的，别跟着主面板一起改回去。
+     * ── 修法：换 `pickPortalContainScale`（宽高取小者）+ 实测本体高度。
+     *    高度必须实测：匣子名可能折行、碎片匣还会多一行备注 ⇒ 设计高不是常数。
+     * ── 依赖 `detailOpen` / `result`：浮窗是条件渲染，挂载那一刻才量得到东西。
+     */
+    const detailPanelRef = useRef<HTMLDivElement>(null);
+    const [detailH, setDetailH] = useState(460); // 首帧占位（按结构粗估），绘制前被实测覆盖
+    useLayoutEffect(() => {
+        const el = detailPanelRef.current;
+        if (!el) return;
+        const update = () => setDetailH(el.offsetHeight || 460);
+        update();
+        if (typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [detailOpen, result]);
 
     // [2026-10-21 莉莉子 🎨] 匣子档案卡浮窗：位置**不进 state**
     //   （260 个 `motion.div`，每帧 setState 会 reconcile 整棵树 ⇒ 掉帧）
@@ -1134,18 +1167,21 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                            ⇒ 手机端改用 `pickCanvasInnerScale`（按"占屏 94%"反算、不再乘 gameScale）；
                              **PC 端原表达式一个字没改**。 */}
                     <div style={{
-                        // [2026-10-24 莉莉子 · 程实测「界面很大」修复]
-                        //   ⚠️ 上一版注释写的「本面板在 ScaleWrapper 内」**前提已失效**：
-                        //      本组件已改为 `createPortal(…, document.body)` ⇒ 面板在**画布之外**，
-                        //      祖先 `scale(s)` 不生效 ⇒ `pickCanvasInnerScale` 的 **÷ s** 变成白除，
-                        //      反被放大 1/s（手机 ≈2.67 倍），900/1180 宽的面板直接超出屏幕。
-                        //   ⇒ 换 `pickPortalContainScale`：**不除 s**，且宽高取小者（配合实测高 panelH）。
+                        // 🔴 [2026-11-08 莉莉子 BUG修复 · 手机端「开包界面缩成一小块」]
+                        //   10-24 那版写的「本组件已改为 `createPortal` ⇒ 面板在画布之外」是**假前提**：
+                        //   本文件唯一一次 `createPortal` 在详情浮窗，主面板三套入口
+                        //   （评估嘉勉 / 战斗奖励 / 通关结算）全部经 `App.tsx:2274-2966` 的 `ScaleWrapper`。
+                        //   祖先已经 `scale(s)`，portal 版公式**不除 s** ⇒ 无人抵消 ⇒
+                        //   视觉尺寸恒为应得值的 `s` 倍（手机 37.4%，即偏小约 2.67 倍）。
+                        //   ⇒ 换回画布内版 `pickCanvasContainScale`（除 s + 宽高取小者 + 实测高 panelH）。
+                        //   与 `ChestOpenModal` 的差别就在这里：那个**真** portal，所以它用 portal 版是对的。
                         //   PC 端 legacy 仍是 `gameScale * panelScale`（原表达式，一个字没改）。
-                        transform: `scale(${pickPortalContainScale(
+                        transform: `scale(${pickCanvasContainScale(
                             PACK_OPEN_UI.panelWidth,
                             panelH,
                             0.92,
                             0.86,
+                            gameScale,
                             gameScale * PACK_OPEN_UI.panelScale,
                         )})`,
                     }}>
@@ -1437,17 +1473,25 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
                             // [2026-10-02 #9] 点背景 = 收起详情（原来 stopPropagation 后什么都不做，像卡住了）
                             onClick={(e) => { e.stopPropagation(); setDetailOpen(false); }}
                         >
-                            {/* [2026-10-21 手机实测修复] 本层是 portal 到 body ⇒ **逃出了 ScaleWrapper**，
-                                祖先那层 s 不再生效，所以不能再除 gameScale（那会二次缩小）。
-                                手机端改用 `pickPortalScale`（按"占屏 92%"反算）；PC 端原表达式不变。 */}
+                            {/* [2026-10-21 方向修复 / 2026-11-08 补高度约束]
+                                · 本层是 portal 到 body ⇒ **逃出了 ScaleWrapper**，祖先那层 s 不生效，
+                                  所以**不能**除 gameScale（那会二次缩小）—— 这一点 10-21 判断是对的。
+                                · 但 `pickPortalScale` 是**宽度版**：只按"占屏 92%"反解宽度，
+                                  同一个 k 会把高度等比抬高 ⇒ 手机 851×393 下视觉高远超屏高，
+                                  底部整排按钮被裁掉（粉丝截图就是这个）。
+                                · ⇒ 换 `pickPortalContainScale`（宽高取小者）+ 实测本体高度 `detailH`。
+                                PC 端 legacy 仍是 `gameScale * panelScale`（原表达式，一个字没改）。 */}
                             <div style={{
-                                transform: `scale(${pickPortalScale(
+                                transform: `scale(${pickPortalContainScale(
                                     PACK_OPEN_UI.detailWidth,
+                                    detailH,
                                     0.92,
+                                    0.86,
                                     gameScale * PACK_OPEN_UI.panelScale,
                                 )})`,
                             }}>
                                 <motion.div
+                                    ref={detailPanelRef}
                                     initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
                                     transition={{ type: 'spring', stiffness: 260, damping: 22 }}
                                     className="flex flex-col items-center shadow-[0_0_60px_rgba(0,0,0,0.9)]"
@@ -1543,14 +1587,18 @@ export const PackOpenModal: React.FC<PackOpenModalProps> = ({ isOpen, pendingPac
             {/* [2026-10-04 程拍板] 一键开包 · **完整结果汇总窗**（连播全部播完后弹出）
                 ⚠️ 必须放在 `</AnimatePresence>` **之内** —— 它是 return 的根元素，
                    同级并列会破坏 JSX 单根（本次踩过）
-                🔴 [2026-10-29 莉莉子 BUG修复] **必须传 `inCanvas={false}`**：
-                   本组件同样是 `createPortal(…, document.body)`（见 `:1111` 注释），整棵子树在画布**之外**，
-                   而 `BulkOpenSummaryModal` 的内层缩放默认走"画布内"版（含 `/s`）⇒ 净放大 1/s 倍。
-                   ⚠️ PC 上 s≈1.03 两式几乎相等 ⇒ **在电脑上完全看不出来**，只有手机/雷电才暴露
-                   （这就是它一直没被发现的原因）。 */}
+                🔴 [2026-11-08 莉莉子 BUG修复 · 手机端「汇总窗缩成一小块」]
+                   **刻意不传 `inCanvas`**（用默认 `true`，走含 `/s` 的画布内版）。
+                   10-29 那版传 `false`，依据是"本组件同样是 `createPortal`（见 `:1111`）"——
+                   而本文件**从未 portal**（唯一一次在详情浮窗）。它在画布内 ⇒ 必须除 s。
+                   传 `false` ⇒ 少除一个 s ⇒ 手机端只剩应得尺寸的 37.4%
+                   （应得 749 宽算成约 280，正是粉丝截图那块）。
+                   `BulkOpenSummaryModal.tsx:280` 的接口注释本来就写着「PackOpenModal —— 在画布**内** ✅」，
+                   与旧调用点互相矛盾 —— 以组件文档 + 代码事实为准。
+                ✅ 对照：`ChestOpenModal` 那条**确实**是 portal（`ChestOpenModal.tsx:411`），
+                   所以它传 `inCanvas={false}` 是对的，别跟着改。 */}
             <BulkOpenSummaryModal
                 key="bulk-summary"
-                inCanvas={false}
                 open={summaryOpen}
                 title="本次一键开包结果"
                 items={bulkList.map<BulkSummaryItem>(c => ({

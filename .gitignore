@@ -32,3 +32,13 @@ android/keystore.properties
 # *.bak-*：出问题时的临时备份副本（如 xxx.tsx.bak-2026-10-21T02-22-42-492Z）。
 _scratch/
 *.bak-*
+
+# 图片素材备份（13MB+，不入库）
+_raw_image_backup/
+
+# 未转换的原始素材（已生成 webp，原图不入库）
+src/image/effect/Gemini_Generated_Image_*.png
+src/image/effect/生成加特林枪视图*.png
+
+# 全部 .bak 备份文件（含队友临时副本），一律不入库
+*.bak

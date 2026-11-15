@@ -1,4 +1,4 @@
-﻿const loadingImagesModules = import.meta.glob('../image/loading/*.webp', { eager: true });
+const loadingImagesModules = import.meta.glob('../image/loading/*.webp', { eager: true });
 
 // 转换为图片路径数组
 export const LOADING_SCREEN_IMAGES = Object.values(loadingImagesModules).map((mod: any) => mod.default);
@@ -25,6 +25,10 @@ import effect_broken1 from '../image/effect/broken1.webp';
 import effect_broken2 from '../image/effect/broken2.webp';
 import effect_be_attacked from '../image/effect/be_attacked.webp'; // [核心新增] 引入全新的法术命中受击贴图
 import mauxir_rush_attack from '../image/effect/mauxir_lotus_rush_attack.webp';
+
+// [2026-11-14 凯茜娅「倾泻」法术特效] 加特林（发射源）+ 能量弹（飞弹本体）
+import katya_barrage_gun from '../image/effect/katya_barrage_gun.webp';
+import katya_barrage_bullet from '../image/effect/katya_barrage_bullet.webp';
 import mauxir_rush_be_attacked from '../image/effect/mauxir_lotus_rush_be_attacked.webp';
 // [新增] 程准备的差异化法术受击特效（BUFF/治疗分类专用）
 import effect_buff_all from '../image/effect/BUFF_ALL.webp';
@@ -63,6 +67,10 @@ import acacia_chrono_echo_2 from '../image/hero/安卡希雅时之重奏2.webp';
 // [2026-09-16 1.0.16] 引入茉莉安 霄鹰的原画
 import marian_skyhawk_1 from '../image/hero/茉莉安霄鹰1.webp';
 import marian_skyhawk_2 from '../image/hero/茉莉安霄鹰2.webp';
+
+// [2026-11-13 1.0.23 凯茜娅·狂诗] 立绘（webp 由美术侧生成，路径固定）
+import katya_klein_rhapsody_1 from '../image/hero/凯茜娅狂诗1.webp';
+import katya_klein_rhapsody_2 from '../image/hero/凯茜娅狂诗2.webp';
 
 // --- 法术卡面 (Spells) ---
 // 通用法术
@@ -146,6 +154,21 @@ import marian_spell_base from '../image/spells/marian_spell.webp';     // 茉莉
 import marian_spell_01 from '../image/spells/marian_spell01.webp';     // 抉择① 小技能
 import marian_spell_02 from '../image/spells/marian_spell02.webp';     // 抉择② 大招
 import marian_spell_03 from '../image/spells/marian_spell03.webp';     // 支援技
+
+// [2026-11-13 1.0.23 凯茜娅·狂诗] 专属法术卡面（webp 由美术侧生成，路径固定）
+import katya_spell_base from '../image/spells/katya_klein_rhapsody_spell.webp';     // 凯茜娅的狂想（抉择基牌）
+import katya_spell_01 from '../image/spells/katya_klein_rhapsody_spell01.webp';     // 溯时双翼
+import katya_spell_02 from '../image/spells/katya_klein_rhapsody_spell02.webp';     // 穿云激流
+import katya_spell_03 from '../image/spells/katya_klein_rhapsody_spell03.webp';     // 滞空碎星（倾泻暂无专属原画，走 abc_spell 占位）
+
+// [2026-11-14 凯茜娅法术卡面补全] 沿用 spells 目录数字序列 50~55（同 47/48/49 之于茉莉安）
+import katya_spell_50 from '../image/spells/50.webp';   // 倾泻（加特林连射）
+import katya_spell_51 from '../image/spells/51.webp';   // 誊抄（手写符文）
+import katya_spell_52 from '../image/spells/52.webp';   // 紧急补给（星芒托举）
+import katya_spell_53 from '../image/spells/53.webp';   // 延续（植物生长）
+import katya_spell_54 from '../image/spells/54.webp';   // 终结（冰晶爆发）
+import katya_spell_55 from '../image/spells/55.webp';   // 冻结弹幕（穿刺，归属待程确认）
+import katya_spell_56 from '../image/spells/56.webp';   // 溯时双翼·狂乱（星芒徽记）
 
 // [2026-09-26 莉莉子] 茉莉安阵营法术正式卡面（T29 出图）：按 T17→T18→T19 对应 47→48→49
 import marian_faction_mark_img from '../image/spells/47.webp';    // 阵营法术一：猎影标记（T17）
@@ -398,6 +421,10 @@ const CARD_KEY_MAP: Record<string, string> = {
   dakors: 'Star_Bright_Squad_Dakors',
   mabel: 'Chongye_Squad_Mabel',
   elice: 'Chongye_Squad_Elice',
+  // [2026-11-13 1.0.23 凯茜娅·狂诗] 「映现」小队三后勤（cardKey 即完整名，短 key 另立）
+  reflection_melisande: 'Reflection_Squad_Melisande',
+  reflection_yulalia: 'Reflection_Squad_Yulalia',
+  reflection_odnie: 'Reflection_Squad_Odnie',
   // [2026-09-16 1.0.16 茉莉安] 獠牙信标：图片由 units glob 自动登记为 cardKey 'Marian_Wolf_Tooth_Beacon'
   wolf_tooth_beacon: 'Marian_Wolf_Tooth_Beacon',
   // [2026-09-17 1.0.16 茉莉安] 「松露」小队三后勤
@@ -525,7 +552,9 @@ export const HERO_IMAGES: Record<string, { base: string; level2: string }> = {
     mauxir_lotus_drive: { base: mauxir_lotus_drive_1, level2: mauxir_lotus_drive_2 },
     acacia_chrono_echo: { base: acacia_chrono_echo_1, level2: acacia_chrono_echo_2 },
     // [2026-09-16 1.0.16 茉莉安]
-    marian: { base: marian_skyhawk_1, level2: marian_skyhawk_2 }
+    marian: { base: marian_skyhawk_1, level2: marian_skyhawk_2 },
+    // [2026-11-13 1.0.23 凯茜娅·狂诗]
+    katya_klein_rhapsody: { base: katya_klein_rhapsody_1, level2: katya_klein_rhapsody_2 }
 };
 // [皮肤] 导出正式单位图片集合（从 glob 自动构建）
 export const UNIT_IMAGES: Record<string, string> = {};
@@ -636,6 +665,20 @@ export const SPELL_IMAGES = {
     acacia_sword_rain: acacia_chrono_echo_spell_gen1,
     acacia_moon_focus: acacia_chrono_echo_spell_gen2,
     acacia_sword_rain_alt: acacia_chrono_echo_spell_gen3,
+
+    // [2026-11-13 1.0.23 凯茜娅·狂诗]
+    // [2026-11-14 卡面补全] 11 张法术全部有专属原画，abc_spell 占位已清零。
+    katya_rhapsody_choice: katya_spell_base,   // 凯茜娅的狂想（抉择基牌）
+    katya_chrono_wing: katya_spell_01,         // 溯时双翼
+    katya_pierce_torrent: katya_spell_02,      // 穿云激流
+    katya_barrage: katya_spell_50,             // 倾泻 ← 50.webp（加特林连射）
+    katya_chrono_frenzy: katya_spell_56,       // 溯时双翼·狂乱 ← 56.webp（星芒徽记）
+    katya_starfall: katya_spell_03,            // 滞空碎星
+    katya_transcribe: katya_spell_51,          // 誊抄 ← 51.webp（手写符文）
+    katya_supply: katya_spell_52,              // 紧急补给 ← 52.webp（星芒托举）
+    katya_barrage_frost: katya_spell_55,       // 冻结弹幕 ← 55.webp（穿刺，归属待程确认）
+    katya_barrage_frost_cont: katya_spell_53,  // 延续 ← 53.webp（植物生长）
+    katya_barrage_frost_end: katya_spell_54,   // 终结 ← 54.webp（冰晶爆发）
 
     // [布里吉小队] 菲儿生成的"强行通讯"
     forced_communication: spell_16,
@@ -794,6 +837,9 @@ export const EFFECT_IMAGES = {
     beAttacked: effect_be_attacked, // [核心新增] 法术命中：受击裂纹特效
     mauxirRushAttack: mauxir_rush_attack,
     mauxirRushBeAttacked: mauxir_rush_be_attacked,
+    // [2026-11-14 凯茜娅「倾泻」] 加特林枪体 + 能量弹（飞弹贴图）
+    katyaBarrageGun: katya_barrage_gun,
+    katyaBarrageBullet: katya_barrage_bullet,
     // [新增] 差异化法术受击特效——程 2026-06-29
     buffAll: effect_buff_all,         // 双维增益（+攻+血）
     buffKeyword: effect_buff_keyword, // 关键词赋予

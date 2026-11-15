@@ -19,6 +19,13 @@ import { getChampionUpgradeProgress } from '../utils/gameRules'; // [2026-09-19]
 import { eventBus, GameEvents } from '../utils/eventBus';
 import { getPower } from '../logic/keywords'; // [2026-09-26 莉莉子] 攻击力唯一口径（0 下限 + maxPower 上限）
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于兜底替换{value}
+// [2026-11-14 莉莉子 🎨视觉层 · 问题 2-1] 倾泻（BARRAGE）卡面「共 {shots} 发（预计 {total} 点）」
+//   ⚠️ `Card` 拿不到棋盘（bench/combatField）⇒ 走 `katyaBarragePreview` 的**账本兜底口径**
+//   （`getKatyaStats(side).power` = 2 + S − D，与 `effectProcessor:5810` 的回落分支同源）。
+//   手牌那条路（`CardAnimations.tsx`）会显式传 `displayParams`，**优先于**这里的兜底 ⇒ 那边算得更准。
+import { getBarrageDisplayParams } from '../utils/katyaBarragePreview';
+// [2026-11-14 莉莉子 ✨ · 倾泻连打段数] 飘字副标注唯一真源（「2 × 5」/「5 连打」）
+import { formatBarrageHitLabel } from '../utils/damageText';
 import { getEquipmentDefs } from '../data/equipment'; // [2026-08-12 装备系统] 手牌右侧装备方块
 import { bindArmamentGaze } from './roguelike/ArmamentPreview'; // [2026-08-26 莉莉子] 手牌卡武装/装备 pips 悬停浮现大卡
 import { getHeroVideo } from '../data/heroVideos'; // [2026-08-16 动态卡面] 天启者动态卡面视频
@@ -454,9 +461,13 @@ const CardInner: React.FC<CardProps> = ({
     const resolvedDisplayParams = useMemo<Record<string, number> | undefined>(() => {
         if (displayParams) return displayParams; // 外部传入的优先（如缇坦妮娅增益）
         if (!data.effects || data.effects.length === 0) return undefined;
+        // [2026-11-14 莉莉子 🎨 · 问题 2-1] 倾泻卡面要的是**动态**发数/预计伤害：
+        //   `{shots}` = max(1, ceil(攻击力/2)) + 观察员加成，`{total}` = shots × 每发。
+        //   本组件没有棋盘上下文 ⇒ 退账本口径（攻击力 = 2 + S − D），算式与结算侧同源。
+        const barrageParams = getBarrageDisplayParams(data);
         const effectDef = EFFECT_DB[data.effects[0]];
-        if (!effectDef?.params) return undefined;
-        const display: Record<string, number> = {};
+        if (!effectDef?.params) return barrageParams;
+        const display: Record<string, number> = { ...(barrageParams ?? {}) };
         for (const [key, val] of Object.entries(effectDef.params)) {
             if (typeof val === 'number') {
                 display[key] = val;
@@ -471,7 +482,8 @@ const CardInner: React.FC<CardProps> = ({
     // [升级版] 全能数值反馈系统 (Health & Power)
     // 分别记录两个属性的变化量
     // [修复] healthDelta 改为 hitQueue 队列，支持连续多段伤害各自独立飘字
-    const [hitQueue, setHitQueue] = useState<{ id: number; amount: number }[]>([]);
+    // [2026-11-14 莉莉子 ✨ · 倾泻连打段数] `hits` / `perHit` 缺省 = 普通单段伤害（老渲染路径，像素不变）
+    const [hitQueue, setHitQueue] = useState<{ id: number; amount: number; hits?: number; perHit?: number }[]>([]);
     const hitIdRef = useRef(0);
     const [powerDelta, setPowerDelta] = useState<number | null>(null);
 
@@ -720,12 +732,19 @@ const CardInner: React.FC<CardProps> = ({
     // 订阅已有的 unit_damage 事件——受击时先飘红色伤害字 + 受击震荡，并同步修正 prevHealthRef（重建"受击后B态"基准），
     // 让渲染时 diff 只反映后续增益（如以守为攻 after_attacked +1/+1）→ 实现"先红字伤害、再绿字增益"的分步表现
     useEffect(() => {
-        const onUnitDamage = (payload: { id: string; amount: number }) => {
+        const onUnitDamage = (payload: { id: string; amount: number; hits?: number; perHit?: number }) => {
             if (payload.id !== data.id || !payload.amount) return;
             // ① 受击震荡 + 飘红色伤害字（负数 → 红字）
             setLocalShake(true);
             const newId = hitIdRef.current++;
-            setHitQueue(prev => [...prev, { id: newId, amount: -payload.amount }]);
+            // [2026-11-14 莉莉子 ✨ · 倾泻连打] `hits` / `perHit` 是**纯元数据**：
+            //   `amount` 仍原样取事件的真实总伤害，数值口径一个字节都没动；缺省时行为逐字不变。
+            setHitQueue(prev => [...prev, {
+                id: newId,
+                amount: -payload.amount,
+                hits: payload.hits,
+                perHit: payload.perHit,
+            }]);
             setTimeout(() => {
                 setHitQueue(prev => prev.filter(h => h.id !== newId));
                 setLocalShake(false);
@@ -1175,6 +1194,7 @@ const CardInner: React.FC<CardProps> = ({
             : data.region === 'Mauxir' ? 'from-gray-950 via-purple-950 to-gray-950'
             : data.region === 'Acacia' ? 'from-gray-950 via-sky-950 to-gray-950'
             : data.region === 'Marian' ? 'from-gray-950 via-fuchsia-950 to-gray-950' // [2026-09-16 茉莉安] 品红
+            : data.region === 'katya_klein_rhapsody' ? 'from-yellow-900 via-blue-950 to-blue-900' // [2026-11-13 凯茜娅·狂诗] 金黄→深蓝
             : data.region === 'Logistics' ? 'from-gray-950 via-gray-800 to-gray-950'
             : data.region === 'Analyst' ? 'from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员黑色卡面
             : 'bg-slate-900';
@@ -1270,6 +1290,7 @@ const CardInner: React.FC<CardProps> = ({
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
                                 : data.region === 'Marian' ? 'from-fuchsia-600/40 via-fuchsia-500/20 to-fuchsia-300/5' // [2026-09-16 茉莉安] 品红
+                                : data.region === 'katya_klein_rhapsody' ? 'from-yellow-600/40 via-blue-500/25 to-blue-300/5' // [2026-11-13 凯茜娅·狂诗] 金黄→深蓝
                                 : data.region === 'Analyst' ? 'from-black/60 via-gray-950/30 to-black/5' // [2026-08-08 莉莉子] 分析员黑色卡面
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
@@ -1526,6 +1547,7 @@ const CardInner: React.FC<CardProps> = ({
                         : data.region === 'Mauxir' ? 'bg-gradient-to-b from-gray-950 via-purple-950 to-gray-950'
                         : data.region === 'Acacia' ? 'bg-gradient-to-b from-gray-950 via-sky-950 to-gray-950'
                         : data.region === 'Marian' ? 'bg-gradient-to-b from-gray-950 via-fuchsia-950 to-gray-950' // [2026-09-16 茉莉安] 品红
+                        : data.region === 'katya_klein_rhapsody' ? 'bg-gradient-to-b from-yellow-900 via-blue-950 to-blue-900' // [2026-11-13 凯茜娅·狂诗] 金黄→深蓝
                         : data.region === 'Logistics' ? 'bg-gradient-to-b from-gray-950 via-gray-800 to-gray-950'
                         : data.region === 'Analyst' ? 'bg-gradient-to-b from-black via-gray-950 to-black' // [2026-08-08 莉莉子] 分析员黑色卡面
                         : 'bg-slate-900'
@@ -1557,6 +1579,7 @@ const CardInner: React.FC<CardProps> = ({
                                 : data.region === 'Mauxir' ? 'from-purple-600/40 via-purple-500/20 to-purple-300/5'
                                 : data.region === 'Acacia' ? 'from-sky-600/40 via-sky-500/20 to-sky-300/5'
                                 : data.region === 'Marian' ? 'from-fuchsia-600/40 via-fuchsia-500/20 to-fuchsia-300/5' // [2026-09-16 茉莉安] 品红
+                                : data.region === 'katya_klein_rhapsody' ? 'from-yellow-600/40 via-blue-500/25 to-blue-300/5' // [2026-11-13 凯茜娅·狂诗] 金黄→深蓝
                                 : data.region === 'Analyst' ? 'from-black/60 via-gray-950/30 to-black/5' // [2026-08-08 莉莉子] 分析员黑色卡面
                                 : 'from-gray-300/40 via-gray-200/20 to-white/5'
                         }`}></div>
@@ -1784,7 +1807,21 @@ const CardInner: React.FC<CardProps> = ({
                         times: [0, 0.5, 1]
                     }}
                 >
-                    {hit.amount > 0 ? `+${hit.amount}` : hit.amount}
+                    {/* [2026-11-14 莉莉子 ✨ · 倾泻连打段数]
+                        `formatBarrageHitLabel` 返回 null（= 没有 hits / hits ≤ 1）时，
+                        **原样输出**旧表达式 ⇒ 普通攻击 / 单体法术的飘字一个字符都不变。
+                        只有「倾泻」这类合并事件才加一行小字副标注：「2 × 5」或「N 连打」。
+                        ⚠️ 主数字仍是事件真实总伤害，副标注只是说明**打了几发**。 */}
+                    {(() => {
+                        const barrageLabel = formatBarrageHitLabel(Math.abs(hit.amount), hit.hits, hit.perHit);
+                        if (!barrageLabel) return hit.amount > 0 ? `+${hit.amount}` : hit.amount;
+                        return (
+                            <span className="inline-flex items-baseline">
+                                <span>{hit.amount}</span>
+                                <span className="ml-1 text-[0.42em] font-bold tracking-tight">{barrageLabel}</span>
+                            </span>
+                        );
+                    })()}
                 </motion.div>
             ))}
 
@@ -1989,6 +2026,7 @@ const CardInner: React.FC<CardProps> = ({
                     : data.region === 'Pupu' ? 'border-red-500/20'
                     : data.region === 'Mauxir' ? 'border-purple-500/20'
                     : data.region === 'Acacia' ? 'border-sky-500/20'
+                    : data.region === 'katya_klein_rhapsody' ? 'border-yellow-500/25' // [2026-11-13 凯茜娅·狂诗] 金黄描边
                     : data.region === 'Logistics' ? 'border-white/10'
                     : data.region === 'Analyst' ? 'border-white/20' // [2026-08-08 莉莉子] 分析员描边
                     : 'border-transparent'}

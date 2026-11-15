@@ -667,7 +667,14 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             //      将来若再出现"重进对局 / 重开流程"类入口 ⇒ 无护栏就会**静默多发一张卡 + 3 件装备**；
             //      而卡 id 是随机的，日志里根本看不出这是重复发放（改动前这段是 `continue`，重复触发无害）。
             if (bench.some(c => c.key === key)) continue;
-            const built = attachRandomEquipments(ctx.createFullCard(key, ctx.owner), fallbackEquips);
+            // [2026-11-08 程拍板 · 「莲开于席」加强] **兜底装备只给天启者**。
+            //   本 handler 现在也会被用来召唤衍生物（`mauxir_lotus_pedestal` 臆莲基座，`isChampion: false`），
+            //   而「随机佩戴 N 件装备」是"玩家拿到这个强化不能一无所有"的补偿语义（见上方 ③ 的程口径），
+            //   套到 0 攻 3 血、只吃 `drone_power` 标签的基座上既不合语义，也会平白送它关键词。
+            //   ⇒ 判据取 `isChampion`：天启者照旧挂装备，衍生物裸召。
+            //   ⚠️ 既有的六条「开局召唤」与「世纪和解」全是天启者 ⇒ 行为零变化。
+            const fresh = ctx.createFullCard(key, ctx.owner);
+            const built = fresh?.isChampion ? attachRandomEquipments(fresh, fallbackEquips) : fresh;
             bench.push({ ...built, animState: 'summoning' as const });
             placedIds.push(built.id);
         }

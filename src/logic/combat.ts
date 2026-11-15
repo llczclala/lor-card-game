@@ -1,6 +1,35 @@
 import type { CardData, GameState, Keyword } from '../types';
 import { checkCardLevelUp, getLeveledUpCard, isNexusImmune } from '../utils/gameRules';
 import { calculateCombatInteraction, deadlyLethalInject } from './keywords'; // [新增] · [2026-09-12 莉莉子 剧毒]
+// [2026-11-14 莉莉子 ✨新功能 · 凯茜娅升级判定] 「她本体进攻造成的战斗伤害」记账（升级 18 → Lv2）。
+//   口径见 `utils/katyaProgress.ts` 的 `KATYA_UPGRADE_DAMAGE`：只算凯茜娅自己打出去的伤害；
+//   「倾泻」那部分在 `effectProcessor` 的 `case 'BARRAGE'` 记。**两者之外的伤害（别的法术卡）不进账**。
+import { bumpKatyaDamage, getKatyaDamage, KATYA_KEY } from '../utils/katyaProgress';
+
+/**
+ * [2026-11-14 莉莉子 ✨新功能 · 凯茜娅升级判定] **本体打水晶的溢出伤害**记账。
+ *
+ * 为什么要单独一个函数：`[Overwhelm]` 的溢出伤害在两个战斗结算函数里各汇一次
+ * （`totalNexus`），口径必须逐字一致 —— 手抄两份是这个仓库反复出过事的地方
+ * （见 `resolveSingleCombat` 剧毒那条注释的教训）。
+ * 口径与 `effectProcessor` 的 BARRAGE 打水晶一致：按**实际扣到水晶的量**算（clamp 到剩余血量）。
+ */
+const recordKatyaNexusDamage = (
+    attacker: CardData,
+    owner: 'player' | 'enemy',
+    game: GameState,
+    nexusDmg: number,
+): void => {
+    if (!(nexusDmg > 0) || attacker.key !== KATYA_KEY) return;
+    const foeSide: 'player' | 'enemy' = owner === 'player' ? 'enemy' : 'player';
+    const hpBefore = foeSide === 'player'
+        ? Math.max(0, game.playerNexus || 0)
+        : Math.max(0, game.enemyNexus || 0);
+    const dealt = Math.min(nexusDmg, hpBefore);
+    if (dealt <= 0) return;
+    bumpKatyaDamage(owner, dealt);
+    attacker.katyaDamage = getKatyaDamage(owner);
+};
 
 
 // [新增] 单次战斗结果接口
@@ -125,6 +154,12 @@ export const resolveSingleCombat = (
       }
 
       // 伤害累加（绝不减 health，只记 damageTaken 欠条）
+      // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅升级判定] 记账点见下方 `bumpKatyaDamage`：
+      //   **必须**在累加之前取阻挡者剩余血量 —— 「造成伤害」按实际扣到肉的量算
+      //   （目标只剩 1 血时打 5 点只算 1 点），与 BARRAGE 的收口口径一致。
+      const blkHpBefore = blk ? Math.max(0, getCurrentHP(blk)) : 0;
+      // 她作为**阻挡者**反击时，被反击的是进攻者 ⇒ 同样先取进攻者剩余血量（同口径 clamp）
+      const atkHpBefore = Math.max(0, getCurrentHP(atk));
       // ══════════════════════════════════════════════════════════════════
       // [2026-10-10 莉莉子 BUG修复 · 程实测「剧毒不生效」] **必须叠加 `deadlyLethalInject`**
       //   ── 剧毒是**负面**词条（带毒单位「受到任何伤害即被消灭」，判定入口 `logic/keywords.ts:41`），
@@ -140,6 +175,24 @@ export const resolveSingleCombat = (
         blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage + deadlyLethalInject(blk, inter.blockerDamage);
       }
       atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage + deadlyLethalInject(atk, inter.attackerDamage);
+
+      // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅升级判定] **她本体进攻造成的战斗伤害**记账
+      //   ⚠️ 只记 `inter.blockerDamage`（她这一拳打出去的），**不含** `deadlyLethalInject` 的注入量
+      //      —— 那是"剧毒额外致死"，不是她的伤害量。
+      if (blk && atk.key === KATYA_KEY && inter.blockerDamage > 0) {
+        bumpKatyaDamage(owner, Math.min(inter.blockerDamage, blkHpBefore));
+        // 同步**卡上镜像**（`CardData.katyaDamage`）：本文件随后会立刻用
+        // `checkCardLevelUp(newAttacker, …)` 判升级（`:210` / `:396`），而它读的正是这个镜像。
+        // 不同步 ⇒ 这一拳的伤害要等下一次 `restampKatyaProgress` 才被判定看见（升级被延迟一回合）。
+        atk.katyaDamage = getKatyaDamage(owner);
+      }
+      // [2026-11-14 莉莉子] 反过来：**她作为阻挡者反击**打出的伤害也进账（归属 = 进攻方的对面）。
+      //   口径与上一段逐字对称：只算 `inter.attackerDamage`（她反击的那一下），按进攻者剩余血量收口。
+      if (blk && blk.key === KATYA_KEY && inter.attackerDamage > 0) {
+        const blockerOwner: 'player' | 'enemy' = owner === 'player' ? 'enemy' : 'player';
+        bumpKatyaDamage(blockerOwner, Math.min(inter.attackerDamage, atkHpBefore));
+        blk.katyaDamage = getKatyaDamage(blockerOwner);
+      }
 
       // 水晶伤害（空气墙过滤）
       let nexus = inter.nexusDamage;
@@ -190,6 +243,9 @@ export const resolveSingleCombat = (
         amount: totalNexus
       };
     }
+    // [2026-11-14 凯茜娅升级] 本体打水晶的溢出伤害入账 —— 必须**早于**下面的升级判定，
+    //   否则这一拳的伤害要等下一次贴值才被 `checkCardLevelUp` 看见（升级延迟一回合）。
+    recordKatyaNexusDamage(newAttacker, owner, game, totalNexus);
 
     // 4. 升级判定 (简化版，仅检查攻击者)
     if (checkCardLevelUp(newAttacker, game.playerNexus, game.enemyNexus) && getCurrentHP(newAttacker) > 0) {
@@ -319,8 +375,25 @@ export const resolveDoubleStrikeCombat = (
         // [2026-10-10 莉莉子 BUG修复 · 剧毒不生效] 同 `resolveSingleCombat`：**这里也必须注入**。
         //   本函数是**连击**的活路径（`useGameState.ts:3550`），此前同样一处都没调 ⇒
         //   连击打带毒单位也不会被解构。两边必须逐字一致，否则单段/连击的剧毒行为会分裂。
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅升级判定] 同 `resolveSingleCombat`：
+        //   先取阻挡者剩余血量，「造成伤害」按实际扣到肉的量算，再记进账本。
+        //   两边必须逐字一致，否则单段/连击的升级进度会分裂（与剧毒那次的教训同型）。
+        const blkHpBefore = blk ? Math.max(0, getCurrentHP(blk)) : 0;
+        // 她作为**阻挡者**反击时要 clamp 进攻者血量（与 `resolveSingleCombat` 逐字对称）
+        const atkHpBefore = Math.max(0, getCurrentHP(atk));
         if (blk) blk.damageTaken = (blk.damageTaken || 0) + inter.blockerDamage + deadlyLethalInject(blk, inter.blockerDamage);
         atk.damageTaken = (atk.damageTaken || 0) + inter.attackerDamage + deadlyLethalInject(atk, inter.attackerDamage);
+        if (blk && atk.key === KATYA_KEY && inter.blockerDamage > 0) {
+            bumpKatyaDamage(owner, Math.min(inter.blockerDamage, blkHpBefore));
+            // 同 `resolveSingleCombat`：镜像必须当场同步，否则紧接着的升级判定（`:396`）读到旧值
+            atk.katyaDamage = getKatyaDamage(owner);
+        }
+        // 她作为**阻挡者反击**的伤害（归属 = 进攻方的对面），与 `resolveSingleCombat` 逐字一致
+        if (blk && blk.key === KATYA_KEY && inter.attackerDamage > 0) {
+            const blockerOwner: 'player' | 'enemy' = owner === 'player' ? 'enemy' : 'player';
+            bumpKatyaDamage(blockerOwner, Math.min(inter.attackerDamage, atkHpBefore));
+            blk.katyaDamage = getKatyaDamage(blockerOwner);
+        }
         let nexus = inter.nexusDamage;
         if (isGhosted && !atk.keywords.includes('Overwhelm')) {
             nexus = 0;
@@ -366,6 +439,8 @@ export const resolveDoubleStrikeCombat = (
     if (totalNexus > 0) {
         nexusDmgInfo = { target: owner === 'player' ? 'enemy' : 'player', amount: totalNexus };
     }
+    // [2026-11-14 凯茜娅升级] 同 `resolveSingleCombat`：本体打水晶的溢出伤害入账，且早于升级判定
+    recordKatyaNexusDamage(newAttacker, owner, game, totalNexus);
     const totalAttackerDmg = strike1.attackerDamage + (strike2?.attackerDamage || 0);
     const totalBlockerDmg = strike1.blockerDamage + (strike2?.blockerDamage || 0);
 

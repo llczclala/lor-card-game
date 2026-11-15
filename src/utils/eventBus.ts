@@ -37,6 +37,14 @@ export const GameEvents = {
     SFX_PUPU_ULTIMATE: 'SFX_PUPU_ULTIMATE',                 // 卜卜大招
     SFX_PUPU_SKILL1: 'SFX_PUPU_SKILL1',                     // 卜卜小技能
     SFX_PUPU_SKILL1_UPGRADED: 'SFX_PUPU_SKILL1_UPGRADED',   // 卜卜小技能强化
+    // [2026-11-15 程拍板 · 倾泻音效重做] 拆成「预热」+「单发开火」两段，替代原来的整段音效：
+    //   · SPINUP：加特林转起来的那一声（1.14s），在**第一发之前**播
+    //   · SHOT  ：单发开火（0.35s），**每发子弹飞出的同一刻**播 ⇒ 音画逐发对齐
+    //   发数多就打得久，不再强行压进 2 秒。
+    SFX_KATYA_BARRAGE_SPINUP: 'SFX_KATYA_BARRAGE_SPINUP',
+    SFX_KATYA_BARRAGE_SHOT: 'SFX_KATYA_BARRAGE_SHOT',
+    // [2026-11-15 程补素材] 收枪：子弹全部打完后、加特林体消失的那一刻播（1.04s）
+    SFX_KATYA_BARRAGE_COOLDOWN: 'SFX_KATYA_BARRAGE_COOLDOWN',
     // ==========================================================
 
     // --- 机制/语音类事件 ---
@@ -264,6 +272,45 @@ export const StrikeEvents = {
 // 导出类型，方便 TypeScript 提示
 // [修正] 合并 StrikeEvents 类型，并补充 string 兜底，防止直接使用字面量(如 'unit_damage')时 TS 报错
 export type GameEventType = typeof GameEvents[keyof typeof GameEvents] | typeof StrikeEvents[keyof typeof StrikeEvents] | string;
+
+// ==========================================================
+// [2026-11-14 莉莉子 ✨ · 倾泻「连打段数」元数据] 受击事件 payload 形状的**单一真源**
+// ── 背景：「倾泻」(BARRAGE) 一次结算连打 N 发（每发 2 点），但按设计只推**一条**合并事件
+//    （「一次算完 + 合并飘字」，禁止 N 次动画）。缺了段数，5 发 × 2 点和 1 次 10 点长得一模一样。
+// ── 约定（**只加不换**）：`hits` / `perHit` 目前只有 `BARRAGE` 写；
+//    其它所有伤害源（普通攻击 / 单体法术 / 信标 / 剧毒…）**缺省不写** ⇒
+//    任何消费方读不到即按「1 段」处理，行为逐字不变。
+// ── 说明：`unit_damage` 是既有**字面量**事件名（不在 `GameEvents` 里，见 `useSfx.ts` 的订阅），
+//    它的 payload 一直靠结构类型在各消费点就地声明。本接口只把形状写下来，
+//    **不强制**旧消费点改写（避免为了一行类型去动十几个文件）。
+// ==========================================================
+
+/** 「倾泻」连打元数据（合并事件专用；缺省 = 单段伤害） */
+export interface BarrageHitMeta {
+    /** 本次合并事件实际代表的**发数**（`>1` 才显示连打样式） */
+    hits?: number;
+    /** 每一发的账面伤害（与 `amount` 自洽时可显示成「2 × 5」） */
+    perHit?: number;
+}
+
+/** `unit_damage` 事件 payload（单位受击） */
+export interface UnitDamagePayload extends BarrageHitMeta {
+    id: string;
+    amount: number;
+    /** 音效层路由用（如信标专属受击音） */
+    key?: string;
+    /** 由战斗结算发出 ⇒ 音效层跳过重复的打击音 */
+    fromCombat?: boolean;
+}
+
+/** `nexus_damage` / `GameEvents.NEXUS_STRIKED` 事件 payload（水晶受击） */
+export interface NexusDamagePayload extends BarrageHitMeta {
+    target?: 'player' | 'enemy' | string;
+    amount?: number;
+    fromCombat?: boolean;
+    /** 「只演出」的水晶事件（镜阵回响等）⇒ 不排微队列、不触发 on_nexus_strike */
+    floatOnly?: boolean;
+}
 
 // 定义事件回调函数类型
 type EventCallback = (payload?: any) => void;

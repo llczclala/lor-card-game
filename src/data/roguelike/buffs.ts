@@ -250,9 +250,14 @@ export const MAZE_BUFFS: MazeBuff[] = [
     },
     {
         id: 'enhance_open_mauxir', name: '莲开于席',
-        description: '开局时，从牌库与手牌召唤猫汐尔到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        // [2026-11-08 程拍板 · 加强] 原版只召猫汐尔本人，程的评价是「太弱」——
+        //   基座才是莲驱的输出核心（她 Lv1 的库效只在回合开始才补一个），开局两者同到才算成型。
+        description: '开局时，从牌库与手牌召唤猫汐尔到备战席（都没有则直接召唤她并随机佩戴一件装备），并额外召唤一个「臆莲基座」。',
         rarity: 'legendary', icon: SPELL_IMAGES.mauxir_lotus_spell, effect: { type: 'passive' },
-        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['mauxir_lotus_drive'], fallbackEquips: 1 } },
+        // ⚠️ 基座是**衍生物**（`isChampion: false`，`maxPerSide: 3`），不进牌库/手牌 ⇒ 一定走 handler 的兜底分支；
+        //   而兜底里的"随机佩戴装备"已按 `isChampion` 收口（见 `logic/rogueTrigger.ts` 的 SUMMON_FROM_DECK），
+        //   所以这里只加 key 即可，不会给基座平白挂上装备。
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['mauxir_lotus_drive', 'mauxir_lotus_pedestal'], fallbackEquips: 1 } },
         playerEligible: true, enemyEligible: true,
     },
     {

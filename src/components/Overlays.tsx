@@ -27,6 +27,9 @@ import { pickTuning } from '../platform/tuning';
 //   · bindTextTokenGaze —— 复用关键词浮层（portal z-10001，压在详情层 10000 之上）
 import { isTouchInput } from '../utils/touchGaze';
 import { bindTextTokenGaze } from './KeywordPreview';
+// [2026-11-14 莉莉子 🎨 · 问题 2-1] 本浮层**不走 Card 组件** ⇒ 卡面动态占位符要自己插值
+//   （倾泻卡的 `{shots}` / `{total}`，算式单源在 `utils/katyaBarragePreview.ts`）
+import { getBarrageDisplayParams } from '../utils/katyaBarragePreview';
 
 // [2026-10-04] 六边形 clip-path + 装备品质色 —— **独立定义同款**（与 Card.tsx:329/331 一致）。
 //   理由同 RogueHeroInfoModal:837 的注释：Card.tsx 是核心文件，不为了两个常量去动它。
@@ -992,7 +995,7 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                     {/* 1. 顶部标题 */}
                     <div className="flex flex-col items-center text-center">
                         <div className="text-sm font-black text-gray-500 uppercase tracking-[0.3em] mb-2 flex items-center gap-3 bg-black/40 px-4 py-1 rounded-full border border-white/5">
-                            <span className={targetCard.region === 'Lyfe' ? 'text-yellow-500' : (targetCard.region === 'Fenny' ? 'text-red-500' : (targetCard.region === 'Analyst' ? 'text-white' : 'text-purple-500'))}>
+                            <span className={targetCard.region === 'Lyfe' ? 'text-yellow-500' : (targetCard.region === 'Fenny' ? 'text-red-500' : (targetCard.region === 'Analyst' ? 'text-white' : (targetCard.region === 'katya_klein_rhapsody' ? 'text-yellow-400' : 'text-purple-500')))}>
                                 {getRegionLabel(targetCard.region, targetCard.key)}
                             </span>
                             <span className="text-gray-600">|</span>
@@ -1136,9 +1139,22 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                 ⚠️ 将来若出现更多"卡自身动态值"的卡，把这段抽成通用工具，别一张一张加。 */}
                             <p className="text-gray-300 text-lg leading-relaxed font-light px-4 whitespace-pre-wrap">
                                 <RichTextParser
-                                    text={targetCard.key === 'spell_hoard'
-                                        ? targetCard.description.replace('{hoardStored}', String(targetCard.hoardStored ?? 0))
-                                        : targetCard.description}
+                                    text={(() => {
+                                        // 「囤积」：卡自身动态值（原逻辑，保持不动）
+                                        let desc = targetCard.key === 'spell_hoard'
+                                            ? targetCard.description.replace('{hoardStored}', String(targetCard.hoardStored ?? 0))
+                                            : targetCard.description;
+                                        // [2026-11-14 莉莉子 🎨 · 问题 2-1] 倾泻（BARRAGE）：
+                                        //   `{shots}` = 发数、`{total}` = 预计伤害。本浮层没有棋盘上下文
+                                        //   ⇒ 用 `getBarrageDisplayParams` 的账本口径（与 `Card.tsx` 兜底同源），
+                                        //   否则会把占位符原样露给玩家。
+                                        const barrage = getBarrageDisplayParams(targetCard);
+                                        if (barrage) {
+                                            desc = desc.replace(/\{(shots|perHit|total)\}/g, (m: string, k: string) =>
+                                                typeof barrage[k] === 'number' ? String(barrage[k]) : m);
+                                        }
+                                        return desc;
+                                    })()}
                                     onNavigate={handleDeepNavigate}
                                 />
                             </p>

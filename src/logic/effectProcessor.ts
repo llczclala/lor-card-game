@@ -25,6 +25,18 @@ import { emitCostReduceVFX } from './costReduceVFX';
 //   ── 飞剑由本文件的 FLYING_SWORD 分支直接塞进交战区，进场路径只切 phase、从不经 commitAttack
 //      ⇒ 倒计时整段不执行、信标一声不响。此处按**实际召出把数**补结算（程 2026-10-09 拍板：每把算 1 次进攻）。
 import { applyBeaconFuse, type BeaconSide } from '../utils/beaconFuse';
+// [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」] 账本唯一自增入口（**绝不**直接写 `buffs.power`）：
+//   · `bumpKatyaDrain`  = 倾泻扣掉的攻击力（D）。`buffs.power` 由 `stampKatyaCard` 独占反写，
+//     这里若自己去改 `buffs.power`，下一次幂等贴值会把它静默覆盖（`utils/katyaProgress.ts:34-37`）。
+//   · `bumpKatyaDamage` = 累计伤害（升级进度 18 → Lv2）
+//   · `getKatyaStats`   = 账本口径的有效攻击力（场上找不到凯茜娅本体时的兜底读法）
+import { bumpKatyaDamage, bumpKatyaDrain, getKatyaStats, KATYA_KEY, addKatyaBarrageCostDown, addKatyaBarrageObserverBonus, getKatyaBarrageObserverBonus, tryTakeKatyaObserverShot } from '../utils/katyaProgress';
+// [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」]
+//   本回合账本：`armFrenzy` 武装（含**回溯**本回合已打出的发数）/ `bumpFrenzyPierce` **每一发** +1 / `isFrenzyArmed` 读取。
+//   ⚠️ 口径（程 2026-11-14 修订）：「每倾泻 3 次」的「次」= **一发** ⇒ 埋点在 `case 'BARRAGE'` 的**发循环内部**
+//      （打单位档 / 打水晶档各一处），不是"一张卡一记"。
+//   AOE 本身仍由本 case 收尾统一补（`runFrenzyAoe`）—— 发循环里只记账，免得中途清场把发数算乱。
+import { FRENZY_EVERY, FRENZY_MAX_TRIGGERS_PER_SETTLE, armFrenzy, bumpFrenzyPierce, getFrenzyPierced, getFrenzyShots, isFrenzyArmed } from '../utils/katyaFrenzy';
 
 // ==========================================
 // [2026-08-15 莉莉子] 泰坦降临·预算均衡拆分（程重定义设计）
@@ -190,16 +202,90 @@ export interface EffectParams {
     useDiscardCount?: boolean;   // 亡语弃牌计数
     reduceCostIfDuplicate?: boolean; // 手牌重复减费
     nexusFallback?: boolean;     // 无合法目标时回退水晶
+    /**
+     * [2026-11-14 莉莉子 · 程拍板「延续」] `RANDOM_WOUNDED_ALLY` 的第二级兜底：
+     * 受伤池空 ⇒ 退到「任意存活友军」（满血也选，治疗量结算 0，演出照常）。
+     * ⚠️ 与 `data/effectRegistry.ts` 的 EffectParams **必须同步**（两处各有一份，见 I01）。
+     * 优先级：受伤友军 > `fallbackToAny` > `nexusFallback` > 空过。
+     */
+    fallbackToAny?: boolean;
     // =====================================
     // [2026-10-23 莉莉子] 三张新法术所需开关
     //   ⚠️ 与 effectRegistry.ts 的 EffectParams **必须同步**（两处各有一份，见 I01）
     // =====================================
     valueFromAllyPower?: boolean;   // [崩坏] 伤害取第 1 目标的当前攻击力
-    drawFilter?: 'champion' | 'unit';          // [同行] 过滤抽取
-    drawFallbackFilter?: 'champion' | 'unit';  // [同行] 兜底抽取
+    // [2026-11-14 莉莉子 · 凯茜娅 L4「紧急补给」] 过滤抽取新增 `'spell'`：
+    //   卡面「抽至多 3 张法术牌」⇒ 必须能按**卡型**筛法术（`type` 以 `spell` 开头）。
+    drawFilter?: 'champion' | 'unit' | 'spell';          // [同行/凯茜娅] 过滤抽取
+    drawFallbackFilter?: 'champion' | 'unit' | 'spell';  // [同行/凯茜娅] 兜底抽取
     discardAll?: boolean;           // [回收] 弃置全部手牌
     drawAfterDiscard?: number;      // [回收] 弃置全部后抽 N 张
     manaGainAfter?: number;         // [回收] 弃置全部后恢复 N 点法力值
+    /**
+     * [2026-11-14 莉莉子 · 凯茜娅 L4「紧急补给」] 手牌满时**停止抽牌**（不烧牌）。
+     * ── 缺省 `false` = 保持既有「爆牌销毁」行为（`DRAW` case 内 `HAND_MAX` 那一段），
+     *    其余所有 DRAW 使用者逐字不变。
+     * ── 为什么这张卡要开：卡面是「抽**至多** 3 张」，手牌已满时抽到的牌被销毁 = 净损失，
+     *    与「至多」的承诺相悖。
+     */
+    stopWhenHandFull?: boolean;
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」] BARRAGE 类参数
+    //   ⚠️ 与 data/effectRegistry.ts 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    damage?: number;                // BARRAGE：每一发的伤害（倾泻 = 2）
+    lv2UnlockNexus?: boolean;       // BARRAGE：true ⇒ 水晶目标需施法者 Lv2
+    barrageObserverBonus?: number;  // BARRAGE：观察员累计加成（L4 接账本前恒读 0）
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4 四张卡] 通用参数补丁
+    //   ⚠️ 与 data/effectRegistry.ts 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    /** [梅莉桑德] 每次打击「倾泻」永久 −N（`KATYA_BARRAGE_COST_DOWN` 类读取，缺省 1） */
+    katyaBarrageCostDown?: number;
+    /** [滞空碎星] 生成张数（缺省 1 —— 与改前「一次生成一张」逐字等价） */
+    generateCount?: number;
+    /**
+     * [滞空碎星] 第 1 目标（`finalTargets[0]`）**已受伤**（`damageTaken > 0`）时的生成张数。
+     * ── 为什么做成参数而不是「两个效果 + 条件」：`GENERATE` 的张数取决于**玩家点选的那个目标**
+     *    的实时状态，而 `spells.ts:93` 把同一份 `targets` 依次喂给链上每个效果
+     *    ⇒ 第二个效果（GENERATE）能拿到第 1 个效果（冻结）选中的那个 id，
+     *    张数在这里现算一次即可，不需要"条件效果"这种层。
+     */
+    generateCountIfWounded?: number;
+    /**
+     * [滞空碎星] 生成物改写费用（0 费「暗箭」）。
+     * ── 同时写 `cost` 与 `costOverride`：前者是**卡面/实扣**读的那一格
+     *    （`getEffectiveSpellCost` 读 `card.cost`），后者是**整卡重建时保留**的标记
+     *    （`utils/gameRules.ts:920` 的 `carryCostOverride`）。
+     *    ⚠️ 与 `data/roguelike/buffs.ts` 里 GENERATE 的 `costOverride` 参数同名同义。
+     */
+    costOverride?: number;
+    /** [紧急补给] `SPELL_MANA_GAIN` 改为**回满**（口径同 `useRoundLifecycle.ts:1059-1061`） */
+    fillToCap?: boolean;
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 「映现·奥德涅」] GENERATE 的「按费用随机挑」三件套
+    //   ⚠️ 与 data/effectRegistry.ts 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    /** 随机生成模式：不给 `generateKey`，改按「费用 ≤ N」从池子里随机取（口径见注册表注释） */
+    randomFromCostAtMost?: number;
+    /** 随机池来源：`'spell'` = 只挑法术牌（`type.startsWith('spell')`） */
+    randomPool?: 'spell';
+    /** 前置条件：本方手牌里必须存在这些 key 之一，否则整段不执行（精确匹配 `card.key`） */
+    requireInHandKey?: string[];
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅最后两张卡]
+    //   ⚠️ 与 data/effectRegistry.ts 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    /** [狂乱 / ARM_FRENZY] 「每倾泻 N 次」的 N（缺省 = `utils/katyaFrenzy.ts` 的 `FRENZY_EVERY`） */
+    every?: number;
+    /** [狂乱 / ARM_FRENZY] 每跳 AOE 伤害（**执行真源**是同名 AOE 效果的 `value`；不一致会 warn） */
+    aoeDamage?: number;
+    /** [穿云激流 / BARRAGE] `true` ⇒ 「消耗全部攻击力随机倾泻 + 击杀续打」分支 */
+    pierceLoop?: boolean;
+    /** [穿云激流] 每击杀 1 个敌方单位 → 敌方水晶受到的伤害（缺省 2） */
+    killNexusDamage?: number;
+    /** [穿云激流] 每击杀 1 个敌方单位 → 给予的 +N/+0（写 `roundBuffs.power`，缺省 2） */
+    killGrantPower?: number;
 }
 
 /**
@@ -482,6 +568,87 @@ export const processEffect = (
     }
 
     // =============================================
+    // [2026-11-13 莉莉子] targetFilter —— **通用**随机目标解析入口
+    // ── 为什么要在这里补：改之前 `targetFilter` 全项目**只有一处**消费者 ——
+    //      `useGameState.ts:4295-4321`，那是在 `ON_FIRST_NEXUS_STRIKE`（鬼怪小队首次打击水晶）
+    //      的特化上下文里手搓的，且**只处理友方**。
+    //      普通法术走的是 `processEffect` 的 `BUFF`/`STRIKE`/`HEAL` 分支，而那些分支
+    //      只遍历 `finalTargets` ⇒ 数据侧写了 `targetFilter` **等于没写**（静默空过）。
+    //      （`EffectParams.targetFilter` 一直是死字段，只剩类型声明）
+    // ── 为什么放在这里：它必须早于 `switch (effect.class)`，且晚于
+    //      `targetRequirements` 的自动填充（`ENEMY_NEXUS`/`SELF`/`ALL_ALLIES` 先占位，
+    //      随机目标只补空位）——这是**唯一**能让 BUFF / STRIKE / HEAL 三个分支
+    //      同时获得随机目标的位置，不必改任何分支内部。
+    // ── 取舍：只在 `finalTargets` 为空时生效。「随机」的语义是**效果自己挑**，
+    //      绝不能覆盖玩家已经点选的目标。
+    // ── 视角（`code.md`「敌我判断黄金法则」）：`context.owner` 是施法者。
+    //      'ally' = 施法者本方，'enemy' = 对面；水晶同理 —— 施法者永远打**对面**的水晶。
+    // =============================================
+    const targetFilter = effect.params?.targetFilter;
+    if (targetFilter && finalTargets.length === 0) {
+        const casterSide: Side = context.owner;
+        const foeSide: Side = casterSide === 'player' ? 'enemy' : 'player';
+        // 对面水晶的绝对坐标（与 `useGameState.ts:4241` 的 `nexusFallbackTarget` 同口径）
+        const foeNexusTarget = casterSide === 'player' ? 'enemy_nexus' : 'player_nexus';
+
+        // 存活判定：与 `useGameState.ts:4269-4272` 逐字一致（尸体不参与随机池）
+        const isLiveUnit = (c?: CardData | null): boolean =>
+            !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+
+        // 收集某一方的存活单位（备战席 + 交战区）
+        // 归属约定：attacker 属 `fight.owner`，blocker 属其对面（与 `useGameState.ts:4261-4268` 同源）
+        const collectLive = (side: Side): CardData[] => {
+            const out: CardData[] = [];
+            (side === 'player' ? nextPlayerBench : nextEnemyBench).forEach(c => {
+                if (isLiveUnit(c)) out.push(c);
+            });
+            (nextCombatField || []).forEach((fight: any) => {
+                if (!fight) return;
+                if (fight.attacker && fight.owner === side && isLiveUnit(fight.attacker)) out.push(fight.attacker);
+                if (fight.blocker && fight.owner !== side && isLiveUnit(fight.blocker)) out.push(fight.blocker);
+            });
+            return out;
+        };
+
+        const pickRandom = <T,>(pool: T[]): T | null =>
+            pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : null;
+
+        if (targetFilter === 'RANDOM_ALLY') {
+            const pick = pickRandom(collectLive(casterSide));
+            if (pick) finalTargets = [{ type: 'ally', id: pick.id }];
+        } else if (targetFilter === 'RANDOM_WOUNDED_ALLY') {
+            // [2026-11-14 莉莉子 · 程拍板「延续」治疗兜底]
+            //   三级优先级：① 受伤友军 → ② `fallbackToAny`：任意存活友军（满血也选）→ ③ `nexusFallback`：本方水晶。
+            //   ② 排在 ③ 之前：「治疗一个友方单位」比「改奶水晶」更贴近卡面文字；
+            //   两者同时开时以 ② 为准（当前唯一使用者「延续」只开了 ②）。
+            const allies = collectLive(casterSide);
+            const pick = pickRandom(allies.filter(u => (u.damageTaken || 0) > 0)) ?? (
+                effect.params?.fallbackToAny ? pickRandom(allies) : null
+            );
+            if (pick) {
+                finalTargets = [{ type: 'ally', id: pick.id }];
+            } else if (effect.params?.nexusFallback) {
+                // 无受伤友军 ⇒ 回退**本方**水晶（与 `useGameState.ts:4306` 同口径）
+                const ownNexus = casterSide === 'player' ? 'player_nexus' : 'enemy_nexus';
+                finalTargets = [{ type: ownNexus, id: ownNexus }];
+            }
+            // 三级全空（本方场上**一个存活单位都没有**，且没开 nexusFallback）⇒ 保持空目标，效果自然空过。
+            //   ⇒ 这是「延续」唯一可能空过的情况（HEAL 分支对空 `finalTargets` 是 forEach 空转，不抛错）。
+        } else if (targetFilter === 'RANDOM_ENEMY') {
+            const pick = pickRandom(collectLive(foeSide));
+            // 敌方空池 ⇒ 不选目标（BUFF/STRIKE/HEAL 的既有空转路径接手，不抛错）
+            if (pick) finalTargets = [{ type: 'enemy', id: pick.id }];
+        } else if (targetFilter === 'RANDOM_ENEMY_OR_NEXUS') {
+            // 单位与水晶**同权**：先组池再随机一次 —— 单位空池时唯一候选就是水晶（天然兜底）
+            const pool: { type: string; id: string }[] =
+                collectLive(foeSide).map(u => ({ type: 'enemy', id: u.id }));
+            pool.push({ type: foeNexusTarget, id: foeNexusTarget });
+            const pick = pickRandom(pool);
+            if (pick) finalTargets = [pick];
+        }
+    }
+
+    // =============================================
     // [2026-07-14 锻造者] 法术增伤光环检测
     // 检查施法者方场上是否有缇坦妮娅（法术伤害+1）
     // =============================================
@@ -529,6 +696,72 @@ export const processEffect = (
         const cardMult = spellResolveSum('damageMult');
         if (cardMult > 1) mult *= cardMult;
         return mult;
+    };
+
+    // =====================================
+    // [2026-11-14 莉莉子 ✨ · 卡「溯时双翼·狂乱」] AOE 的**唯一执行器**（武装回溯 / 每发推进共用同一份）
+    // ── AOE 复用通用原语 `effect_katya_frenzy_aoe`（STRIKE + `targetAllEnemies` +
+    //    **显式 `enlightenOverwhelm: false`**，否则 maxMana ≥ 10 会白送「全场碾压」）。
+    // ── 嵌套 `processEffect` 是仓库既有范式（同文件 `onDamageSurviveCheck` 里
+    //    `:6229` / `:6268` 两处，以及 `processOnGetAttackToken` 的 `:6347`）。
+    // ── `sourceCard` **刻意不传**：狂乱的真实伤害只有 AOE 效果里写的那 1 点，
+    //    不该继承「倾泻」那张卡身上的卡级增伤装备（`spellResolveSum` 读 `sourceCard.equipment`）。
+    // ── 为什么定义在 `switch` 之前：武装回溯（`case 'ARM_FRENZY'`，switch 内）与
+    //    每发结算的收尾（switch 之后）**都要用**，写两份必然漂移。
+    // =====================================
+    /** 本张卡结算期间攒下的狂乱跳数（每发推进时累加，结算完统一补 AOE） */
+    let frenzyPendingHops = 0;
+    let frenzyPendingSide: Side | null = null;
+
+    const runFrenzyAoe = (side: Side, hops: number): number => {
+        const n = Math.max(0, Math.floor(hops));
+        if (n <= 0) return 0;
+        if (n > FRENZY_MAX_TRIGGERS_PER_SETTLE) {
+            // ⚠️ **不截断**：截断会让账本已推进的跳数与实伤分叉（多打/少打都对不上卡面）。
+            //    这里只自证"这是异常数据，不是数值算错"。
+            console.warn(`[Frenzy] 单次结算要补 ${n} 跳，超过告警阈值 ${FRENZY_MAX_TRIGGERS_PER_SETTLE} ⇒ 照常结算`);
+        }
+        for (let h = 0; h < n; h++) {
+            const frenzyCtx: EffectContext = {
+                game: nextGame,
+                playerBench: nextPlayerBench,
+                enemyBench: nextEnemyBench,
+                playerHand: nextPlayerHand,
+                enemyHand: nextEnemyHand,
+                playerDeck: nextPlayerDeck,
+                enemyDeck: nextEnemyDeck,
+                combatField: nextCombatField,
+                owner: side,
+            };
+            const res = processEffect('effect_katya_frenzy_aoe', [], frenzyCtx);
+            if (res.game) nextGame = res.game;
+            if (res.playerBench) nextPlayerBench = res.playerBench;
+            if (res.enemyBench) nextEnemyBench = res.enemyBench;
+            if (res.playerHand) nextPlayerHand = res.playerHand;
+            if (res.enemyHand) nextEnemyHand = res.enemyHand;
+            if (res.playerDeck) nextPlayerDeck = res.playerDeck;
+            if (res.enemyDeck) nextEnemyDeck = res.enemyDeck;
+            if (res.combatField) nextCombatField = res.combatField;
+            if (res.events.length > 0) events.push(...res.events);
+        }
+        events.push({
+            type: 'katya_frenzy_trigger',
+            payload: { side, triggers: n, pierced: getFrenzyPierced(side) },
+        });
+        console.log(`[Frenzy] ${side} 触发狂乱 ${n} 跳 ⇒ 敌方全体 ${n} 点（本回合已打出 ${getFrenzyShots(side)} 发，余 ${getFrenzyPierced(side)} 发待满跳）`);
+        return n;
+    };
+
+    /**
+     * 倾泻**每一发**的记账口：推进狂乱账本，把跳数攒进 `frenzyPending*`，
+     * 等本张卡结算完再由 `runFrenzyAoe` 统一补（发循环里炸 AOE 会中途清场，把发数算乱）。
+     */
+    const noteFrenzyShot = (side: Side): void => {
+        const r = bumpFrenzyPierce(side);
+        if (r.triggers > 0) {
+            frenzyPendingHops += r.triggers;
+            frenzyPendingSide = side;
+        }
     };
 
     // --- 根据效能类型 (Class) 分发逻辑 ---
@@ -3773,7 +4006,10 @@ export const processEffect = (
             const NEXUS_MAX_HP = 20;
 
             // [2026-07-10 精灵小队] 自动目标解析：无目标参数时自动检索
-            if (finalTargets.length === 0 && effect.targetRequirements.length === 0) {
+            // [2026-11-13 莉莉子] 多一个否定条件：**声明了 `targetFilter` 的效果不走「治疗自身」兜底**。
+            //   随机池为空（如全场没有受伤友军）时语义是「本次不结算」；
+            //   旧写法会把法术卡自己当治疗目标 ⇒ 白跑一趟（还可能留下误导性日志）。
+            if (finalTargets.length === 0 && effect.targetRequirements.length === 0 && !effect.params?.targetFilter) {
                 if (effect.params?.targetCondition === 'all_injured') {
                     // 斯涅妮卡：治疗所有受伤友方（备战席+交战区）
                     const bench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
@@ -4305,11 +4541,17 @@ export const processEffect = (
             // ── 主筛选（drawFilter）找不到时，按 drawFallbackFilter 再抽一张兜底；
             //    两者都找不到 ⇒ 本效果空转（一张都不抽，也不爆牌）。
             // =====================================
-            const matchesDrawFilter = (card: CardData, filter: 'champion' | 'unit'): boolean => {
+            // [2026-11-14 莉莉子 · 凯茜娅 L4「紧急补给」] 新增 `'spell'` 分支。
+            //   卡型判据用 `startsWith('spell')` 而不是 `includes('spell')` ——
+            //   与 `utils/gameRules.ts:74-76` 的既有口径**逐字同源**（`CardType` 是闭合四值联合
+            //   `'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow'`，两种写法对当前数据等价，
+            //   但将来新增卡型时前缀写法不会把 `xxx-spell` 之类误判成法术）。`unit` 那格保持原样。
+            const matchesDrawFilter = (card: CardData, filter: 'champion' | 'unit' | 'spell'): boolean => {
                 if (filter === 'champion') return card.isChampion === true;
+                if (filter === 'spell') return typeof card.type === 'string' && card.type.startsWith('spell');
                 return typeof card.type === 'string' && card.type.includes('unit');
             };
-            const poolIndicesOf = (filter: 'champion' | 'unit'): number[] =>
+            const poolIndicesOf = (filter: 'champion' | 'unit' | 'spell'): number[] =>
                 deck.reduce<number[]>((acc, c, idx) => { if (matchesDrawFilter(c, filter)) acc.push(idx); return acc; }, []);
 
             for (let i = 0; i < drawCount; i++) {
@@ -4325,7 +4567,7 @@ export const processEffect = (
                     const primary = effect.params.drawFilter;
                     const fallback = effect.params.drawFallbackFilter;
                     let pool = poolIndicesOf(primary);
-                    let hitFilter: 'champion' | 'unit' = primary;
+                    let hitFilter: 'champion' | 'unit' | 'spell' = primary;
                     if (pool.length === 0 && fallback) {
                         pool = poolIndicesOf(fallback);
                         hitFilter = fallback;
@@ -4339,6 +4581,17 @@ export const processEffect = (
                 }
 
                 if (ownerHand.length >= HAND_MAX) {
+                    // =====================================
+                    // [2026-11-14 莉莉子 · 凯茜娅 L4「紧急补给」] 可选保护：**手牌满就停手**。
+                    // ── 缺省（未开 `stopWhenHandFull`）= 既有行为：烧掉**被选中那张**并继续循环，
+                    //    其余所有 DRAW 使用者（「同行」「回收」…）逐字不变。
+                    // ── 开了就是「抽**至多** N 张」的严格语义：一张都不销毁，直接停。
+                    //    ⚠️ 停在**取牌之前** ⇒ 牌库与手牌都不动（不是"先抽再扔"）。
+                    // =====================================
+                    if (effect.params.stopWhenHandFull) {
+                        console.log(`[Draw] 手牌已满 ${HAND_MAX} 张 ⇒ 按 stopWhenHandFull 停止抽牌（不销毁牌库牌）`);
+                        break;
+                    }
                     // 爆牌：被**选中那张**照样销毁（与顶部抽牌同口径，而不是永远烧牌库顶）
                     const burnedCard = deck.splice(pickIdx, 1)[0];
                     console.log(`[Draw] 手牌已满 ${HAND_MAX} 张，${burnedCard.name} 被爆牌销毁`);
@@ -4360,14 +4613,77 @@ export const processEffect = (
         // =====================================
         case 'GENERATE': {
             const genKey = effect.params.generateKey as string;
-            if (!genKey) {
+            // =====================================
+            // [2026-11-14 莉莉子 ✨新功能 · 「映现·奥德涅」] ① 前置条件：若 X 在手牌
+            // ── 语义：`requireInHandKey` 里**任意一个** key 出现在本方手牌 ⇒ 放行；否则本效果**整段不执行**。
+            // ── 为什么不用 `params.condition` / `presenceRequirement`：前者是效果级的
+            //    `targetCondition` 暗号（走 `isValidTarget`，只作用于**单位目标**），
+            //    后者（`presenceRequirement`）扫的是**备战席 / 交战区**，**不含手牌**
+            //    （`useGameState.ts:3057-3065` 与 `effectProcessor` 的 onDamagedGenerate 段都是这个口径）。
+            //    卡面写的是「若“凯茜娅·狂诗”**在手牌**」⇒ 必须新开一个手牌口径，不能借用。
+            // =====================================
+            const genRequiredInHand = effect.params.requireInHandKey;
+            if (genRequiredInHand && genRequiredInHand.length > 0) {
+                const myHandForCheck = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+                const handHit = myHandForCheck.some(c => genRequiredInHand.includes(c.key));
+                if (!handHit) {
+                    console.log(`[Generate] 前置条件不成立（手牌里没有 [${genRequiredInHand.join(' / ')}]）⇒ 本效果空转`);
+                    break;
+                }
+            }
+
+            // =====================================
+            // [2026-11-14 莉莉子 ✨新功能 · 「映现·奥德涅」] ②「按费用随机挑」模式
+            // ── 卡面是「生成 2 张【瞬逝】**低费法术**」——没有指定是哪张 ⇒ 现有 GENERATE（只吃
+            //    `generateKey` 固定一张）表达不了。这里加一条**正交**的旁路：不给 key，给池子。
+            // ── 池子优先级（本批口径）：
+            //      ① 本方**牌库**里符合「法术 且 费用 ≤ N」的**不同 key** —— 优先用牌库，
+            //         保证生成物**属于这套牌**（不会凭空冒出别阵营的牌），且不消耗牌库（只借 key）；
+            //      ② 牌库一张都没有 ⇒ 退化为**同阵营全局卡池**（`CARD_DB` 里 `region` 相同 + 可收藏），
+            //         否则「牌库洗完后这张卡等于空过」，与卡面「生成」的承诺不符。
+            // ── 「法术」判据 `type.startsWith('spell')`：与 `utils/gameRules.ts:74-76` 逐字同源。
+            // ── ✅ 低费口径 = **费用 ≤ 3**（[2026-11-14 程拍板] 定稿，原保守值 2 已废；
+            //    数字的唯一真源是数据侧 `effect.params.randomFromCostAtMost`，本文件只读不算）。
+            // =====================================
+            const genRandCostCap = effect.params.randomFromCostAtMost;
+            const genRandomMode = genRandCostCap !== undefined && effect.params.randomPool === 'spell';
+            if (!genKey && !genRandomMode) {
                 console.warn("[Generate] 缺少 generateKey，无法生成卡牌。");
                 break;
+            }
+            const genRandomPoolKeys: string[] = [];
+            if (genRandomMode) {
+                const cap = Math.max(0, Math.floor(genRandCostCap as number));
+                // ⚠️ 形参写成结构子集 `{ type?, cost? }`：`CARD_DB` 的值类型是
+                //    `Omit<CardData, 'id'|'strikeCount'|'animState'|'damageTaken'|'buffs'>`（卡面模板），
+                //    直接标 `CardData` 会让 `tsc -b` 报 TS2345（模板缺运行时字段）。
+                const matchesCheapSpell = (c: { type?: string; cost?: number }): boolean =>
+                    typeof c.type === 'string' && c.type.startsWith('spell') && ((c.cost ?? 0) <= cap);
+                const ownerDeck = context.owner === 'player' ? nextPlayerDeck : nextEnemyDeck;
+                const deckKeys = Array.from(new Set((ownerDeck ?? []).filter(matchesCheapSpell).map(c => c.key)));
+                if (deckKeys.length > 0) {
+                    genRandomPoolKeys.push(...deckKeys);
+                } else {
+                    // 兜底池：**同阵营**全局卡池（不跨阵营 —— 生成的牌必须属于这套牌的语言）
+                    const ownerRegion = context.sourceCard?.region;
+                    const globalKeys = Object.values(CARD_DB)
+                        .filter(c => matchesCheapSpell(c)
+                            && c.isCollectible !== false
+                            && (!ownerRegion || c.region === ownerRegion))
+                        .map(c => c.key);
+                    genRandomPoolKeys.push(...Array.from(new Set(globalKeys)));
+                    console.log(`[Generate] 牌库无 ≤${cap} 费法术 ⇒ 退化为同阵营全局卡池（${genRandomPoolKeys.length} 个 key）`);
+                }
+                if (genRandomPoolKeys.length === 0) {
+                    console.warn(`[Generate] 费用 ≤${cap} 的法术池为空 ⇒ 本效果空转（不生成任何牌）`);
+                    break;
+                }
+                console.log(`[Generate] 随机池（≤${cap} 费法术）：${genRandomPoolKeys.join(', ')}`);
             }
             const targetHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
 
             // [2026-07-17 鸦眼小队] 重复减费模式：若手牌中已有该卡牌，则减费而非生成
-            if (effect.params.reduceCostIfDuplicate) {
+            if (effect.params.reduceCostIfDuplicate && genKey) {
                 const existingIdx = targetHand.findIndex(c => c.key === genKey);
                 if (existingIdx !== -1) {
                     const updated = { ...targetHand[existingIdx] };
@@ -4381,46 +4697,96 @@ export const processEffect = (
                 }
             }
 
-            let newCard = createCard(genKey);
-            // [2026-07-30 安卡希雅] 灵轨月轮模式 & Lv2升阶：生成扩散→根据状态决定替换
-            if (genKey === 'acacia_sword_rain') {
-                // 先检测安卡是否已升级到 Lv2 → 生成月镰剑势，忽略集束/扩散模式
-                const ownerBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
-                const isAcaciaLv2 = ownerBench.some(c => c.key === 'acacia_chrono_echo' && c.level === 2);
-                if (isAcaciaLv2) {
-                    newCard = createCard('acacia_sword_rain_alt');
-                    console.log(`[安卡Lv2] 灵轨月轮·扩散 → 月镰剑势 (升级生效)`);
-                } else {
-                    // Lv1：检测集束模式
-                    const focusMode = context.owner === 'player'
-                        ? nextGame.playerAcaciaSwordFocus
-                        : nextGame.enemyAcaciaSwordFocus;
-                    if (focusMode) {
-                        newCard = createCard('acacia_moon_focus');
-                        console.log(`[圆缺有律·生效] 灵轨月轮·扩散 → 灵轨月轮·集束 (模式生效)`);
+            // =====================================
+            // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4「滞空碎星」] 生成张数 / 费用改写
+            // ── 三个新参数，缺省值让「一次生成一张、不改费用」的老行为**逐字不变**：
+            //      · `generateCount`          张数（缺省 1）
+            //      · `generateCountIfWounded` 第 1 目标**已受伤**时改用这个张数（滞空碎星 2 → 3）
+            //      · `costOverride`           生成物改写费用（0 费「暗箭」）
+            // ── 「已受伤」判据 = `damageTaken > 0` —— 与 `targetFilter: 'RANDOM_WOUNDED_ALLY'`
+            //    （本文件 `:582`）以及 `targetCondition: 'injured'` 同一口径。
+            // ── 目标从哪来：`spells.ts:93` 把**同一份** `targets` 顺序喂给链上每个效果
+            //    ⇒ 本条（链上第 2 段）收到的 `finalTargets[0]` 正是第 1 段「冻结」时玩家点选的那个。
+            //    找不到（目标已离场 / 单独调试本效果）⇒ 回落 `generateCount`（2 张）。
+            // ── ⚠️ 手牌上限 10：满手时那一张**仍然会被销毁**（既有行为，本批不改，
+            //    与卡 1 的注释同口径）。多张生成时，第一张被销毁即 `break`，不再空转日志。
+            // =====================================
+            const genCount = Math.max(1, Math.floor(effect.params.generateCount ?? 1));
+            const genWoundedParam = effect.params.generateCountIfWounded;
+            let genFinalCount = genCount;
+            if (genWoundedParam !== undefined) {
+                const genTargetId: string | undefined = finalTargets[0]?.id;
+                const genIsLive = (c?: CardData | null): boolean =>
+                    !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+                const genTarget: CardData | undefined = genTargetId
+                    ? ([...nextPlayerBench, ...nextEnemyBench].find(c => c.id === genTargetId && genIsLive(c))
+                        ?? (nextCombatField || [])
+                            .map((f: any) => (f?.attacker?.id === genTargetId ? f.attacker
+                                : f?.blocker?.id === genTargetId ? f.blocker : null))
+                            .find((c: CardData | null): c is CardData => genIsLive(c))
+                        ?? undefined)
+                    : undefined;
+                if (genTarget && (genTarget.damageTaken || 0) > 0) {
+                    genFinalCount = Math.max(1, Math.floor(genWoundedParam));
+                    console.log(`[Generate] 目标 ${genTarget.name} 已受伤（damageTaken=${genTarget.damageTaken}）⇒ 生成张数 ${genCount}→${genFinalCount}`);
+                }
+            }
+            const genCostOverride = effect.params.costOverride;
+
+            for (let genI = 0; genI < genFinalCount; genI++) {
+                // [2026-11-14 「映现·奥德涅」] 随机模式下**每张各抽一次**（两张可能不同）
+                const genKeyThis = genRandomMode
+                    ? genRandomPoolKeys[Math.floor(Math.random() * genRandomPoolKeys.length)]
+                    : genKey;
+                let newCard = createCard(genKeyThis);
+                // [2026-07-30 安卡希雅] 灵轨月轮模式 & Lv2升阶：生成扩散→根据状态决定替换
+                //   ⚠️ 随机池模式下 `genKey` 为空 ⇒ 本段整体跳过（它是「安卡那张卡」专属的转换链）
+                if (!genRandomMode && genKey === 'acacia_sword_rain') {
+                    // 先检测安卡是否已升级到 Lv2 → 生成月镰剑势，忽略集束/扩散模式
+                    const ownerBench = context.owner === 'player' ? nextPlayerBench : nextEnemyBench;
+                    const isAcaciaLv2 = ownerBench.some(c => c.key === 'acacia_chrono_echo' && c.level === 2);
+                    if (isAcaciaLv2) {
+                        newCard = createCard('acacia_sword_rain_alt');
+                        console.log(`[安卡Lv2] 灵轨月轮·扩散 → 月镰剑势 (升级生效)`);
+                    } else {
+                        // Lv1：检测集束模式
+                        const focusMode = context.owner === 'player'
+                            ? nextGame.playerAcaciaSwordFocus
+                            : nextGame.enemyAcaciaSwordFocus;
+                        if (focusMode) {
+                            newCard = createCard('acacia_moon_focus');
+                            console.log(`[圆缺有律·生效] 灵轨月轮·扩散 → 灵轨月轮·集束 (模式生效)`);
+                        }
                     }
                 }
-            }
-            // [安卡希雅] 生成的卡牌若需易逝(Volatile)，追加关键词
-            // [2026-10-06 程实测 BUG修复] **追加前去重** —— 安卡的「灵轨月轮·扩散」/「月镰剑势」
-            //   **卡面自带** `Volatile`（`cards.ts:433/442/451`），而效果参数又写了 `isVolatile: true`
-            //   （`effectRegistry.ts:1690/1700/1711/1721`）⇒ 旧写法堆成 `['Volatile','Volatile']`
-            //   ⇒ 卡面出现**两个「瞬逝」图标**。（其余追加点都用 Set：`useRoundLifecycle.ts:544`、`keywords.ts:503`。）
-            if (effect.params.isVolatile) {
-                newCard = { ...newCard, keywords: Array.from(new Set([...(newCard.keywords || []), 'Volatile' as any])) };
-            }
-            if (targetHand.length < 10) {
-                // [2026-09-04 莉莉子 修复] 同 id 去重：同一实例若已在该手牌（事件重复双触），不再追加，防 React key 撞车
-                if (!targetHand.some(c => c.id === newCard.id)) {
-                    targetHand.push(newCard);
-                    // [2026-07-09] 改为 sfx_generate 事件，由动画层处理"中央展示→飞入手中"
-                    events.push({ type: 'sfx_generate', payload: newCard });
-                    console.log(`[GenerateDebug] 生成了 ${newCard.name} 到 ${context.owner} 手牌 (effect=${effect.id})`);
-                } else {
-                    console.warn(`[Generate] ⚠️ ${newCard.name} 已在手牌（id=${newCard.id}），跳过重复生成`);
+                // [安卡希雅] 生成的卡牌若需易逝(Volatile)，追加关键词
+                // [2026-10-06 程实测 BUG修复] **追加前去重** —— 安卡的「灵轨月轮·扩散」/「月镰剑势」
+                //   **卡面自带** `Volatile`（`cards.ts:433/442/451`），而效果参数又写了 `isVolatile: true`
+                //   （`effectRegistry.ts:1690/1700/1711/1721`）⇒ 旧写法堆成 `['Volatile','Volatile']`
+                //   ⇒ 卡面出现**两个「瞬逝」图标**。（其余追加点都用 Set：`useRoundLifecycle.ts:544`、`keywords.ts:503`。）
+                if (effect.params.isVolatile) {
+                    newCard = { ...newCard, keywords: Array.from(new Set([...(newCard.keywords || []), 'Volatile' as any])) };
                 }
-            } else {
-                console.log(`[Generate] 手牌已满(10/10)，${newCard.name} 被销毁`);
+                // [2026-11-14 莉莉子 · 滞空碎星] 费用改写：`cost`（卡面/实扣读它）+ `costOverride`
+                //   （整卡重建时保留，见 `utils/gameRules.ts:920` 的 `carryCostOverride`）
+                if (genCostOverride !== undefined) {
+                    const overrideCost = Math.max(0, Math.floor(genCostOverride));
+                    newCard = { ...newCard, cost: overrideCost, costOverride: overrideCost };
+                }
+                if (targetHand.length < 10) {
+                    // [2026-09-04 莉莉子 修复] 同 id 去重：同一实例若已在该手牌（事件重复双触），不再追加，防 React key 撞车
+                    if (!targetHand.some(c => c.id === newCard.id)) {
+                        targetHand.push(newCard);
+                        // [2026-07-09] 改为 sfx_generate 事件，由动画层处理"中央展示→飞入手中"
+                        events.push({ type: 'sfx_generate', payload: newCard });
+                        console.log(`[GenerateDebug] 生成了 ${newCard.name} 到 ${context.owner} 手牌 (effect=${effect.id})`);
+                    } else {
+                        console.warn(`[Generate] ⚠️ ${newCard.name} 已在手牌（id=${newCard.id}），跳过重复生成`);
+                    }
+                } else {
+                    console.log(`[Generate] 手牌已满(10/10)，${newCard.name} 被销毁`);
+                    break; // 满手后后续张数同样无法落地 ⇒ 停止，不刷 N 条空日志
+                }
             }
             break;
         }
@@ -4615,6 +4981,105 @@ export const processEffect = (
         }
 
         // =============================================
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「誊抄」] 机制：给**手牌实例**追加关键词
+        // ── 语义：把 `params.keywords` 并进 `finalTargets[0]` 指向的**那一张手牌实例**的关键词表。
+        // ── ⚠️ 只改实例，**绝不碰 `CARD_DB`**：那是模块级常量，改了会**跨局污染**
+        //    （同 `utils/gameRules.ts:1402` 记的那条警告：模板被写坏 = 之后所有对局的这张卡都带着它）。
+        // ── 写回出口与前例 `COST_REDUCE`（本文件 `:4780`）逐字同源：
+        //      · 本方 `nextPlayerHand = [...hand]` / `nextEnemyHand = [...hand]`
+        //      · 由 `logic/spells.ts` 的效果链累加器把 `playerHand` 逐段接回去（`:100` / `:207`）
+        //    —— 不要新增第二个写回通道。
+        // ── 为什么读 `finalTargets[0].id` 而不是重新算"哪张合法"：
+        //    合法性已由 `useSpellSystem.isValidTarget` 的 `HAND_CARD` 分支（含 `excludeKeywords`）挡过，
+        //    这里只做**兜底**（AI / 沙盒 / 回放不经那层 UI）。
+        // =============================================
+        case 'GRANT_HAND_KEYWORD': {
+            const ghHand = context.owner === 'player' ? nextPlayerHand : nextEnemyHand;
+            const ghAdd = (effect.params.keywords || []) as Keyword[];
+            if (ghAdd.length === 0) { console.warn("[GrantHandKeyword] params.keywords 为空 ⇒ 空过"); break; }
+            // ── [AI 侧兜底] AI 的 `findAITargetsForEffect` **不认 `HAND_CARD`**（它只枚举场上单位）
+            //    ⇒ 敌方打这张牌时 `finalTargets` 恒空。不在这里自动挑一张，AI 就是**白花 1 费**。
+            //    挑法与 `SUMMON_FROM_HAND` 的 AI 分支（本文件 `:4824` 附近）逐字同源：随机取一张合法手牌。
+            let ghTargetId = finalTargets[0]?.id;
+            if (!ghTargetId && context.owner === 'enemy') {
+                const aiLegal = ghHand.filter(c =>
+                    typeof c.type === 'string' && c.type.startsWith('spell')
+                    && !ghAdd.every(k => (c.keywords || []).includes(k))
+                    && c.id !== context.sourceCard?.id);
+                if (aiLegal.length === 0) { console.log("[GrantHandKeyword] AI 手牌无合法法术目标 ⇒ 空过"); break; }
+                ghTargetId = aiLegal[Math.floor(Math.random() * aiLegal.length)].id;
+                console.log(`[GrantHandKeyword] AI 自动选择手牌目标 ${ghTargetId}`);
+            }
+            if (!ghTargetId) { console.warn("[GrantHandKeyword] 没有指定手牌目标 ⇒ 空过"); break; }
+            const ghIdx = ghHand.findIndex(c => c.id === ghTargetId);
+            if (ghIdx < 0) {
+                console.warn(`[GrantHandKeyword] 手牌里找不到目标 ${ghTargetId}（可能已被别的效果移走）⇒ 空过`);
+                break;
+            }
+            const ghCard = ghHand[ghIdx];
+            // 兜底①：只认法术（与目标需求的 `cardTypeFilter: 'spell'` 同口径）
+            if (typeof ghCard.type !== 'string' || !ghCard.type.startsWith('spell')) {
+                console.warn(`[GrantHandKeyword] 目标 ${ghCard.name} 不是法术牌（type=${ghCard.type}）⇒ 空过`);
+                break;
+            }
+            // 兜底②：**幂等** —— 已经有全部目标关键词 ⇒ 原样返回（不产生新对象、不刷音效）
+            if (ghAdd.every(k => (ghCard.keywords || []).includes(k))) {
+                console.log(`[GrantHandKeyword] ${ghCard.name} 已拥有 [${ghAdd.join(', ')}] ⇒ 无需重复赋予`);
+                break;
+            }
+            const ghNextCard: CardData = {
+                ...ghCard,
+                keywords: Array.from(new Set([...(ghCard.keywords || []), ...ghAdd])),
+            };
+            const ghNextHand = [...ghHand];
+            ghNextHand[ghIdx] = ghNextCard;
+            if (context.owner === 'player') nextPlayerHand = ghNextHand;
+            else nextEnemyHand = ghNextHand;
+            events.push({ type: 'sfx_buff', payload: { id: ghTargetId } });
+            console.log(`[GrantHandKeyword] ${ghCard.name} 获得词条 [${ghAdd.join(', ')}]（仅本实例，模板未改）`);
+            break;
+        }
+
+        // =============================================
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「映现·尤拉莉雅」②] 受击 ⇒「倾泻」发数 +N
+        // ── 这里**只记账**（模块账本 `katyaProgress.addKatyaBarrageObserverBonus`），
+        //    发数在 `case 'BARRAGE'` 的 `brObserver` 那里被读走 ⇒ 与「谁在施法」解耦：
+        //    账本按**方**记（`context.owner` = 受伤单位那一侧，由派发方算好）。
+        // ── 派发点只有一处：微队列的 `UNIT_DAMAGED`（`useGameState.ts:3015`）。
+        //    本文件 `:6040` 的「即时检测」**已显式排除本 class**（否则同一次受击会被两条路各记一次 = +2）。
+        // ── ⚠️ 不改 `buffs.power`：本加成是**发数**加数，不是攻击力（攻击力账归 S/D，见 katyaProgress 头注释）。
+        // =============================================
+        case 'KATYA_BARRAGE_OBSERVER': {
+            const boParams = effect.params as EffectParams;
+            const boSide = context.owner;
+            const boAmount = Math.max(1, Math.floor(boParams.barrageObserverBonus ?? 1));
+            // =====================================
+            // [2026-11-14 莉莉子 ✨ · 程拍板] **每回合至多 `KATYA_OBSERVER_MAX_PER_ROUND` 次**的闸门
+            // ── 为什么需要：本 effect 现在按「倾泻的**发数**」派发（微队列把一条合并事件拆成 hits 次调用，
+            //    见 `useGameState.ts` 的 `UNIT_DAMAGED`）。没有闸门的话，被 5 发倾泻打一次就 +5 发，
+            //    多发倾泻能滚成雪崩。
+            // ── 闸门位置选**模块账本**（`utils/katyaProgress.ts`）而不是卡上字段，理由见该文件注释：
+            //    ① 记账点本来就在那本账里，闸门与账目同源，不会出现「账记了但闸没放」
+            //    ② 本 case 的返回值**不含卡改动**，写卡上字段就得改 `processEffect` 的返回契约
+            //       或微队列的提交路径 ⇒ 波及**所有** ON_DAMAGE_SURVIVE 消费者（班西等）
+            //    ③ 卡实例会被 `stampKatyaCard` / 变形 / 克隆重建，账本按实例 id 记则不受重建影响
+            // ── 记账键 = 受伤单位实例 id（缺省回落阵营）⇒ 场上两张同名卡**各算各的**，
+            //    与卡面「每当我方…」的主体一致；回合过期靠比较 `game.round`，零清理代码。
+            // ── 超限：**静默不触发**（不打 warn —— 倾泻多发时每回合都会撞上限，会刷屏）。
+            // =====================================
+            const boGateKey = context.sourceCard?.id || `side:${boSide}`;
+            if (!tryTakeKatyaObserverShot(boGateKey, context.game?.round ?? 0)) {
+                break;
+            }
+            const boTotal = addKatyaBarrageObserverBonus(boSide, boAmount);
+            // 直接广播金光：本 case 由**微队列**派发，那一站不转发 `events`（只转发受伤飘字）
+            //   ⇒ 走 `events.push` 会静默丢弃（不是 bug，是那一站的既有范围）。
+            eventBus.emit(GameEvents.SFX_BUFF_APPLY);
+            console.log(`[KatyaBarrageObserver] ${context.sourceCard?.name ?? '尤拉莉雅'} 受到打击 ⇒ ${boSide} 侧「倾泻」发数 +${boAmount}（累计 +${boTotal}）`);
+            break;
+        }
+
+        // =============================================
         // [2026-07-14 锻造者] 机制 15：法术增伤光环 (SPELL_DAMAGE_AURA)
         // 实际增伤在 STRIKE 中由 getSpellDamageBonus 处理
         // =============================================
@@ -4754,6 +5219,19 @@ export const processEffect = (
             // [2026-10-08 莉莉子 · 法术专属装备 第二波] 恢复法术法力（余温笔录）
             //   上限**不写死 3**：走 spellManaCapOf（共鸣涌流成长 / 囤积提额都算在内）
             const gain = effect.params.value || 1;
+            // [2026-11-14 莉莉子 · 凯茜娅 L4「紧急补给」] `fillToCap` ⇒ **回满**（不是 +N）。
+            //   口径照抄 `useRoundLifecycle.ts:1059-1061` 的「秘法回响」：
+            //   `playerSpellMana = spellManaCapOf(game)` —— 上限同样不写死 3。
+            //   ⚠️ 不走 `SPELL_MANA_GAIN` 的 `+value` 路径的原因：上限会随共鸣涌流/囤积涨到 6~9，
+            //      +N 永远补不满，与卡面「回满法术法力」不符。
+            if (effect.params.fillToCap) {
+                const cap = spellManaCapOf(nextGame);
+                if (context.owner === 'player') nextGame.playerSpellMana = cap;
+                else nextGame.enemySpellMana = cap;
+                events.push({ type: 'sfx_generate', payload: null });
+                console.log(`[SpellManaGain] ${context.owner} 法术法力回满至上限 ${cap}`);
+                break;
+            }
             if (context.owner === 'player') {
                 nextGame.playerSpellMana = Math.min(spellManaCapOf(nextGame), (nextGame.playerSpellMana || 0) + gain);
             } else {
@@ -5321,6 +5799,778 @@ export const processEffect = (
         }
 
         // =====================================
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4「映现·梅莉桑德」] 「倾泻」永久减费
+        // ── 效果：本效果宿主**自己打击敌方水晶后**（`timing: 'ON_NEXUS_STRIKE'`，[2026-11-14 程拍板]
+        //    由 `ON_ATTACK` 收窄而来）⇒ 「倾泻」费用永久 −N（可叠加，无回合上限）。
+        // ── 为什么**只写账本**、不碰卡：费用查询腿是纯函数 `getEffectiveSpellCost`
+        //    （`utils/gameRules.ts:33`，10 个调用点：卡面角标 / 悬停预览 / 门禁 / 实扣 / 抉择）
+        //    ⇒ 减费只可能记在模块级账本里，由它在 `:132` 那一段读取
+        //    （`card.key === 'katya_barrage' ? getKatyaBarrageCostDown(side) : 0`）。
+        //    **下限 0 在查询腿已钳**（`:133` 的 `Math.max(0, condBase - barrageCostDown)`）⇒ 这里不重复钳。
+        // ── 归属：`context.owner` 是**施法者/宿主方**（`useGameState.ts:4408-4452` 的
+        //    「每次打击水晶雷达」按 `isPlayerStriking / isEnemyStriking` 算出 side 再注入，
+        //    `striker = currentFight.attacker`）⇒ 敌方梅莉桑德打击时记的是敌方那本账，镜面局不串味。
+        // ── 为什么不做「每回合至多一次」：卡面没有该限制（对比尤拉莉雅的「每回合至多一次」明确写死）。
+        // =====================================
+        case 'KATYA_BARRAGE_COST_DOWN': {
+            const kcdSide = context.owner;
+            const kcdAmount = Math.max(0, Math.floor(effect.params.katyaBarrageCostDown ?? effect.params.value ?? 1));
+            if (kcdAmount <= 0) {
+                console.warn('[KatyaCostDown] 减费量为 0，空过');
+                break;
+            }
+            const kcdTotal = addKatyaBarrageCostDown(kcdSide, kcdAmount);
+            // 广播一条**本批自定义**的减费事件（供日后特效层接：目前无消费者，属"数据先于表现"）。
+            // ⚠️ 刻意**不复用** `sfx_cost_reduce`：那条事件的既有消费者（`useGameState.ts:4406`）
+            //   按 `payload.cardId` 打日志，而本减费改的是**查询期费用**、不是某张手牌实例
+            //   ⇒ 混用只会打出 `undefined -1` 的误导日志。
+            events.push({
+                type: 'katya_barrage_cost_down',
+                payload: { side: kcdSide, amount: kcdAmount, total: kcdTotal, sourceId: context.sourceCard?.id ?? null },
+            });
+            console.log(`[KatyaCostDown] ${kcdSide} 「倾泻」累计减费 ${kcdTotal}（本次 −${kcdAmount}，来源 ${context.sourceCard?.name ?? '未知'}）`);
+            break;
+        }
+
+        // =====================================
+        // [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」] 武装本回合的狂乱账本
+        // ── 卡面：「本回合内“凯茜娅·狂诗”每倾泻 3 次，对敌方全体造成 1 点伤害。」
+        // ── 本 case **只置位**，一击都不打：
+        //    真伤害在「一次倾泻结算完成」处补（见本文件 BARRAGE case 之后、switch 之外的收尾段
+        //    调 `effect_katya_frenzy_aoe`）—— 打在这里的话，`BARRAGE` 还没结算完就清场了。
+        // ── 归属：`context.owner` = **施法者方**（与其它效果同口径）⇒ 镜像对局两边各一本账。
+        // ── `every`：执行真源是 `utils/katyaFrenzy.ts` 的 `FRENZY_EVERY`；数据侧同值只是声明。
+        //    `aoeDamage` 同理 —— 真伤害写在 `effect_katya_frenzy_aoe.params.value`，
+        //    两处不一致时这里 warn 一句（自证"是数据漂移，不是结算算错"）。
+        // =====================================
+        case 'ARM_FRENZY': {
+            const frzSide = context.owner;
+            const declaredEvery = effect.params.every;
+            const every = Math.max(1, Math.floor(declaredEvery ?? FRENZY_EVERY));
+            if (declaredEvery !== undefined && every !== FRENZY_EVERY) {
+                console.warn(`[Frenzy] 数据声明 every=${declaredEvery} 与常量 FRENZY_EVERY=${FRENZY_EVERY} 不一致 ⇒ **按数据执行**（${every}）`);
+            }
+            const declaredAoe = Math.max(0, Math.floor(effect.params.aoeDamage ?? 0));
+            const actualAoe = Math.max(0, Math.floor(EFFECT_DB['effect_katya_frenzy_aoe']?.params?.value ?? 0));
+            if (declaredAoe > 0 && declaredAoe !== actualAoe) {
+                console.warn(`[Frenzy] 声明 aoeDamage=${declaredAoe} 与实际 AOE ${actualAoe} 不一致 ⇒ **以 AOE 效果为准**`);
+            }
+            // ⚠️ 幂等 + **回溯**（同一本账，见 katyaFrenzy 文件头）：
+            //   武装时读取本回合**已打出的倾泻发数** R ⇒ `pierced = R`；
+            //   若 `R >= every` ⇒ 立刻补 `floor(R / every)` 跳 AOE，余 `R % every` 保留。
+            //   （用户口径：本回合已经打了 3 发才打狂乱，那 3 发不能白打 ——
+            //    而且"回溯"是唯一可行的结算时机：本回合后面可能再也不打倾泻了。）
+            const wasArmed = isFrenzyArmed(frzSide);
+            const frzArm = armFrenzy(frzSide, every);
+            events.push({
+                type: 'katya_frenzy_armed',
+                payload: {
+                    side: frzSide, every, aoeDamage: actualAoe,
+                    pierced: frzArm.pierced, shots: frzArm.shots, backlogTriggers: frzArm.triggers,
+                },
+            });
+            console.log(`[Frenzy] ${frzSide} ${wasArmed ? '重复' : ''}武装「狂乱」：每 ${every} 发倾泻 ⇒ 敌方全体 ${actualAoe} 点（本回合已打出 ${frzArm.shots} 发 ⇒ 回溯补 ${frzArm.triggers} 跳，余 ${frzArm.pierced} 发）`);
+            // 回溯出来的跳数**立刻**结算：不等下一次倾泻（本回合可能再也打不出一发）
+            if (frzArm.triggers > 0) runFrenzyAoe(frzSide, frzArm.triggers);
+            break;
+        }
+
+        // =====================================
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」] BARRAGE —— 多段连击（**一次算完**）
+        // ── 与**上面** `CHAIN_STRIKE` 的分工（**别照抄它**）：
+        //    · CHAIN_STRIKE 是**状态机**：一击一步、`pendingChain` + 驱动器 setTimeout 续击
+        //      ⇒ 天生 N 次动画；
+        //    · BARRAGE 在**本次调用内**把 N 发算完，只推**一条**合并伤害事件
+        //      ⇒ 演出层只飘一次字（设计口径：「一次算完 + 合并飘字」）。
+        // ── 发数：`max(1, ceil(N / 2)) + 观察员加成`，N = 施法者（凯茜娅本体）当前有效攻击力
+        //    （`getPower`，`logic/keywords.ts:89-95`：含 buffs / roundBuffs、0 下限）。
+        //    观察员加成 `params.barrageObserverBonus` **本批恒读 0**（L4 接账本）。
+        // ── 目标：Lv1 只能敌方**单位**；Lv2 才解锁敌方**水晶**。
+        //    筛选层已由 `useSpellSystem.isValidTarget(…, nexusMinLevel)` 挡过（A 方案，
+        //    见 `data/effectRegistry.ts` 的 `TargetRequirement.minLevel`）；
+        //    这里再判一次是**兜底** —— AI 直连 / 沙盒 / 记录回放都不经过那层 UI。
+        // ── 扣减（程拍板）：打单位 → `ceil(fired / 2)`（fired = 实际打出几发，目标死了就停）；
+        //    打水晶 → `max(1, ceil(N / 2))`（按理论发数扣，不按实际）。
+        //    ⚠️ 只走 `bumpKatyaDrain`，**绝不直接改 `buffs.power`** —— 那是 `stampKatyaCard`
+        //       独占反写的镜像，两处都写就是两份账（`utils/katyaProgress.ts:34-37`）。
+        // ── 伤害账：`bumpKatyaDamage(owner, 实际总伤害)`。只算**她打出去的**；
+        //    别的法术卡（冻结弹幕等）的伤害不进这本账 ⇒ 记账钉在这里，不做全局受伤钩子。
+        // ── 四区域刷值：本 case **只动账本**。倾泻必定经由一次施法结算 ⇒
+        //    `useSpellSystem.dispatchSpellCastSideEffects` 尾部（`useSpellSystem.ts:1124-1125`
+        //    的 `bumpKatyaSpell + restampKatyaProgress`）会在结算后刷四区域
+        //    ⇒ 卡面拿到的是 `S+1 / D+n / damage` 的最新值（顺序正确，不需要第二个刷新出口）。
+        // ── 死亡/屏障：与 `CHAIN_STRIKE` 同口径 —— 本 case 只记 `damageTaken` 欠条，
+        //    生死判决交给统一流程（`judgeLifeAndDeath`），屏障/剧毒仍由各自既有通路处理。
+        // =====================================
+        // =====================================
+        // [2026-11-15 程拍板 · 穿云激流状态机] **一发一步**
+        // ── 驱动器：`useGameState.pierceStep`（每 120ms 一拍），本分支只负责"打这一发"。
+        // ── 与旧 `pierceLoop` 的关系：旧版一次算完（最多 256 发）⇒ 视觉层只能事后补播，
+        //    出现"只看到两发、对面全死"。新版逻辑按拍推进，与枪口转向/子弹飞出同一拍。
+        // ── 每次：随机挑存活敌人 → 单发 2 点（过屏障/坚韧）→ 击杀则水晶 −2、凯茜娅 +3/+0、budget +3
+        // =====================================
+        case 'PIERCE_STEP': {
+            const pp = (context.game as any).pendingPierce as GameState['pendingPierce'];
+            if (!pp || pp.done) return { ...context, events: [] };
+            const ppFoe = pp.foeSide;
+            const foeBench = ppFoe === 'player' ? context.playerBench : context.enemyBench;
+            const field = (context.combatField || []) as any[];
+            const ppLive = (c: any) => !!c && !c.isDead
+                && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+            const plLedger = pp.hpLedger || {};
+            const pool: CardData[] = [
+                ...(foeBench || []).filter(ppLive),
+                ...field.map((f: any) => (f.owner === ppFoe ? f.attacker : f.blocker)).filter(ppLive),
+            ].filter((c: any) => getHealth(c) - (plLedger[c.id] || 0) > 0);   // 已在该链里被打死的别再打
+            if (pool.length === 0) {
+                // 没目标可打了 ⇒ 链收尾（扣减/记账由 useSpellSystem 在 done 后统一做）
+                return { ...context, events: [], game: { ...context.game, pendingPierce: { ...pp, done: true } } as GameState };
+            }
+            const victim = pool[Math.floor(Math.random() * pool.length)];
+            const hasBarrier = !!victim.keywords?.includes('Barrier')
+                && !(victim.depletedKeywords || []).includes('Barrier');
+            const toughCut = victim.keywords?.includes('Tough') ? 1 : 0;
+            const raw = Math.max(0, 2 - toughCut);
+            // ⚠️ 有效血量 = 卡面血量 − **本链已打出但还在飞**的伤害（`hpLedger`）。
+            //   不加这一步：伤害跟着子弹走之后，state 里的血量还没变 ⇒ 击杀永远判不出来 ⇒ 续打断掉。
+            const hp = Math.max(0, getHealth(victim) - (plLedger[victim.id] || 0));
+            const dealt = hasBarrier ? 0 : Math.min(raw, hp);
+            const killed = !hasBarrier && raw > 0 && hp - dealt <= 0;
+            const nextLedger = { ...plLedger, [victim.id]: (plLedger[victim.id] || 0) + dealt };
+
+            // ── 写这一发的结果（只碰这一个单位）
+            //   ⚠️ [2026-11-15 程实测纠正] **`damageTaken` 不在这里写** ——
+            //      伤害必须跟着子弹走：本步只算出"这一发打谁、打多少"，真伤害由
+            //      `handleStrikeHit`（`useRoundLifecycle.ts:203-213`）在**子弹命中那一帧**写入。
+            //      原先一拍就写 ⇒ 枪刚展开、子弹还在天上，敌人已经死了。
+            const ppApply = (c: CardData): CardData => {
+                if (c.id !== victim.id) return c;
+                let nc: CardData = c;
+                if (hasBarrier && !(nc.depletedKeywords || []).includes('Barrier')) {
+                    nc = { ...nc, depletedKeywords: [...(nc.depletedKeywords || []), 'Barrier'] };
+                }
+                // 只给受击姿态；血量变化交给命中事件
+                if (!nc.isDead && hasBarrier) nc = { ...nc, animState: 'hit' as const };
+                return nc;
+            };
+            const nextFoeBench = (foeBench || []).map(ppApply);
+            const nextField = field.map((f: any) => ({
+                ...f,
+                attacker: f.attacker ? ppApply(f.attacker) : f.attacker,
+                blocker: f.blocker ? ppApply(f.blocker) : f.blocker,
+            }));
+
+            // ── 击杀奖励：水晶 −2 / 凯茜娅 +3/+0（只写 roundBuffs）/ 预算 +3
+            let nextGame: any = { ...context.game };
+            let nextBudget = pp.budget - 1;
+            let nextKills = pp.kills;
+            const ppGrant = (c: CardData): CardData =>
+                c.id === pp.casterId
+                    ? {
+                        ...c,
+                        roundBuffs: {
+                            power: (c.roundBuffs?.power || 0) + 3,
+                            health: c.roundBuffs?.health || 0,
+                        },
+                        animState: 'buff' as const,
+                    }
+                    : c;
+            if (killed) {
+                nextKills += 1;
+                nextBudget += 3;
+                const nexusKey = pp.casterSide === 'player' ? 'enemyNexus' : 'playerNexus';
+                nextGame[nexusKey] = Math.max(0, (nextGame[nexusKey] || 0) - 2);
+            }
+            const myBenchKey = pp.casterSide === 'player' ? 'playerBench' : 'enemyBench';
+            const grantToBench = killed ? (context as any)[myBenchKey]?.map(ppGrant) : (context as any)[myBenchKey];
+            const grantToField = killed
+                ? nextField.map((f: any) => ({
+                    ...f,
+                    attacker: f.attacker ? ppGrant(f.attacker) : f.attacker,
+                    blocker: f.blocker ? ppGrant(f.blocker) : f.blocker,
+                }))
+                : nextField;
+
+            const nextPP = {
+                ...pp,
+                hpLedger: nextLedger,
+                budget: nextBudget,
+                shotIndex: pp.shotIndex + 1,
+                totalFired: pp.totalFired + 1,
+                totalDealt: pp.totalDealt + dealt,
+                kills: nextKills,
+                done: nextBudget <= 0 || pp.shotIndex + 1 >= 256,
+            };
+
+            // 这一发**不再推 `unit_damage`** —— 伤害改由子弹命中时的 `handleStrikeHit` 写入并推飘字，
+            // 否则会出现"飘字先出、子弹后到"的错位（与视觉断链同一个病根）。
+            const ppEvents: any[] = [];
+            if (hasBarrier) ppEvents.push({ type: 'sfx_shield_break', payload: null });
+
+            const out: any = {
+                ...context,
+                events: ppEvents,
+                combatField: grantToField,
+                game: { ...nextGame, pendingPierce: nextPP } as GameState,
+                // 供驱动器取用：这一发打了谁、掉了多少（视觉层据此让枪口转过去）
+                pierceShot: { targetId: victim.id, dealt, killed, barrierPopped: hasBarrier },
+            };
+            if (pp.casterSide === 'player') out.playerBench = grantToBench;
+            else out.enemyBench = grantToBench;
+            if (ppFoe === 'player') out.playerBench = nextFoeBench;
+            else out.enemyBench = nextFoeBench;
+            return out;
+        }
+
+        case 'BARRAGE': {
+            const brParams = effect.params as EffectParams;
+            const brSide = context.owner;
+            const brFoe: 'player' | 'enemy' = brSide === 'player' ? 'enemy' : 'player';
+
+            // ① 施法者（凯茜娅本体）：本方备战席 + 本方那一侧的战线
+            //    归属口径与 `CHAIN_STRIKE` 同源：attacker 属 `f.owner`，blocker 属其对面。
+            const brMyUnits: CardData[] = [
+                ...(brSide === 'player' ? nextPlayerBench : nextEnemyBench),
+                ...((nextCombatField || [])
+                    .map(f => (f.owner === brSide ? f.attacker : f.blocker))
+                    .filter(Boolean) as CardData[]),
+            ];
+            const brKatya = brMyUnits.find(u => u.key === KATYA_KEY && !u.isDead && u.animState !== 'dying');
+
+            // ② N：场上本体优先（含临时 buff）；本体不在场则回落到账本口径（2 + S − D）
+            //    （账本口径来源：`getKatyaStats` 的 `power`；沙盒/回放场景常用）
+            const brPower = brKatya ? getPower(brKatya) : Math.max(0, getKatyaStats(brSide).power);
+            const brCasterLevel = brKatya?.level ?? 1;
+
+            // [2026-11-14 莉莉子 ✨新功能 · 尤拉莉雅] 观察员加成**接账本**：
+            //   发数 = ceil(攻击力 / 2) + `params.barrageObserverBonus`（数据侧常量，现恒 0）
+            //          + `getKatyaBarrageObserverBonus(side)`（模块账本，由「每次受到打击 +1」写入）
+            //   ⚠️ 账本按**方**读（`brSide` = 施法方）⇒ 镜像对局不串侧。
+            const brObserver = Math.max(0, brParams.barrageObserverBonus || 0)
+                + getKatyaBarrageObserverBonus(brSide);
+            // =====================================
+            // [2026-11-14 莉莉子 独立审查 · 漏洞6] 这个 64 **不是设计规则**，是**防御性上限**：
+            //   设计文档写的是「攻击力上限 = 不设上限」（`1.0.23凯茜娅-设计方案.md` 2.1 表），
+            //   但 40 张同名卡叠出来的发数足以把一次结算打成天文数字
+            //   ⇒ 与 `CHAIN_STRIKE` 的 `MAX_CHAIN=20`（本文件 :5318）同级用意：**只防爆，不改设计**。
+            //   ⚠️ 一旦真被截断，必须 `console.warn` 自证「是护栏动的，不是数值算错」——
+            //      否则这份日志和"攻击力算错"无法区分。
+            // =====================================
+            const BR_COUNT_HARD_CAP = 64;
+            const brIdealCount = Math.max(1, Math.ceil(brPower / 2)) + brObserver;
+            const brCount = Math.min(BR_COUNT_HARD_CAP, brIdealCount);
+            if (brIdealCount > BR_COUNT_HARD_CAP) {
+                console.warn(`[Barrage] 理论发数 ${brIdealCount} 超过**防御性**上限 ${BR_COUNT_HARD_CAP} ⇒ 截断（设计无上限，此处仅防爆）`);
+            }
+            const brPerHit = Math.max(1, brParams.damage || 2);
+
+            // ── [2026-11-14 莉莉子 独立审查 · 漏洞4] **尸体不是目标**：
+            //    过滤口径与 `SPREAD_DAMAGE` 的 `isLive`（本文件 `:5972` 附近）逐字一致 ——
+            //    `!isDead && animState !== 'dying' && animState !== 'ephemeral_dying'`。
+            //    否则"打尸体"会走完整结算，并把 `'dying'` 硬写成 `'hit'` ⇒ **尸体回春**。
+            //    ⚠️ [卡 2 穿云激流] 定义**上提**到此处：下面的 pierceLoop 分支与常规目标查找共用这一份，
+            //      不允许各写一份（两份判据必然漂移）。
+            const brIsLive = (c: CardData | null | undefined): boolean =>
+                !!c && !c.isDead && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+
+            // =====================================
+            // [2026-11-14 莉莉子 ✨新功能 · 卡 2「穿云激流」] pierceLoop：消耗（账面）一半 → 随机倾泻 → 击杀续打
+            // ── 卡面：「给予 +4/+0，随后按其攻击力一半的次数随机倾泻（每发 2 点）；
+            //           每击杀一个敌方单位，敌方水晶受到 2 点伤害，并获得 +3/+0 继续。
+            //           结算完成后，她的攻击力永久减少施法前账面攻击力的一半。」
+            // ── 与常规档（下面 ③~⑥）的**分工**：常规档由玩家点一个目标；本档**无目标**、逐发重掷。
+            // ── 口径（程拍板 · 2026-11-14 第二次调整：消耗由「全部·仅本次结算」改为「一半·永久」）：
+            //      · **发数口径 N** = `getPower(plKatya)` ⇒ **含** effects[0] 的 +4 与击杀追加的 +3，
+            //        即"她这一刻到底有多猛"。发数 `ceil(N / 2)`，与普通倾泻同式。
+            //      · **代价口径 N₀** = `getKatyaStats(side).power` = 2 + S − D ⇒ **不含** roundBuffs。
+            //        结算**完成后**（`⑧`）才 `bumpKatyaDrain(side, ceil(N₀ / 2))`：永久扣掉账面的一半。
+            //      · N 与 N₀ **不是同一个数、也绝不能互借**：按峰值扣一半（≥11）会把账面打进负数、
+            //        被 `getPower` 钳到 0 ⇒ 这张卡当场自废。详见 `plN0Book` 处的长注释。
+            //      · 每轮预算 `plBudget` 仍只是**局部变量**（"这一轮还能打几发"），它与"永久代价"是两件事；
+            //        **绝不写 `buffs.power`**（那是养攻独占的反写镜像，`utils/katyaProgress.ts:34-40`）。
+            //      · 击杀奖励 `+3/+0` 写 `roundBuffs` ⇒ **本回合**变强、回合末清算，不永久滚雪球。
+            //      · 发数：每轮「消耗」后归零，击杀换来的 +3/+0 成为**下一轮**的 N ⇒ 发数随之重算
+            //        （`ceil(3/2)` = 2 发）。
+            //      · 「随机倾泻」= **每发重掷目标**（"随机"字面 + 扫射直觉）。
+            //      · 击杀判据 = **`hpLeft <= 0`**，**不读 `isDead`**（真判死只有 `judgeLifeAndDeath`）。
+            //      · 收尾只推**一条** `unit_damage` + 一条 `nexus_damage`（合并飘字，设计禁止 N 次动画）。
+            // ── 屏障 / 坚韧 / 剧毒三段**逐字照抄常规档**（本文件下方 unit 档的 `:5990-6030`），不另写一套。
+            // =====================================
+            if (brParams.pierceLoop) {
+                const plSide = brSide;
+                const plFoe = brFoe;
+                const plPerHit = Math.max(1, Math.floor(brParams.damage ?? 2));
+                const plKillNexus = Math.max(0, Math.floor(brParams.killNexusDamage ?? 2));
+                // [2026-11-14 莉莉子 💡体验优化] 击杀奖励 +2 → +3（程拍板）：
+                //   `roundBuffs` 是**本回合临时**值 ⇒ 滚得更顺，但不会永久变强、不产生无限雪球。
+                //   ⚠️ 这里只给"参数缺省"兜底（`?? 3`）；真值在 `data/effectRegistry.ts` 的
+                //      `effect_katya_pierce_barrage.params.killGrantPower` —— 改数值只改那一处。
+                const plKillGrant = Math.max(0, Math.floor(brParams.killGrantPower ?? 3));
+
+                // ① 施法者：优先取「上一段 +4 的落点」那个 id
+                //    （同阵营存在多张本体时，不会"账贴在 A、弹从 B 打出"）
+                const plTargetId: string | undefined = finalTargets[0]?.id;
+                const plKatya = (plTargetId ? brMyUnits.find(u => u.id === plTargetId) : undefined) ?? brKatya;
+                if (!plKatya) {
+                    console.warn('[PierceTorrent] 场上找不到“凯茜娅·狂诗” ⇒ 本段空过（攻击力无来源）');
+                    break;
+                }
+
+                // ② **发数基数 N** = 她的**当前有效攻击力**（含 +4 与后续击杀追加）
+                //    ⚠️ 全卡最关键的一行：`getPower` 读 `power + buffs.power + roundBuffs.power`
+                //    （`logic/keywords.ts:89-95`）。`+4` 由 effects[0] 的 BUFF（`duration: 'ROUND'`）写进
+                //    **`roundBuffs.power`**（本文件 `:2200-2203`）；而 `logic/spells.ts:96-98` 把效果①产出的
+                //    新 `playerBench` 写回累加器 `acc`，效果②的 context 正是从 `acc` 组装的（`spells.ts:77-90`）
+                //    ⇒ 这一行读到的就是**已含 +4** 的值。日志里的「发数基数」即为自证。
+                //    ⚠️ 它**只**决定本次能打几发，**不**参与永久扣减（那是下面的 N₀）。
+                const plInitial = Math.max(0, getPower(plKatya));
+                if (!(plInitial > 0)) {
+                    console.warn('[PierceTorrent] 攻击力为 0 ⇒ 无发可打，空过（若此处应为 6 = 基础2+成长+4，请回查 +4 是否落进 roundBuffs）');
+                    break;
+                }
+
+                // ②-b **代价口径 N₀** = 施法前的**账面**攻击力 = `getKatyaStats(side).power` = 2 + S − D
+                //    ⚠️ 与 `plInitial`（发数基数）是**两个不同的数**，本卡全部争议都在这两个数上：
+                //      · `plInitial` 含 roundBuffs（+4）与击杀追加（+3 × n）⇒ 那是"这一次能打多猛"的**峰值**；
+                //      · `plN0Book`  不含 roundBuffs ⇒ 那是她**账面上真正存着**的攻击力。
+                //    ⚠️ 为什么必须按 N₀ 扣、不能按峰值扣（程拍板的理由，实测口径）：
+                //      账面 8 攻 → +4 打底、每击杀再 +3 续打，一次结算的峰值可到 21。
+                //      按峰值扣一半（`ceil(21/2)` = 11）⇒ 账面 8 − 11 = −3 ⇒ `getPower` 钳到 **0**
+                //      ⇒ 之后既打不出倾泻、也打不动人，这张卡等于自废。
+                //      按 N₀=8 扣 4 ⇒ 账面剩 4，仍是"半个能打的凯茜娅"—— 这才是「消耗一半」。
+                //    ⚠️ `getKatyaStats().power` **可能为负**（D 已大过 2+S）：先 `Math.max(0, …)` 再取半，
+                //      `bumpKatyaDrain` 对 ≤0 的额度也天然空转 ⇒ 双重保险，扣减量恒 ≥ 0。
+                //    ⚠️ 本行只**算**、不扣：真扣在发循环结束后的 `⑧`（否则会污染本次发数）。
+                const plN0Book = Math.max(0, Math.floor(getKatyaStats(plSide).power));
+                const plDrain = plN0Book > 0 ? Math.ceil(plN0Book / 2) : 0;
+
+                // ③ 逐单位状态（血量 / 屏障）—— 以 id 为键，跨轮次连续
+                interface PlState { hpLeft: number; barrierLeft: number; barrierPopped: boolean; dealt: number }
+                const plState = new Map<string, PlState>();
+                const plEnsure = (c: CardData): PlState => {
+                    const hit = plState.get(c.id);
+                    if (hit) return hit;
+                    // 屏障"是否健在"必须排除 `depletedKeywords`（`logic/keywords.ts:358-369`）
+                    const hasBarrier = c.keywords.includes('Barrier')
+                        && !(c.depletedKeywords || []).includes('Barrier');
+                    const fresh: PlState = {
+                        hpLeft: getHealth(c),
+                        barrierLeft: hasBarrier ? 1 : 0, // 屏障 = 只吸收 **1 个**伤害实例
+                        barrierPopped: false,
+                        dealt: 0,
+                    };
+                    plState.set(c.id, fresh);
+                    return fresh;
+                };
+
+                // ④ 活体池 = 敌方备战席 + 敌方那一侧的战线（归属口径：attacker 属 `f.owner`，blocker 属其对面）
+                const plPool = (): CardData[] => {
+                    const bench = plFoe === 'player' ? nextPlayerBench : nextEnemyBench;
+                    const field = ((nextCombatField || []) as any[])
+                        .map(f => (f?.owner === plFoe ? f.attacker : f.blocker))
+                        .filter(Boolean) as CardData[];
+                    return [...bench, ...field].filter(c => brIsLive(c) && plEnsure(c).hpLeft > 0);
+                };
+
+                // ⑤ 落地一发：实伤 + 屏障耗尽（口径照抄常规档的 `brApplyHit`）
+                const plApplyHit = (id: string, dealt: number, barrierPopped: boolean): void => {
+                    const apply = (c: CardData): CardData => {
+                        if (c.id !== id) return c;
+                        let nc: CardData = c;
+                        if (barrierPopped && !(nc.depletedKeywords || []).includes('Barrier')) {
+                            nc = { ...nc, depletedKeywords: [...(nc.depletedKeywords || []), 'Barrier'] };
+                        }
+                        if (dealt > 0) {
+                            nc = { ...nc, damageTaken: (nc.damageTaken || 0) + dealt + deadlyLethalInject(nc, dealt) };
+                        }
+                        // `animState: 'hit'` **只在没死时**写 —— 硬写会把 `'dying'` 覆盖成 `'hit'`（尸体回春）
+                        if (!nc.isDead && (dealt > 0 || barrierPopped)) {
+                            nc = { ...nc, animState: 'hit' as const };
+                        }
+                        return nc;
+                    };
+                    if (plFoe === 'player') nextPlayerBench = nextPlayerBench.map(apply);
+                    else nextEnemyBench = nextEnemyBench.map(apply);
+                    if (nextCombatField) {
+                        nextCombatField = (nextCombatField as any[]).map((f: any) => ({
+                            ...f,
+                            attacker: f.attacker ? apply(f.attacker) : f.attacker,
+                            blocker: f.blocker ? apply(f.blocker) : f.blocker,
+                        }));
+                    }
+                };
+
+                // ⑥ 「获得 +2/+0 继续」：**只写 `roundBuffs.power`**
+                //    —— `buffs.power` 是养攻独占的镜像，写它会在下一次 `stampKatyaCard` 被静默抹掉。
+                const plGrantPower = (amount: number): void => {
+                    if (!(amount > 0)) return;
+                    const grant = (c: CardData): CardData =>
+                        c.id === plKatya.id
+                            ? {
+                                ...c,
+                                roundBuffs: {
+                                    power: (c.roundBuffs?.power || 0) + amount,
+                                    health: c.roundBuffs?.health || 0,
+                                },
+                                animState: 'buff' as const,
+                            }
+                            : c;
+                    if (plSide === 'player') nextPlayerBench = nextPlayerBench.map(grant);
+                    else nextEnemyBench = nextEnemyBench.map(grant);
+                    if (nextCombatField) {
+                        nextCombatField = (nextCombatField as any[]).map((f: any) => ({
+                            ...f,
+                            attacker: f.attacker ? grant(f.attacker) : f.attacker,
+                            blocker: f.blocker ? grant(f.blocker) : f.blocker,
+                        }));
+                    }
+                };
+
+                // ⑦ 续打循环（**三道防爆闸门**：单轮 64 / 轮数 32 / 总发数 256，超限必 warn 自证）
+                const PL_ROUND_CAP = 32;   // 轮数（每轮 = 一次"倾泻一整轮预算"）
+                const PL_SHOT_CAP = 256;   // 整段总发数
+                let plBudget = plInitial;
+                let plRounds = 0;
+                let plShots = 0;
+                let plKills = 0;
+                let plUnitTotal = 0;
+                let plNexusTotal = 0;
+                let plGrantedTotal = 0;
+                let plPrimaryId = '';
+                let plPrimaryDealt = 0;
+
+                while (plBudget > 0) {
+                    if (plRounds >= PL_ROUND_CAP) {
+                        console.warn(`[PierceTorrent] 续打轮数达到**防御性**上限 ${PL_ROUND_CAP} ⇒ 截断（设计无轮数上限，此处仅防爆）`);
+                        break;
+                    }
+                    plRounds += 1;
+                    const shots = Math.min(BR_COUNT_HARD_CAP, Math.max(1, Math.ceil(plBudget / 2)));
+                    // 本轮预算一次打空：`plBudget` **只是"这一轮还能打几发"的局部变量**，
+                    // 既不进 D 账、也不是"永久代价"（永久代价在 `⑧` 按 N₀ 记一次，与本行无关）。
+                    plBudget = 0;
+                    let killsThisRound = 0;
+
+                    for (let i = 0; i < shots; i++) {
+                        if (plShots >= PL_SHOT_CAP) {
+                            console.warn(`[PierceTorrent] 总发数达到**防御性**上限 ${PL_SHOT_CAP} ⇒ 截断（设计无上限，此处仅防爆）`);
+                            break;
+                        }
+                        const pool = plPool();
+                        if (pool.length === 0) break; // 目标池空 ⇒ 退出（外层 while 随即结束）
+                        const victim = pool[Math.floor(Math.random() * pool.length)]; // 每发**重掷**目标
+                        const st = plEnsure(victim);
+                        plShots += 1;
+                        // [2026-11-14 莉莉子 ✨ · 狂乱] **每一发**都算「倾泻一次」（程口径：次 = 发）
+                        //   ⚠️ 与常规档（打水晶 :6189 / 打单位 :6258）**同口径**：放在 `plShots += 1`
+                        //      之后、屏障判定之前 ⇒ 屏障吸收的那一发也计、坚韧削成 0 的那一发也计
+                        //      （两者都是"实打实打出去并走完结算的一发"）。
+                        //   ⚠️ 宿主池空（`pool.length === 0` 在 `plShots += 1` 之前 break）⇒ **不计**：
+                        //      那一发根本没打出去。
+                        noteFrenzyShot(plSide);
+
+                        // ① 屏障：挡掉这一个实例（后面的发数照常结算）
+                        if (st.barrierLeft > 0) {
+                            st.barrierLeft -= 1;
+                            st.barrierPopped = true;
+                            events.push({ type: 'sfx_shield_break', payload: null });
+                            plApplyHit(victim.id, 0, true);
+                            continue;
+                        }
+                        // ② 坚韧：每个实例各自 −1；③ clamp 到剩余血量（打死即停在该发，不溢出）
+                        const toughCut = victim.keywords.includes('Tough') ? 1 : 0;
+                        const dealt = Math.min(Math.max(0, plPerHit - toughCut), Math.max(0, st.hpLeft));
+                        if (dealt <= 0) {
+                            // 打不动（坚韧削到 0 / 已空血待判死）⇒ 本发空过，换下一位
+                            console.warn(`[PierceTorrent] 对 ${victim.name} 单发实伤为 0（坚韧 −${toughCut}、剩余血 ${Math.max(0, st.hpLeft)}）⇒ 换目标`);
+                            continue;
+                        }
+                        st.hpLeft -= dealt;
+                        st.dealt += dealt;
+                        plUnitTotal += dealt;
+                        plApplyHit(victim.id, dealt, false);
+                        if (st.dealt > plPrimaryDealt) {
+                            plPrimaryDealt = st.dealt;
+                            plPrimaryId = victim.id;
+                        }
+
+                        // ── 击杀（判据 hpLeft ≤ 0；**不能读 `isDead`**）
+                        if (st.hpLeft > 0) continue;
+                        plKills += 1;
+                        killsThisRound += 1;
+                        let killNexusDealt = 0;
+                        // 敌水晶 −2（`isNexusImmune` 兜底；按剩余水晶收口，不打出负血）
+                        if (plKillNexus > 0 && !isNexusImmune(nextGame, plFoe)) {
+                            const cur = plFoe === 'player' ? (nextGame.playerNexus || 0) : (nextGame.enemyNexus || 0);
+                            killNexusDealt = Math.min(plKillNexus, cur);
+                            if (killNexusDealt > 0) {
+                                if (plFoe === 'player') nextGame.playerNexus = Math.max(0, cur - killNexusDealt);
+                                else nextGame.enemyNexus = Math.max(0, cur - killNexusDealt);
+                                plNexusTotal += killNexusDealt;
+                            }
+                        }
+                        // 「获得 +3/+0 继续」—— 写 roundBuffs（**本回合临时**），作为**下一轮**的预算来源
+                        // ⚠️ 不写 `buffs.power`：那格被 `stampKatyaCard` 幂等覆盖成 S−D，
+                        //    写它 = 下一次贴值时被静默抹掉，而且会让"临时奖励"变成永久成长（滚雪球）。
+                        if (plKillGrant > 0) {
+                            plGrantPower(plKillGrant);
+                            plGrantedTotal += plKillGrant;
+                        }
+                        console.log(`[PierceTorrent] 第 ${plRounds} 轮第 ${i + 1} 发击杀 ${victim.name} ⇒ ${plFoe} 水晶 −${killNexusDealt}，凯茜娅 本回合 +${plKillGrant}/+0（累计 +${plGrantedTotal}/+0）`);
+                    }
+
+                    // 一轮打完：本轮击杀换来的 +N/+0 成为下一轮预算
+                    //（N 变了 ⇒ 发数按 `ceil(N/2)` 自然重算，正是程要的「按新攻击力重算整轮发数」）
+                    plBudget = killsThisRound > 0 ? killsThisRound * plKillGrant : 0;
+                }
+
+                // =====================================
+                // ⑧ **永久代价**：结算完成后按 N₀ 扣 D（`bumpKatyaDrain` 是全项目唯一自增入口）
+                // ── 时机（硬要求）：必须在 `while` 之后。
+                //    ① 卡面写的是「**结算完成后**攻击力永久减少一半」；
+                //    ② `plBudget` 的起点是 `plInitial = getPower`（含 +4）⇒ 若在循环前扣，
+                //       账本先变、`dispatchSpellCastSideEffects` 尾部再贴值，虽然本次发数已算好不会变，
+                //       但"扣完才结算"与卡面口径不符，且会让日志里的「发数基数」与「扣减」看起来互相矛盾。
+                // ── 额度 = `ceil(N₀ / 2)`，**不是** `ceil(峰值 / 2)`、也**不是**实际打出的发数：
+                //    N₀ 是她在施法前账面上真正存着的攻击力 ⇒ 扣完账面剩 `floor(N₀/2)` ≥ 0，永不为负。
+                // ── 空场（`plShots === 0`，敌方一个活单位都没有）**照卡面无条件扣**：
+                //    程给的公式没有"没打到就免单"的例外。
+                //    （若日后要改成"打出至少 1 发才扣"，判据就是 `plShots > 0 && plDrain > 0`，一行事。）
+                // ⚠️ 与下方 `⑨` 的 `bumpKatyaDamage` 是**两本独立账**：D = 代价、damage = 升级进度，别混。
+                // =====================================
+                // [2026-11-14 莉莉子 BUG修复] 一手没打出去就不该扣：敌方空场时 plShots=0，原实现照扣一半攻击力（与普通倾泻「0 发不扣」的口径矛盾）。
+                if (plShots > 0 && plDrain > 0) bumpKatyaDrain(plSide, plDrain);
+
+                // ⑨ 收尾：**只推一条** `unit_damage` + 一条 `nexus_damage`（合并飘字）
+                if (plUnitTotal > 0) {
+                    events.push({
+                        type: 'unit_damage',
+                        // [2026-11-14 莉莉子 ✨ · 连打段数] 仍**只有这一条**事件（演出不变），
+                        //   只把「打了几发 / 每发几点」带出去 ⇒ 飘字能写成「2 × 5」而不是一个光秃秃的合计。
+                        payload: { id: plPrimaryId || plKatya.id, amount: plUnitTotal, hits: plShots, perHit: plPerHit },
+                    });
+                }
+                if (plNexusTotal > 0) {
+                    // hits = 触发水晶打击的**击杀次数**（每击杀一次打一发 `plKillNexus` 点）；
+                    // 收口/免疫会让 `perHit × hits` 与 `amount` 不等 ⇒ 飘字自动退回「N 连打」，不编算式。
+                    events.push({ type: 'nexus_damage', payload: { target: plFoe, amount: plNexusTotal, hits: plKills, perHit: plKillNexus } });
+                }
+                // 账本：她的实际总伤害（升级进度 18 → Lv2 的记账钩子之一）
+                // ⚠️ 本行只记 `damage`；**D 账在上面的 `⑧`**（按 N₀ 记一次），两本账互不替代。
+                if (plUnitTotal + plNexusTotal > 0) bumpKatyaDamage(plSide, plUnitTotal + plNexusTotal);
+
+                console.log(`[PierceTorrent] 发数基数=${plInitial}（含 roundBuffs） N₀账面=${plN0Book} 永久扣D=${plDrain} 轮数=${plRounds} 发数=${plShots} 击杀=${plKills} 单位伤害=${plUnitTotal} 水晶伤害=${plNexusTotal} 追加+${plGrantedTotal}/+0`);
+                break;
+            }
+
+            // ③ 目标解析（`finalTargets[0]` 由玩家点选 / AI 预填）
+            const brTarget = finalTargets[0];
+            const brTargetId: string | undefined = brTarget?.id;
+            const brIsNexus = brTargetId === 'player_nexus' || brTargetId === 'enemy_nexus'
+                || String(brTarget?.type || '').includes('nexus');
+
+            // ④ Lv1 兜底：不许指水晶（筛选层已挡，这里防绕过）
+            if (brIsNexus && (brParams.lv2UnlockNexus ?? true) && brCasterLevel < 2) {
+                console.warn(`[Barrage] 施法者等级 ${brCasterLevel} < 2 ⇒ 不能指向水晶，本次空过`);
+                break;
+            }
+
+            if (!brTargetId) {
+                console.warn('[Barrage] 没有目标 ⇒ 空过（选择层应已保证有目标）');
+                break;
+            }
+
+            // ⑤ 打水晶：按理论发数扣（`max(1, ceil(N/2))`），伤害按水晶剩余血量收口
+            if (brIsNexus) {
+                const brImmune = isNexusImmune(nextGame, brFoe);
+                let brNexusLeft = brFoe === 'player' ? (nextGame.playerNexus || 0) : (nextGame.enemyNexus || 0);
+                let brTotal = 0;
+                let brFired = 0;
+                for (let i = 0; i < brCount && brNexusLeft > 0 && !brImmune; i++) {
+                    const dealt = Math.min(brPerHit, brNexusLeft);
+                    brNexusLeft -= dealt;
+                    brTotal += dealt;
+                    brFired += 1;
+                    // [2026-11-14 莉莉子 ✨ · 狂乱] **每一发**都算「倾泻一次」（程口径：次 = 发）
+                    noteFrenzyShot(brSide);
+                }
+                if (brFoe === 'player') nextGame.playerNexus = Math.max(0, brNexusLeft);
+                else nextGame.enemyNexus = Math.max(0, brNexusLeft);
+
+                if (brFired > 0) {
+                    // 合并飘字：**一条**事件（不是 N 条）
+                    // [2026-11-14 莉莉子 ✨ · 连打段数] `hits` = 实际打出并发数，`perHit` = 每发账面
+                    //   ⇒ 飘字写成「2 × 5」。屏障/坚韧/水晶剩余血量收口会让乘积与 `amount` 不等，
+                    //   那一侧由 `utils/damageText.ts` 自动降级成「N 连打」（绝不编算式）。
+                    events.push({ type: 'nexus_damage', payload: { target: brFoe, amount: brTotal, hits: brFired, perHit: brPerHit } });
+                    bumpKatyaDamage(brSide, brTotal);
+                    // [2026-11-14 莉莉子 独立审查 · 致命2] 水晶档的扣减口径：**按理论发数**（程拍板），
+                    //   与实际血量无关 —— 但**必须**留在 `brFired > 0` 里面：
+                    //   水晶免疫（`isNexusImmune`）时循环一次都不跑（fired=0、零伤害、零事件），
+                    //   原先这行在块外 ⇒ 照样扣 `max(1, ceil(N/2))` ⇒ **攻击力凭空蒸发**。
+                    //   0 发就不扣（"没打出去，就不该有代价"）。
+                    // [2026-11-14 程拍板 · 对水晶与单位**不再区分**]
+                    //   原口径：按理论发数扣一半（`ceil(brPower/2)`）—— 与单位侧的
+                    //   `ceil(实际发数 × 2/3)` 是两套逻辑，卡面也没法一句话讲清。
+                    //   现统一为 `ceil(实际发数 × 2/3)`：口径与单位完全相同，卡面只需写一次代价。
+                    //   ⚠️ 仍留在 `brFired > 0` 里面 —— 水晶免疫时循环一次都不跑（fired=0），
+                    //      0 发就不扣（"没打出去，就不该有代价"）。
+                    bumpKatyaDrain(brSide, Math.max(0, Math.ceil(brFired * 2 / 3)));
+                }
+                console.log(`[Barrage] 打 ${brFoe} 水晶：N=${brPower} 发数=${brCount} 实际=${brFired} 伤害=${brTotal} 扣减D=${brFired > 0 ? Math.max(0, Math.ceil(brFired * 2 / 3)) : 0}`);
+                break;
+            }
+
+            // ⑥ 打单位：在敌方备战席 + 敌方战线里按 id 找（一处的对象引用可能不在第一个命中区）
+            // ── ⚠️ 存活判据 `brIsLive`（**尸体不是目标**）已**上提**到本 case 顶部（`:5839` 附近）：
+            //    新增的 `pierceLoop` 分支也要用同一份口径，两份各写一次必然漂移。
+            const brFindTarget = (): { card: CardData; zone: 'bench' | 'field' } | null => {
+                const bench = brFoe === 'player' ? nextPlayerBench : nextEnemyBench;
+                const inBench = bench.find(c => c.id === brTargetId && brIsLive(c));
+                if (inBench) return { card: inBench, zone: 'bench' };
+                for (const f of (nextCombatField || []) as any[]) {
+                    if (f?.attacker?.id === brTargetId && brIsLive(f.attacker)) return { card: f.attacker, zone: 'field' };
+                    if (f?.blocker?.id === brTargetId && brIsLive(f.blocker)) return { card: f.blocker, zone: 'field' };
+                }
+                return null;
+            };
+
+            const brHit = brFindTarget();
+            if (!brHit) {
+                console.warn(`[Barrage] 目标 ${brTargetId} 已不在场上（或已死/正在死亡）⇒ 空过`);
+                break;
+            }
+
+            // =====================================
+            // [2026-11-14 莉莉子 独立审查 · 致命1] 逐发**独立**过一遍标准伤害口径
+            // ── 病根：原实现只 `damageTaken += brTotal` ⇒ **径直穿透**【屏障】【坚韧】【剧毒】。
+            // ── 口径与本文件其它伤害源**逐字同源**（本处是"多发"，故把它们的单发内核放进循环）：
+            //      · 屏障：吸收**一个伤害实例** → `sfx_shield_break` + `depletedKeywords += 'Barrier'`
+            //        （`effectProcessor.ts:1018-1023` / `:1057-1066` / `:632-635`；
+            //         "屏障是否健在"必须排除 `depletedKeywords`，见 `logic/keywords.ts:358-369`）
+            //        ⇒ 连打 3 发 = 3 个实例：**第一发被吸收，后两发照常结算**
+            //      · 坚韧：**每个实例**先 −1（`effectProcessor.ts:1025` / `:1067` / `:638`）
+            //        ⇒ 设计文档「2 点一发能打穿减伤」= 每发实打 **1**（`1.0.23凯茜娅-设计方案.md:95`）
+            //      · 剧毒：`deadlyLethalInject(target, 本发实际伤害)`（`:1028` / `:1070` / `:641`）
+            //      · 每发实伤再 **clamp 到目标剩余血量**（打死即停在当发，不溢出到"欠条"外）
+            // ── `fired` 口径（程拍板）：**实际打出并结算了的发数** —— 被屏障吸收的那一发**也算**
+            //    （它是实打实打出去、并走完结算的一发）；扣减按它算（`ceil(fired / 2)`）。
+            // ── 演出不变：仍只推**一条**合并 `unit_damage`（设计口径：一次算完 + 合并飘字）。
+            // =====================================
+            const brHasBarrier = brHit.card.keywords.includes('Barrier')
+                && !(brHit.card.depletedKeywords || []).includes('Barrier');
+            const brToughCut = brHit.card.keywords.includes('Tough') ? 1 : 0;
+            let brHpLeft = getHealth(brHit.card);
+            let brBarrierLeft = brHasBarrier ? 1 : 0;   // 屏障 = 只吸收 **1 个**伤害实例
+            let brBarrierPopped = false;
+            let brFired = 0;
+            let brTotal = 0;
+            const brHitAmounts: number[] = [];   // [逐发飘字] 每发实际伤害，收尾按条推事件
+
+            for (let i = 0; i < brCount && brHpLeft > 0; i++) {
+                brFired += 1;   // 本发已打出（无论是否被吸收）
+                // [2026-11-14 莉莉子 ✨ · 狂乱] **每一发**都算「倾泻一次」（程口径：次 = 发）
+                //   ⚠️ 屏障吸收的那一发也计（它就是"打出去并走完结算的一发"，与 `brFired` 同口径）。
+                noteFrenzyShot(brSide);
+                // ① 屏障：挡掉这一个实例，后面的发数正常结算
+                if (brBarrierLeft > 0) {
+                    brBarrierLeft -= 1;
+                    brBarrierPopped = true;
+                    events.push({ type: 'sfx_shield_break', payload: null });
+                    continue;
+                }
+                // ② 坚韧：每个实例各自 −1
+                const brRaw = Math.max(0, brPerHit - brToughCut);
+                // ③ clamp 到剩余血量
+                const brDealt = Math.min(brRaw, brHpLeft);
+                if (brDealt <= 0) {
+                    // 打不动（坚韧把单发削到 0）⇒ 停在当发，绝不空转 N 次
+                    console.warn(`[Barrage] ${brHit.card.name} 单发被减伤削到 0（坚韧 −${brToughCut}）⇒ 停在 ${brFired} 发`);
+                    break;
+                }
+                brHpLeft -= brDealt;
+                brTotal += brDealt;
+                brHitAmounts.push(brDealt);
+            }
+
+            if (brFired > 0) {
+                const brVictimId = brHit.card.id;
+                // [漏洞4] `animState: 'hit'` **只在没死时**写 —— 硬写会把 `'dying'` 覆盖成 `'hit'`（尸体回春）
+                const brApplyHit = (c: CardData): CardData => {
+                    if (c.id !== brVictimId) return c;
+                    let nc: CardData = c;
+                    // 屏障被这一轮打穿 ⇒ 记入 `depletedKeywords`（与其它伤害源同口径，**不动 `keywords` 本体**）
+                    if (brBarrierPopped && !(nc.depletedKeywords || []).includes('Barrier')) {
+                        nc = { ...nc, depletedKeywords: [...(nc.depletedKeywords || []), 'Barrier'] };
+                    }
+                    if (brTotal > 0) {
+                        // 剧毒：与 `:641` / `:1028` / `:1070` 同款 —— 这里按**本轮合计实伤**注入一次
+                        nc = {
+                            ...nc,
+                            damageTaken: (nc.damageTaken || 0) + brTotal + deadlyLethalInject(nc, brTotal),
+                        };
+                    }
+                    if (!nc.isDead && (brTotal > 0 || brBarrierPopped)) {
+                        nc = { ...nc, animState: 'hit' as const };
+                    }
+                    return nc;
+                };
+
+                if (brHit.zone === 'bench') {
+                    if (brFoe === 'player') nextPlayerBench = nextPlayerBench.map(brApplyHit);
+                    else nextEnemyBench = nextEnemyBench.map(brApplyHit);
+                } else if (nextCombatField) {
+                    // 防线里同一实例可能同时是 attacker / blocker 之一 ⇒ 两处都套用（按 id 幂等）
+                    nextCombatField = nextCombatField.map((f: any) => ({
+                        ...f,
+                        attacker: f.attacker ? brApplyHit(f.attacker) : f.attacker,
+                        blocker: f.blocker ? brApplyHit(f.blocker) : f.blocker,
+                    })) as any;
+                }
+
+                // [2026-11-14 程拍板 · 逐发飘字] 由「合并一条」改为**每发一条独立事件**
+                //   —— 对齐项目既有的多发打击做法（连击 `useGameState.ts:3945-3974` / `CHAIN_STRIKE` 状态机）：
+                //   演出层按条弹出 N 个数字（`Card.tsx` 的 `hitQueue` 自带 `index * 45` 纵向错开）。
+                //   `hits: 1` ⇒ `formatBarrageHitLabel` 返回 null ⇒ 不再挂「2 × 5」副标注。
+                //   ⚠️ 末发被剩余血量收口时按**真实伤害**飘（如 2/2/1，合计 5），不篡改成账面值 2。
+                if (brTotal > 0) {
+                    brHitAmounts.forEach((dmg) => {
+                        if (dmg > 0) {
+                            events.push({ type: 'unit_damage', payload: { id: brVictimId, amount: dmg, hits: 1, perHit: brPerHit } });
+                        }
+                    });
+                }
+
+                // 账本：累计伤害（升级进度）+ 倾泻扣减（打单位）
+                //   [2026-11-14 程拍板] 扣减由 `ceil(fired / 2)`（≈攻击力 1/4）
+                //   改为 `ceil(fired × 2 / 3)`（≈攻击力 1/3）。
+                //   口径仍是**实际发数**：目标残血被当发送走时只按真实打出的发数扣，
+                //   不按满额 `brCount` 扣（与"击杀即停"同源）。
+                if (brTotal > 0) bumpKatyaDamage(brSide, brTotal);
+                bumpKatyaDrain(brSide, Math.max(0, Math.ceil(brFired * 2 / 3)));
+
+                // ── [2026-11-14 凯茜娅「倾泻」特效] 加特林弹幕（**纯视觉**）
+                //   伤害与账本已在上面全部结算完，这里只把「打了几发 / 每发几点」交给演出层。
+                //   约束（程拍板）：不管多少发，**整段恒定 2 秒内打完**，以配合 `倾泻.ogg`
+                //   —— 那段音效是**完整的一次开火→收枪**，开火声只占前 2 秒，不是单发循环。
+                //   ⚠️ **飞行时长与发弹间隔都跟着发数动态走**（程 2026-11-14 二次拍板）：
+                //     · 发数多 ⇒ 单发快掠（否则 N 发同时在天上，糊成一片看不出是子弹）
+                //     · 发数少 ⇒ 单发放慢（否则一闪而过，看不清弹体）
+                //     · 两者之和恒压在 2 秒：末发 t=(N-1)×interval，落地再 +flight
+                //   `spellKey: 'katya_barrage'` ⇒ `SpellProjectile` 走专属能量弹外观。
+                // [2026-11-15 程拍板 · 演出驱动结算] **演出不在这里发** ——
+                //   已上移到 `useSpellSystem.resolveStack` 的倾泻专用分支：先播完加特林弹幕，
+                //   再调本函数做结算（伤害/扣减/死亡判定都在那一刻才发生）。
+                //   ⚠️ 若此处再发一条 `StrikeEvents.COMMAND`，会出现两套加特林同时开火。
+                //   代价：直连 `effectProcessor` 的路径（沙盒等）没有专属特效，可接受。
+            }
+
+            console.log(`[Barrage] 打单位 ${brHit.card.name}：N=${brPower} 发数=${brCount} 实际=${brFired} 伤害=${brTotal} 扣减D=${brFired > 0 ? Math.max(0, Math.ceil(brFired * 2 / 3)) : 0} 屏障=${brHasBarrier ? (brBarrierPopped ? '已击破' : '未破') : '无'} 坚韧=${brToughCut} 剩余HP=${Math.max(0, brHpLeft)}`);
+            break;
+        }
+
+
+        // =====================================
         // [2026-09-16 1.0.16 茉莉安 · T09] 分摊伤害（獠牙信标亡语）
         // ── 对【本方】备战席 + 交战区【全体】分摊总量伤害
         // ── 分配口径（设计文档 3.4）：**让宿主吃满，不浪费** ——
@@ -5490,6 +6740,25 @@ export const processEffect = (
     }
 
     // =====================================
+    // [2026-11-14 莉莉子 ✨ · 卡「溯时双翼·狂乱」] 埋点：**本张倾泻卡结算完成**
+    // ── 口径（程 2026-11-14 修订，最终版）：「每倾泻 3 次」的「次」= **一发** ⇒
+    //    计数已经**在发循环内部**逐发做完（`noteFrenzyShot`，**三处**：穿云激流 :6087 /
+    //    打水晶 :6189 / 打单位 :6258），这里只负责把攒下的跳数**统一补成 AOE**。
+    // ── 为什么不把 AOE 炸在发循环里：连打中途清场会让 `brCount`/`brFired` 与
+    //    「每 3 发一跳」的算术自相矛盾（4 发本该 1 跳 + 余 1，清场后可能只打出 2 发）。
+    //    记账与伤害分离后：**账按发推进、伤害按张收尾**，两者都对得上卡面。
+    // ── `pierceLoop`（穿云激流）**也计数**：其发循环内有 `noteFrenzyShot(plSide)`，
+    //    与常规两档（打水晶 / 打单位）**同口径**：每发一次、屏障吸收的那发也计。
+    //    （2026-11-14 补：此处原注「不计数」已作废 —— 卡面「每倾泻 3 次」的「次」= 一发，
+    //      大招的每一发同样是"倾泻一次"，不该漏账。）
+    // ── 触发条件只看「本张卡攒下的跳数」：`frenzyPendingHops > 0` 本身已含 `isFrenzyArmed`
+    //    （未武装时 `bumpFrenzyPierce` 恒返回 `triggers: 0`）。
+    // =====================================
+    if (frenzyPendingSide && frenzyPendingHops > 0) {
+        runFrenzyAoe(frenzyPendingSide, frenzyPendingHops);
+    }
+
+    // =====================================
     // [核心修复] 万能召唤音效触发器
     // 只要本次结算往队列里塞入了 'summon' 或 'summon_combat' 事件，立刻播放召唤音效！
     // 完美覆盖法术、战吼、回合开始、攻击宣告等所有场景！
@@ -5573,6 +6842,21 @@ export const processEffect = (
                 console.log(`[OnDamageSurviveCheck] 检查效果 ${effId}: def=${!!def}, timing=${def?.timing}`);
 
                 if (def && def.timing === 'ON_DAMAGE_SURVIVE') {
+                    // =====================================
+                    // [2026-11-14 莉莉子 ✨新功能 · 尤拉莉雅] **本 class 不走这一路**
+                    // ── 病根（会双记）：本文件在本函数尾部还会 `onDamageSurviveCheck()` 扫一遍
+                    //    `events` 里的 `unit_damage`（`:6100`），而同一批事件在 `:350` 已经
+                    //    `eventBus.emit('unit_damage')` ⇒ 微队列（`useGameState.ts:3015`）**另有一路**派发。
+                    //    两路都派 ⇒ 「受到打击 +1」会变成 +2。
+                    // ── 取舍：本 class **只认微队列那一路** —— 它覆盖面更大（战斗伤害也走它），
+                    //    且带着 `currentHp > 0` 的存活判据。
+                    // ── ⚠️ 只排除本 class：`effect_danu_banshee_damage_buff` 等既有 ON_DAMAGE_SURVIVE
+                    //    行为**一字不动**（它们的历史双触发不在本次范围内）。
+                    // =====================================
+                    if (def.class === 'KATYA_BARRAGE_OBSERVER') {
+                        console.log(`[OnDamageSurviveCheck] ${unit.name} 的 ON_DAMAGE_SURVIVE 由微队列统一派发 ⇒ 此处跳过（防双记）`);
+                        continue;
+                    }
                     console.log(`[OnDamageSurviveCheck] ✅ 命中 ON_DAMAGE_SURVIVE！触发效果: ${def.name}`);
 
                     const subCtx: EffectContext = {

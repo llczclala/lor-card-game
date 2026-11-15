@@ -1458,7 +1458,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         const ownedCount = getOwnedCount(key);
 
         // [管理员特权] 动态识别身份，解除单卡3张与持有数量拦截
-        const isAdmin = userSystem.userId === 'dev_full_admin';
+        const isAdmin = (userSystem.userId || '').includes('dev_full');
         const maxLimit = isAdmin ? 40 : 3;
 
         if (currentCount >= maxLimit) return;
@@ -1490,7 +1490,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         const ownedCount = getOwnedCount(key); // [新增]
 
         // [管理员特权] 动态计算加满按钮的目标数量，免除持有量和3张瓶颈
-        const isAdmin = userSystem.userId === 'dev_full_admin';
+        const isAdmin = (userSystem.userId || '').includes('dev_full');
         const maxPerCard = isAdmin ? 40 : 3; // 单卡上限
         const deckLimit = 40;
         const championLimit = 6;
@@ -1572,7 +1572,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         const remaining = 40 - stats.total;
         if (remaining <= 0) return;
 
-        const isAdmin = userSystem.userId === 'dev_full_admin';
+        const isAdmin = (userSystem.userId || '').includes('dev_full');
 
         const matchingKeys = Object.keys(CARD_DB).filter(key => {
             const card = CARD_DB[key];
@@ -1639,7 +1639,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     };
 
     const visibleCards = useMemo(() => {
-        const isAdmin = userSystem.userId === 'dev_full_admin';
+        const isAdmin = (userSystem.userId || '').includes('dev_full');
 
         return Object.values(CARD_DB).filter(c => {
             // 不可收集的隐藏
@@ -1947,7 +1947,14 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
     //   ⚠️ **每次渲染实时算，绝不缓存**：玩家可能刚抽到缺的那张卡，
     //      缓存会让卡组一直停在"不能开局"，玩家会认为卡组坏了。
     //   （这套判据同时用于"导入后缺卡的卡组"和"玩家自己的卡组" —— 后者天然恒为 true）
-    const deckPlayable = isDeckPlayable(localDeck, userSystem.collection?.ownedCards ?? {});
+    // [2026-11-14 莉莉子 BUG修复 · 开发者账号绕开「卡是否齐」]
+    //   病根：`isDeckPlayable` 查的是"玩家**拥有**多少张"，而衍生卡（倾泻 / 狂想 / 延续 / 终结 /
+    //   溯时双翼 / 狂乱 / 穿云激流）**没有获取途径**、`isCollectible: false`，要它们"被拥有"
+    //   永远不成立 ⇒ 任何含衍生卡的测试卡组都卡在「卡牌不全」，开不了局。
+    //   程序号本来就是全卡档，这层校验对它没有意义。
+    //   ⚠️ **不豁免 `isFull`（必须 40 张）** —— 空卡组仍然不许开局。
+    const isDevAccount = (userSystem.userId || '').includes('dev_full');
+    const deckPlayable = isDevAccount || isDeckPlayable(localDeck, userSystem.collection?.ownedCards ?? {});
 
     if (viewMode === 'SELECTION') {
         const hubDeck = userSystem.decks.find((d: any) => d.id === hubDeckId);
@@ -1957,7 +1964,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
         //   ⚠️ 与 `deckPlayable` 一样**实时算**，抽到卡后立刻恢复可玩
         const hubPlayable = !hubDeck
             ? true
-            : isDeckPlayable(hubDeck.cards, userSystem.collection?.ownedCards ?? {});
+            : (isDevAccount || isDeckPlayable(hubDeck.cards, userSystem.collection?.ownedCards ?? {}));
 
         return (
             <div className="w-full h-full bg-[#0f172a] text-white flex flex-col relative overflow-hidden font-sans">
@@ -2709,6 +2716,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                                                     { key: 'Mauxir', label: '猫汐尔' },
                                                     { key: 'Acacia', label: '安卡希雅' },
                                                     { key: 'Marian', label: '茉莉安' }, // [2026-09-16 1.0.16 新阵营]
+                                                    { key: 'katya_klein_rhapsody', label: '凯茜娅·狂诗' }, // [2026-11-13 1.0.23 新阵营 · 黄蓝]
                                                     { key: 'Titan', label: '泰坦' },
                                                     { key: 'Analyst', label: '分析员' },
                                                     { key: 'Logistics', label: '后勤' },
@@ -2785,7 +2793,7 @@ export const DeckBuilder: React.FC<DeckBuilderProps> = ({
                         const inDeckCount = localDeck[card.key] || 0;
 
                         // [管理员特权] 动态计算卡组中该卡的锁定与上限置灰状态
-                        const isAdmin = userSystem.userId === 'dev_full_admin';
+                        const isAdmin = (userSystem.userId || '').includes('dev_full');
                         const isLocked = !isAdmin && ownedCount === 0;
                         const fullCard = toFullCardData(card);
 

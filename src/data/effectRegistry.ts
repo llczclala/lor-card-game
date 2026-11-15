@@ -3,6 +3,10 @@
  */
 
 import type { Race, Keyword } from '../types';
+// [2026-11-14 莉莉子 ✨新功能 · 奥德涅] 「若凯茜娅·狂诗在手牌」的前置条件用**唯一真源**的 key。
+//   依赖方向：effectRegistry(data) → katyaProgress(utils) → types（后者只 import 类型）
+//   ⇒ **无循环依赖**（同一方向的先例：`data/cards.ts:5` 就 import 了 katyaProgress 的常量）。
+import { KATYA_KEY } from '../utils/katyaProgress';
 
 export type EffectClass =
     | 'STRIKE' | 'SUMMON' | 'BUFF' | 'FATES_CHOICE' | 'RALLY' | 'CLONE_AND_SUMMON'
@@ -36,6 +40,45 @@ export type EffectClass =
     | 'RESURRECT'           // [2026-08-06 莉莉子] 复活类：从墓地复活最强N个单位并附幻象（法术2）
     | 'SET_STATS'           // [2026-08-18 莉莉子] 面板强制设定类：本回合将单位面板设置为指定数值（止水凝形）
     | 'CLONE_TO_HAND'       // [2026-08-18 莉莉子] 复制到手类：复制任意单位的基础白板到手牌并附瞬逝（忆影拓印）
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」] 多段连击类（**一次算完**，不是状态机）
+    //   ── 与 `CHAIN_STRIKE` 的本质区别（别照抄它）：
+    //      · CHAIN_STRIKE 是**状态机**（`types.ts:388-405` 的 `pendingChain`）：一击一步、
+    //        由 `useGameState` 的驱动器 `setTimeout` 逐击推进 ⇒ 天生 N 次动画；
+    //      · BARRAGE 在**同一次 `processEffect` 调用内**把 N 发全部算完、伤害合并成**一条**
+    //        `unit_damage` / `nexus_damage` 事件 ⇒ 演出层只播一次合并飘字（设计要的正是这个）。
+    | 'BARRAGE'             // [2026-11-14 莉莉子 · 凯茜娅] 倾泻类：按施法者攻击力算发数，逐发 2 点一次算完
+    | 'PIERCE_STEP'         // [2026-11-15 程拍板 · 凯茜娅] 穿云激流的**单发结算步**（状态机，驱动器逐拍调）
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4「映现·梅莉桑德」]
+    //   「倾泻」永久减费类：宿主**打击敌方水晶后**（`ON_NEXUS_STRIKE`）把减费记进账本
+    //   （`utils/katyaProgress.ts` 的 `addKatyaBarrageCostDown`），
+    //   查询腿由 `utils/gameRules.ts:132` 读同一本账 ⇒ 卡面价 / 门禁价 / 实扣价三价同源。
+    | 'KATYA_BARRAGE_COST_DOWN'
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4 第三批 · 三张卡]
+    // ── 这三个 class 的语义都**只读 `class` 字段做识别**，不靠 processEffect 的 switch 落地；
+    //    驱动点写在各条注释里（`GRANT_HAND_KEYWORD` 例外，它在 effectProcessor 里有 case）。
+    // ==========================================
+    /** [誊抄] 给**手牌**里的一张法术实例追加关键词（写的是手牌实例，**不碰 `CARD_DB`**） */
+    | 'GRANT_HAND_KEYWORD'
+    /**
+     * [映现·尤拉莉雅 ①] 我方本轮打出法术 ⇒ 自身获得【屏障】（每回合至多一次）。
+     * 驱动点：`hooks/useSpellSystem.ts` 的 `dispatchSpellCastSideEffects` 尾段（法术真正结算后，
+     * 覆盖 极速 / 堆栈 / 被反制 三个出口）；**不在** `effectProcessor` 里派发。
+     */
+    | 'KATYA_SPELL_CAST_BARRIER'
+    /**
+     * [映现·尤拉莉雅 ②] 自身受到打击 ⇒ 该方「倾泻」的发数 +N（无上限）。
+     * `timing: 'ON_DAMAGE_SURVIVE'`；驱动点 = 微队列的 `UNIT_DAMAGED` 那一路
+     * （`useGameState.ts:3015`）—— **不是** `effectProcessor` 内的即时检测那一路（会双触发，见该处注释）。
+     */
+    | 'KATYA_BARRAGE_OBSERVER'
+    /**
+     * [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」] **武装本回合的狂乱账本**。
+     * 本类只做一件事：`utils/katyaFrenzy.ts` 的 `armFrenzy(context.owner, params.every)`。
+     * 真正的伤害**不在这里**结算 —— 埋点在 `effectProcessor` 的 `case 'BARRAGE'` 收尾
+     * （「一次倾泻结算完成」处），由那里补 `effect_katya_frenzy_aoe`（STRIKE + targetAllEnemies）。
+     */
+    | 'ARM_FRENZY'
 
 export type EffectTiming =
     | 'BURST' | 'FAST' | 'SLOW'
@@ -97,6 +140,41 @@ export interface TargetRequirement {
     cardTypeFilter?: 'unit' | 'spell'; // [2026-07-14 锻造者] 手牌选择时的卡牌类型过滤
     stackCostBelow?: number;      // [2026-08-05 莉莉子] SPELL_ON_STACK 目标费用上限（不含）
     stackSpeedFilter?: string[];  // [2026-08-05 莉莉子] SPELL_ON_STACK 目标速度白名单（如 ['spell-fast']）
+    /**
+     * [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」Lv1/Lv2 门] **水晶类目标**的施法者等级下限。
+     *
+     * 语义（精确到分支，别理解成"整条需求失效"）：
+     *   · 只约束「**水晶**」这一类目标（`card === 'nexus'` 的那条路径）；
+     *   · **单位**目标不受影响（`count` 需求照旧）；
+     *   · 未设 = 不限制。
+     *
+     * 为什么只约束水晶：`ENEMY_TARGET` / `ANY_TARGET` 这类 type 把"单位"与"水晶"混在
+     *   同一个枚举值里 ⇒ 给整条需求加等级门会把单位一起挡掉（那就没目标可选了）。
+     *   而"Lv1 不能打水晶、Lv2 才能打"正是这类卡唯一的等级差异。
+     *
+     * 施法者等级的来源：本等级**不在**法术卡上（法术卡恒 `level: 0`），而在天启者本体上 ——
+     *   由 `hooks/useSpellSystem.ts` 的 `getCasterKatyaLevel(side)` **只扫施法方**那四区域取
+     *   （见 `isValidTarget` 的 `nexusMinLevel` / `casterSide` 形参）。
+     *   ⚠️ 绝不扫双方取 max：镜像对局里敌方 Lv2 会顶开我方 Lv1 的水晶门（白花费用 + 零伤害）。
+     *   **目标筛选层是唯一门**，结算层另有一道兜底（`BARRAGE` case）。
+     */
+    minLevel?: number;
+    /**
+     * [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「誊抄」] **排除**拥有这些关键词的目标（**语义 = "或"取反**）。
+     *
+     * 与 `keywordFilter` 的关系：`keywordFilter` 是「至少拥有其一 ⇒ 放行」，
+     *   本字段是「拥有任意其一 ⇒ **拒绝**」。两者可同时出现，先放行、后排除。
+     *
+     * ⚠️ 为什么必须**新增字段**、不能复用 `keywordFilter`：
+     *   ① 「已是【回响】的法术不可选」在 `keywordFilter` 的语义下表达不出来（它只会"要"，不会"不要"）；
+     *   ② `keywordFilter` 在 `isValidTarget` 里判、而 **`HAND_CARD` 在判它之前就 `return true` 了**
+     *      （`hooks/useSpellSystem.ts:548-551`）⇒ 对**手牌**根本不起作用。
+     *      所以本字段的判定被放进那段 `HAND_CARD` 分支**内部**（见该处注释）。
+     *
+     * 目前唯一使用者：`effect_katya_transcribe`（`excludeKeywords: ['Echo']`）。
+     * 未设 = 不过滤（其余全部 134 条效果逐字不变）。
+     */
+    excludeKeywords?: string[];
 }
 
 // [修改] 扁平化参数结构，移除 buffs 嵌套，与 Processor 对齐
@@ -214,6 +292,15 @@ export interface EffectParams {
     returnToHand?: boolean;      // 撤回回手牌
     excludeKeys?: string[];      // 按 key 排除目标单位
     nexusFallback?: boolean;     // 无合法目标时回退水晶
+    /**
+     * [2026-11-14 莉莉子 · 程拍板「延续」] `RANDOM_WOUNDED_ALLY` 的**第二级兜底**：
+     * 受伤池为空时退到「任意存活友军」（哪怕满血、治疗量结算为 0），而非空过。
+     * ── 优先级（`effectProcessor.ts` 的 RANDOM_WOUNDED_ALLY 分支）：
+     *      受伤友军 > `fallbackToAny`（任意友军） > `nexusFallback`（本方水晶） > 空过。
+     *    两个都开时 `fallbackToAny` 优先 —— 「治疗一个友方单位」比「改奶水晶」更贴近卡面。
+     * ── 唯一可能仍为空的情况：本方**场上一个存活单位都没有**（连交战区也没有），此时安静空过。
+     */
+    fallbackToAny?: boolean;
     targetType?: string;         // 目标类型
     reduceCostIfDuplicate?: boolean; // 手牌重复减费
     freezeAllEnemies?: boolean;  // 冻结全体敌方
@@ -225,12 +312,76 @@ export interface EffectParams {
     //      新增字段必须【两边同步补】（见本文件上文 I01 备注）
     // =====================================
     valueFromAllyPower?: boolean;   // [崩坏] 伤害值取「第 1 目标的当前攻击力」，对第 1、2 目标各打一次等量伤害
-    drawFilter?: 'champion' | 'unit';        // [同行] 过滤抽取：只抽牌库中满足该筛选项的牌（随机位置）
-    drawFallbackFilter?: 'champion' | 'unit'; // [同行] 过滤抽取找不到时，退化为按该筛选项再抽一张
+    // [2026-11-14 莉莉子 · 凯茜娅 L4「紧急补给」] 过滤抽取补 `'spell'`（卡面「抽至多 3 张法术牌」）
+    drawFilter?: 'champion' | 'unit' | 'spell';        // [同行/凯茜娅] 过滤抽取：只抽牌库中满足该筛选项的牌（随机位置）
+    drawFallbackFilter?: 'champion' | 'unit' | 'spell'; // [同行/凯茜娅] 过滤抽取找不到时，退化为按该筛选项再抽一张
     discardAll?: boolean;           // [回收] 弃置全部手牌（本参数与 drawAfterDiscard / manaGainAfter 同属一个效果）
     drawAfterDiscard?: number;      // [回收] 弃置全部之后抽 N 张（在同一效果内完成，避开跨效果的手牌容量竞态）
     manaGainAfter?: number;         // [回收] 弃置全部之后恢复 N 点法力值（走 GRANT_MANA 同口径：不超上限）
+    /** [凯茜娅 L4「紧急补给」] 手牌满时**停止抽牌**（不烧牌）；缺省 = 保留既有爆牌行为 */
+    stopWhenHandFull?: boolean;
     fromHoardStored?: boolean;      // [囤积] 兑现「这张卡自己」攒下的点数（CardData.hoardStored），不取固定 value
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」] BARRAGE 类参数
+    //   ⚠️ 与 `logic/effectProcessor.ts` 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    damage?: number;                // BARRAGE：**每一发**的伤害（倾泻 = 2）
+    lv2UnlockNexus?: boolean;       // BARRAGE：true ⇒ 水晶目标需施法者 Lv2（配合 targetRequirements[i].minLevel 使用）
+    barrageObserverBonus?: number;  // BARRAGE：观察员累计加成（L4 接账本前恒读 0）
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4 四张卡]
+    //   ⚠️ 与 `logic/effectProcessor.ts` 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    katyaBarrageCostDown?: number;  // [梅莉桑德] 每次打击「倾泻」永久 −N（缺省读 value，再缺省 1）
+    generateCount?: number;         // [滞空碎星] 生成张数（缺省 1 = 老行为）
+    generateCountIfWounded?: number; // [滞空碎星] 第 1 目标 damageTaken > 0 时的生成张数（2 → 3）
+    costOverride?: number;          // [滞空碎星] 生成物改写费用（0 费「暗箭」；同时写 cost + costOverride）
+    fillToCap?: boolean;            // [紧急补给] SPELL_MANA_GAIN 改为回满（spellManaCapOf）
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4 第三批 · 「映现·奥德涅」]
+    //   GENERATE 的「按费用随机挑」三件套
+    //   ⚠️ 与 `logic/effectProcessor.ts` 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    /**
+     * [奥德涅] 随机生成模式：**不给 `generateKey`**，而是从池子里筛「费用 ≤ N」的牌随机取。
+     * ── 口径：`randomFromCostAtMost: 3` ⇒ **低费 = 费用 ≤ 3**（[2026-11-14 程拍板] 定稿；原保守值 2）。
+     * ── 每次生成**各抽一次**（`generateCount: 2` ⇒ 可能抽到两张不同的）。
+     */
+    randomFromCostAtMost?: number;
+    /**
+     * [奥德涅] 随机池的来源：`'spell'` = 只挑法术牌（`type` 以 `spell` 开头，
+     * 与 `utils/gameRules.ts:74-76` 的口径逐字同源）。
+     * ── 池子的优先级：**本方牌库**里符合条件的不同 `key` → 空则退化为**同阵营全局卡池**
+     *    （`CARD_DB` 里 `region === 本源卡 region` 且可收藏）。理由见 GENERATE 分支注释。
+     */
+    randomPool?: 'spell';
+    /**
+     * [奥德涅] **前置条件**：本方手牌里必须存在这些 key 之一，否则本效果整段不执行。
+     * 卡面的「若“凯茜娅·狂诗”在手牌」用它表达（写在卡牌数据里，不散落进代码）。
+     * ── 精确匹配 `card.key`（不用 `includes` —— 凯茜娅的 key 是唯一全名）。
+     */
+    requireInHandKey?: string[];
+    // =====================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅最后两张卡]
+    //   ⚠️ 与 `logic/effectProcessor.ts` 的 EffectParams **必须同步**（两处各有一份，见 I01）
+    // =====================================
+    /**
+     * [狂乱 / ARM_FRENZY] 「每倾泻 N 次」的 N。
+     * ⚠️ 执行真源是 `utils/katyaFrenzy.ts` 的 `FRENZY_EVERY`（缺省即取它）；
+     *   这里写同值只是**声明**，`armFrenzy` 会按本值落地，两边不一致时以数据为准（有日志）。
+     */
+    every?: number;
+    /** [狂乱 / ARM_FRENZY] 每跳对敌方全体造成的伤害（声明用；执行真源是 `effect_katya_frenzy_aoe` 的 `value`，不一致会 warn） */
+    aoeDamage?: number;
+    /**
+     * [穿云激流 / BARRAGE] `true` ⇒ 走「消耗全部攻击力随机倾泻 + 击杀续打」分支：
+     * 目标**逐发随机重掷**、无 `finalTargets`、击杀后补水晶伤害并 +N/+0 续打。
+     */
+    pierceLoop?: boolean;
+    /** [穿云激流] 每击杀一个敌方单位，敌方水晶受到的伤害（口径缺省 2） */
+    killNexusDamage?: number;
+    /** [穿云激流] 每击杀一个敌方单位，给予凯茜娅的 +N/+0 攻击力（写 `roundBuffs.power`） */
+    killGrantPower?: number;
 }
 
 export interface EffectDefinition {
@@ -724,7 +875,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'ANY_UNIT', count: 1, label: '选择一个攻击力小于3的单位' }
+            { type: 'ANY_UNIT', count: 1, label: '选择攻击力＜3的单位' }
         ],
         params: {
             duration: 'ROUND',
@@ -993,7 +1144,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALLY_UNIT', count: 1, label: '选择一个泰坦友方单位作为祭品', raceFilter: ['titan'] },
+            { type: 'ALLY_UNIT', count: 1, label: '选择一个泰坦友方单位', raceFilter: ['titan'] },
             { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
         ],
         params: {
@@ -1011,8 +1162,8 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALLY_UNIT', count: 1, label: '选择一个拥有幻象的友方单位', keywordFilter: ['Ephemeral'] },
-            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位作为转移目标' }
+            { type: 'ALLY_UNIT', count: 1, label: '选择拥有幻象的友方单位', keywordFilter: ['Ephemeral'] },
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
         ],
         params: {
             removeKeywords: ['Ephemeral'],   // 从第一个目标（友方）移除幻象
@@ -1976,7 +2127,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'SPELL_ON_STACK', count: 1, label: '选择一个费用小于等于3的快速法术', stackCostBelow:4, stackSpeedFilter: ['spell-fast'] }
+            { type: 'SPELL_ON_STACK', count: 1, label: '选择一张≤3费的快速法术', stackCostBelow:4, stackSpeedFilter: ['spell-fast'] }
         ],
         params: {},
         record: { summary: '无效化一个费用小于3的快速法术' }
@@ -2054,12 +2205,12 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
     'effect_temp_spell_11': {
         id: 'effect_temp_spell_11',
         name: '战术闪击',
-        description: '极速：选择一个手牌中费用小于等于3的单位打出',
+        description: '极速：选择一张≤3费的手牌单位打出',
         class: 'SUMMON_FROM_HAND',
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'HAND_CARD', count: 1, cardTypeFilter: 'unit', label: '选择一个手牌中费用小于等于3的单位' }
+            { type: 'HAND_CARD', count: 1, cardTypeFilter: 'unit', label: '选择一张≤3费的手牌单位' }
         ],
         params: { maxCost: 4 },
         record: { summary: '从手牌直接打出费用小于3的单位' }
@@ -2320,7 +2471,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'ENEMY_UNIT', count: 2, label: '选择两个敌方单位，使其暴露' }
+            { type: 'ENEMY_UNIT', count: 2, label: '选择两个敌方单位' }
         ],
         params: {
             damageBeaconBy: 3,    // 对信标的伤害（来源=法术卡本身，不归属茉莉安）
@@ -2346,7 +2497,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'BURST',
         targetRequirements: [
-            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位作为首个目标' }
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' }
         ],
         params: {}
     },
@@ -2511,8 +2662,8 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         timing: 'ON_PLAY',
         speed: 'FAST',
         targetRequirements: [
-            { type: 'ALLY_UNIT',  count: 1, label: '选择我方一个单位使其【暴露】' },
-            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位，本回合 -4/-0' },
+            { type: 'ALLY_UNIT',  count: 1, label: '选择一个友方单位' },
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' },
         ],
         params: {},               // 具体数值在专属实现里写死（-4/-0）
     },
@@ -2650,7 +2801,7 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
             // 第 1 步：我方泰坦（raceFilter 是目标校验层的硬闸，见 useSpellSystem.isValidTarget）
             { type: 'ALLY_UNIT', count: 1, label: '选择一个我方泰坦单位', raceFilter: ['titan'] },
             // 第 2 步：敌方单位或敌方水晶（ENEMY_TARGET = 仅敌方侧）
-            { type: 'ENEMY_TARGET', count: 1, label: '选择一个敌方单位或敌方水晶' },
+            { type: 'ENEMY_TARGET', count: 1, label: '选择单位或水晶' },
         ],
         params: {
             valueFromAllyPower: true,
@@ -2717,6 +2868,589 @@ export const EFFECT_DB: Record<string, EffectDefinition> = {
         targetRequirements: [],
         params: { fromHoardStored: true },
     },
+
+    // ==========================================
+    // [2026-11-13 莉莉子 · 凯茜娅「冻结弹幕」三连]
+    // 三张卡：冻结弹幕 → 延续 → 终结。全部**无手选目标**（`targetRequirements: []`
+    // ⇒ `useSpellSystem.ts:373` 直接 onComplete(card, [])），随机性一律交给
+    // `params.targetFilter`（通用解析入口见 `effectProcessor.ts` 的「targetFilter 通用解析」段）。
+    //
+    // ⚠️ 为什么一条卡要拆成 2~3 个 effect，而不是塞进一个：
+    //    `executeSpellEffect`（`logic/spells.ts:74-93`）按 `cardDef.effects` **数组顺序**逐个
+    //    `processEffect`，并把上一步的产出作为下一步的输入（累加器 `acc`）。
+    //    「打伤害 + 生成卡」、「冻结 + 强化」都是不同 class（STRIKE / GENERATE / BUFF），
+    //    没有任何单一 class 分支能同时干两件事 ⇒ 唯一正解是拆链。
+    //    先例：`temp_spell_10`（`cards.ts:1292`，撤回 + 生成）同理。
+    //
+    // ⚠️ 每个效果**各自**独立随机：卡面「并」的语义要求在**当时最新的战场**上重新掷一次，
+    //    所以同一条链上的两段可以命中不同目标（这是设计意图，不是 bug）。
+    // ⚠️ [2026-11-14 程拍板] 冻结段只保留在「终结」上；「冻结弹幕」本体已删冻结（改成纯 1 点伤害 + 生成），
+    //    费用随之 2 → 1 —— 第一发因此**永不空**（`RANDOM_ENEMY_OR_NEXUS` 永远含敌方水晶）。
+    // ==========================================
+
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」] BARRAGE 类首个使用者
+    // ── 结算口径（`logic/effectProcessor.ts` 的 `case 'BARRAGE'`，逐条对得上）：
+    //      发数   = max(1, ceil(攻击力 / 2)) + 观察员加成
+    //      每发   = `params.damage`（2）
+    //      目标   = 玩家选：Lv1 只能敌方**单位**；Lv2 解锁敌方**水晶**
+    //      停止   = 目标死亡即停（`fired` 记实际发数）
+    //      扣减   = 打单位：ceil(fired / 2)；打水晶：max(1, ceil(攻击力 / 2))
+    //      记账   = 累计伤害进 `bumpKatyaDamage`（升级进度）
+    //      演出   = **一次算完、一条合并飘字**（与 CHAIN_STRIKE 逐击状态机相反）
+    // ── `targetRequirements` 用 `ENEMY_TARGET`（敌方单位或敌方水晶）而不是 `ENEMY_UNIT`：
+    //    倾泻 Lv2 要能指向水晶。Lv1 的水晶闭锁**不靠这里**，靠 `minLevel: 2`
+    //    （语义见 `TargetRequirement.minLevel` 的注释；筛选在
+    //     `hooks/useSpellSystem.ts` 的 `isValidTarget`，结算层还有一道兜底）。
+    // ==========================================
+    'effect_katya_barrage': {
+        id: 'effect_katya_barrage',
+        name: '倾泻',
+        description: '对敌方单位倾泻弹药，数量等同于“凯茜娅·狂诗”攻击力一半，每发 2 点伤害。\n结算后，她的攻击力永久减少（约为本次发数的 2/3）。',
+        class: 'BARRAGE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [
+            // [2026-11-14 莉莉子 独立审查 · 漏洞8] label 必须同时表达**两种**合法目标：
+            //   type 是 `ENEMY_TARGET`（敌方单位 **或** 敌方水晶，水晶由 `minLevel: 2` 门控），
+            //   原文案只写「选择一个敌方单位」⇒ 玩家以为 Lv2 也打不了水晶。
+            { type: 'ENEMY_TARGET', count: 1, label: '选择一个敌方单位', minLevel: 2 },
+        ],
+        params: {
+            damage: 2,
+            lv2UnlockNexus: true,
+        },
+        // 不声明 `record`：`useSpellSystem` 只在 class 为 STRIKE / HEAL 时读 `record.summary`
+        //   ⇒ BARRAGE 写在这里是**永不生效的死数据**（同本文件 `effect_katya_barrage_frost_end_buff` 的结论）。
+        //   对局记录由 `unit_damage` / `nexus_damage` 事件那条既有链路负责。
+    },
+
+    // --- ① 冻结弹幕 · 原第 1 段（**已停用**）：随机冻结一个敌方单位 ---
+    // 冻结范式照抄 `effect_lyfe_support`（本文件 :719-734）：BUFF 类 + ROUND + Frostbite。
+    //   `power`/`health` 不配 ⇒ 通用 BUFF 的 `applyStats` 原样返回，
+    //   真正生效的是 `effectProcessor` 的「拦截冻结词条」分支（走 `applyFrostbite` 攻击力对冲）。
+    // ⚠️ [2026-11-14 莉莉子 · 程拍板] **本效果已从「冻结弹幕」的链上摘除**（卡面改成只打 1 点 + 生成延续）。
+    //   定义**保留在此**（不删数据）：语义仍是「随机冻结一个敌方单位」，
+    //   与 `effect_katya_barrage_frost_end_freeze`（终结·冻结）逐字同构，
+    //   将来若要复用/调回去直接挂回 `cards.ts` 的 effects 数组即可。
+    //   当前**无任何卡牌引用** ⇒ 死数据，不参与任何结算。
+    'effect_katya_barrage_frost_freeze': {
+        id: 'effect_katya_barrage_frost_freeze',
+        name: '霜矢标记·冻结',
+        description: '随机冻结一个敌方单位（本回合）。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            duration: 'ROUND',
+            keywords: ['Frostbite'] as Keyword[],
+            targetFilter: 'RANDOM_ENEMY',
+        },
+    },
+    // --- ① 冻结弹幕 · 第 1 段（原第 2 段）：随机敌方单位或敌方水晶 1 点伤害 ---
+    'effect_katya_barrage_frost_strike': {
+        id: 'effect_katya_barrage_frost_strike',
+        name: '霜矢标记·碎冰',
+        description: '对一个随机的敌方单位或敌方水晶造成1点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 1,
+            targetFilter: 'RANDOM_ENEMY_OR_NEXUS',
+        },
+        record: { summary: '造成 {value} 点伤害', trackTargets: true },
+    },
+    // --- ① 冻结弹幕 · 第 2 段（原第 3 段）：生成【瞬逝】的「延续」---
+    // 生成范式照抄 `effect_temp_spell_10_generate`（同文件 TEMP 法术区）：GENERATE + isVolatile。
+    'effect_katya_barrage_frost_generate': {
+        id: 'effect_katya_barrage_frost_generate',
+        name: '霜矢标记·延续',
+        description: '在手牌生成一张瞬逝的“逆境萌生”。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'katya_barrage_frost_cont', isVolatile: true },
+    },
+
+    // --- ② 延续 · 第一段：随机治疗一个受伤的友方单位 2 点（无受伤友军时退到任意友军）---
+    // ⚠️ [2026-11-14 莉莉子 · 程拍板] **加兜底**：只挑受伤友军时，全队满血 ⇒ 整段静默空过
+    //    ⇒ 玩家拿不到第三张「终结」，整条三连断在第二环。
+    //    现开 `fallbackToAny: true`：受伤池空 ⇒ 随机挑一个**任意存活友军**（满血也照常选/照常演出，
+    //    治疗量结算为 0）。池子只在「本方场上一个存活单位都没有」时才真空。
+    //    仍**不配** `nexusFallback`：卡面没有「改奶水晶」这层语义；若将来同时开，
+    //    `fallbackToAny` 优先（见 `effectProcessor.ts` 该分支的优先级注释）。
+    'effect_katya_barrage_frost_cont_heal': {
+        id: 'effect_katya_barrage_frost_cont_heal',
+        name: '延续·疗愈',
+        description: '随机治疗一个受伤的友方单位2点；若无受伤友方，则随机治疗一个其他友方单位。',
+        class: 'HEAL',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 2,
+            targetFilter: 'RANDOM_WOUNDED_ALLY',
+            fallbackToAny: true,
+        },
+        record: { summary: '治疗 {value} 点', trackTargets: true },
+    },
+    // --- ② 延续 · 第二段：生成【瞬逝】的「终结」---
+    'effect_katya_barrage_frost_cont_generate': {
+        id: 'effect_katya_barrage_frost_cont_generate',
+        name: '延续·终结',
+        description: '在手牌生成一张瞬逝的“胜负终局”。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'katya_barrage_frost_end', isVolatile: true },
+    },
+
+    // --- ③ 终结 · 第一段：随机冻结一个敌方单位 ---
+    'effect_katya_barrage_frost_end_freeze': {
+        id: 'effect_katya_barrage_frost_end_freeze',
+        name: '终结·冻结',
+        description: '随机冻结一个敌方单位（本回合）。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            duration: 'ROUND',
+            keywords: ['Frostbite'] as Keyword[],
+            targetFilter: 'RANDOM_ENEMY',
+        },
+    },
+    // --- ③ 终结 · 第二段：随机一个友方单位 +0/+3 ---
+    // 不写 `duration` ⇒ 走通用 BUFF 的缺省 'PERMANENT'（卡面没有「本回合」，即永久身材）。
+    'effect_katya_barrage_frost_end_buff': {
+        id: 'effect_katya_barrage_frost_end_buff',
+        name: '终结·强化',
+        description: '给予一个随机的友方单位 +0/+3。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            power: 0,
+            health: 3,
+            targetFilter: 'RANDOM_ALLY',
+        },
+        // 不声明 `record`：`useSpellSystem` 只在 class 为 STRIKE / HEAL 时读 `record.summary`
+        //   （`useSpellSystem.ts:1198` / `:1969`）⇒ BUFF 类写在这里是**永不生效的死数据**。
+    },
+
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4]
+    // 四张卡：本体「凯茜娅·狂诗」入场/回合开始补「倾泻」· 梅莉桑德打击减费 ·
+    //        滞空碎星（冻结 + 按目标是否受伤生成 0 费暗箭）· 紧急补给（抽法术牌 + 回满法术法力）
+    // ── 通用纪律：每个效果都挂在 `effects[0]`（或链条首段），因为
+    //    `useSpellSystem.ts:241` 的目标需求判定**只读 `card.effects[0]`**。
+    // ==========================================
+
+    // --- ① 本体：入场 & 回合开始 → 生成一张「倾泻」 ---
+    // 时机复用 `ON_PLAY_AND_ROUND_START`（同 `effect_marian_beacon_snipe`，本文件上文）：
+    //   · 「入场」半边由 `logic/summonEntry.ts` 的 `isEntryTiming` 放行（含本时机 ✅）
+    //   · 「回合开始」半边由 `useRoundLifecycle.ts:564` 的 `timing.includes('ROUND_START')` 扫备战席放行
+    // ⚠️ 两点**刻意不写**（卡面要求）：
+    //   1. **不设 `isVolatile`** ⇒ 生成的「倾泻」不是【瞬逝】
+    //   2. **不设 `reduceCostIfDuplicate`** ⇒ 不限囤积，手牌里已有几张照样再生成一张
+    // ⚠️ 手牌上限 10：满手时这一张会被 `effectProcessor` 的 GENERATE 分支销毁
+    //    （既有行为，本批**不改**；日志 `[Generate] 手牌已满(10/10)，… 被销毁`）。
+    'effect_katya_rhapsody_barrage_generate': {
+        id: 'effect_katya_rhapsody_barrage_generate',
+        name: '狂诗·倾泻',
+        description: '入场与回合开始时：在手牌生成一张“倾泻”。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY_AND_ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { generateKey: 'katya_barrage' },
+        animationDuration: 600,
+    },
+
+    // --- ② “映现”梅莉桑德：打击**敌方水晶**后 → 「倾泻」永久 −1 ---
+    // [2026-11-14 程拍板 · 口径收窄] 原为 `ON_ATTACK`（不分打单位 / 打水晶），现改为
+    //   `ON_NEXUS_STRIKE` —— 本仓**已有**「每次打击水晶」的球探，不需要新埋点：
+    //   派发点：`hooks/useGameState.ts:4408-4452` 的「每次打击水晶雷达」，
+    //   触发条件 `useGameState.ts:4412` 的 `isPlayerStriking || isEnemyStriking`
+    //   （= 攻击者 `currentFight.attacker` 把**对面**水晶打掉血 ⇒ 正是「打击敌方水晶」），
+    //   `owner: side` 注入归属（`useGameState.ts:4429`）⇒ 敌方梅莉桑德记的是敌方那本账。
+    //   先例：`effect_truffle_drone_nightvision`（本文件 `:2708`，卡面写「每次打击敌方水晶时」）。
+    // ⚠️ 因此她**被迫格挡**时不再触发（格挡永远打不到水晶），这正是本次要的收窄。
+    // 记账：`utils/katyaProgress.ts` 的 `addKatyaBarrageCostDown(side, 1)`；
+    //   下限 0 由查询腿 `utils/gameRules.ts:133` 的 `Math.max(0, condBase - barrageCostDown)` 钳。
+    'effect_melisande_barrage_discount': {
+        id: 'effect_melisande_barrage_discount',
+        name: '映现·折价',
+        description: '打击敌方水晶后，“倾泻”的费用永久 −1（最低 0）。',
+        class: 'KATYA_BARRAGE_COST_DOWN',
+        timing: 'ON_NEXUS_STRIKE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { katyaBarrageCostDown: 1 },
+    },
+
+    // --- ③ 滞空碎星 · 第一段：冻结一个敌方单位 ---
+    // 冻结范式照抄 `effect_lyfe_support` / `effect_katya_barrage_frost_freeze`（本文件 `:2812`）：
+    //   BUFF + `duration: 'ROUND'` + `keywords: ['Frostbite']`（不配 power/health ⇒ `applyStats` 原样返回，
+    //   真正生效的是「拦截冻结词条」分支 `effectProcessor.ts:2550-2555` 的 `applyFrostbite`）。
+    // ⚠️ 这一段**必须**排在链首：目标选择（`ENEMY_UNIT`）只从 `effects[0]` 读，
+    //   而第二段的生成张数要用到这里选中的那个 id。
+    'effect_katya_starfall_freeze': {
+        id: 'effect_katya_starfall_freeze',
+        name: '滞空碎星·冻结',
+        description: '【冻结】一个敌方单位（本回合）。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            { type: 'ENEMY_UNIT', count: 1, label: '选择一个敌方单位' },
+        ],
+        params: {
+            duration: 'ROUND',
+            keywords: ['Frostbite'] as Keyword[],
+        },
+    },
+    // --- ③ 滞空碎星 · 第二段：生成 2 张 0 费「暗箭」（目标已受伤 → 3 张）---
+    // 张数**动态**：`generateCountIfWounded` 由 `effectProcessor` 的 GENERATE 分支现算 ——
+    //   它拿 `finalTargets[0]`（= 上一段玩家点选的那个单位，`spells.ts:93` 同一份 targets 逐段下传）
+    //   查 `damageTaken > 0`，成立就换成 3。**不需要**「条件效果」这种额外层。
+    // 目标已离场 ⇒ 回落 `generateCount`（2 张）。
+    // `costOverride: 0`：`hidden_arrow` 本体是 1 费（`cards.ts:153`）⇒ 这里改写成 0 费
+    //   （同时写 `cost` 与 `costOverride`，见 `utils/gameRules.ts:920`）。
+    'effect_katya_starfall_generate': {
+        id: 'effect_katya_starfall_generate',
+        name: '滞空碎星·暗箭',
+        description: '在手牌生成 2 张 0 费“暗箭”（目标已受伤时改为 3 张）。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],   // 目标已在第一段选过；这里不再要求玩家点第二次
+        params: {
+            generateKey: 'hidden_arrow',
+            generateCount: 2,
+            generateCountIfWounded: 3,
+            costOverride: 0,
+        },
+        animationDuration: 600,
+    },
+
+    // --- ④ 紧急补给 · 第一段：抽至多 3 张**法术**牌 ---
+    // `drawFilter: 'spell'` 是本批新开的筛选项（`effectProcessor.ts` 的 `matchesDrawFilter`）。
+    // 不配 `drawFallbackFilter` ⇒ 牌库没有法术牌时**一张都不抽**（「至多」的严格语义，不爆牌）。
+    // `stopWhenHandFull: true` ⇒ 手牌满就 `break`，**不销毁**抽到的牌（缺省行为是爆牌，本卡关闭它）。
+    'effect_katya_supply_draw': {
+        id: 'effect_katya_supply_draw',
+        name: '稳态奇点·补给',
+        description: '抽至多 3 张法术牌（手牌已满时不再抽，也不销毁）。',
+        class: 'DRAW',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            value: 3,
+            drawFilter: 'spell',
+            stopWhenHandFull: true,
+        },
+    },
+    // --- ④ 紧急补给 · 第二段：回满法术法力 ---
+    // 走 `SPELL_MANA_GAIN` + `fillToCap`（不是 +N —— 上限会被共鸣涌流/囤积抬到 6~9）。
+    // 口径与 `useRoundLifecycle.ts:1059-1061` 的「秘法回响」逐字同源：`= spellManaCapOf(game)`。
+    'effect_katya_supply_refill': {
+        id: 'effect_katya_supply_refill',
+        name: '稳态奇点·回蓝',
+        description: '回满法术法力（上限走 spellManaCapOf）。',
+        class: 'SPELL_MANA_GAIN',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { fillToCap: true },
+    },
+
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4 第三批]
+    // 三张卡：誊抄（给手牌法术上【回响】）· 映现·尤拉莉雅（法术⇒屏障 / 受击⇒倾泻+1）·
+    //        映现·奥德涅（凯茜娅在手牌时生成 2 张瞬逝低费法术 / 8 张法术提速）
+    // ── 通用纪律不变：目标需求只读 `effects[0]`（`useSpellSystem.ts:241` 那条）。
+    // ==========================================
+
+    // --- ① 誊抄：选择一张手牌中的法术，赋予其【回响】---
+    // ⚠️ 目标需求必须在 `effects[0]`：本卡只挂这一个效果。
+    // ── `excludeKeywords: ['Echo']`：卡面「已是【回响】的法术不可选」。
+    //    为什么不用 `keywordFilter` —— 语义是"至少拥有其一"，且 `HAND_CARD` 在
+    //    `isValidTarget` 里**先 return 了**。详见 `TargetRequirement.excludeKeywords` 的注释。
+    // ── 写入的是**手牌实例**（`effectProcessor` 的 `GRANT_HAND_KEYWORD`），
+    //    触发判定读的正是实例关键词（`useSpellSystem.ts:1202` 的 `card.keywords.includes('Echo')`）
+    //    ⇒ **绝不改 `CARD_DB`**（模块级常量，改了会跨局污染，见 `utils/gameRules.ts:1402` 的警告）。
+    'effect_katya_transcribe': {
+        id: 'effect_katya_transcribe',
+        name: '复调重奏',
+        description: '选择一张手牌中的法术牌，赋予其【回响】（已是【回响】的法术不可选）。',
+        class: 'GRANT_HAND_KEYWORD',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [
+            {
+                type: 'HAND_CARD',
+                count: 1,
+                cardTypeFilter: 'spell',
+                label: '选择一张手牌法术',
+                excludeKeywords: ['Echo'],
+            },
+        ],
+        // `keywords` 是 EffectParams 里既有的「要追加的词条」（BUFF 类共用），本类复用同一格
+        params: { keywords: ['Echo'] },
+    },
+
+    // --- ② 映现·尤拉莉雅 ①：我方本回合打出法术 ⇒ 自身获得【屏障】（每回合至多一次）---
+    // ⚠️ **没有 effectProcessor 的 case**：派发点在 `hooks/useSpellSystem.ts` 的
+    //    `dispatchSpellCastSideEffects` 尾段（唯一的「法术真正结算之后」出口，
+    //    覆盖 极速 / 堆栈 / **被反制** 三个分支）。`class` 只作为**识别标记**被那个尾段扫到。
+    // 节流：写在卡上 `CardData.barrierGrantedRound`（= 上次发放时的 `game.round`，见 types.ts 注释），
+    //    ★ 靠比较自然过期 ⇒ 回合清那套三处接线一个都不需要（漏一处就会永久锁死）。
+    // 屏障本身：`keywords += 'Barrier'` + `roundKeywords += 'Barrier'`（回合末由
+    //    `useRoundLifecycle.ts:1010-1012` + `:983-988` 连黯淡标记一起收回）——
+    //    与 BUFF 类 `duration:'ROUND'` 的记账口径逐字同源（`effectProcessor.ts:2197-2213`）。
+    'effect_yulalia_spell_barrier': {
+        id: 'effect_yulalia_spell_barrier',
+        name: '映现·护幕',
+        description: '我方本回合每打出一张法术牌，自身获得【屏障】（每回合至多一次）。',
+        class: 'KATYA_SPELL_CAST_BARRIER',
+        timing: 'BURST',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {},
+        animationDuration: 400,
+    },
+
+    // --- ② 映现·尤拉莉雅 ②：每次受到打击 ⇒「倾泻」发数 +1（无上限）---
+    // 时机 = `ON_DAMAGE_SURVIVE`（**受伤并存活**才触发，见 `useGameState.ts:3018` 的 `currentHp > 0`）：
+    //   ⚠️ 口径缺口：**致命那一击不计**（人已经死了，`ON_DAMAGE_SURVIVE` 按定义不触发）——待程确认。
+    // 派发点：微队列 `UNIT_DAMAGED`（`useGameState.ts:3015`）—— 战斗伤害与效果伤害都会到此；
+    //   而 `effectProcessor.ts:6040` 那路「即时检测」**已排除本 class**（否则同一次受击 +2，见该处注释）。
+    // 记账：`utils/katyaProgress.ts` 的 `addKatyaBarrageObserverBonus(side, N)`（**发数**账，不是攻击力账）；
+    //   读取腿在 `effectProcessor` 的 `case 'BARRAGE'`（`brObserver`），⚠️ 不碰 `buffs.power`。
+    'effect_yulalia_barrage_observer': {
+        id: 'effect_yulalia_barrage_observer',
+        name: '映现·观星',
+        description: '每次受到打击，“倾泻”的倾泻次数 +1（无上限）。',
+        class: 'KATYA_BARRAGE_OBSERVER',
+        timing: 'ON_DAMAGE_SURVIVE',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: { barrageObserverBonus: 1 },
+        animationDuration: 400,
+    },
+
+    // --- ③ 映现·奥德涅 ①：入场与回合开始 ⇒ 若凯茜娅在手牌，生成 2 张【瞬逝】低费法术 ---
+    // 时机复用 `ON_PLAY_AND_ROUND_START`（本体「狂诗·倾泻」同一档，见本文件 `:3179` 附近）：
+    //   · 「入场」半边 → `logic/summonEntry.ts` 的 `isEntryTiming` 放行
+    //   · 「回合开始」半边 → `useRoundLifecycle.ts:564` 的 `timing.includes('ROUND_START')` 扫备战席
+    // 生成内容**不写死 key**：走 GENERATE 新增的「按费用随机挑」模式
+    //   （`randomPool: 'spell'` + `randomFromCostAtMost: 3` + `generateCount: 2`）。
+    //   ✅ **低费口径 = 费用 ≤ 3**（[2026-11-14 程拍板] 原保守值 2 → 3，口径已确认）。
+    // 前置条件「若凯茜娅·狂诗在手牌」→ `requireInHandKey: [KATYA_KEY]`（GENERATE 分支首行判）。
+    'effect_odnie_generate_cheap_spells': {
+        id: 'effect_odnie_generate_cheap_spells',
+        name: '映现·采撷',
+        description: '入场与回合开始时：若“凯茜娅·狂诗”在手牌，在手牌生成 2 张【瞬逝】低费法术。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY_AND_ROUND_START',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {
+            randomPool: 'spell',
+            randomFromCostAtMost: 3,
+            generateCount: 2,
+            isVolatile: true,
+            requireInHandKey: [KATYA_KEY],
+        },
+        animationDuration: 600,
+    },
+
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 卡 2「溯时双翼」]
+    // 卡面 =「给予“凯茜娅·狂诗”【屏障】，并在手牌中生成一张【瞬逝】的“溯时双翼·狂乱”」。
+    // ⚠️ 屏障那段**必须**挂在 `cards.ts` 的 `katya_chrono_wing.effects[0]`：
+    //    `hooks/useSpellSystem.ts:239-242` 的 `getEffectDef` 只读 `effects[0]` ⇒ 目标需求只认这一段。
+    // ==========================================
+
+    // --- ① 蓄势 + 屏障：BUFF + ROUND + power 2 + Barrier（**同一段**） ---
+    // ![2026-11-14 程拍板] 「溯时双翼」2 费 → 3 费，并补 **+2/+0**：
+    //   整套凯茜娅卡组没有直接加攻的手段，缺一个爆发跳板。
+    //   手感：8 攻 → 打溯时双翼 → 10 攻 → 倾泻 `ceil(10/2)` = 5 发 = 10 点，第 3 发即触发狂乱。
+    //   · **合并成一段 BUFF**（不另立一条效果链）：`applyStats` 与 `applyKeywords` 在同一目标上
+    //     串行落地（`effectProcessor.ts:2643` / `:2653`）⇒ 一次结算既加攻也贴屏障。
+    //     范式先例：`effect_golia_buff`（本文件 `:657`，`power: 2 + duration:'ROUND' + keywords:['Overwhelm']`
+    //     的现役同构段）。
+    //   · `duration: 'ROUND'` ⇒ `power` 落进 **`roundBuffs.power`**（`effectProcessor.ts:2286-2289`），
+    //     **绝不碰 `buffs.power`**（那格被“养攻”独占，`stampKatyaCard` 每次覆盖成 S − D，
+    //     `utils/katyaProgress.ts:284`）；`stampKatyaCard` 只 patch `buffs / katyaSpellGrowth /
+    //     katyaDamage`（`:283-287`）⇒ 本段写的 `roundBuffs` 不会被贴值抹掉。
+    //   · 同一 `duration` 也把【屏障】记进 `roundKeywords` 临时账本（`effectProcessor.ts:2298-2302`）
+    //     ⇒ 回合末由 `clearRoundBuffsAndBarrier` 一并清算，不会退化成永久词条。
+    //   · 目标口径 `ALLY_CHAMPION` + `filterKey`：`hooks/useSpellSystem.ts:656`
+    //     `isAlly && card.isChampion && (!filterKey || card.key === filterKey)`。
+    'effect_katya_chrono_wing_barrier': {
+        id: 'effect_katya_chrono_wing_barrier',
+        name: '溯时双翼·蓄势',
+        description: '给予“凯茜娅·狂诗”+2/+0 与【屏障】（本回合）。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择友方“凯茜娅·狂诗”', filterKey: KATYA_KEY },
+        ],
+        params: {
+            power: 2,
+            health: 0,
+            duration: 'ROUND',
+            keywords: ['Barrier'],
+        },
+    },
+
+    // --- ② 在手牌生成【瞬逝】的「溯时双翼·狂乱」 ---
+    // 生成范式照抄 `effect_katya_barrage_frost_generate`（本文件 `:2925`）：GENERATE + isVolatile。
+    // ⚠️ `isVolatile` 与卡面自带的 `keywords: ['Volatile']`（`katya_chrono_frenzy`）**不冲突**：
+    //    `effectProcessor.ts:4665-4666` 是 `Array.from(new Set([...keywords, 'Volatile']))` —— **追加去重**。
+    //    2026-10-06 那次修复补的正是这个去重（安卡的卡面 Volatile + 参数 isVolatile 曾叠出两个"瞬逝"图标）。
+    //    故两边同时存在只会合并成一份；这里保留 `isVolatile` 是有意的**冗余保险**
+    //    （将来若有人摘掉卡面 `Volatile`，瞬逝语义仍从这里兜住）。
+    'effect_katya_chrono_wing_frenzy': {
+        id: 'effect_katya_chrono_wing_frenzy',
+        name: '溯时双翼·狂乱',
+        description: '在手牌中生成一张【瞬逝】的“溯时双翼·狂乱”。',
+        class: 'GENERATE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: { generateKey: 'katya_chrono_frenzy', isVolatile: true },
+        animationDuration: 600,
+    },
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 卡 1「溯时双翼·狂乱」]
+    // 卡面：「本回合内“凯茜娅·狂诗”每倾泻 3 次，对敌方全体造成 1 点伤害。」
+    // ── 口径（程拍板）：**「每倾泻 3 次」= 3 张倾泻卡**，不是 3 发
+    //    ⇒ 埋点在「**一次倾泻结算完成**」处（`effectProcessor` 的 `case 'BARRAGE'` 收尾，
+    //      switch 之后那段），**不在发循环内**。
+    // ── 本条效果**只武装账本**（`utils/katyaFrenzy.ts`），伤害由下面的 AOE 效果在倾泻收尾时补。
+    // ── `Volatile` 只决定**手牌瞬逝**，与"持续到回合末"无关（寿命由 `resetFrenzyRound()` 管）。
+    // ==========================================
+    'effect_katya_chrono_frenzy_arm': {
+        id: 'effect_katya_chrono_frenzy_arm',
+        name: '狂乱',
+        description: '本回合内“凯茜娅·狂诗”每倾泻 3 次，对敌方全体造成 1 点伤害。',
+        class: 'ARM_FRENZY',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [], // 不选目标：账本是按**方**的
+        params: { every: 3, aoeDamage: 1 },
+        animationDuration: 400,
+    },
+
+    // ── 狂乱的一跳：**直接复用通用 AOE 原语**（`STRIKE` 的 `value + targetAllEnemies`），逻辑层零新增代码。
+    //    先例：`effect_marian_support_aoe`（本文件 :2508「制空覆盖」）。
+    //    ⚠️ **必须显式 `enlightenOverwhelm: false`** —— 该原语自带一段"maxMana ≥ 10 ⇒ 全场碾压"的
+    //       巨偶一瞥彩蛋（`effectProcessor.ts:965-998`），不关掉会白送一次碾压。
+    //    ⚠️ 本条**不是**给玩家打的卡：它是倾泻收尾时由逻辑层代打的（`effectProcessor` 的 BARRAGE 收尾）。
+    //       立刻可分辨的证据 = `targetRequirements: []` 且没人把它挂进任何 `cards.ts` 的 effects。
+    'effect_katya_frenzy_aoe': {
+        id: 'effect_katya_frenzy_aoe',
+        name: '狂乱·震波',
+        description: '对敌方备战席与战场的所有单位各造成 1 点伤害。',
+        class: 'STRIKE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [],
+        params: { value: 1, targetAllEnemies: true, enlightenOverwhelm: false },
+    },
+
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 卡 2「穿云激流」] 两段效果，**顺序即语义**
+    //   ① `+4/+0` —— **必须写 `roundBuffs`**（`duration: 'ROUND'`），**绝不碰 `buffs.power`**
+    //      · `buffs.power` 被"养攻"独占：`stampKatyaCard` 每次重算都把它覆盖成 `S − D`
+    //        （`utils/katyaProgress.ts:34-40`）⇒ 直接改它会在下一次贴值时被**静默抹掉**。
+    //      · `roundBuffs` 不参与那次覆盖（`stampKatyaCard` 只 patch buffs / katyaSpellGrowth / katyaDamage）；
+    //        战斗与结算读的是 `getPower = power + buffs.power + roundBuffs.power`（`logic/keywords.ts:89-95`）。
+    //      · 术语：项目里「**赋予**」= 永久(`buffs`)、「**给予**」= 本回合(`roundBuffs`)
+    //        （`logic/rogueBattle.ts:29`）—— 卡面写的正是「给予」。
+    //   ② `BARRAGE + pierceLoop` —— 读 `getPower(brKatya)`，**因此 ① 必须先结算完、且要能被读到**；
+    //      链路：`logic/spells.ts:96` 把 ① 的 `playerBench` 写回 `acc`，② 从 `acc` 拿上下文
+    //      （`spells.ts:77-90`）⇒ ② 读到的是**已含 +4** 的那张卡。详见 `effectProcessor` 的 BARRAGE 注释。
+    //      ⚠️ `getPower` 只用于**发数**（这一轮能打多猛）。
+    //         **永久代价**走另一条口径：`getKatyaStats(side).power` = 2 + S − D（**不含** `roundBuffs`），
+    //         结算完成后 `bumpKatyaDrain(side, ceil(N₀ / 2))` —— 按峰值扣会把账面打成负数、卡直接废掉。
+    //   ⚠️ 目标需求只读 `effects[0]`（`hooks/useSpellSystem.ts:239-242`）⇒ 选"哪一只凯茜娅"由 ① 提供。
+    // ==========================================
+    'effect_katya_pierce_grant': {
+        id: 'effect_katya_pierce_grant',
+        name: '穿云·蓄势',
+        description: '给予“凯茜娅·狂诗”+4/+0（本回合）。',
+        class: 'BUFF',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [
+            { type: 'ALLY_CHAMPION', count: 1, label: '选择友方“凯茜娅·狂诗”', filterKey: KATYA_KEY },
+        ],
+        params: {
+            power: 4,
+            health: 0,
+            duration: 'ROUND', // ⇒ 写 roundBuffs（`effectProcessor.ts:2200-2203`），回合末自动清算
+        },
+    },
+
+    'effect_katya_pierce_barrage': {
+        id: 'effect_katya_pierce_barrage',
+        name: '穿云·激流',
+        description: '按其攻击力一半的次数（向上取整）随机倾泻（每发 2 点）；每击杀一个敌方单位，敌方水晶受到 2 点伤害并获得 +3/+0 继续。结算完成后，她的攻击力永久减少施法前账面攻击力的一半（向上取整）。',
+        class: 'BARRAGE',
+        timing: 'ON_PLAY',
+        speed: 'SLOW',
+        targetRequirements: [], // 无目标：逐发随机重掷（`pierceLoop` 内部自选）
+        params: {
+            damage: 2,          // 每发 2 点（与普通倾泻同口径）
+            pierceLoop: true,   // ⇒ 走"消耗（账面）一半 + 击杀续打"分支
+            killNexusDamage: 2, // 每击杀 1 个敌方单位 → 敌方水晶 −2
+            // [2026-11-14 莉莉子 💡体验优化] +2 → **+3**（程拍板）：写 `roundBuffs`（本回合临时），
+            //   续打滚得更顺；因为是临时值，不会永久变强 ⇒ 不产生无限雪球。
+            //   发数随之重算：`ceil(3/2)` = 2 发/轮。
+            killGrantPower: 3,  // 每击杀 1 个敌方单位 → 给予 +3/+0（写 roundBuffs）继续
+        },
+        animationDuration: 600,
+    },
+
+      // ==========================================
+    // [2026-11-15 程拍板 · 穿云激流状态机] **单发结算步**
+    // ── 不挂在卡牌 effects 里，由 `useGameState.pierceStep` 驱动器每 120ms 调一次。
+    // ── 每次：从当前存活敌人里随机挑一个 → 打 1 发（过坚韧/屏障）→
+    //    击杀则水晶 −2、凯茜娅 +3/+0、budget +3 → 回写 `pendingPierce` 计数。
+    // ── 好处：**逻辑与视觉同一拍**，不会再有"只看到两发、对面全死了"。
+    // ==========================================
+    'effect_katya_pierce_step': {
+        id: 'effect_katya_pierce_step',
+        name: '穿云·逐发',
+        description: '（内部）穿云激流的一发结算 —— 由状态机驱动器逐拍调用，不直接挂在卡面上。',
+        class: 'PIERCE_STEP',
+        timing: 'ON_PLAY',
+        speed: 'BURST',
+        targetRequirements: [],
+        params: {},
+        animationDuration: 0,
+    },
+    // TODO(卡 3 ②「我方打出 8 张法术牌后，倾泻提速：慢速→快速」)：
+    //   **本批未实现**。判据本身现成（`utils/gameRules.ts:176` 的 `getSpellCastSnapshot(side).thisRun`，
+    //   含所有法术、天然含「倾泻」），但「速度」是**卡牌静态属性** `CardType`（`types.ts:3` 闭合四值），
+    //   全项目**没有"有效速度"的抽象**；真正拦人的判定散在三处、且两处是红线文件：
+    //     · `hooks/useGameState.ts:1719`（`isPlayable`：战斗中绝不能打慢速）
+    //     · `hooks/useGameState.ts:5100-5118`（实打守卫：战斗阶段／慢速限制）
+    //     · `components/GameSession.tsx:3099/3120`（点击提示，**本批明确禁止改**）
+    //   另加 `components/CardAnimations.tsx:230-234`（手牌高亮）与 `components/SpellCard.tsx:59-61`（速度图标）。
+    //   ⇒ 改动面 = 3 个红线/禁改文件 + 2 个显示层，且要新造"有效速度"口径，本批**不做**。
 };
 
 

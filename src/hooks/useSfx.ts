@@ -64,6 +64,10 @@ import mulliganDrawSound from '../music/music/换牌阶段开局抽出卡牌.ogg
 import cardToDeckSound from '../music/music/卡牌入队.ogg';
 import defaultHitSound from '../music/music/默认受击.ogg';
 import beaconHitSound from '../music/music/茉莉安 霄鹰/信标受击.ogg';
+// [2026-11-15 程拍板 · 倾泻音效重做] 拆两段：预热(1.14s) + 单发开火(0.35s)
+import katyaBarrageSpinup from '../music/music/凯茜娅狂诗/倾泻1.ogg';
+import katyaBarrageShot from '../music/music/凯茜娅狂诗/倾泻2.ogg';
+import katyaBarrageCooldown from '../music/music/凯茜娅狂诗/倾泻3.ogg';
 
 // ══════════════════════════════════════════════════════════════════════
 // 「一次点击 = 一声 click.ogg」的去重状态（**模块级**）
@@ -123,11 +127,14 @@ export const useSfx = () => {
         const liveSfx = new Set<HTMLAudioElement>();
 
         // 创建 Audio 对象 (预加载)
-        const playSound = (src: string, baseVolume: number = 1.0) => {
+        // [2026-11-15 倾泻] `playbackRate` 可选：高射速下同一段音效连续叠播会糊成一片，
+        //   给每发一点微小的变调差异，耳朵才能分辨出"一发一发"
+        const playSound = (src: string, baseVolume: number = 1.0, playbackRate = 1) => {
             // [2026-10-15 · 独立审查返工] **电平门**：不只是"翻转那一刻在播的"，
             //   切后台**之后**新触发的声音也要拦住（第一版只做了边沿触发 ⇒ 后台新音效全漏）。
             if (isAppHidden()) return;
             const audio = new Audio(src);
+            if (playbackRate !== 1) audio.playbackRate = playbackRate;
             // [修改] 应用全局音量倍率
             audio.volume = baseVolume * globalVolumeRef.current;
             liveSfx.add(audio);
@@ -342,6 +349,12 @@ export const useSfx = () => {
         const playMauxirSummon = () => playSound(mauxirSummonSound, 0.8);
         const playMauxirRushAttack = () => playSound(mauxirRushAttackSound, 0.8);
         const playMauxirRushHit = () => playSound(mauxirRushHitSound, 0.8);
+        // [2026-11-15 倾泻] 预热一声 + 每发开火一声（后者由 `SpellProjectile` 在子弹飞出时逐发触发）
+        //   开火音：音量压到 0.5（120ms 间隔会三层叠响，太响会闷）、变调 ±8% 随机（避免听起来像单声长音）
+        const playKatyaBarrageSpinup = () => playSound(katyaBarrageSpinup, 0.9);
+        const playKatyaBarrageShot = () => playSound(katyaBarrageShot, 0.5, 0.92 + Math.random() * 0.16);
+        // [2026-11-15 程补素材] 收枪：子弹打完、加特林体消失那一刻（1.04s）
+        const playKatyaBarrageCooldown = () => playSound(katyaBarrageCooldown, 0.85);
         // ================= [2026-07-31 安卡希雅·时之重奏] 专属音效触发器 =================
         const playAcaciaRushFocus = () => playSound(acaciaRushFocusSound, 0.8);      // 圆缺有律 → 集束
         const playAcaciaRushSpread = () => playSound(acaciaRushSpreadSound, 0.8);    // 圆缺有律 → 扩散
@@ -406,6 +419,10 @@ export const useSfx = () => {
         eventBus.on(GameEvents.SFX_SUMMON, playSummon);
         eventBus.on(GameEvents.UNIT_DIE, playDefeat);
         eventBus.on(GameEvents.SFX_PUPU_ULTIMATE, playPupuUlt);
+        // [2026-11-15 倾泻] 预热 + 逐发开火
+        eventBus.on(GameEvents.SFX_KATYA_BARRAGE_SPINUP, playKatyaBarrageSpinup);
+        eventBus.on(GameEvents.SFX_KATYA_BARRAGE_SHOT, playKatyaBarrageShot);
+        eventBus.on(GameEvents.SFX_KATYA_BARRAGE_COOLDOWN, playKatyaBarrageCooldown);
         // [2026-09-19 1.0.16 茉莉安] 大招逐击音效：一击一声
         eventBus.on(GameEvents.CHAIN_STRIKE_STEP, playMarianUlt);
         // [2026-09-19] 法术交互五件套 + BUFF 金光
@@ -479,6 +496,9 @@ export const useSfx = () => {
             eventBus.off(GameEvents.SFX_SUMMON, playSummon);
             eventBus.off(GameEvents.UNIT_DIE, playDefeat);
             eventBus.off(GameEvents.SFX_PUPU_ULTIMATE, playPupuUlt);
+            eventBus.off(GameEvents.SFX_KATYA_BARRAGE_SPINUP, playKatyaBarrageSpinup);
+            eventBus.off(GameEvents.SFX_KATYA_BARRAGE_SHOT, playKatyaBarrageShot);
+            eventBus.off(GameEvents.SFX_KATYA_BARRAGE_COOLDOWN, playKatyaBarrageCooldown);
             // [2026-09-19 1.0.16 茉莉安] 大招逐击音效解除绑定（顺手掐掉正在播的那条）
             eventBus.off(GameEvents.CHAIN_STRIKE_STEP, playMarianUlt);
             eventBus.off(GameEvents.SFX_SPELL_DRAG, playSpellDrag);

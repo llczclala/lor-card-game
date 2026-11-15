@@ -400,6 +400,12 @@ export const GLOSSARY_DB: Record<string, GlossaryConfig> = {
         description: '该单位在场时，手牌中对应的法术牌会变化为天启者法术。',
         color: 'blue'
     },
+    // [2026-11-14 程拍板] 「各处」——把原先列在卡面的四个区域收进术语
+    '各处': {
+        label: '各处',
+        description: '手牌 / 备战席 / 战场 / 牌库 —— 这四个区域里的同名单位都算数。',
+        color: 'yellow'
+    },
     '衍生': {
         label: '衍生',
         description: '该卡牌可以在满足条件时生成另一张指定的卡牌。',

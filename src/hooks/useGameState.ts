@@ -14,7 +14,7 @@ import { canAfford, grantExtraAttackTurn } from '../logic/core'; // [2026-10-03]
 import { awaitLevelUpDrain as awaitLevelUpDrainCore, makeLevelUpDrainBudget } from '../utils/levelUpDrain';
 import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19 方案C] AI 施法三拍
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
-import { eventBus, GameEvents } from '../utils/eventBus';
+import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
 import { applyChannelOnSummon, applyEchoOnPlay, getPower, getHealth } from '../logic/keywords'; // [2026-09-22 修复] getHealth 统一有效血量口径 // [2026-08-06 莉莉子] Echo 回响
 import { canBlockAttacker, getBlockRejectReason, BLOCK_REJECT_TEXT } from '../logic/blockRules'; // [2026-10-26 莉莉子] 格挡合法性唯一门卫（无法格挡/隐秘/凶恶）
 import { checkCardLevelUp, accumulateMauxirDamage, applyBeaconDeaths, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide, assembleBeaconCard, grantBeaconRespawnEffect, hasLiveMarian, canPlayerRetractBlocker, collectFieldUnits, sideOfUnit, sideOfLevelUpTicket, setNexusMaxSnapshot, isNexusImmune, setSpellCostDownAllSnapshot, applySpellCostDownToNewCard, resetSpellCastState, setSpellCostUpAllSnapshot, resetCostModifiers, getCostTaxOf, clearHandCostTax, addHandCostTax, addChainCostTax, noteRoundPlay, CARD_COST_CAP, noteNexusHit, NEXUS_CAP_AFTER_HITS, bumpHoardStored } from '../utils/gameRules'; // [2026-10-24] 费用修饰器：建局重设 / 累积 / 清零 / 单位卡实扣加税 · 第21条：水晶受伤计数
@@ -28,6 +28,12 @@ import { applyCantAttackZeroPower, restoreCantAttackPower } from '../utils/cantA
 import { markUnitDieDispatched, hasUnitDieDispatched } from '../utils/deathLedger';
 // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔升级进度：真源账本 + 幂等贴值（含交战区）
 import { applyMauxirProgress, applyMauxirProgressToField, resetMauxirProgress } from '../utils/mauxirProgress';
+// [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 全局账本清零 + 「参战变形」重建后的幂等贴值
+//   （真源见 utils/katyaProgress.ts；施法自增入口在 useSpellSystem 的 `dispatchSpellCastSideEffects` 尾部）
+import { stampKatyaZone, resetKatyaProgress, bumpKatyaDrain, bumpKatyaDamage } from '../utils/katyaProgress';
+// [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」] 「本回合内」账本的开局清零
+//   ⚠️ 与 `resetKatyaProgress()` **同批**（两个建局入口都要清；历史上正是漏了一处才出过跨局残留）
+import { resetFrenzyAll } from '../utils/katyaFrenzy';
 import { useRoundLifecycle } from './useRoundLifecycle'; // [核心新增] 引入剥离的回合生命周期引擎
 import { getRogueDefs, flashRogueBuff, applyPermanentBuff, applyStatBalance, getEquipTriggers, isStrikeTargetAlive, isRallyByAttackPowerMet } from '../logic/rogueBattle'; // [2026-08-11] 迷宫强化战斗内分发（分发已收编 rogueTrigger）· [2026-09-15] isStrikeTargetAlive 打击成长的存活判据
 import { runRogueTrigger, commitSlicePatch, getSpellCostDownAll, getSpellCostUpAll, getCostTaxConfig, getChainPlayTaxConfig, hasNexusDamageCap, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎 · [2026-10-24] 费用修饰器三个纯查询 + 第21条 · [2026-10-26] getCostTaxMode → getCostTaxConfig（费用税拆四条）
@@ -642,6 +648,14 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         //   ⚠️ 建局入口有**两处**（本初始构建 effect + `resetGame`），两处都要清
         //      —— 与装备/武装"两个建局入口"同源（2026-08-25 正是漏了一处才出事）。
         resetMauxirProgress();
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 同一理由：凯茜娅的 S/D 账本必须**每题清零**
+        //   （S = 本局已施放法术数，D = 倾泻累计扣减）—— 否则跨局继承上一局的养攻。
+        //   ⚠️ 与 `resetMauxirProgress` 同位置：**沙盒早退之前**；两个建局入口（本 effect + `resetGame`）都要清。
+        resetKatyaProgress();
+        // [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」] 同一理由：本回合账本（armed / pierced）
+        //   也必须**每题清零** —— 否则跨局继承上一局的"已武装 + 已累计倾泻张数"。
+        //   ⚠️ 与 `resetKatyaProgress()` 同位置：**沙盒早退之前**；两个建局入口（本 effect + `resetGame`）都要清。
+        resetFrenzyAll();
         // [2026-10-06 莉莉子 BUG修复 · 莲台无垠] 「全法术 −N」快照（**建卡之前**就要设好）——
         //   查询口径 `getEffectiveSpellCost` 据此给**所有**法术减费（含战斗中生成的），
         //   不再依赖"开局那一刻改数据"（那正是它原先漏掉生成法术的原因）。
@@ -1197,7 +1211,11 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         //   升级判据 = **按方**列表（原先传全局 `leveledChampions` ⇒ 镜像对局里会读到敌方的升级，
         //   于是"变回 Lv2 卡 / 取 Lv2 关联法术"跨侧串味）
         const pResult = processHandTransformation(playerHand, playerUnits, stateRef.current.game.leveledChampionsBySide?.player ?? [], rogueEquipments, 'player');
-        if (pResult.changed) setPlayerHand(pResult.hand);
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 变形结果**必须重贴**凯茜娅的账：
+        //   情况 B「法术 → 英雄」用的是 `createFullCard` **整卡重建**（上方 `:1150` 一带）⇒
+        //   `buffs.power` 归零，若不在写回前重贴，手牌里的她会从 `2+S−D` 掉回 `2`。
+        //   `stampKatyaZone` 是幂等的：没命中凯茜娅时返回**原数组**（React 直接 bail out）。
+        if (pResult.changed) setPlayerHand(stampKatyaZone(pResult.hand, 'player') as CardData[]);
 
         // 2. 处理敌方 (Enemy) [本次修复的核心]
         const enemyUnits = [
@@ -1207,7 +1225,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         ];
         // [2026-10-04] 敌方侧：装备表 = enemyEquipments；升级判据同样**按方**（见上）
         const eResult = processHandTransformation(enemyHand, enemyUnits, stateRef.current.game.leveledChampionsBySide?.enemy ?? [], enemyEquipments, 'enemy');
-        if (eResult.changed) setEnemyHand(eResult.hand);
+        // [2026-11-14 莉莉子] 敌方侧同上（镜像对局里敌方也可能有凯茜娅；贴的是**敌方那本账**）
+        if (eResult.changed) setEnemyHand(stampKatyaZone(eResult.hand, 'enemy') as CardData[]);
 
     }, [playerBench, enemyBench, combatField, playerHand, enemyHand, game.leveledChampions, game.leveledChampionsBySide]); // [关键] 依赖列表包含双方状态 + 升级标记（升级时自动重跑变形）；[2026-10-04] 补分阵营表（变形已改读它）
 
@@ -1383,8 +1402,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         };
 
         // [核心新增] 监听全域受伤事件，将其吸入微队列统一清算！
-        const handleUnitDamage = (payload: { id: string, amount: number }) => {
-            console.log(`[🩸UnitDamage] 收到受伤事件: id=${payload.id}, amount=${payload.amount}`);
+        // [2026-11-14 莉莉子 ✨] `hits` / `perHit` 只有「倾泻」会带（合并事件的段数元数据），
+        //   本处理只**原样传递**（不在这里拆分），拆点见下方 `UNIT_DAMAGED` 的 ON_DAMAGE_SURVIVE。
+        const handleUnitDamage = (payload: { id: string, amount: number, hits?: number, perHit?: number }) => {
+            console.log(`[🩸UnitDamage] 收到受伤事件: id=${payload.id}, amount=${payload.amount}${payload.hits && payload.hits > 1 ? `, hits=${payload.hits}` : ''}`);
             pendingActionsRef.current.push({ type: 'UNIT_DAMAGED', payload });
         };
 
@@ -1906,6 +1927,12 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         //    真正的清零发生在上面那个初始构建 effect（App 用 `key` 递增重挂 GameSession 时触发）。
         //    这里**保留**为防御性第二入口：将来若有人接上 resetGame，账本不会漏清。
         resetMauxirProgress();
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 防御性第二入口（同上，与猫汐尔同源）：
+        //   将来若有人接上 `resetGame`，凯茜娅的 S/D 账本不会漏清。
+        resetKatyaProgress();
+        // [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」] 防御性第二入口（同上，与凯茜娅 S/D 同源）：
+        //   将来若有人接上 `resetGame`，「本回合」的狂乱账本也不会跨局残留。
+        resetFrenzyAll();
         // [2026-10-06 莲台无垠] 同一道理：法术减费快照也必须跟着重设（否则跨局残留）
         setSpellCostDownAllSnapshot(
             getSpellCostDownAll(stateRef.current.game?.rogueEnhancements),
@@ -2986,6 +3013,10 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                 });
 
                 if (damagedUnit && damagedUnit.effects) {
+                    // [2026-11-14 莉莉子 ✨ · 倾泻连打段数] 这条合并 `unit_damage` 代表的**实际发数**。
+                    //   只有「倾泻」会写 `hits`（`effectProcessor` 的 `case 'BARRAGE'`）；
+                    //   普通攻击 / 单体法术 / 信标 / 剧毒… 都读不到 ⇒ 缺省 1 ⇒ 老行为逐字不变。
+                    const mergedHits = Math.max(1, Math.floor(Number((action.payload as { hits?: number })?.hits) || 1));
                     damagedUnit.effects.forEach((effId: string) => {
                         const def = EFFECT_DB[effId];
 
@@ -3001,33 +3032,56 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                             const currentHp = (damagedUnit.health + (damagedUnit.buffs?.health || 0) + (damagedUnit.roundBuffs?.health || 0) - (damagedUnit.damageTaken || 0)); // [2026-07-31] 补上本回合临时血
                             console.log(`[MicroQueue:OnDamageSurvive] ${damagedUnit.name} 检出 ON_DAMAGE_SURVIVE，HP=${currentHp}，damageTaken=${damagedUnit.damageTaken}，effects=${damagedUnit.effects?.join(',')}`);
                             if (currentHp > 0) {
-                                const isPUnit = nextPlayerBench.some(c => c.id === targetId) ||
-                                    nextCombatField.some(f => (f.owner === 'player' && f.attacker?.id === targetId) || (f.owner === 'enemy' && f.blocker?.id === targetId));
+                                // =====================================
+                                // [2026-11-14 莉莉子 ✨ · 程拍板] **按倾泻的「发数」派发**
+                                // ── 病根：「倾泻」一次结算连打 N 发，但只推**一条**合并 `unit_damage`
+                                //    （设计：一次算完 + 合并飘字）⇒ 挂在这条事件上的「每次受到打击」钩子
+                                //    只会计一次，5 发倾泻和 1 次 10 点毫无区别（**信息丢失**）。
+                                // ── 口径：`payload.hits` 就是这条合并事件代表的**实际发数**；
+                                //    **只有按「次/发」计数的 class 才循环** —— 目前唯一一个：
+                                //      · `KATYA_BARRAGE_OBSERVER`（尤拉莉雅：受击 ⇒ 倾泻发数 +1）
+                                //        它由本 case 自己的闸门（`utils/katyaProgress.ts` 的
+                                //        `tryTakeKatyaObserverShot`，每回合至多 2 次）兜住，不会雪崩。
+                                // ── 其余 ON_DAMAGE_SURVIVE（如 `effect_danu_banshee_damage_buff` 班西：
+                                //    +2/+0 且**生成一张墓穴蜘蛛**）保持 **1 次**：5 发倾泻若按发触发
+                                //    就是一次刷 5 张蜘蛛 + +10/+0 ⇒ 那是失控而不是修复（程的纪律：
+                                //    「发现某张卡按发数触发会失控，先报告再动手」）。
+                                // ── `hits` 缺省（普通攻击 / 单体法术 / 信标…）⇒ repeat = 1，
+                                //    **老行为逐字不变**。
+                                // ⚠️ 循环体内不重取 `damagedUnit`：能走到循环的 class 只动账本、
+                                //    不改受伤单位本身；将来若有 class 既按发又改卡，需在此重取。
+                                // =====================================
+                                const repeat = def.class === 'KATYA_BARRAGE_OBSERVER' ? mergedHits : 1;
 
-                                const survivorCtx: EffectContext = {
-                                    game: nextGame, playerBench: nextPlayerBench, enemyBench: nextEnemyBench,
-                                    playerHand: nextPlayerHand, enemyHand: nextEnemyHand,
-                                    playerDeck: nextPlayerDeck, enemyDeck: nextEnemyDeck,
-                                    combatField: nextCombatField,
-                                    owner: isPUnit ? 'player' : 'enemy',
-                                    sourceCard: damagedUnit
-                                };
+                                for (let hitIdx = 0; hitIdx < repeat; hitIdx++) {
+                                    const isPUnit = nextPlayerBench.some(c => c.id === targetId) ||
+                                        nextCombatField.some(f => (f.owner === 'player' && f.attacker?.id === targetId) || (f.owner === 'enemy' && f.blocker?.id === targetId));
 
-                                const res = processEffect(effId, [damagedUnit], survivorCtx);
-                                if (res.game) nextGame = res.game;
-                                if (res.playerBench) nextPlayerBench = res.playerBench;
-                                if (res.enemyBench) nextEnemyBench = res.enemyBench;
-                                if (res.playerHand) nextPlayerHand = res.playerHand;
-                                if (res.enemyHand) nextEnemyHand = res.enemyHand;
-                                // [2026-10-06 莉莉子 · 既有裂缝④收口] 本站点此前把牌库结果**只写局部变量**，
-                                //   而本函数（flushMicroQueue）的尾部提交清单里**没有** setPlayerDeck/setEnemyDeckState
-                                //   ⇒ `processEffect` 产出的牌库改动**写完就丢**（与 P0 那两条同一个病）。
-                                //   这里按同族兄弟站点（亡语 / 信标）的写法就地提交，并同步 stateRef。
-                                if (res.playerDeck) { nextPlayerDeck = res.playerDeck; setPlayerDeck(res.playerDeck); stateRef.current.playerDeck = res.playerDeck; }
-                                if (res.enemyDeck) { nextEnemyDeck = res.enemyDeck; setEnemyDeckState(res.enemyDeck); stateRef.current.enemyDeck = res.enemyDeck; }
-                                if (res.combatField) nextCombatField = res.combatField;
+                                    const survivorCtx: EffectContext = {
+                                        game: nextGame, playerBench: nextPlayerBench, enemyBench: nextEnemyBench,
+                                        playerHand: nextPlayerHand, enemyHand: nextEnemyHand,
+                                        playerDeck: nextPlayerDeck, enemyDeck: nextEnemyDeck,
+                                        combatField: nextCombatField,
+                                        owner: isPUnit ? 'player' : 'enemy',
+                                        sourceCard: damagedUnit
+                                    };
 
-                                console.log(`[MicroQueue] ${damagedUnit.name} 受伤存活，触发 ON_DAMAGE_SURVIVE 效果: ${def.name}`);
+                                    const res = processEffect(effId, [damagedUnit], survivorCtx);
+                                    if (res.game) nextGame = res.game;
+                                    if (res.playerBench) nextPlayerBench = res.playerBench;
+                                    if (res.enemyBench) nextEnemyBench = res.enemyBench;
+                                    if (res.playerHand) nextPlayerHand = res.playerHand;
+                                    if (res.enemyHand) nextEnemyHand = res.enemyHand;
+                                    // [2026-10-06 莉莉子 · 既有裂缝④收口] 本站点此前把牌库结果**只写局部变量**，
+                                    //   而本函数（flushMicroQueue）的尾部提交清单里**没有** setPlayerDeck/setEnemyDeckState
+                                    //   ⇒ `processEffect` 产出的牌库改动**写完就丢**（与 P0 那两条同一个病）。
+                                    //   这里按同族兄弟站点（亡语 / 信标）的写法就地提交，并同步 stateRef。
+                                    if (res.playerDeck) { nextPlayerDeck = res.playerDeck; setPlayerDeck(res.playerDeck); stateRef.current.playerDeck = res.playerDeck; }
+                                    if (res.enemyDeck) { nextEnemyDeck = res.enemyDeck; setEnemyDeckState(res.enemyDeck); stateRef.current.enemyDeck = res.enemyDeck; }
+                                    if (res.combatField) nextCombatField = res.combatField;
+
+                                    console.log(`[MicroQueue] ${damagedUnit.name} 受伤存活，触发 ON_DAMAGE_SURVIVE 效果: ${def.name}${repeat > 1 ? `（第 ${hitIdx + 1}/${repeat} 段）` : ''}`);
+                                }
                             }
                         }
 
@@ -3712,6 +3766,76 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     }, [game.pendingChain]);
 
     // ==========================================
+    // [2026-11-15 程拍板 · 穿云激流状态机] 逐发驱动器（与 `chainStrikeStep` 同构）
+    // ── 每 120ms 一拍：调 `effect_katya_pierce_step` 打一发 → 立刻把那发弹道发出去
+    //    ⇒ 枪口转向、子弹飞出、伤害落地**同一拍**，逻辑与视觉不再断链。
+    // ── 收尾（done）：扣攻击力 + 升级记账 + 清链 + 还原 phase。
+    // ==========================================
+    const PIERCE_STEP_MS = 120;
+
+    const pierceStep = () => {
+        const pp = stateRef.current.game.pendingPierce;
+        if (!pp || pp.done) return;
+        bumpAnimProgress();
+        const snap = stateRef.current;
+        const ctx: EffectContext = {
+            game: { ...snap.game },
+            playerBench: [...snap.playerBench],
+            enemyBench: [...snap.enemyBench],
+            playerHand: [...snap.playerHand],
+            enemyHand: [...snap.enemyHand],
+            playerDeck: snap.playerDeck,
+            enemyDeck: snap.enemyDeck,
+            combatField: [...snap.combatField],
+            owner: pp.casterSide,
+        };
+        const res = processEffect('effect_katya_pierce_step', [], ctx);
+        // 这一发的飘字/特效事件立刻转发（与伤害同拍）
+        if (res.events && res.events.length > 0) relayEffectEvents(res.events as any);
+        setPlayerBench(res.playerBench);
+        setEnemyBench(res.enemyBench);
+        if (res.combatField) setCombatField(res.combatField as any);
+        setGame(res.game as GameState);
+        stateRef.current.playerBench = res.playerBench;
+        stateRef.current.enemyBench = res.enemyBench;
+        stateRef.current.game = res.game as GameState;
+        if (res.combatField) stateRef.current.combatField = res.combatField as any[];
+
+        // 这一发的弹道 —— 与逻辑同一拍，但**伤害跟着子弹走**：
+        //   把本发**真实伤害**塞进 bullet（`handleStrikeHit` 会在命中那一帧写入 damageTaken），
+        //   而不是像旧实现那样 `damage: 0` + 提前结算。
+        const shot = (res as any).pierceShot as
+            { targetId: string; dealt: number; killed: boolean; barrierPopped: boolean } | undefined;
+        if (shot) {
+            eventBus.emit(StrikeEvents.COMMAND, {
+                sourceId: pp.casterId,
+                bullets: [{ targetId: shot.targetId, damage: shot.dealt, barrierPopped: shot.barrierPopped }],
+                interval: 0,
+                duration: 0.28,
+                spellKey: 'katya_pierce',
+            });
+            eventBus.emit(GameEvents.SFX_KATYA_BARRAGE_SHOT);
+        }
+    };
+
+    useEffect(() => {
+        const pp = game.pendingPierce;
+        if (!pp) return;
+        if (pp.done) {
+            // 收尾：扣减（施法前账面的一半）+ 升级记账（累计实伤）
+            if (pp.drainPending > 0) bumpKatyaDrain(pp.casterSide, pp.drainPending);
+            if (pp.totalDealt > 0) bumpKatyaDamage(pp.casterSide, pp.totalDealt);
+            setGame(prev => (prev.pendingPierce
+                ? { ...prev, pendingPierce: undefined, phase: pp.prevPhase as GameState['phase'] }
+                : prev));
+            return;
+        }
+        setGame(prev => (prev.phase === 'animating' ? prev : { ...prev, phase: 'animating' as const }));
+        const timer = setTimeout(() => pierceStep(), PIERCE_STEP_MS);
+        return () => clearTimeout(timer);
+    }, [game.pendingPierce]);
+
+    // ==========================================
     // [2026-10-03 莉莉子 · P0 收口] **"等升级播完"的唯一实现已提到 `utils/levelUpDrain.ts`**
     //   （原先 useGameState 与 useSpellSystem 各抄一份）。这里只做"接线"：
     //   把本 hook 的 stateRef / setGame / wait 传进去，并支持传入"本场战斗累计预算"。
@@ -4271,6 +4395,24 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                                 !u.isDead && u.animState !== 'dying' && u.animState !== 'ephemeral_dying'
                             );
 
+                            // [2026-11-13 莉莉子 · targetFilter 扩容] 敌方存活池（与 liveAllies 同口径，归属取反）
+                            //   归属约定沿用上方收集：attacker 属 `fight.owner`，blocker 属其对面。
+                            //   ⚠️ 通用入口已补在 `effectProcessor.ts`（BUFF/STRIKE/HEAL 走 processEffect 的那条路）；
+                            //      这里是 `ON_FIRST_NEXUS_STRIKE` 的**特化**上下文，自己算 autoTargets 后传入 targets，
+                            //      故必须同样认识两个新暗号，否则鬼怪小队类效果用上新值时仍然静默空过。
+                            const liveEnemies: CardData[] = (() => {
+                                const foes: CardData[] = [...(side === 'player' ? stateRef.current.enemyBench : stateRef.current.playerBench)];
+                                if (stateRef.current.combatField) {
+                                    stateRef.current.combatField.forEach(fight => {
+                                        if (fight.owner !== side && fight.attacker) foes.push(fight.attacker);
+                                        if (fight.owner === side && fight.blocker) foes.push(fight.blocker);
+                                    });
+                                }
+                                return foes.filter(u =>
+                                    !u.isDead && u.animState !== 'dying' && u.animState !== 'ephemeral_dying'
+                                );
+                            })();
+
                             let autoTargets: { type: string; id: string }[] = [];
                             const params = def.params;
 
@@ -4287,6 +4429,19 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
                                 } else if (params.nexusFallback) {
                                     autoTargets = [{ type: nexusFallbackTarget, id: nexusFallbackTarget }];
                                 }
+                            } else if (params.targetFilter === 'RANDOM_ENEMY') {
+                                // [2026-11-13 莉莉子] 随机一个存活敌方单位；空池 ⇒ 不选目标（效果空过）
+                                if (liveEnemies.length > 0) {
+                                    const pick = liveEnemies[Math.floor(Math.random() * liveEnemies.length)];
+                                    autoTargets = [{ type: 'enemy', id: pick.id }];
+                                }
+                            } else if (params.targetFilter === 'RANDOM_ENEMY_OR_NEXUS') {
+                                // [2026-11-13 莉莉子] 「存活敌方单位 + 对面水晶」同权随机 —— 单位空池时唯一候选即水晶
+                                const foeNexus = side === 'player' ? 'enemy_nexus' : 'player_nexus';
+                                const pool: { type: string; id: string }[] =
+                                    liveEnemies.map(u => ({ type: 'enemy', id: u.id }));
+                                pool.push({ type: foeNexus, id: foeNexus });
+                                autoTargets = [pool[Math.floor(Math.random() * pool.length)]];
                             }
 
                             const ctx: EffectContext = {

@@ -5,6 +5,8 @@ import { EQUIPMENT_BY_ID } from '../data/equipment'; // [2026-10-03] 升级时�
 import { getPower } from '../logic/keywords'; // [2026-09-26 莉莉子] 攻击力唯一口径（0 下限 + maxPower 上限）
 // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔升级进度的**唯一真源**（模块级账本）
 import { bumpMauxirProgress, applyMauxirProgress } from './mauxirProgress';
+// [2026-11-14 莉莉子 ✨新功能 · 凯茜娅] 升级阈值（18 → Lv2）·「倾泻」军械员减费账本（L4 才写入，本批恒 0）
+import { KATYA_UPGRADE_DAMAGE, getKatyaBarrageCostDown } from './katyaProgress';
 
 /** [2026-07-10 诗人] 检测凯特琳减费光环是否在场 */
 export const hasPoetCaitlinAura = (bench: CardData[]): boolean => {
@@ -111,6 +113,24 @@ export const getEffectiveSpellCost = (
     const cond = getSpellConditionalCost(card, castBasis ?? spellCastSnapshot[side]);
     if (cond.zero) return 0;
     const condBase = Math.max(0, base + cond.mod);
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」动态费用] **军械员打击 → 倾泻永久 −1**（可叠加）
+    // ── 本批只通"查询腿"：账本 `getKatyaBarrageCostDown(side)` 目前恒 **0**
+    //    （写入端 L4 才接：军械员打击结算处调 `addKatyaBarrageCostDown(side, 1)`）。
+    // ── 为什么钉在**这里**（而不是逐处改调用点）：全项目「倾泻的费用」有 **10 个真实调用点** ——
+    //      `components/CardAnimations.tsx:142/157/172/186`（手牌费用角标 4 处）
+    //      `components/GameSession.tsx:1526`（悬停预览）
+    //      `hooks/useGameState.ts:1720/5088`（门禁 · 实扣）
+    //      `hooks/useSpellSystem.ts:1170/1340`（施法扣费 · 抉择）
+    //      `utils/gameRules.ts:968`（抉择/折扣链）
+    //    —— 它们**全部**经过本函数 ⇒ 减费在这里生效即"显示价 / 门禁价 / 实扣价"三价同源。
+    // ── 顺序：排在「条件减费」之后、「加费税」之前 —— 与既有减费口径一致（减费先算、税后加）。
+    //     `cond.zero`（双生符归零）在上面已提前返回，不吃这一层。
+    // ⚠️ 触发条件用 `card.key` 精确匹配：倾泻是生成物、没有 `associatedChampionKey`。
+    //    将来若出现同类的第二张「倾泻」，改成按效果类（`EFFECT_DB[...].class === 'BARRAGE'`）判定即可。
+    // ==========================================
+    const barrageCostDown = card.key === 'katya_barrage' ? getKatyaBarrageCostDown(side) : 0;
+    const spellBase = Math.max(0, condBase - barrageCostDown);
     // [2026-10-24 莉莉子 · 费用修饰器] 法术额外吃：① 全场法术加费 + ②③ 费用税，最后钳到费用上限。
     //   ⚠️ 上面 `cond.zero`（双生符：本场法术数达标 ⇒ 费用归零）**优先**，不吃这一层 —— 刻意保留。
     // [2026-10-26 莉莉子] 法术卡只看「法术」那一格税（单位税与它无关）
@@ -118,10 +138,10 @@ export const getEffectiveSpellCost = (
     // 只有极速(burst)和快速(fast)法术受凯特琳减费影响
     if (card.type === 'spell-burst' || card.type === 'spell-fast') {
         if (hasPoetCaitlinAura(bench)) {
-            return Math.min(CARD_COST_CAP, Math.max(0, condBase - 1) + extra);
+            return Math.min(CARD_COST_CAP, Math.max(0, spellBase - 1) + extra);
         }
     }
-    return Math.min(CARD_COST_CAP, condBase + extra);
+    return Math.min(CARD_COST_CAP, spellBase + extra);
 };
 
 // ── [2026-10-08 莉莉子 · 法术专属装备 第二波] **条件减费要读的对局状态**（按方，只读快照）──
@@ -626,6 +646,15 @@ export const checkCardLevelUp = (
     //   ⚠️ 读的是专属字段 beaconDeaths，不是自定义位域 customProgress（目标 2 与 bit2 撞车）
     if (card.key === 'marian' && (card.beaconDeaths || 0) >= 2) return true;
 
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗升级判定] 本局她**本体**累计造成 18 点伤害 → Lv2
+    //   ⚠️ 读**卡上镜像** `katyaDamage`，不是 `getKatyaDamage(side)` ——
+    //      本函数签名里没有 side（升级扫描器只拿得到单张卡），而卡上镜像正是为此准备的：
+    //      `stampKatyaCard` 幂等贴值（`utils/katyaProgress.ts`），真源仍是那里的账本。
+    //      与猫汐尔 `mauxirDamage`（`:641`）/ 茉莉安 `beaconDeaths`（`:647`）完全同构。
+    //   ⚠️ 口径：只算「倾泻」+「她本体进攻的战斗伤害」；别的法术卡的伤害不进这本账
+    //      （记账点：`effectProcessor` 的 BARRAGE case · `combat.ts` 的两个战斗结算函数）。
+    if (card.key === 'katya_klein_rhapsody' && (card.katyaDamage || 0) >= KATYA_UPGRADE_DAMAGE) return true;
+
     return false;
 };
 
@@ -857,6 +886,20 @@ export const getLeveledUpCard = (card: CardData): CardData => {
             effects: ['effect_acacia_chrono_echo_lv2', 'effect_acacia_chrono_echo_token_lv2'],
         } as CardData;
     }
+
+    // [2026-11-13 1.0.23 凯茜娅·狂诗] Lv2：2/12，解锁"倾泻"打水晶且次数不减半
+    if (card.key === 'katya_klein_rhapsody') {
+        return {
+            ...card,
+            level: 2,
+            health: card.health + 2, // 10 → 12
+            maxHealth: card.maxHealth + 2,
+            level2ImageUrl: card.level2ImageUrl,
+            description: '每打出一张法术牌，各处“凯茜娅·狂诗”永久获得 +1/+0。\n入场与回合开始：生成一张“倾泻”。\n参战：变化为“凯茜娅的狂想”。\n【Lv2】“倾泻”可以以敌方水晶为目标。',
+            effects: [...(card.effects || [])],
+        } as CardData;
+    }
+
 
     return card;
 };
@@ -1169,6 +1212,11 @@ export const checkCardReadyToLevelUp = (card: CardData, game?: GameState): boole
     if (card.key === 'mauxir_lotus_drive' && (card.mauxirDamage || 0) >= 30) return true;
     // [2026-07-31 安卡希雅] 场下升级：朔望之期已打出（全局标记）→ 手牌安卡橙色高亮"打出即升级"
     if (card.key === 'acacia_chrono_echo' && game?.leveledChampions?.includes('acacia_chrono_echo')) return true;
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗升级判定] 手牌橙色高光「蓄势待发」
+    //   ⚠️ 三处判定必须**同口径同阈值**（`checkCardLevelUp` / `getChampionUpgradeProgress` / 本函数）——
+    //      历史上漏一处就会出现"进度环显示 0、手牌没高光、却突然升级"的错位
+    //      （见本文件 `getChampionUpgradeProgress` 上方的血泪注释）。
+    if (card.key === 'katya_klein_rhapsody' && (card.katyaDamage || 0) >= KATYA_UPGRADE_DAMAGE) return true;
     // 未来其他以 customProgress 追踪升级的英雄可加在这里
     // if (card.key === 'xxx' && (card.customProgress || 0) >= N) return true;
     return false;
@@ -1486,6 +1534,11 @@ export const getChampionUpgradeProgress = (
             return card.customProgress || 0;
         // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔读**专属镜像**（真源见 utils/mauxirProgress）
         case 'mauxir_lotus_drive': return card.mauxirDamage || 0;
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗] 升级进度 = 本局她**本体**累计造成的伤害
+        //   （阈值 `KATYA_UPGRADE_DAMAGE` = 18，`data/cards.ts:579-580` 的 levelUpTarget 同源）。
+        //   与上面 `checkCardLevelUp` / `checkCardReadyToLevelUp` 三处**必须同源** ——
+        //   本函数是「进度环 / 牌库面板气泡 / 阶跃反馈仪」的唯一口径（Card.tsx 两处 + GameSession）。
+        case 'katya_klein_rhapsody': return card.katyaDamage || 0;
         default: return 0;
     }
 };

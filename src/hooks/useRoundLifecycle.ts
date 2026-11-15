@@ -3,6 +3,8 @@ import type { MutableRefObject } from 'react';
 import type { CardData, GameState, GameRecordCategory, RecordEntity } from '../types';
 import { calculateRoundStart, spellManaCapOf } from '../logic/core';
 import { resetSpellCastRoundCounters, resetRoundChainTax, clearHandCostTax, resetNexusHitCount } from '../utils/gameRules'; // [2026-10-08 第二波] 回合开始清零本回合施法计数 · [2026-10-24] + 费用修饰器回合清零 / 第21条受伤计数
+// [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」] 「本回合内」账本到期（`resetSpellCastRoundCounters()` 旁）
+import { resetFrenzyRound } from '../utils/katyaFrenzy';
 import { getCurrentHP } from '../logic/combat';
 import { processEffect, relayEffectEvents, hasLiveUnitOfSide, processOnGetAttackToken } from '../logic/effectProcessor'; // [2026-10-04] +hasLiveUnitOfSide（回合兜底复用"存在性"唯一出口）｜ [2026-10-06] +processOnGetAttackToken（块 B 改走唯一入口）
 import type { EffectContext } from '../logic/effectProcessor';
@@ -601,7 +603,10 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                                             const targetId = event.payload.target === 'enemy' ? 'nexus_enemy' : 'nexus_player';
                                             const delay = nexusDamageIndex * 250;
                                             setTimeout(() => {
-                                                eventBus.emit('unit_damage', { id: targetId, amount: event.payload.amount });
+                                                // [2026-11-14 莉莉子 ✨ · 倾泻连打段数] 这里是**唯一**重建 payload 的转发点，
+                                                //   必须把 `hits` / `perHit` 一起带过去（否则 `NEXUS_STRIKED` 有、飘字那一路丢）。
+                                                //   缺省时两个字段都是 undefined ⇒ 行为与改动前逐字一致。
+                                                eventBus.emit('unit_damage', { id: targetId, amount: event.payload.amount, hits: event.payload.hits, perHit: event.payload.perHit });
                                                 eventBus.emit(GameEvents.NEXUS_STRIKED, event.payload);
                                             }, delay);
                                             nexusDamageIndex++;
@@ -1072,6 +1077,12 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
         // [2026-10-08 莉莉子 · 法术专属装备 第二波] **本回合施法计数清零**
         //   （活页夹页"本回合尚未打出过法术"的判据；「本场」累计保留）
         resetSpellCastRoundCounters();
+        // [2026-11-14 莉莉子 ✨新功能 · 卡「溯时双翼·狂乱」] **本回合账本到期**
+        // ── 卡面写的是「本回合内…」⇒ 与上面的"本回合施法计数"同一生命周期，
+        //    故挂在同一处（`resetSpellCastRoundCounters()` 的下一行），单一清零出口。
+        // ── 清的是 `utils/katyaFrenzy.ts` 的 armed / pierced（**模块级账本**，非 React state）；
+        //    漏清 ⇒ 跨回合残留，狂乱会变成永久光环。
+        resetFrenzyRound();
         // [2026-10-24 莉莉子 · 费用修饰器] 回合开始清「本回合」类的 ③ 连出税 + 出牌计数。
         //   ⚠️ ② 费用税**不在这里清** —— 它的清零时机由强化版本决定（见回合末那段）。
         resetRoundChainTax();

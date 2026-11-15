@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import type { MutableRefObject, Dispatch, SetStateAction } from 'react';
 import type { CardData, GameState, SpellStackItem, Race, Keyword } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry';
@@ -20,6 +20,9 @@ import { getFlyingSwordOwner, getDefensiveSide, getExtraAttackOwner } from '../l
 import { applyPermanentBuff, getEquipTriggers } from '../logic/rogueBattle'; // [2026-08-19] 迷宫强化分发（分发已收编 rogueTrigger）
 import { runRogueTrigger, type RogueTriggerCtx, type Side } from '../logic/rogueTrigger'; // [2026-09-09 重构] 迷宫强化统一串行触发引擎
 import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
+// [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 法术数自增 + 四区域幂等贴值
+//   （真源 = 模块级账本，见 utils/katyaProgress.ts 头注释；清零在建局/重开两处）
+import { bumpKatyaSpell, stampKatyaCard, stampKatyaZone, stampKatyaField, KATYA_KEY, getKatyaStats } from '../utils/katyaProgress';
 
 /**
  * [2026-09-19 1.0.16 茉莉安] 是否为「连斩类」法术（目前只有「最终指令」）。
@@ -215,6 +218,14 @@ export interface UseSpellSystemParams {
     onInvalidTarget?: (message: string) => void;
 }
 
+/**
+ * [2026-11-14 程拍板 · 时间序修正] 「确认入栈」时已预先记过 +1/+0 的法术实例 id。
+ * 用途：让倾泻在**结算时**读到加攻后的面板（先加攻 → 后减攻），
+ *       同时保证结算后的 `dispatchSpellCastSideEffects` **不重复记账**。
+ * 判据即删（`delete` 命中返回 true），用后不留痕 ⇒ 卡被复制 / 新开一局都不会残留。
+ */
+const katyaPreCountedSpellIds = new Set<string>();
+
 export const useSpellSystem = (params: UseSpellSystemParams) => {
     const {
         stateRef, game,
@@ -237,6 +248,53 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         if (!card.effects || card.effects.length === 0) return null;
         return EFFECT_DB[card.effects[0]];
     };
+
+    // =========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」Lv1/Lv2 目标门]
+    // ── 需求：`TargetRequirement.minLevel`（`data/effectRegistry.ts:100-119`）只约束**水晶**目标。
+    // ── 为什么这里要"扫全场取等级"：法术卡恒 `level: 0`，等级在**天启者本体**上
+    //    （`data/cards.ts:571` 的 `level: 1`）⇒ 目标筛选层没有别的来源。
+    // ── 数据源与既有 `remainingSelectable`（`:662`）同源：
+    //      stateRef（useGameState 层） → boardSnapshot（GameSession UI 层补传，`:1391`）。
+    //      两层都可能缺 ⇒ **回 1（Lv1）**：宁可挡住水晶，也不让 Lv1 白打一炮（安全方向）。
+    // ── 取**最大值**：同一方多张同名时取最大是"最宽容但不误放 Lv1"的口径。
+    // ── [2026-11-14 莉莉子 独立审查 · 致命3] **必须只看施法方**（`side`）：
+    //    原实现把 `enemyBench / enemyHand / enemyDeck` 一起扫、取**双方六区域的 max** ⇒
+    //    镜像对局里敌方有 Lv2 凯茜娅时，我方 Lv1 的「倾泻」在 **UI 层被放行打水晶**，
+    //    而结算层 `brCasterLevel = 本体 level = 1` 兜底 break（`effectProcessor.ts:5471`）
+    //    ⇒ **白花 4 费、零伤害、只留一条 console.warn**。
+    // =========================================
+    const getCasterKatyaLevel = (side: 'player' | 'enemy' = 'player'): number => {
+        const board: any = stateRef ? stateRef.current : boardSnapshotParam?.();
+        if (!board) return 1;
+        // 四区域 + 战线，**只取施法方那一侧**
+        const bench: CardData[] = side === 'player' ? (board.playerBench ?? []) : (board.enemyBench ?? []);
+        const hand: CardData[] = side === 'player' ? (board.playerHand ?? []) : (board.enemyHand ?? []);
+        const deck: CardData[] = side === 'player' ? (board.playerDeck ?? []) : (board.enemyDeck ?? []);
+        // 战线归属口径（全局统一）：attacker 属 `f.owner`、blocker 属其**对面**
+        const field: CardData[] = ((board.combatField ?? []) as any[])
+            .map((f: any) => (f?.owner === side ? f?.attacker : f?.blocker))
+            .filter(Boolean) as CardData[];
+        let lv = 0;
+        for (const c of [...bench, ...hand, ...deck, ...field]) {
+            if (c?.key === KATYA_KEY) lv = Math.max(lv, c.level || 1);
+        }
+        return lv || 1;
+    };
+
+    // =========================================
+    // [2026-11-14 莉莉子 独立审查 · 致命3] 目标所属侧 → **施法方**
+    // ── 为什么需要这个换算：`isValidTarget(card, owner, …)` 的 `owner` 是**被选目标的阵营**，
+    //    不是施法者（三处独立证据见本文件 `:702-711`）。
+    //   · `ENEMY_TARGET` / `ENEMY_NEXUS` ⇒ 目标属敌方 ⇒ 施法方 = 目标侧的**对面**
+    //   · 其余（`PLAYER_NEXUS` 等己方水晶）⇒ 施法方 = 目标侧本身
+    // ── 当前所有调用点在**玩家点选路径**（AI 走 `findAITargetsForEffect`，不经此处），
+    //    按目标侧反推既等价、又能让将来"敌方也走 UI 层"时自动正确。
+    // =========================================
+    const casterSideOf = (reqType: TargetType, targetOwner: 'player' | 'enemy'): 'player' | 'enemy' =>
+        (reqType === 'ENEMY_TARGET' || reqType === 'ENEMY_NEXUS')
+            ? (targetOwner === 'player' ? 'enemy' : 'player')
+            : targetOwner;
 
     // [2026-07-21] 根据 ID 在全场查找单位（备战席/战场/手牌）
     const findUnitById = (id: string): CardData | null => {
@@ -373,6 +431,63 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         if (effect.targetRequirements.length === 0 && !skipAutoComplete) {
             onComplete(card, []);
         } else {
+            // =====================================
+            // [2026-11-14 莉莉子 独立审查 · 漏洞5] 进入选目标**之前**先探一次"到底有没有合法目标"
+            // ── 只覆盖 **ENEMY_TARGET + minLevel** 这一类（= Lv1 的「倾泻」）：
+            //    水晶被等级门挡下 + 敌方场上没有活着的单位 ⇒ 这次选目标**一格都点不亮**。
+            //    不提示的话，玩家只会看到"进了瞄准态但什么都点不了"，然后手动取消
+            //    （连"为什么点不了"都没有一句解释）。
+            // ── 其余法术的"非法点击静默"行为**一字不改**（与 `onInvalidTarget` 的既有范围约定一致）。
+            // =====================================
+            const firstReq = effect.targetRequirements[0];
+            if (firstReq && firstReq.type === 'ENEMY_TARGET' && firstReq.minLevel !== undefined) {
+                const board: any = stateRef ? stateRef.current : boardSnapshotParam?.();
+                const isFoeLive = (c: any) => !!c && !c.isDead
+                    && c.animState !== 'dying' && c.animState !== 'ephemeral_dying';
+                const foeUnits = board
+                    ? [
+                        ...(board.enemyBench ?? []),
+                        ...((board.combatField ?? []) as any[])
+                            .map((f: any) => (f?.owner === 'enemy' ? f?.attacker : f?.blocker)),
+                    ].filter(isFoeLive).length
+                    : 0;
+                const nexusSelectable = isValidTarget(
+                    'nexus', 'enemy', firstReq.type, firstReq.filterKey,
+                    effect.params?.targetCondition, firstReq.raceFilter, firstReq.keywordFilter,
+                    firstReq.stackCostBelow, firstReq.stackSpeedFilter,
+                    firstReq.minLevel, casterSideOf(firstReq.type, 'enemy'),
+                );
+                if (foeUnits === 0 && !nexusSelectable) {
+                    const reason = `${card.name}：施法者未达 Lv2，不能指向敌方水晶；敌方场上也没有可选单位 ⇒ 当前无可选目标`;
+                    onInvalidTarget?.(reason);   // 标准对局：GameSession → announce 中央播报
+                    setMessage?.(reason);        // 沙盒：SandboxSession 会渲染 message
+                }
+            }
+            // =====================================
+            // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「誊抄」] 手牌目标为 0 时**先提示**（同上一条的写法）
+            // ── 为什么需要：`remainingSelectable` 对 `HAND_CARD` 恒返回 -1（不可枚举 ⇒ 不放宽），
+            //    所以"手里一张可选的法术都没有"时，玩家只会看到进了瞄准态却**点哪都没反应**，
+            //    只能自己按取消 —— 连原因都没有一句。
+            // ── 判据与点击路径逐字同源（`cardTypeFilter` + `excludeKeywords` + 排除正在打出的自己）。
+            // =====================================
+            const handReq = effect.targetRequirements[0];
+            if (handReq && handReq.type === 'HAND_CARD') {
+                const board: any = stateRef ? stateRef.current : boardSnapshotParam?.();
+                const myHand: CardData[] = board?.playerHand ?? [];
+                const legalCount = myHand.filter(c => {
+                    if (!c || !c.id) return false;
+                    if (castingCard && c.id === castingCard.id) return false;
+                    if (handReq.cardTypeFilter === 'spell' && !c.type?.includes('spell')) return false;
+                    if (handReq.cardTypeFilter === 'unit' && !c.type?.includes('unit')) return false;
+                    if ((handReq.excludeKeywords || []).some(kw => c.keywords?.includes(kw as Keyword))) return false;
+                    return true;
+                }).length;
+                if (legalCount === 0) {
+                    const reason = `${card.name}：手牌里没有可选的目标（${handReq.excludeKeywords?.length ? `已是【${handReq.excludeKeywords.join('/')}】的法术不可选` : '无合法手牌'}）`;
+                    onInvalidTarget?.(reason);
+                    setMessage?.(reason);
+                }
+            }
             // 进入选择模式
             setCastingCard(card);
             setCurrentStepIndex(0);
@@ -423,9 +538,22 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         raceFilter?: Race[],       // [新增] 种族过滤器
         keywordFilter?: string[],   // [2026-07-07] 关键词过滤
         stackCostBelow?: number,    // [2026-08-05 莉莉子] SPELL_ON_STACK 目标费用上限（不含）
-        stackSpeedFilter?: string[] // [2026-08-05 莉莉子] SPELL_ON_STACK 目标速度白名单
+        stackSpeedFilter?: string[], // [2026-08-05 莉莉子] SPELL_ON_STACK 目标速度白名单
+        nexusMinLevel?: number,      // [2026-11-14 莉莉子] 水晶类目标的施法者等级下限（`TargetRequirement.minLevel`）
+        casterSide?: 'player' | 'enemy', // [2026-11-14 莉莉子 独立审查 · 致命3] **施法方**（等级门只扫这一侧；缺省按目标侧反推）
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「誊抄」] 「**排除**拥有这些关键词的目标」（`TargetRequirement.excludeKeywords`）
+        //   ⚠️ 必须放在**末位**：本函数是 11 个位置实参的既有签名，插在中间会让
+        //      `excludeKeywords` 悄悄顶掉下一个实参（全是可选参 ⇒ tsc 不会报错，只会静默错位）。
+        excludeKeywords?: string[]
     ): boolean => {
         if (card === 'nexus') {
+            // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「倾泻」] **水晶类目标的等级门**
+            //   ── 语义只覆盖"水晶"（本分支）：单位目标完全不受影响 —— 见 `TargetRequirement.minLevel` 注释。
+            //   ── 未设 ⇒ 不限制（其余 133 条效果的现有行为逐字不变）。
+            //   ── [独立审查 · 致命3] 等级**必须按施法方**取：`casterSide` 缺省时用 `casterSideOf` 反推，
+            //      绝不再"扫双方取 max"（那会让敌方 Lv2 顶开我方 Lv1 的水晶门）。
+            if (nexusMinLevel !== undefined
+                && getCasterKatyaLevel(casterSide ?? casterSideOf(reqType, owner)) < nexusMinLevel) return false;
             // [2026-06-27 生机补充] ally_only 时我方水晶可被选，敌方不可
             // [2026-10-04 莉莉子] ally_not_full = ally_only ∪ 「满血水晶不可选」
             if (targetCondition === 'ally_only' || targetCondition === 'ally_not_full') {
@@ -455,7 +583,21 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         const isEnemy = owner === 'enemy';
 
 		// [2026-06-27 暗箱操作] HAND_CARD 跳过存活检查（手牌法术 health=0 会误杀）
+		// =====================================
+		// [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「誊抄」] 手牌专属的两道门（都必须在 `return true` **之前**）
+		// ── 为什么整个 `keywordFilter` 那段帮不上忙：它在本函数下半段才判，
+		//    而 `HAND_CARD` 在这里已经 `return true` 了 ⇒ 上半段所有过滤（种族/关键词/条件）
+		//    对手牌**全部失效**。所以「已是【回响】不可选」只能写在**这一段里面**。
+		// ── ① `excludeKeywords`：拥有**任意一个** ⇒ 拒绝（语义见 `TargetRequirement.excludeKeywords`）。
+		// ── ② **正在打出的这张卡自己**也不可选（原先只有点击路径 `:670` 一处拦，AI/沙盒/回放绕过它
+		//    ⇒ 会把自己的手牌实例改掉然后飞出去，凭空多一份副本）。
+		// =====================================
 		if (reqType === 'HAND_CARD') {
+			if (excludeKeywords && excludeKeywords.length > 0) {
+				const hitExcluded = excludeKeywords.some(kw => card.keywords?.includes(kw as Keyword));
+				if (hitExcluded) return false;
+			}
+			if (castingCard && card.id === castingCard.id) return false;
 			return true;
 		}
 
@@ -596,6 +738,15 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 setMessage?.(`只能选择费用低于${maxCost}的卡牌！`);
                 return;
             }
+            // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「誊抄」] 「已是【回响】不可再选」要说一句人话
+            //   —— 若不提示，玩家只会看到"点了没反应"（`isValidTarget` 静默 return false）。
+            //   判据与 `isValidTarget` 的 `HAND_CARD` 分支同源（`excludeKeywords`）。
+            const excludedKws = requirement.excludeKeywords || [];
+            if (excludedKws.length > 0 && excludedKws.some(kw => target.keywords?.includes(kw as Keyword))) {
+                setMessage?.(`已是【${excludedKws.join('】【')}】的法术不可选！`);
+                console.log(`[HAND_CARD] ${target.name} 已拥有 [${excludedKws.join(', ')}] ⇒ 拒绝`);
+                return;
+            }
         }
 
         // [2026-08-05 莉莉子 法术16] 多目标选择去重：同一单位不可重复选（防止三连选天启者选中同一个）
@@ -605,7 +756,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         }
 
         // 验证合法性：将法术配置中的高级暗号和种族过滤器传给雷达
-        if (isValidTarget(target, owner, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter, requirement.stackCostBelow, requirement.stackSpeedFilter)) {
+        //   [独立审查 · 致命3] 第 10 个实参 `casterSide` = **施法方**（`owner` 是目标所属侧 ⇒ 用 `casterSideOf` 反推）
+        if (isValidTarget(target, owner, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter, requirement.stackCostBelow, requirement.stackSpeedFilter, requirement.minLevel, casterSideOf(requirement.type, owner), requirement.excludeKeywords)) {
             // [新增] 目标合法，成功锁定！播放清脆的确认音
             eventBus.emit(GameEvents.SFX_SELECT_UNIT);
 
@@ -705,12 +857,20 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                         ...playerPool.map(c => ({ card: c, side: 'player' as const })),
                         ...enemyPool.map(c => ({ card: c, side: 'enemy' as const })),
                     ];
+                } else if (requirement.type === 'ENEMY_TARGET') {
+                    // =====================================
+                    // [2026-11-14 莉莉子 独立审查 · 漏洞5] `ENEMY_TARGET` 改为**可枚举**：
+                    //   候选 = 敌方单位（同 `ENEMY_UNIT`）+ **敌方水晶**（下面单独 +1，走完整 `isValidTarget`
+                    //   水晶分支 ⇒ `minLevel` 那道等级门**一起生效**）。
+                    // ── 原实现一律 `return -1`，理由是「水晶永远可选」；但 Lv1 的「倾泻」水晶已被挡 ⇒
+                    //    敌场空时合法目标真的是 **0 个**，却因为 -1 不算 0 ⇒ 只能手动取消、无任何提示。
+                    // ── 判别式不变（`remainingSelectable === 0` 才放宽）⇒ 有单位可选时行为**逐字不变**；
+                    //    水晶始终可选的效果（如「崩坏」，无 `minLevel`）恒 ≥ 1 ⇒ 同样不受影响。
+                    // =====================================
+                    candidates = enemyPool.map(c => ({ card: c, side: 'enemy' as const }));
                 } else {
-                    // [2026-10-23 莉莉子 · 崩坏] ⚠️ `ENEMY_TARGET` **故意**不纳入放宽：
-                    //   它的候选包含「敌方水晶」，而水晶永远可选 ⇒ `remainingSelectable` 恒 ≥ 1，
-                    //   若把它当成"单位池"来数，敌场空时会数出 0 ⇒ 被判定"本步已无可选" ⇒
-                    //   **直接收工、玩家永远点不到敌方水晶**。返回 -1（无法枚举 ⇒ 不放宽）才是对的。
-                    return -1; // 其余类型（水晶 / 堆叠法术 / 手牌…）不放宽 ⇒ 维持原行为
+                    // 其余类型（水晶 / 堆叠法术 / 手牌…）不放宽 ⇒ 维持原行为
+                    return -1;
                 }
 
                 if (requirement.filterKey) {
@@ -725,7 +885,22 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     seen.add(c.id);
                     if (newTargets.some(t => t.id === c.id)) continue; // 同一步不可重复选同一单位
                     // ⚠️ 用**候选自己的阵营** `side` 校验（原实现传的是被点击目标的 `owner`）
-                    if (isValidTarget(c, side, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter, requirement.stackCostBelow, requirement.stackSpeedFilter)) n++;
+                    //   [独立审查 · 致命3] 末位 `casterSide` 同样按候选侧反推（本路径 = 玩家点选 ⇒ 恒为 'player'）
+                    if (isValidTarget(c, side, requirement.type, requirement.filterKey, effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter, requirement.stackCostBelow, requirement.stackSpeedFilter, requirement.minLevel, casterSideOf(requirement.type, side), requirement.excludeKeywords)) n++;
+                }
+                // [独立审查 · 漏洞5] `ENEMY_TARGET` 的**水晶**候选单独计数（+1）：
+                //   "能否选水晶"走完整 `isValidTarget` 水晶分支 ⇒ `minLevel` 等级门在此生效；
+                //   ⚠️ 水晶不参与 `filterKey / raceFilter / keywordFilter` 这类**单位**过滤
+                //   （与 `isValidTarget` 的水晶分支逐字一致：它在过滤前就 return 了）。
+                if (requirement.type === 'ENEMY_TARGET'
+                    && !newTargets.some(t => String(t?.type ?? '').includes('nexus'))) {
+                    const nexusSelectable = isValidTarget(
+                        'nexus', 'enemy', requirement.type, requirement.filterKey,
+                        effect.params?.targetCondition, requirement.raceFilter, requirement.keywordFilter,
+                        requirement.stackCostBelow, requirement.stackSpeedFilter, requirement.minLevel,
+                        casterSideOf(requirement.type, 'enemy'),
+                    );
+                    if (nexusSelectable) n += 1;
                 }
                 return n;
             })();
@@ -870,6 +1045,12 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             console.log(`[ChampionSpell] 🎽 回库副本 ${champKey} 补挂装备/武装 [${copyEquips.join(', ')}]`);
         }
 
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 本条管路是**整卡新建**英雄副本
+        //   （`createFullCard` / `getLeveledUpCard` / `attachEquipment` 都产出新对象）⇒ `buffs.power` 从 0 起。
+        //   不在这里补贴的话，回库的凯茜娅副本会以「2」躺在牌库 ⇒ 「牌库那张也涨、抽到即战力」落空。
+        //   `stampKatyaCard` 幂等：不是凯茜娅时**原样返回同一对象**。
+        champCard = stampKatyaCard(champCard, owner);
+
         // Fisher-Yates 洗入牌堆（与 useGameState.shuffleDeck 同算法）——
         // 抽牌是从牌库顶 splice，追加到末尾等于沉底，必须打散才有意义
         const shuffleIn = (deck: CardData[]) => {
@@ -894,6 +1075,53 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             owner,
         });
         console.log(`[ChampionSpell] ✅ ${src.name} 使用后，牌库生成一张 ${champCard.name}`);
+    };
+
+    // ==========================================
+    // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] **四区域幂等贴值**
+    // ── 区域：手牌 / 备战席 / 牌库（平区，整数组同归属方）+ 交战区（按战线归属，见 util 注释）。
+    // ── 为什么这个函数住在 hook 里、不搬进 util：真源是**模块账本**（真源不能住 React state，
+    //    理由同 `utils/mauxirProgress.ts:18-23`），但**写回卡面**只能走 setState ⇒ 只能在 hook 内。
+    // ── 为什么用**函数式**写回：值式写回会被别处的 `setX(ctx 快照数组)` 静默盖回
+    //    （`utils/mauxirProgress.ts:12-16` 记的就是这个坑）。
+    // ── 幂等：`stampKatya*` 没命中凯茜娅时**返回原引用** ⇒ React 直接 bail out，不会白 render。
+    // ==========================================
+    const restampKatyaProgress = () => {
+        setPlayerHand(prev => {
+            const next = (stampKatyaZone(prev, 'player') ?? prev) as CardData[];
+            stateRef.current.playerHand = next;
+            return next;
+        });
+        setPlayerBench(prev => {
+            const next = (stampKatyaZone(prev, 'player') ?? prev) as CardData[];
+            stateRef.current.playerBench = next;
+            return next;
+        });
+        setPlayerDeck(prev => {
+            const next = (stampKatyaZone(prev, 'player') ?? prev) as CardData[];
+            stateRef.current.playerDeck = next;
+            return next;
+        });
+        setEnemyHand(prev => {
+            const next = (stampKatyaZone(prev, 'enemy') ?? prev) as CardData[];
+            stateRef.current.enemyHand = next;
+            return next;
+        });
+        setEnemyBench(prev => {
+            const next = (stampKatyaZone(prev, 'enemy') ?? prev) as CardData[];
+            stateRef.current.enemyBench = next;
+            return next;
+        });
+        setEnemyDeckState(prev => {
+            const next = (stampKatyaZone(prev, 'enemy') ?? prev) as CardData[];
+            stateRef.current.enemyDeck = next;
+            return next;
+        });
+        setCombatField(prev => {
+            const next = (stampKatyaField(prev) ?? prev) as any[];
+            stateRef.current.combatField = next;
+            return next;
+        });
     };
 
     // ==========================================
@@ -1055,6 +1283,134 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 });
             }
         }
+
+        // ── ⑥ [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 本局法术数 +1 ⇒ 四区域幂等贴值
+        //   · 落点：本函数**尾部**。三个出口（极速法术 `:1292` / 堆栈法术 `:2069` /
+        //     **被反制**的法术 `:1942`）全部汇到这里 ⇒ 与程的口径「被反制掉的法术也算施放过」一致。
+        //   · 时机：本函数整体在**可撤回窗口之后**（1 秒悬停撤回的分支已 `return`，见 `commitSpell`
+        //     极速分支上方那段注释）⇒ 撤回不记账、不可刷；也**不是** `noteSpellCast`
+        //     （那条无 setState、UI 不刷新）。
+        //   · 为什么排在 ⑤ Echo 段之后：本条是函数式写回，排在本函数最后一次 `setPlayerHand` 之后
+        //     ⇒ 最终值一定来自账本（不会被 Echo 的值式写回盖成旧值）。
+        //   · 双侧都贴：敌方也可能有凯茜娅（镜像流派），且贴的是**各自那本账**。
+        if (katyaPreCountedSpellIds.delete(card.id)) {
+            // 已在「确认入栈」时预记账（`confirmPendingSpell`）⇒ 这里只刷四区域，不再 bump
+            restampKatyaProgress();
+        } else {
+            bumpKatyaSpell(owner);
+            restampKatyaProgress();
+        }
+
+        // ==========================================
+        // ── ⑦ [2026-11-14 莉莉子 ✨新功能 · 凯茜娅「映现·尤拉莉雅」①] 我方打出法术 ⇒ 【屏障】
+        //   · 时机：**与 ⑥ 同一档**（法术真正结算之后，三出口全覆盖）—— 所以"被反制的法术也给屏障"，
+        //     与程 2026-10-12 的口径一致（被反制掉的法术**算施放过**）。
+        //   · 派发者：扫**本方在场单位**里持有 `class === 'KATYA_SPELL_CAST_BARRIER'` 效果的那些
+        //     （数据驱动：将来同类的第二张卡自动生效，不认卡 key）。
+        //   · 「每回合至多一次」的节流：写在**卡上** `barrierGrantedRound`（= 上次发放时的 `game.round`）。
+        //     ★ 为什么用"回合号比较"而不是 `xxxUsedThisRound: boolean`：后者要三处接线
+        //       （建局初始化 / 回合清 / 快照白名单），漏一处就**永久锁死**；
+        //       本字段靠比较**自然过期**，零清理代码（范式同 `types.ts:393 truffleGardenerRound`）。
+        //   · 屏障的记账口径与 BUFF 类 `duration:'ROUND'` 逐字同源（`effectProcessor.ts:2197-2213`）：
+        //       真·新获得 ⇒ `keywords += Barrier` + `roundKeywords += Barrier`
+        //     回合末由 `useRoundLifecycle.ts:983-988 / :1010-1012` 连**黯淡标记**一起收回
+        //     （⚠️ 只改 `keywords` 不记 `roundKeywords` ⇒ 屏障会永久粘在身上）。
+        //     ⚠️ 原先就有（且没被打穿）⇒ **只消费节流、不动词条**：绝不把别人的**永久**屏障
+        //       塞进 `roundKeywords`（那会在回合末被剥掉）。
+        //   · 写回：函数式（与 ⑥ 的 restamp 同批排队 ⇒ 不会互相覆盖）；`stateRef` 就地同步，
+        //     让同一 tick 内后续调用读到屏障已在身。
+        // ==========================================
+        {
+            const barrierSide: 'player' | 'enemy' = owner;
+            const barrierRound = stateRef.current.game?.round ?? 0;
+            const barrierBoard = stateRef.current;
+            const barrierBench = barrierSide === 'player' ? barrierBoard.playerBench : barrierBoard.enemyBench;
+            // 战线归属口径（全局统一）：attacker 属 `f.owner`，blocker 属其**对面**
+            const barrierFieldUnits: CardData[] = ((barrierBoard.combatField ?? []) as any[])
+                .map((f: any) => (f?.owner === barrierSide ? f?.attacker : f?.blocker))
+                .filter(Boolean) as CardData[];
+            const barrierCarriers = [...barrierBench, ...barrierFieldUnits].filter(u =>
+                (u.effects || []).some(id => EFFECT_DB[id]?.class === 'KATYA_SPELL_CAST_BARRIER'));
+
+            if (barrierCarriers.length > 0) {
+                const barrierPatches = new Map<string, CardData>();
+                for (const carrier of barrierCarriers) {
+                    if (carrier.barrierGrantedRound === barrierRound) {
+                        console.log(`[Yulalia] ${carrier.name} 本回合（round=${barrierRound}）已发过屏障 ⇒ 跳过`);
+                        continue;
+                    }
+                    const kw = 'Barrier' as Keyword;
+                    const hasKw = (carrier.keywords || []).includes(kw);
+                    const isDepleted = (carrier.depletedKeywords || []).includes(kw);
+                    if (hasKw && !isDepleted) {
+                        // 已有健康屏障 ⇒ 只消费节流（不重复贴、不污染 roundKeywords）
+                        barrierPatches.set(carrier.id, { ...carrier, barrierGrantedRound: barrierRound });
+                        console.log(`[Yulalia] ${carrier.name} 已有【屏障】⇒ 本次不重复赋予（节流已消费）`);
+                        continue;
+                    }
+                    barrierPatches.set(carrier.id, {
+                        ...carrier,
+                        keywords: hasKw ? carrier.keywords! : [...(carrier.keywords || []), kw],
+                        // 被打穿的屏障**重新点亮**：从黯淡表里摘掉（否则"有词条=挡一次"永远失效，
+                        // 判据见 `logic/keywords.ts:358-369`）
+                        depletedKeywords: isDepleted
+                            ? (carrier.depletedKeywords || []).filter(k => k !== kw)
+                            : carrier.depletedKeywords,
+                        // 只有**真·新增**才记进回合账本（见上方 ⚠️）
+                        roundKeywords: hasKw
+                            ? carrier.roundKeywords
+                            : Array.from(new Set([...(carrier.roundKeywords || []), kw])),
+                        barrierGrantedRound: barrierRound,
+                    });
+                    console.log(`[Yulalia] ${carrier.name} 因我方打出法术获得【屏障】（本回合限一次）`);
+                }
+
+                if (barrierPatches.size > 0) {
+                    const applyPatches = (list: CardData[]): CardData[] => {
+                        let changed = false;
+                        const next = list.map(c => {
+                            const hit = barrierPatches.get(c.id);
+                            if (!hit) return c;
+                            changed = true;
+                            return hit;
+                        });
+                        return changed ? next : list; // 无变化 ⇒ 原引用（React 直接 bail out）
+                    };
+                    if (barrierSide === 'player') {
+                        setPlayerBench(prev => {
+                            const next = applyPatches(prev);
+                            stateRef.current.playerBench = next;
+                            return next;
+                        });
+                    } else {
+                        setEnemyBench(prev => {
+                            const next = applyPatches(prev);
+                            stateRef.current.enemyBench = next;
+                            return next;
+                        });
+                    }
+                    setCombatField(prev => {
+                        let changed = false;
+                        const next = prev.map((f: any) => {
+                            if (f.owner === barrierSide) {
+                                const hit = f.attacker ? barrierPatches.get(f.attacker.id) : undefined;
+                                if (!hit) return f;
+                                changed = true;
+                                return { ...f, attacker: hit };
+                            }
+                            const hit = f.blocker ? barrierPatches.get(f.blocker.id) : undefined;
+                            if (!hit) return f;
+                            changed = true;
+                            return { ...f, blocker: hit };
+                        });
+                        if (!changed) return prev;
+                        stateRef.current.combatField = next as any[];
+                        return next as any[];
+                    });
+                    eventBus.emit(GameEvents.SFX_BUFF_APPLY); // 屏障亮起 = 金光（不是"选目标"的点击音）
+                }
+            }
+        }
     };
 
     const commitSpell = async (card: CardData, owner: 'player' | 'enemy', targets: any[], originalPhase?: any) => {
@@ -1096,6 +1452,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         //   现统一在 `dispatchSpellCastSideEffects()` 的 ⑤ 段兑现（法术真正结算之后，含被反制的那一支）。
 
         if (card.type === 'spell-burst') {
+            // [2026-11-15 程拍板 · 极速法术演出] 声明提到分支外 —— 结算后的「补线 + 圆盘出栈」要用它
+            let canShowCastVfx = false;
             if (!card.parentCard) {
                 // [2026-07-10 诗人] 凯特琳减费影响实际扣费（双方均适配）
                 const benchForCost = owner === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
@@ -1167,7 +1525,29 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 }
 
                 setGame(prev => ({ ...prev, spellCasting: null, activeCard: null }));
-                console.log(`[LILITH-DEBUG][BURST] 已清除 spellCasting/activeCard`);
+
+                // ── [2026-11-15 程拍板 · 极速法术演出] 玩家侧的极速法术此前**一帧演出都没有**：
+                //   它根本不进 `spellStack`，而法术圆盘的渲染条件是「在栈内」
+                //   （`GameSession.tsx:4154` 的 `spell-casting` 中枢只对栈内法术生效）
+                //   ⇒ 玩家打出去，屏幕上只在敌人身上掉个数字，完全不知道发生了什么。
+                //   现补三步：**圆盘浮现 → 瞄准线 → 出栈结算**。
+                //   ⚠️ 只在**栈为空**时做临时进栈 —— 栈非空时插队会干扰既有的响应窗口逻辑。
+                canShowCastVfx = stateRef.current.game.spellStack.length === 0;
+                if (canShowCastVfx) {
+                    setGame(prev => ({ ...prev, spellStack: [{ card, owner, targets }, ...prev.spellStack] }));
+                    await wait(450);   // ① 圆盘浮现
+                    if (targets && targets.length > 0) {
+                        // ② 瞄准线（从圆盘指向实际目标）—— 无手选目标的法术（随机命中）走到结算后再补
+                        eventBus.emit('SHOW_TEMP_LINES', [{
+                            sourceId: card.id,
+                            targets: targets.map((t: any) => ({ id: t.id, type: owner === 'player' ? 'enemy' : 'ally' })),
+                        }]);
+                        await wait(400);
+                        eventBus.emit('HIDE_TEMP_LINES');
+                    }
+                    // ③ 圆盘**先留着** —— 随机命中的法术要在结算后补一条线，那时还要它当起点锚
+                }
+                console.log(`[LILITH-DEBUG][BURST] 已清除 spellCasting/activeCard，演出=${canShowCastVfx}`);
             }
 
             // Phase 3: AI 弹道飞行前清除瞄准线
@@ -1185,15 +1565,37 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [2026-09-19 1.0.16 茉莉安] 连斩类法术（最终指令）**跳过通用弹道** ——
             //   它的逐击演出由 UltimateStrikeLayer 全权负责；不跳过的话，玩家指定的**首击**
             //   会被这发"通用飞弹"顶掉（后续续击才是专属特效）⇒ "第一击是默认特效"。
-            if (!isChainStrikeSpell(card)) {
+            if (!isChainStrikeSpell(card) && card.key !== 'katya_barrage') {
                 eventBus.emit(StrikeEvents.COMMAND, {
                     sourceId: card.id,
                     spellKey: card.key,
                     bullets: (targets || []).map(t => ({ targetId: t.id, damage: 0, barrierPopped: false })),
                     interval: 0
                 });
-                await waitForStrikeComplete();
+                // ==========================================
+                // [2026-11-14 莉莉子 · 程拍板「终结/延续/冻结弹幕」空过不卡]
+                // ── 现象：目标由 `targetFilter` 在 effectProcessor 内部**随机挑**的法术
+                //    （本三连的发牌/治疗/冰冻全是这种），施法时 `targets` 恒为 `[]`
+                //    ⇒ 上面这发 COMMAND 的 `bullets` 为空。
+                //    `SpellProjectile` 的 `handleCommand` 对空 bullets **直接 return**，
+                //    永不发 `StrikeEvents.COMPLETE`（`components/SpellProjectile.tsx:593`）
+                //    ⇒ 这里必然走满 `waitForStrikeComplete` 的 3000ms 超时兜底
+                //    ⇒ 玩家点了之后要静默等 ~1s(悬停窗) + 3s(超时) 才看到「极速法术生效」。
+                // ── 修法：**没有任何子弹要飞**时不必等。COMMAND 仍照发（万一将来有人监听它做特效），
+                //    只跳过「等弹道播完」这一步 —— 有目标的法术逐字不变。
+                // ==========================================
+                if ((targets || []).length > 0) await waitForStrikeComplete();
             }
+
+            // [2026-11-15 程拍板 · 方案A] 随机命中的法术（冰三连等）在**结算瞬间**才知道打谁。
+            //   这里挂一次性监听，把第一个被打中的目标记下来，供演出补一条瞄准线。
+            let castHitId: string | null = null;
+            const onCastHit = (p: any) => { if (!castHitId && p?.id) castHitId = p.id; };
+            const onCastNexusHit = (p: any) => {
+                if (!castHitId && p?.target) castHitId = p.target === 'player' ? 'nexus_player' : 'nexus_enemy';
+            };
+            eventBus.on('unit_damage', onCastHit);
+            eventBus.on(GameEvents.NEXUS_STRIKED, onCastNexusHit);
 
             executeSpellEffect(card.key, owner, targets, {
                 game: stateRef.current.game,
@@ -1214,6 +1616,24 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                 //   而 RogueTriggerCtx.createFullCard 必填 ⇒ 必须从这里一路带下去。
                 createFullCard,
             }, card); // [2026-07-28] 传入法术卡牌实例（供 FLYING_SWORD 读取 customProgress 模式）
+
+            // ── [2026-11-15 方案A 收尾] 卸监听 → 随机命中补线 → 圆盘出栈
+            await wait(150);   // 给伤害事件一点落地时间（部分路径是异步 emit）
+            eventBus.off('unit_damage', onCastHit);
+            eventBus.off(GameEvents.NEXUS_STRIKED, onCastNexusHit);
+            if (canShowCastVfx) {
+                // 只补「没有手选目标」的 —— 有目标的在上一步已经画过线了，别画两遍
+                if (castHitId && (!targets || targets.length === 0)) {
+                    eventBus.emit('SHOW_TEMP_LINES', [{
+                        sourceId: card.id,
+                        targets: [{ id: castHitId, type: owner === 'player' ? 'enemy' : 'ally' }],
+                    }]);
+                    await wait(400);   // 让玩家看清"打的是它"
+                    eventBus.emit('HIDE_TEMP_LINES');
+                }
+                // 圆盘收
+                setGame(prev => ({ ...prev, spellStack: prev.spellStack.filter(s => s.card.id !== card.id) }));
+            }
 
             await wait(50);
             const isQueueProcessed = flushMicroQueue();
@@ -1690,6 +2110,16 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         if (playedSpell && playedSpell.owner !== 'enemy') {
             setPlayerHand(prev => bumpHoardStored(prev));
         }
+        // ── [2026-11-14 程拍板 · 时间序修正] 「确认入栈」= 法术真的打出去了（已过可撤回窗口）。
+        //   此刻就落下「每打出一张法术牌 +1/+0」，让倾泻在**结算时**读到加攻后的面板 ⇒
+        //   表现为 **先飘 +1（加攻）→ 再飘 −N（倾泻扣减）**，与卡面口径「以结算时的攻击力为准」一致。
+        //   ⚠️ 只对倾泻提前：其他法术不读面板攻击力，提前没有可见差异（也把改动面压到最小）。
+        //   结算后的 `dispatchSpellCastSideEffects` 尾部认这个 Set，跳过重复 bump（只刷四区域）。
+        if (playedSpell && playedSpell.card.key === 'katya_barrage') {
+            katyaPreCountedSpellIds.add(playedSpell.card.id);
+            bumpKatyaSpell(playedSpell.owner);
+            restampKatyaProgress();
+        }
         setMessage(isBlockDeclare ? "法术入栈，继续部署防线" : "法术入栈，等待对方响应");
     };
 
@@ -1966,7 +2396,110 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [核心升级] 栈内法术弹道接入通用管线！
             // [核心修复] 放宽限制！即使没有具体目标，也必须发出施法指令以触发屏幕中央的法阵特效！
             // [2026-09-19 1.0.16 茉莉安] 连斩类法术（最终指令）同样跳过 —— 见上方说明（首击会被顶掉）
-            if (!isChainStrikeSpell(spell.card)) {
+            // [2026-11-14 凯茜娅「倾泻」] 同连斩：**跳过通用弹道**。它的加特林弹幕由
+            //   `effectProcessor` 的 BARRAGE 全权负责（2 秒铺满 + 逐发落点）。若不跳过会有两个毛病：
+            //     ① `sourceId` 是**法术卡 id** ⇒ 会命中「法术圆盘」那个 `data-entity-id` ⇒ 枪先闪在圆盘上；
+            //     ② 多出一条 `interval: 0` 的齐射 ⇒ 玩家先看到一发默认飞弹，才轮到真正的弹幕。
+            // ── [2026-11-15 程拍板 · 演出驱动结算] 倾泻：**先播完加特林弹幕，再结算**
+            //   病根：`effectProcessor` 一帧算完伤害 ⇒ 敌人当场阵亡，而弹幕还要飞 1.1~3.7 秒，
+            //   全程追着尸体打；子弹命中时尸体又被爆炸一遍，飘字也全挤在结算那一帧。
+            //   现改为：预演弹道 → 播完 → 才 executeSpellEffect（掉血 / 死亡 / 飘字都发生在那一刻）。
+            //   ⚠️ 结算里的 BARRAGE 分支已不再发 COMMAND（否则两套加特林同时开火）。
+            if (spell.card.key === 'katya_barrage') {
+                const barSide = spell.owner;
+                const barBench = barSide === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
+                const barField = (stateRef.current.combatField || []) as any[];
+                const barKatya = [
+                    ...barBench,
+                    ...barField.map((f: any) => (f.owner === barSide ? f.attacker : f.blocker)),
+                ].filter(Boolean).find((c: any) => c.key === 'katya_klein_rhapsody' && !c.isDead);
+                const barTargetId = spell.targets?.[0]?.id;
+                if (barKatya && barTargetId) {
+                    const barShots = Math.max(1, Math.ceil(getPower(barKatya) / 2));
+                    // ⚠️ **必须先挂监听、再发射**（照 `useRoundLifecycle.ts:1625` 的铁律）：
+                    //   `COMPLETE` 可能在弹丸飞完后**立刻**发出，若先 emit 再挂监听，就永远等不到 ⇒
+                    //   只能走满超时兜底，表现为「特效播完了，但伤害和扣减迟迟不落」。
+                    const strikeDone = waitForStrikeComplete(60000);
+                    eventBus.emit(GameEvents.SFX_KATYA_BARRAGE_SPINUP);
+                    eventBus.emit(StrikeEvents.COMMAND, {
+                        sourceId: barKatya.id,
+                        // ⚠️ `damage` **必须是 0**（与通用弹道 `:2440` / `:1572` 一致）：
+                        //   `SpellProjectile` 命中时 emit `StrikeEvents.HIT`，而 `handleStrikeHit`
+                        //   （`useRoundLifecycle.ts:195-227`）会把 `bullet.damage` **当真伤害写进 damageTaken**。
+                        //   这里写 2 的后果：弹幕先真打 2×N 把目标打死，等弹幕播完 BARRAGE 再结算时
+                        //   `brFindTarget()` 找不到目标 ⇒ 整张牌空过（不掉血、不扣攻、不记升级进度）；
+                        //   若目标血够厚没死，则是**弹幕 + BARRAGE 双倍伤害**。
+                        //   ⇒ 弹道在这里**纯视觉**，真伤害一律交给 BARRAGE。
+                        bullets: Array.from({ length: barShots }, () => ({ targetId: barTargetId, damage: 0, barrierPopped: false })),
+                        preDelay: 1140,      // 与 倾泻1.ogg 对齐
+                        interval: 120,       // 加特林射速
+                        duration: 0.28,      // 单发飞行
+                        spellKey: 'katya_barrage',
+                    });
+                    await strikeDone;
+                }
+            }
+
+            // ── [2026-11-15 程拍板 · 穿云激流**状态机**] 与茉莉安大招同构：一发一步
+            //   ① 施法瞬间就落 `+4/+0`（凯茜娅卡面立刻变）
+            //   ② 启动 `pendingPierce` 链，由 `useGameState.pierceStep` 每 120ms 推一拍
+            //   ③ 每拍：随机挑存活敌人 → 该枪口转过去 → 打一发 → 击杀续打
+            //   ⇒ 逻辑与视觉**同一拍**，不会再有“只看到两发、对面全死了”
+            //   ⚠️ 本分支**跳过** `executeSpellEffect`（旧 pierceLoop 已废弃），
+            //      法术计数等副作用由 `dispatchSpellCastSideEffects` 补上。
+            if (spell.card.key === 'katya_pierce_torrent') {
+                const plSide = spell.owner;
+                const plFoe = plSide === 'player' ? 'enemy' : 'player';
+                const plBench = plSide === 'player' ? stateRef.current.playerBench : stateRef.current.enemyBench;
+                const plField = (stateRef.current.combatField || []) as any[];
+                const plKatya = [
+                    ...plBench,
+                    ...plField.map((f: any) => (f.owner === plSide ? f.attacker : f.blocker)),
+                ].filter(Boolean).find((c: any) => c.key === 'katya_klein_rhapsody' && !c.isDead);
+                if (plKatya) {
+                    const plGrantNow = (c: CardData): CardData =>
+                        c.id === plKatya.id
+                            ? { ...c, roundBuffs: { power: (c.roundBuffs?.power || 0) + 4, health: c.roundBuffs?.health || 0 }, animState: 'buff' as const }
+                            : c;
+                    if (plSide === 'player') {
+                        setPlayerBench(prev => prev.map(plGrantNow));
+                        stateRef.current.playerBench = stateRef.current.playerBench.map(plGrantNow);
+                    } else {
+                        setEnemyBench(prev => prev.map(plGrantNow));
+                        stateRef.current.enemyBench = stateRef.current.enemyBench.map(plGrantNow);
+                    }
+                    const plBudget = Math.max(1, Math.ceil((getPower(plKatya) + 4) / 2));
+                    const plN0 = Math.max(0, Math.floor(getKatyaStats(plSide).power));
+                    eventBus.emit(GameEvents.SFX_KATYA_BARRAGE_SPINUP);
+                    setGame(prev => ({
+                        ...prev,
+                        pendingPierce: {
+                            casterSide: plSide,
+                            casterId: plKatya.id,
+                            foeSide: plFoe,
+                            budget: plBudget,
+                            shotIndex: 0,
+                            totalFired: 0,
+                            totalDealt: 0,
+                            kills: 0,
+                            drainPending: plN0 > 0 ? Math.ceil(plN0 / 2) : 0,
+                            hpLedger: {},
+                            done: false,
+                            prevPhase: prev.phase,
+                        },
+                    }));
+                    await new Promise<void>(resolve => {
+                        const iv = setInterval(() => {
+                            if (!stateRef.current.game.pendingPierce) { clearInterval(iv); resolve(); }
+                        }, 80);
+                        setTimeout(() => { clearInterval(iv); resolve(); }, 60000);
+                    });
+                    dispatchSpellCastSideEffects(spell.card, spell.owner);
+                    continue;
+                }
+            }
+
+            if (!isChainStrikeSpell(spell.card) && spell.card.key !== 'katya_barrage') {
                 eventBus.emit(StrikeEvents.COMMAND, {
                     sourceId: spell.card.id,
                     spellKey: spell.card.key,
@@ -2091,7 +2624,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             // [2026-06-27 HAND_CARD] 手牌选择不高亮场上目标
             if (currentRequirement.type === 'HAND_CARD') return false;
             const effect = getEffectDef(castingCard);
-            return isValidTarget(card, owner, currentRequirement.type, currentRequirement.filterKey, effect?.params?.targetCondition, currentRequirement.raceFilter, currentRequirement.keywordFilter, currentRequirement.stackCostBelow, currentRequirement.stackSpeedFilter);
+            return isValidTarget(card, owner, currentRequirement.type, currentRequirement.filterKey, effect?.params?.targetCondition, currentRequirement.raceFilter, currentRequirement.keywordFilter, currentRequirement.stackCostBelow, currentRequirement.stackSpeedFilter, currentRequirement.minLevel, casterSideOf(currentRequirement.type, owner), currentRequirement.excludeKeywords);
         },
         startCasting,
         cancelCasting,
@@ -2107,6 +2640,11 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         confirmPendingSpell,
         cancelPendingSpell,
         resolveStack,
+        // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] **四区域幂等贴值**的对外出口。
+        //   用途①（L3「倾泻」）：扣攻击力时先 `bumpKatyaDrain`，再调它刷四个区域
+        //     —— 只改账本不刷贴值的话，卡面会停在旧值直到下一次施法。
+        //   用途②（沙盒/Studio）：`setKatyaProgressForSandbox` 改完 S/D 后调它刷新全场。
+        restampKatyaProgress,
         // [2026-10-16 莉莉子] 教程专用：敌方自动施法（指定双方目标）
         autoCastEnemySpell,
     };

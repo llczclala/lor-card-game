@@ -1,7 +1,7 @@
 {
   "name": "snowbreak-rivals",
   "private": true,
-  "version": "1.0.22",
+  "version": "1.0.23",
   "type": "module",
   "main": "electron-main.cjs",
   "description": "Snowbreak Rivals PC Client",
@@ -54,7 +54,8 @@
     "lucide-react": "^0.562.0",
     "pixi.js": "^7.4.2",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "three": "^0.187.0"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3",

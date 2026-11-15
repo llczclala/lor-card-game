@@ -21,6 +21,7 @@
  * 参考实现：`src/components/TitleScreen.tsx` 的 `TITLE_UI`（样板屏）。
  */
 import { isNative } from './index';
+import { GAME_WIDTH, GAME_HEIGHT } from '../utils/gameScale'; // 画布尺寸（与 ScaleWrapper 同源，禁止另抄一份字面量）
 
 /**
  * 按运行平台取一套界面参数。
@@ -118,6 +119,10 @@ export function pickCanvasInnerScale(
   legacyDesktopScale: number,
 ): number {
   if (!isNative()) return legacyDesktopScale;
+  // ⚠️ [2026-11-08 莉莉子] 本函数**当前零调用点**（死代码）。保留只为兼容历史调用方。
+  //   若日后要复活它，注意它与 `pickCanvasContainScale` 曾犯同一个病：按 `innerWidth` 反解，
+  //   而画布内实际可用宽只有 `1680 × s` ⇒ 面板会超出画布、被 `overflow:hidden` 裁掉。
+  //   新代码请一律用 `pickCanvasContainScale`（已改为按画布尺寸计算）。
   const w = typeof window !== 'undefined' ? window.innerWidth : 0;
   if (w <= 0 || mobileGameScale <= 0 || panelWidthPx <= 0) return legacyDesktopScale;
   return (w * viewportRatio) / (panelWidthPx * mobileGameScale);
@@ -160,13 +165,20 @@ export function pickCanvasContainScale(
   legacyDesktopScale: number,
 ): number {
   if (!isNative()) return legacyDesktopScale;
-  if (typeof window === 'undefined') return legacyDesktopScale;
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  if (w <= 0 || h <= 0 || mobileGameScale <= 0) return legacyDesktopScale;
   if (panelWidthPx <= 0 || panelHeightPx <= 0) return legacyDesktopScale;
-  const kW = (w * viewportRatioW) / (panelWidthPx * mobileGameScale);
-  const kH = (h * viewportRatioH) / (panelHeightPx * mobileGameScale);
+  if (mobileGameScale <= 0) return legacyDesktopScale; // s 异常 ⇒ 不做修正
+  // 🔴 [2026-11-08 莉莉子 BUG修复 · 画布内不能用 innerWidth 反解]
+  //   画布内的可用空间是**画布 1680×1050**，不是视口。
+  //   `s` 由**高度**决定（`s = min(w/1680, h/1050)`）⇒ 宽屏下画布 CSS 宽 `1680×s` **小于** `innerWidth`，
+  //   差额就是两侧黑边；而 `#game-scale-container` 是 `overflow: hidden`（`ScaleWrapper.tsx:70`）
+  //   ⇒ 按 `innerWidth × ratio` 算出的面板会**超出画布、被直接裁掉**：
+  //     手机横屏：`0.92 × 851 = 783` CSS px，画布只有 `1680 × 0.374 = 629` ⇒ **每边裁掉 77px**。
+  //   ⇒ 正确语义：占的是**画布**的比例 —— `k = 画布尺寸 × ratio ÷ 面板设计尺寸`。
+  //     该式与 `s` 和 `innerWidth` 都无关：PC / 雷电 / 手机算出的 **k 完全相同**，
+  //     经祖先 `scale(s)` 后自然收缩到"画布的 ratio" —— 这才是"画布内"该有的行为。
+  //   ⚠️ PC 端仍原样返回 legacy（上面第一条早退），观感零变化。
+  const kW = (GAME_WIDTH * viewportRatioW) / panelWidthPx;
+  const kH = (GAME_HEIGHT * viewportRatioH) / panelHeightPx;
   return Math.min(kW, kH);
 }
 
@@ -174,11 +186,17 @@ export function pickCanvasContainScale(
  * **portal 到 `document.body`** 的弹窗的**「放得下」缩放**（宽、高都要管）。
  *
  * 🐛 为什么需要它（2026-10-24 程实测「开匣的界面也很大」）：
- *   `ChestOpenModal` / `PackOpenModal` **是 `createPortal(…, document.body)` 的**，
+ *   `ChestOpenModal` **是 `createPortal(…, document.body)` 的**（`ChestOpenModal.tsx:411`），
  *   渲染位置在 `ScaleWrapper` **之外** ⇒ 祖先那层 `scale(s)` 根本不生效。
- *   但它们当时用的是**画布内**的 `pickCanvasInnerScale` —— 那个公式会 **÷ s**，
+ *   但它当时用的是**画布内**的 `pickCanvasInnerScale` —— 那个公式会 **÷ s**，
  *   而这里压根没有 s 可除 ⇒ 结果被**额外放大 1/s 倍**（手机 ≈ **2.67 倍**）：
  *   900 宽的面板算出来 `k = 2.38` ⇒ 视觉宽 **2139 CSS px**（屏宽只有 851）。
+ *
+ * 🔴 2026-11-08 更正：本条原先与 `PackOpenModal` **并称** —— 那是假前提，已剔除。
+ *   它的主面板从未 portal（全文件唯一 `createPortal` 是「获得奖励匣」详情浮窗），
+ *   当年照本函数（不除 s）改 ⇒ 手机端反而**偏小 2.67 倍**（视觉尺寸恒为应得值的 s 倍），
+ *   现已改回 `pickCanvasContainScale`。
+ *   ⇒ **判据永远是「祖先链里有没有 `#game-scale-container`」，不是「这组件看起来像不像弹窗」。**
  *
  * ✅ portal 版公式（**没有 `/ s`**）：
  *   `kW = (ratioW × innerWidth)  / panelWidthPx`

@@ -478,6 +478,25 @@ export const MISSIONS: MissionDef[] = [
         targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_truffle_mushroom_shadows_01' },
         condition: { type: 'play_card', targetKey: 'Truffle_Squad_Mushroom_Shadows' }
     },
+    // [2026-11-15 1.0.23 凯茜娅] 映现小队「阶段二」皮肤解锁任务（与松露/圣树同构）
+    {
+        id: 'mission_reflection_melisande_01',
+        category: 'achievement', title: '折价之刃', description: '在对局中累计打出「映现-梅莉桑德」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_reflection_melisande_01' },
+        condition: { type: 'play_card', targetKey: 'Reflection_Squad_Melisande' }
+    },
+    {
+        id: 'mission_reflection_yulalia_01',
+        category: 'achievement', title: '观星者', description: '在对局中累计打出「映现-尤拉莉雅」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_reflection_yulalia_01' },
+        condition: { type: 'play_card', targetKey: 'Reflection_Squad_Yulalia' }
+    },
+    {
+        id: 'mission_reflection_odnie_01',
+        category: 'achievement', title: '采撷之手', description: '在对局中累计打出「映现-奥德涅」5 次',
+        targetCount: 5, reward: { type: 'skin', cosmeticId: 'mission_reflection_odnie_01' },
+        condition: { type: 'play_card', targetKey: 'Reflection_Squad_Odnie' }
+    },
     {
         id: 'mission_truffle_elm_01',
         category: 'achievement', title: '榆木流萤', description: '在对局中累计打出「松露-榆」5 次',
@@ -501,12 +520,12 @@ export const MISSIONS: MissionDef[] = [
     // 旧 ID 的存档会自动保留，新 ID 会被视为全新任务，已领取玩家也能再次领取。
     // ==========================================
     {
-        id: 'version_old_friend_20261108',
-        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-11-08）',
+        id: 'version_old_friend_20261115',
+        category: 'version', title: '老友福利', description: '感谢你一直以来的支持，这是给新版本测试服玩家的回馈礼包！（2026-11-15）',
         targetCount: 1, rewardDirect: true,
         reward: { type: 'dataGold', amount: 8000 },
         condition: { type: 'direct_claim' },
-        showCondition: { accountCreatedBefore: '2026-11-08' }
+        showCondition: { accountCreatedBefore: '2026-11-15' }
     },
     {
         id: 'version_new_start',
@@ -568,6 +587,21 @@ export const MISSIONS: MissionDef[] = [
         targetCount: 1, rewardDirect: true,
         reward: { type: 'card', cardKeys: ['marian', 'Truffle_Squad_Mushroom_Shadows', 'Truffle_Squad_Elm', 'Truffle_Squad_Iris'] },
         condition: { type: 'direct_claim' }
+    },
+    // [2026-11-15 1.0.23 凯茜娅] 版本启航：天启者本体 + 映现小队全员
+    {
+        id: 'version_katya_start',
+        category: 'version', title: '新版本启航', description: '迎接新版本，获得凯茜娅·狂诗与映现小队全员！',
+        targetCount: 1, rewardDirect: true,
+        reward: { type: 'card', cardKeys: ['katya_klein_rhapsody', 'Reflection_Squad_Melisande', 'Reflection_Squad_Yulalia', 'Reflection_Squad_Odnie'] },
+        condition: { type: 'direct_claim' }
+    },
+    {
+        id: 'version_katya_win',
+        category: 'version', title: '狂诗的回响', description: '携带凯茜娅·狂诗赢得一场对局胜利',
+        targetCount: 1,
+        reward: { type: 'dataGold', amount: 4800 },
+        condition: { type: 'win_with_champion', targetKey: 'katya_klein_rhapsody' }
     },
     {
         id: 'version_cat_win',

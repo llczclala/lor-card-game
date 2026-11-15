@@ -37,7 +37,7 @@ export interface GachaResult {
 }
 
 // [新增] 卡池配置系统 ==========================================
-export type PoolId = 'permanent' | 'lotus' | 'zenith';
+export type PoolId = 'permanent' | 'lotus' | 'zenith' | 'reflection';
 
 export interface GachaPoolConfig {
     id: PoolId;
@@ -107,6 +107,23 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
         cardBackIndices: [17, 18, 19],
         deskIndices: [10, 11, 12, 13, 14], // [2026-09-18] 本批新牌桌 ×5（原误加的专属桌已删除）
         // 与 lotus 同构：排除常驻池两位英雄的阵营卡
+        includeInCommonPool: (card) =>
+            card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
+    },
+    // ================================================================
+    // [2026-11-15 1.0.23 凯茜娅] 新池 —— 收纳 凯茜娅·狂诗 + 映现小队
+    //   ⚠️ TODO(素材)：项目只有 3 套池立绘（Permanent / GachaPool1 / GachaPool2），
+    //      本池暂时复用 zenith 的 desk/button，专属素材到位后改这两行即可。
+    //   ⚠️ TODO(索引)：cardBackIndices / deskIndices 暂沿用 zenith，避免越界。
+    reflection: {
+        id: 'reflection',
+        name: '镜中狂想',
+        coverImg: ZgachaDeskImg,
+        btnImg: ZgachaBtnImg,
+        pityLabel: '狂诗保底进度',
+        heroKeys: ['katya_klein_rhapsody'],
+        cardBackIndices: [17, 18, 19],
+        deskIndices: [10, 11, 12, 13, 14],
         includeInCommonPool: (card) =>
             card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
     },

@@ -1,4 +1,5 @@
-export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'Acacia' | 'Marian' | 'Titan' | 'Analyst' | 'TEST';
+// [2026-11-13 1.0.23 凯茜娅·狂诗] 新阵营 —— 值用全名 'katya_klein_rhapsody'（程拍板，不是 'Katya'）
+export type Region = 'Lyfe' | 'Fenny' | 'Pupu' | 'Logistics' | 'Mauxir' | 'Acacia' | 'Marian' | 'katya_klein_rhapsody' | 'Titan' | 'Analyst' | 'TEST';
 export type CardType = 'unit' | 'spell-burst' | 'spell-fast' | 'spell-slow';
 export type Race = 'summoner' | 'summon' | 'titan'; // [新增] 种族：召唤师/召唤物/泰坦
 
@@ -8,6 +9,7 @@ export const GachaPoolEnum = {
     Permanent: 'permanent', // 常守之誓
     Lotus: 'lotus',         // 烬中镜火
     Zenith: 'zenith',       // [2026-09-16 1.0.16] 自往昔归还 —— 收纳「安卡希雅 + 茉莉安」（2026-09-17 由暂定名「苍穹回响」定名）
+    Reflection: 'reflection', // [2026-11-15 1.0.23] 收纳「凯茜娅·狂诗 + 映现小队」
 } as const;
 export type GachaPoolId = (typeof GachaPoolEnum)[keyof typeof GachaPoolEnum];
 // 完整的 36 个关键词定义
@@ -77,6 +79,24 @@ export interface CardData {
   //      bit1 根本不是空闲位 —— `equipment.ts:900` 的 `| 2` 会把进度虚增 2（0→2、4→6…），
   //      任何 `& ~2` 又会把它无意扣掉 2。（茉莉安当初另开 `beaconDeaths` 是同一个理由。）
   mauxirDamage?: number;
+  // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 凯茜娅专属：**本局已打出法术数**的显示镜像。
+  //   真源 = 模块级账本 `utils/katyaProgress.ts`（ledger：S = 已施放法术数，D = 倾泻累计扣减；
+  //   有效攻击力 = 2 + S − D；为什么真源不住在卡上/`game` 里，见该文件头注释）。
+  //   本字段由 `stampKatyaCard` **幂等贴值**（同值重复贴不会产生新对象）。
+  //   ⚠️ 卡面**战斗数值**的镜像走 `buffs.power`（= S − D，配合 `power: 2` 得到 2+S−D），
+  //      本字段只是“施法数”这半个账的可见镜像（升级/UI 想显示“已施放 N 张”时读它）。
+  //   ⚠️ 刻意**不复用 `customProgress`** —— 那是被多个系统共用的位域（bit1 = 绿色减费标记），
+  //      施法数是 0..N 的计数器，塞进位域会被 `equipment.ts` 的 `| 2` / `& ~2` 改坏（猫汐尔同款理由）。
+  katyaSpellGrowth?: number;
+  // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅升级判定] 凯茜娅专属：**本局她本体累计造成的伤害**镜像。
+  //   真源 = 模块级账本 `utils/katyaProgress.ts` 的 `damage`（`bumpKatyaDamage` 单一自增，
+  //   口径：只算「倾泻」+「她本体进攻的战斗伤害」，别的法术卡打的伤害不进这本账）。
+  //   ⚠️ 为什么判定层读**这个字段**而不是 `getKatyaDamage(side)`：
+  //      `gameRules.checkCardLevelUp` / `getChampionUpgradeProgress` / `checkCardReadyToLevelUp`
+  //      三处的签名里**都没有 side**（卡不知道自己在谁手里），且 `Card.tsx` 的进度环只拿得到卡。
+  //      这正是猫汐尔/茉莉安用「卡上镜像 + 账本真源」的同一个理由（`mauxirDamage` / `beaconDeaths`）。
+  //   ⚠️ 由 `stampKatyaCard` **幂等贴值**（同值重复贴不产生新对象）。
+  katyaDamage?: number;
   // [2026-10-06 莉莉子 BUG修复 · 莲台无垠] **本场已应用过的「全法术减费」量**。
   //   为什么要这个标记：减费现在有**两条路** ——
   //     ① 开局对已在手/库的法术**改数据**（卡面能显示绿色减费，玩家看得见）
@@ -126,6 +146,13 @@ export interface CardData {
   buffs?: { power: number, health: number };
   roundBuffs?: { power: number, health: number }; // [新增] 临时账本：专门记录单回合(ROUND)增益，用于回合末秋后算账
   roundKeywords?: Keyword[]; // [核心新增] 词条临时账本：专门记录单回合获得的词条，回合末予以回收
+  // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅 L4「映现·尤拉莉雅」] **「本回合已发过屏障」的节流戳**。
+  //   语义：值 = 上次发放时的 `game.round`；`=== game.round` 即「本回合已用过」。
+  //   ── 为什么不另开一个全局 `xxxUsedThisRound: boolean`：那类字段要**三处接线**
+  //      （建局初始化 / 回合清 / 快照白名单），漏一处就永久锁死；而本字段**靠比较自然过期**，
+  //      与既有范式 `types.ts:393 truffleGardenerRound` 逐字同构，**零清理代码**。
+  //   ── 每张尤拉莉雅各存各的 ⇒ 场上两张同名卡各自「每回合一次」，与卡面「每当我方…」的主体一致。
+  barrierGrantedRound?: number;
   depletedKeywords?: Keyword[]; // [泰坦] 黯淡关键词列表：关键词不再触发，但不失去，仍计入计数
   parentCard?: CardData; // [新增] 法术血统(DNA)：记录衍生该卡牌的”母体”实体（用于撤回法术时完美还原手牌与费用）
 
@@ -404,6 +431,34 @@ export interface GameState {
     skipBeacon?: boolean;
   };
   // ⛔ [2026-10-02 已废弃并删除] `marianBeaconVoucher` —— 见上方说明（补兵券随亡语化移除）。
+  // ==========================================
+  // [2026-11-15 程拍板 · 穿云激流状态机] 与 `pendingChain` 同构：**一发一步**
+  // ── 为什么：原先 `pierceLoop` 在 effectProcessor 里一次算完（最多 256 发），
+  //    视觉层只能事后补播 ⇒ 出现「只看到两发子弹、对面全死了」的断链。
+  // ── 现在逻辑跟着视觉走：每 120ms 一步 —— 随机挑目标 → 对应那把枪转过去 → 打这一发 →
+  //    判定击杀（水晶 −2 / 凯茜娅 +3/+0 / budget +3）→ 继续。
+  // ── 驱动器：useGameState 的 `pierceStep` 定时器（见同名注释）。
+  // ==========================================
+  pendingPierce?: {
+    casterSide: 'player' | 'enemy';
+    casterId: string;              // 凯茜娅实例 id（多张本体时不串人）
+    foeSide: 'player' | 'enemy';
+    budget: number;                // 剩余可打发数（击杀后 +3）
+    shotIndex: number;             // 已打出的步数（决定左右枪轮流）
+    totalFired: number;            // 实际打出（扣减口径用）
+    totalDealt: number;            // 累计伤害（升级记账用）
+    kills: number;
+    drainPending: number;          // 收尾要扣的攻击力（施法前账面的一半）
+    /**
+     * [2026-11-15] 本链里**已经打出去、但子弹还在飞**的累计伤害（按目标 id）。
+     * 为什么必须有：伤害改成"跟着子弹走"（命中才写 `damageTaken`）之后，
+     *   下一拍读 state 仍看到满血 ⇒ 击杀判不出来 ⇒ 续打永远断。
+     * 因此本步用 `getHealth(卡) − hpLedger[id]` 作为**有效血量**来判击杀。
+     */
+    hpLedger?: Record<string, number>;
+    done: boolean;
+    prevPhase: string;
+  };
   enemyNexus: number;
   enemyNexusMax?: number; // [2026-08-30 莉莉子] 敌方水晶回血上限（=敌方水晶初值；肉鸽=难度基础+生命强化，缺省 20）
   enemyNexusBarrier?: number; // [2026-08-27] 敌方水晶屏障（固若金汤：可挡伤害点数，回合末清零）
