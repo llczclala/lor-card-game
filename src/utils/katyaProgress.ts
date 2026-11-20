@@ -119,6 +119,35 @@ export const bumpKatyaDrain = (side: 'player' | 'enemy', amount: number): number
     return KATYA_BASE_POWER + (rec.spell || 0) - rec.drain;
 };
 
+// ==========================================
+// [2026-11-19 莉莉子 · 神格神经②④] 「每打出一张法术，**下回合**最大法力 +N」
+//   为什么按 round 打标而不是"回合末搬家"：
+//     `calculateRoundStart(currentGame)` 收到的 `prev.round` 就是**上回合号**
+//     （内部 `newRound = prev.round + 1`），所以查询侧直接拿 `prev.round` 来读本账本，
+//     命中即"上回合打的法术数"，**不需要任何清零动作**、也不会跨回合/跨局残留。
+//   ⚠️ 与 `bumpKatyaSpell`（养攻 S）是**两本账**：S 是"本局累计"，这里是"本回合计数"。
+//      两者在同一次施法里各记一笔，别互相顶替。
+// ==========================================
+const spellByRound: Record<'player' | 'enemy', { round: number; count: number }> = {
+    player: { round: -1, count: 0 },
+    enemy: { round: -1, count: 0 },
+};
+
+// ==========================================
+// [2026-11-19 莉莉子 · 神格神经⑥] 「凯茜娅的攻击力不再减少」开关
+//   为什么是**模块级开关**而不是查询型：消费方 `getPower`（`logic/keywords.ts`）是全局热路径，
+//   只拿得到一张卡、拿不到 game/强化列表。⇒ 由 `rogueTrigger` 的 `KATYA_POWER_IMMUNE`
+//   handler 在 game_start 置位，`stampKatyaCard` 据此在卡上写 `powerFloor` 下限。
+//   ⚠️ 只挡**负向**修正：`getPower` 仅在"算出来低于下限"时顶住，正向加成照常叠加。
+// ==========================================
+const powerImmune: Record<'player' | 'enemy', boolean> = { player: false, enemy: false };
+
+export const setKatyaPowerImmune = (side: 'player' | 'enemy', value: boolean): void => {
+    powerImmune[side] = value;
+};
+
+export const isKatyaPowerImmune = (side: 'player' | 'enemy'): boolean => powerImmune[side];
+
 /** 对局开局/重开清零（**两个建局入口都必须调**，见文件头） */
 export const resetKatyaProgress = (): void => {
     ledger.player = { spell: 0, drain: 0, damage: 0 };
@@ -131,6 +160,36 @@ export const resetKatyaProgress = (): void => {
     barrageObserverBonus.enemy = 0;
     // [2026-11-14 尤拉莉雅闸门] 回合配额同属一局 ⇒ 一起清（否则上一局撞过上限，新局第一回合就哑火）
     observerRoundGate.clear();
+    // [2026-11-19 神格神经②④] 回合法术数同属一局 ⇒ 一起清
+    spellByRound.player = { round: -1, count: 0 };
+    spellByRound.enemy = { round: -1, count: 0 };
+    // [2026-11-19 神格神经⑥] 降攻免疫同属一局 ⇒ 一起清（否则上一局开了 ⑥，新局还免疫）
+    powerImmune.player = false;
+    powerImmune.enemy = false;
+};
+
+// ==========================================
+// [2026-11-19 莉莉子 · 神格神经②④] 本回合法术计数的读写
+// ==========================================
+
+/** 记一张法术（本回合计数）。返回该回合累计数。 */
+export const bumpKatyaSpellInRound = (side: 'player' | 'enemy', round: number): number => {
+    const rec = spellByRound[side];
+    if (rec.round !== round) {
+        rec.round = round;
+        rec.count = 0;
+    }
+    rec.count += 1;
+    return rec.count;
+};
+
+/**
+ * 读「`round` 那一回合」打出的法术数。
+ * ⚠️ 传的是**上回合**的 round（`calculateRoundStart` 里的 `prev.round`），不是当前回合。
+ */
+export const getKatyaSpellCountInRound = (side: 'player' | 'enemy', round: number): number => {
+    const rec = spellByRound[side];
+    return rec.round === round ? rec.count : 0;
 };
 
 /**
@@ -340,9 +399,14 @@ export const stampKatyaCard = <T extends CardData>(card: T, side: 'player' | 'en
     const { spell, power, damage } = getKatyaStats(side);
     const growth = power - KATYA_BASE_POWER; // = spell − drain
     const buffHealth = card.buffs?.health || 0;
+    // [2026-11-19 神格神经⑥] 「攻击力不再减少」⇒ 在卡上写一个**下限**，由 `getPower` 兜底。
+    //   为什么写卡上而不是让 `getPower` 去查强化：`getPower` 是全局热路径、拿不到 game；
+    //   而这里是"贴值唯一出口"，天然知道 side。冻结/debuff 注入的负 power 会被这个下限顶住。
+    const floor = powerImmune[side] ? power : undefined;
     // 已经贴好？· 有 buffs 就要求 power 已等于净成长；干净实例则要求净成长为 0（不凭空造 `{0,0}`）
     const buffsOk = card.buffs ? (card.buffs.power || 0) === growth : growth === 0;
-    if (buffsOk && (card.katyaSpellGrowth ?? 0) === spell && (card.katyaDamage ?? 0) === damage) {
+    if (buffsOk && (card.katyaSpellGrowth ?? 0) === spell && (card.katyaDamage ?? 0) === damage
+        && (card.powerFloor ?? undefined) === floor) {
         return card; // 幂等：原样返回同一对象
     }
     // 只在“本来就有 buffs”或“净成长非 0”时写 buffs —— 避免给干净实例凭空造一个 `{0,0}`
@@ -350,6 +414,8 @@ export const stampKatyaCard = <T extends CardData>(card: T, side: 'player' | 'en
     if (card.buffs || growth !== 0) patch.buffs = { power: growth, health: buffHealth };
     // 同理：伤害为 0 时不写字段（干净实例保持干净；`?? 0` 让判据仍然成立）
     if (damage !== 0 || card.katyaDamage !== undefined) patch.katyaDamage = damage;
+    // ⑥ 未生效时**显式清掉**（`undefined` 覆盖旧值），否则关掉强化后下限还在
+    patch.powerFloor = floor;
     return { ...card, ...patch } as T;
 };
 

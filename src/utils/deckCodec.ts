@@ -269,7 +269,13 @@ export function decodeDeckCode(raw: string): DeckCodeDecodeResult {
     }
 
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const heroId = view.getUint16(1, false) >> 4;
+    // [2026-11-18 莉莉子 BUG修复] 此处原为 `>> 4`，与编码端 `setUint16(1, heroId & 0x0fff)`
+    //   **位移不对称** ⇒ 任何 heroId ≥ 16 的卡组码解出来都是「ID ÷ 16」那张卡：
+    //   芬妮(8) 会变里芙、卜卜(16) 会变 lyfe_spell、凯茜娅(219) 会变 hidden_arrow。
+    //   卡牌段是 `(id << 4)` / `(value >> 4) & 0x0fff`，本来就对称；只有英雄这一行写错。
+    //   取 `& 0x0fff` 与编码端注释「12 bit hero（高 4 bit 为 0 = 保留位）」一致，
+    //   且**已发出的旧码全部照旧正确**（旧码的 hero 本来就写在低 12 位）。
+    const heroId = view.getUint16(1, false) & 0x0fff;
     const hero = getDeckCodeCardKey(heroId);
     if (hero === undefined) return { ok: false, kind: 'unknown-card', detail: `heroId=${heroId}` };
 

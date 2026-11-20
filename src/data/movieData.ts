@@ -188,6 +188,13 @@ import marian_levelup_4k from '../movie/level up/茉莉安霄鹰_level up/4k.web
 import marian_win_1k from '../movie/win/茉莉安霄鹰_win/1k.webm';
 import marian_win_2k from '../movie/win/茉莉安霄鹰_win/2k.webm';
 import marian_win_4k from '../movie/win/茉莉安霄鹰_win/4k.webm';
+// [2026-11-18 莉莉子 BUG修复 · 凯茜娅的胜利影片一直没注册]
+//   素材（`src/movie/win/凯茜娅狂诗_win/{1k,2k,4k}.webm`）早就放进来了，
+//   但下面 `MOVIE_DB.win` 漏了这一条 ⇒ 她赢了之后 `getVictoryMovie` 会跳过她、
+//   回退到卡组里别的英雄（粉丝看到"猫猫画面 + 凯茜娅语音"）。
+import katya_win_1k from '../movie/win/凯茜娅狂诗_win/1k.webm';
+import katya_win_2k from '../movie/win/凯茜娅狂诗_win/2k.webm';
+import katya_win_4k from '../movie/win/凯茜娅狂诗_win/4k.webm';
 
 // [2026-10-19 莉莉子 · 安卓] 一次性影片（升级 / 胜利 / 标题）**首帧静图** —— 39 张
 //   （`src/image/level_up|win|title/…`，与影片一一对应）
@@ -240,6 +247,10 @@ import poster_marian_levelup_4k from '../image/level_up/茉莉安霄鹰_level up
 import poster_marian_win_1k from '../image/win/茉莉安霄鹰_win/1k.jpg';
 import poster_marian_win_2k from '../image/win/茉莉安霄鹰_win/2k.jpg';
 import poster_marian_win_4k from '../image/win/茉莉安霄鹰_win/4k.jpg';
+// [2026-11-18 莉莉子] 凯茜娅胜利影片的首帧静图（安卓无可绘制帧时的兜底）
+import poster_katya_win_1k from '../image/win/凯茜娅狂诗_win/1k.jpg';
+import poster_katya_win_2k from '../image/win/凯茜娅狂诗_win/2k.jpg';
+import poster_katya_win_4k from '../image/win/凯茜娅狂诗_win/4k.jpg';
 // 标题（烬中焰火）
 import poster_title_1k from '../image/title/烬中焰火/1k.jpg';
 import poster_title_2k from '../image/title/烬中焰火/2k.jpg';
@@ -346,7 +357,9 @@ export const MOVIE_DB = {
         pupu_specular_soul: [{ '1k': pupu_win_1k, '2k': pupu_win_2k, '4k': pupu_win_4k }],
         mauxir_lotus_drive: [{ '1k': mauxir_win_1k, '2k': mauxir_win_2k, '4k': mauxir_win_4k }],
         acacia_chrono_echo: [{ '1k': acacia_win_1k, '2k': acacia_win_2k, '4k': acacia_win_4k }],
-        marian: [{ '1k': marian_win_1k, '2k': marian_win_2k, '4k': marian_win_4k }]
+        marian: [{ '1k': marian_win_1k, '2k': marian_win_2k, '4k': marian_win_4k }],
+        // [2026-11-18 莉莉子] 凯茜娅·狂诗的胜利影片（素材一直有，只是这里漏了）
+        katya_klein_rhapsody: [{ '1k': katya_win_1k, '2k': katya_win_2k, '4k': katya_win_4k }]
     } as Record<string, MovieSource[]>
 };
 
@@ -385,6 +398,23 @@ export const getVictoryMovie = (heroKeys: string[], res: VideoResolution = '1k')
     return null;
 };
 
+/**
+ * 与 `getVictoryMovie` **同源同序**，但返回**命中的英雄 key** 而不是影片 URL。
+ *
+ * [2026-11-18 莉莉子 BUG修复 · 胜利影片与语音错位]
+ * ── 病根：语音用的是「随机挑的存活 MVP」，而视频用的是「候选列表里第一个**有影片**的」。
+ *    当 MVP 没配胜利影片时，`getVictoryMovie` 会**往后找别的英雄**（比如猫汐尔），
+ *    语音却还是那个 MVP（比如凯茜娅）⇒ 画面和声音是两个英雄，粉丝看到的就是这个。
+ * ── 修法：先问「到底会播谁的影片」，让语音跟着它走，两边永远同一个人。
+ *    注意顺序必须与 `getVictoryMovie` 完全一致，否则又会对不上。
+ */
+export const getVictoryMovieKey = (heroKeys: string[]): string | null => {
+    for (const key of heroKeys) {
+        if (MOVIE_DB.win[key] && MOVIE_DB.win[key].length > 0) return key;
+    }
+    return null;
+};
+
 // ==========================================
 // [2026-10-19 莉莉子 · 安卓] 一次性影片（升级 / 胜利 / 标题）→ **首帧静图** 查找表
 // ==========================================
@@ -418,6 +448,8 @@ const WIN_POSTERS: Record<string, MovieSource[]> = {
     mauxir_lotus_drive: [{ '1k': poster_mauxir_win_1k, '2k': poster_mauxir_win_2k, '4k': poster_mauxir_win_4k }],
     acacia_chrono_echo: [{ '1k': poster_acacia_win_1k, '2k': poster_acacia_win_2k, '4k': poster_acacia_win_4k }],
     marian: [{ '1k': poster_marian_win_1k, '2k': poster_marian_win_2k, '4k': poster_marian_win_4k }],
+    // [2026-11-18 莉莉子] 凯茜娅·狂诗
+    katya_klein_rhapsody: [{ '1k': poster_katya_win_1k, '2k': poster_katya_win_2k, '4k': poster_katya_win_4k }],
 };
 
 const ALL_RESOLUTIONS: VideoResolution[] = ['1k', '2k', '4k'];

@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import type { MutableRefObject, Dispatch, SetStateAction } from 'react';
 import type { CardData, GameState, SpellStackItem, Race, Keyword } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry';
@@ -12,7 +12,7 @@ import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19
 import { noteSpellCast, getSpellCastSnapshot, clearHandCostTax, bumpHoardStored } from '../utils/gameRules'; // [2026-10-08 第二波] 施法计数（条件减费判据）· [2026-10-12] + 施法前基准 · [2026-10-24] + 费用税清零 · [2026-10-23] + 囤积攒点
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { CARD_DB } from '../data/cards';
-import { calculateNewMana, getEffectiveSpellCost, getChoiceCardCost, CHOICE_FLYING_SWORD_DISCOUNT_KEYS, buffTopUnitInDeck, getLeveledUpCard, isLeveledUpForSide } from '../utils/gameRules'; // [2026-10-12] + 抉择算价唯一入口
+import { calculateNewMana, getEffectiveSpellCost, getChoiceCardCost, CHOICE_FLYING_SWORD_DISCOUNT_KEYS, buffTopUnitInDeck, getLeveledUpCard, isLeveledUpForSide, isUnitCard } from '../utils/gameRules'; // [2026-10-12] + 抉择算价唯一入口 · [2026-11-19] + isUnitCard（卡型判据收口）
 import { attachEquipment } from '../data/equipment'; // [2026-10-04 莉莉子 BUG修复] 法术回库生成的英雄副本要补挂装备/武装
 import { StrikeEvents } from '../utils/eventBus'; // [新增] 引入全新的打击信号总线
 import { getCurrentHP } from '../logic/combat'; // [新增] 引入真实血量探针
@@ -22,7 +22,7 @@ import { runRogueTrigger, type RogueTriggerCtx, type Side } from '../logic/rogue
 import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
 // [2026-11-14 莉莉子 ✨新功能 · 凯茜娅·狂诗「养攻」L2] 法术数自增 + 四区域幂等贴值
 //   （真源 = 模块级账本，见 utils/katyaProgress.ts 头注释；清零在建局/重开两处）
-import { bumpKatyaSpell, stampKatyaCard, stampKatyaZone, stampKatyaField, KATYA_KEY, getKatyaStats } from '../utils/katyaProgress';
+import { bumpKatyaSpell, bumpKatyaSpellInRound, stampKatyaCard, stampKatyaZone, stampKatyaField, KATYA_KEY, getKatyaStats } from '../utils/katyaProgress';
 
 /**
  * [2026-09-19 1.0.16 茉莉安] 是否为「连斩类」法术（目前只有「最终指令」）。
@@ -478,7 +478,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
                     if (!c || !c.id) return false;
                     if (castingCard && c.id === castingCard.id) return false;
                     if (handReq.cardTypeFilter === 'spell' && !c.type?.includes('spell')) return false;
-                    if (handReq.cardTypeFilter === 'unit' && !c.type?.includes('unit')) return false;
+                    if (handReq.cardTypeFilter === 'unit' && !isUnitCard(c)) return false;
                     if ((handReq.excludeKeywords || []).some(kw => c.keywords?.includes(kw as Keyword))) return false;
                     return true;
                 }).length;
@@ -725,7 +725,7 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
 
         // [2026-08-08 莉莉子修复] HAND_CARD 类型/费用过滤（战术闪击等：只能选指定类型、费用上限的手牌）
         if (requirement.type === 'HAND_CARD' && target !== 'nexus') {
-            if (requirement.cardTypeFilter === 'unit' && !target.type?.includes('unit')) {
+            if (requirement.cardTypeFilter === 'unit' && !isUnitCard(target)) {
                 setMessage?.("只能选择单位卡牌！");
                 return;
             }
@@ -1298,6 +1298,9 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
             restampKatyaProgress();
         } else {
             bumpKatyaSpell(owner);
+            // [2026-11-19 神格神经②④] 「本回合打出几张法术」——与上面 S 账本**并行各记一笔**，
+            //   供 `core.startManaBonusOf` 在**下回合**换算成最大法力。
+            bumpKatyaSpellInRound(owner, stateRef.current.game.round);
             restampKatyaProgress();
         }
 
@@ -2118,6 +2121,8 @@ export const useSpellSystem = (params: UseSpellSystemParams) => {
         if (playedSpell && playedSpell.card.key === 'katya_barrage') {
             katyaPreCountedSpellIds.add(playedSpell.card.id);
             bumpKatyaSpell(playedSpell.owner);
+            // [2026-11-19 神格神经②④] 与 S 账本同批记「本回合法术数」（同样只在预记账这条路上记一次）
+            bumpKatyaSpellInRound(playedSpell.owner, stateRef.current.game.round);
             restampKatyaProgress();
         }
         setMessage(isBlockDeclare ? "法术入栈，继续部署防线" : "法术入栈，等待对方响应");

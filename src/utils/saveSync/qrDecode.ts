@@ -131,7 +131,7 @@ function binarizeAdaptive(img: GrayImage, block = 32, k = 0.86): Bitmap {
 }
 
 /** 兼容旧名字：默认用 Otsu */
-function binarize(img: GrayImage): Bitmap {
+export function binarize(img: GrayImage): Bitmap {
     return binarizeOtsu(img);
 }
 
@@ -230,7 +230,7 @@ function dedupe(list: Finder[]): Finder[] {
     return out;
 }
 
-function findFinders(bm: Bitmap): Finder[] {
+export function findFinders(bm: Bitmap): Finder[] {
     const raw: Finder[] = [];
     // 隔行扫，足够找到且更快
     for (let y = 0; y < bm.height; y++) {
@@ -255,11 +255,33 @@ function findFinders(bm: Bitmap): Finder[] {
  * 📌 2026-10-21 起不再"只赌一组"：取景里常有几十个误命中（实测一次看到 32 个），
  *    只取最像的一组、选错就整帧报废。现在返回前 `limit` 组，由调用方逐组尝试。
  */
-function rankFinderTriples(
+export function rankFinderTriples(
     list: Finder[],
     limit = 4,
 ): Array<{ tl: Finder; a: Finder; b: Finder; score: number }> {
-    const cands = list.slice(0, 40); // 候选上限，C(40,3)=9880，可接受
+    // [2026-11-18 莉莉子 BUG修复 · 大版本解不出来]
+    // ── 病根：原来是 `list.slice(0, 40)`，而 `findFinders` 返回的是**扫描顺序**（y 从上到下）。
+    //    小版本候选少（v3 才 21 个）时真定位图形碰巧在池里；版本一大，数据区里偶然符合
+    //    1:1:3:1:1 的模块暴增（实测 v25 = 338 个、v40 = 769 个），前 40 个全挤在图像上部，
+    //    真正在**三个角**的定位图形根本进不了候选池 ⇒ 后面的仿射/纠错全部基于错误三点。
+    // ── 修法：真定位图形必然**离图像中心最远**（三个角），按「到包围盒中心的距离」降序取前 N。
+    //    内部误命中都在数据区，离中心近，天然被排除。
+    let cx = 0, cy = 0;
+    if (list.length > 0) {
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const f of list) {
+            if (f.x < minX) minX = f.x;
+            if (f.x > maxX) maxX = f.x;
+            if (f.y < minY) minY = f.y;
+            if (f.y > maxY) maxY = f.y;
+        }
+        cx = (minX + maxX) / 2;
+        cy = (minY + maxY) / 2;
+    }
+    const byCorner = [...list].sort(
+        (p, q) => Math.hypot(q.x - cx, q.y - cy) - Math.hypot(p.x - cx, p.y - cy),
+    );
+    const cands = byCorner.slice(0, 40); // C(40,3)=9880，可接受
     // 候选里最远的一对距离 —— 用来给"更大的三角形"加分（真定位图形一定跨得最开）
     let maxDist = 1;
     for (let i = 0; i < cands.length; i++) {
@@ -315,7 +337,31 @@ const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
 /** 版本 → 边长 */
 const sizeOfVersion = (v: number) => 17 + 4 * v;
 
-function sampleGrid(
+/**
+ * [2026-11-18 莉莉子 BUG修复 · 大版本采样漂移]
+ * 定位图形中心**亚像素精化**：扫描得到的是整数像素坐标，±0.5px 的误差经仿射放大后，
+ * 在大版本（v25 跨度 110 模块）可达 1 个模块 ⇒ 采样点整体推到隔壁格。
+ * 这里在「中心 3×3 模块」范围内取黑色像素质心（真定位图形中心就是这个 3×3 黑块）。
+ * 取不到黑点（候选是误命中）时原样返回，不引入新风险。
+ */
+export function refineFinder(bm: Bitmap, f: Finder): Finder {
+    const half = Math.max(1, Math.round(f.module * 1.5));
+    const x0 = Math.max(0, Math.floor(f.x - half));
+    const x1 = Math.min(bm.width - 1, Math.ceil(f.x + half));
+    const y0 = Math.max(0, Math.floor(f.y - half));
+    const y1 = Math.min(bm.height - 1, Math.ceil(f.y + half));
+    let sx = 0, sy = 0, n = 0;
+    for (let y = y0; y <= y1; y++) {
+        const row = y * bm.width;
+        for (let x = x0; x <= x1; x++) {
+            if (bm.dark[row + x]) { sx += x; sy += y; n++; }
+        }
+    }
+    if (n === 0) return f;
+    return { x: sx / n, y: sy / n, module: f.module };
+}
+
+export function sampleGrid(
     bm: Bitmap,
     tl: Finder, tr: Finder, bl: Finder,
     size: number,
@@ -372,6 +418,18 @@ export function buildReserved(size: number, version: number): boolean[][] {
     const ALIGN: ReadonlyArray<ReadonlyArray<number>> = [
         [], [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34],
         [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50],
+        // [2026-11-18] v11~v40 —— 与 `qr.ts` 的 ALIGN_POS 逐字一致
+        [6, 30, 54], [6, 32, 58], [6, 34, 62],
+        [6, 26, 46, 66], [6, 26, 48, 70], [6, 26, 50, 74], [6, 30, 54, 78],
+        [6, 30, 56, 82], [6, 30, 58, 86], [6, 34, 62, 90],
+        [6, 28, 50, 72, 94], [6, 26, 50, 74, 98], [6, 30, 54, 78, 102], [6, 28, 54, 80, 106],
+        [6, 32, 58, 84, 110], [6, 30, 58, 86, 114], [6, 34, 62, 90, 118],
+        [6, 26, 50, 74, 98, 122], [6, 30, 54, 78, 102, 126], [6, 26, 52, 78, 104, 130],
+        [6, 30, 56, 82, 108, 134], [6, 34, 60, 86, 112, 138], [6, 30, 58, 86, 114, 142],
+        [6, 34, 62, 90, 118, 146],
+        [6, 30, 54, 78, 102, 126, 150], [6, 24, 50, 76, 102, 128, 154], [6, 28, 54, 80, 106, 132, 158],
+        [6, 32, 58, 84, 110, 136, 162],
+        [6, 26, 54, 82, 110, 138, 166], [6, 30, 58, 86, 114, 142, 170],
     ];
     const pos = ALIGN[version] ?? [];
     for (const cy of pos) {
@@ -508,6 +566,23 @@ const ECC_L: ReadonlyArray<{ ec: number; blocks: ReadonlyArray<readonly [number,
     { ec: 20, blocks: [[1, 80]] }, { ec: 26, blocks: [[1, 108]] }, { ec: 18, blocks: [[2, 68]] },
     { ec: 20, blocks: [[2, 78]] }, { ec: 24, blocks: [[2, 97]] }, { ec: 30, blocks: [[2, 116]] },
     { ec: 18, blocks: [[2, 68], [2, 69]] },
+    // ── [2026-11-18 莉莉子 · 存档二维码直传] v11~v40，与 `qr.ts` 的表**必须逐字一致**
+    //    （两端各存一份是既有结构；改一处必须同步改另一处，否则编得出来、解不回来）
+    { ec: 20, blocks: [[4, 81]] }, { ec: 24, blocks: [[2, 92], [2, 93]] },
+    { ec: 26, blocks: [[4, 107]] }, { ec: 30, blocks: [[3, 115], [1, 116]] },
+    { ec: 22, blocks: [[5, 87], [1, 88]] }, { ec: 24, blocks: [[5, 98], [1, 99]] },
+    { ec: 28, blocks: [[1, 107], [5, 108]] }, { ec: 30, blocks: [[5, 120], [1, 121]] },
+    { ec: 28, blocks: [[3, 113], [4, 114]] }, { ec: 28, blocks: [[3, 107], [5, 108]] },
+    { ec: 28, blocks: [[4, 116], [4, 117]] }, { ec: 28, blocks: [[2, 111], [7, 112]] },
+    { ec: 30, blocks: [[4, 121], [5, 122]] }, { ec: 30, blocks: [[6, 117], [4, 118]] },
+    { ec: 26, blocks: [[8, 106], [4, 107]] }, { ec: 28, blocks: [[10, 114], [2, 115]] },
+    { ec: 30, blocks: [[8, 122], [4, 123]] }, { ec: 30, blocks: [[3, 117], [10, 118]] },
+    { ec: 30, blocks: [[7, 116], [7, 117]] }, { ec: 30, blocks: [[5, 115], [10, 116]] },
+    { ec: 30, blocks: [[13, 115], [3, 116]] }, { ec: 30, blocks: [[17, 115]] },
+    { ec: 30, blocks: [[17, 115], [1, 116]] }, { ec: 30, blocks: [[13, 115], [6, 116]] },
+    { ec: 30, blocks: [[12, 121], [7, 122]] }, { ec: 30, blocks: [[6, 121], [14, 122]] },
+    { ec: 30, blocks: [[17, 122], [4, 123]] }, { ec: 30, blocks: [[4, 122], [18, 123]] },
+    { ec: 30, blocks: [[20, 117], [4, 118]] }, { ec: 30, blocks: [[19, 118], [6, 119]] },
 ];
 
 function totalCodewords(version: number): number {
@@ -694,7 +769,13 @@ function parseByteMode(data: number[], version: number): string {
     const mode = take(4);
     if (mode !== 0b0100) throw new QrDecodeError(`不是 byte 模式（mode=${mode}），不是本游戏的配对码`);
     const len = take(version <= 9 ? 8 : 16);
-    if (len <= 0 || len > 400) throw new QrDecodeError('长度字段异常');
+    // [2026-11-18 莉莉子 BUG修复 · 大版本一律解不出来]
+    // ── 病根：这里原本写死 `len > 400`。当年配对码只有几十字节，400 是随手拍的哨兵；
+    //    而 v13 的 byte 容量已是 425 字节 ⇒ **采样完全正确、却在这一行被当成"长度异常"丢掉**，
+    //    外层只会看到"错误位置定位失败"，查不到真凶。
+    // ── 修法：上限改为该版本的**数据码字总容量**（数据区最多就这么多字节）。
+    const dataCap = ECC_L[version - 1].blocks.reduce((sum, [n, l]) => sum + n * l, 0);
+    if (len <= 0 || len > dataCap) throw new QrDecodeError('长度字段异常');
     const bytes: number[] = [];
     for (let i = 0; i < len; i++) bytes.push(take(8));
     return new TextDecoder().decode(new Uint8Array(bytes));
@@ -847,7 +928,14 @@ function decodeBitmap(bm: Bitmap, diag: QrDiag): QrDecodeResult {
                         const size = sizeOfVersion(ver);
                         if (Math.abs(size - sizeGuess) > 1) throw new StageError('网格尺寸对不上（角度或裁切问题）', 1);
 
-                        const modules = sampleGrid(bm, tlP, trP, blP, size);
+                        // [2026-11-18] 三个定位中心先做亚像素精化再采样（大版本必需，见 refineFinder）
+                        const modules = sampleGrid(
+                            bm,
+                            refineFinder(bm, tlP),
+                            refineFinder(bm, trP),
+                            refineFinder(bm, blP),
+                            size,
+                        );
 
                         // ✅ 容错①：两份副本 + 最近邻，容 3 位错
                         const fmt = readFormat(modules, size);

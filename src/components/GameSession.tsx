@@ -18,9 +18,11 @@ import { UltimateStrikeLayer } from './UltimateStrikeLayer'; // [2026-09-19 1.0.
 import { CostReduceVFXLayer } from './CostReduceVFXLayer'; // [2026-10-08 莉莉子] 减费特效层「绿潮降临」（P1）
 import { useGameState } from '../hooks/useGameState';
 import { useAI } from '../hooks/useAI';
-import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason, canPlayerRetractBlocker, getChoiceCardCost, sideOfLevelUpTicket, getEffectiveSpellCost } from '../utils/gameRules'; // [2026-10-12] + getChoiceCardCost（抉择三价同源）· [2026-10-18] + sideOfLevelUpTicket（出队兜底去重）· [2026-10-24] + getEffectiveSpellCost（悬停预览走同一算价口径）
+import { evaluateChoiceCondition, canAffordCard, getChampionUpgradeProgress, getSpellPlayBlockReason, canPlayerRetractBlocker, getChoiceCardCost, sideOfLevelUpTicket, getEffectiveSpellCost, isUnitCard } from '../utils/gameRules'; // [2026-10-12] + getChoiceCardCost（抉择三价同源）· [2026-10-18] + sideOfLevelUpTicket（出队兜底去重）· [2026-10-24] + getEffectiveSpellCost（悬停预览走同一算价口径）· [2026-11-19] + isUnitCard（卡型判据收口）
 import { Battlefield } from './Battlefield';
 import { CARD_DB, createCard } from '../data/cards';
+// [2026-11-18 莉莉子 BUG修复 · 胜利影片与语音错位] 需要知道"到底会播谁的影片"
+import { getVictoryMovieKey } from '../data/movieData';
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
 import { canBlockAttacker, getBlockRejectReason, BLOCK_REJECT_TEXT } from '../logic/blockRules'; // [2026-10-26 莉莉子] 格挡合法性唯一门卫（无法格挡/隐秘/凶恶）
 import type { BlockRejectReason } from '../logic/blockRules';
@@ -1553,7 +1555,11 @@ export const GameSession: React.FC<GameSessionProps> = ({
         playerBench,
         combatField,
         setMessage,
-        actions: { ...actions, setGame, setEnemyHand, setEnemyBench, setCombatField, setPlayerBench },
+        // [2026-11-19 代码债收口] 原为 `{ ...actions, setGame, setEnemyHand, setEnemyBench, setCombatField, setPlayerBench }`：
+        //   ⚠️ `setEnemyBench` / `setCombatField` / `setPlayerBench` 这 3 个 **不在** `useGameState` 的 actions 里
+        //      （它们是 GameSession 自己的 useState setter）⇒ 必须补，删了 tsc 立刻报缺；
+        //   ✅ `setGame` / `setEnemyHand` 两个 useAI 从来没调用过（`actions: any` 时代看不出来）⇒ 已删。
+        actions: { ...actions, setEnemyBench, setCombatField, setPlayerBench },
         disabled: disableAI,
         paused: isPaused, // [2026-08-30 莉莉子] 局内暂停冻结 AI
         difficulty: aiDifficulty ?? 'normal', // [2026-08-06] 标准对战难度（默认普通）
@@ -2827,11 +2833,6 @@ export const GameSession: React.FC<GameSessionProps> = ({
             ? survivingHeroes[Math.floor(Math.random() * survivingHeroes.length)]
             : playerBench[0];
 
-        if (mvp) {
-            // 触发 MVP 语音 (小兵也可以说话)
-            eventBus.emit(GameEvents.GAME_VICTORY, { hero: mvp });
-        }
-
         // [修复] 2. 视频播放逻辑 (Fix: 解决 MVP 是小兵导致没视频播的问题)
         // 我们构建一个候选列表，只要列表里任何一个 key 有视频，就能播放
         const videoCandidates: string[] = [];
@@ -2849,6 +2850,25 @@ export const GameSession: React.FC<GameSessionProps> = ({
         // 优先级 C: 整个卡组 (兜底，movieData 会自动筛选有视频的卡)
         // 这样即使场上只有小兵，只要你带了里芙，就能放里芙的视频
         videoCandidates.push(...deck);
+
+        // ══════════════════════════════════════════════════════════════════
+        // [2026-11-18 莉莉子 BUG修复 · 胜利影片与语音错位]
+        // ── 病根：语音用「随机挑的 mvp」，视频用「候选里第一个**有影片**的」。
+        //    mvp 没配胜利影片时，`getVictoryMovie` 会往后找别的英雄（猫汐尔），
+        //    语音却还是 mvp（凯茜娅）⇒ 画面和声音是两个英雄。
+        // ── 修法：先问「实际会播谁的影片」，语音跟着它走。
+        //    找不到对应卡牌实例（比如命中的是只在卡组里、没上场的英雄）时，
+        //    退回 `CARD_DB` 的模板（`playVoice` 只读 `key` / `id`，模板足够）。
+        // ══════════════════════════════════════════════════════════════════
+        const videoKey = getVictoryMovieKey(videoCandidates);
+        const voiceHero = videoKey
+            ? (playerBench.find(c => c.key === videoKey) ?? (CARD_DB[videoKey] as CardData | undefined) ?? mvp)
+            : mvp;
+
+        if (voiceHero) {
+            // 触发语音（小兵也可以说话）
+            eventBus.emit(GameEvents.GAME_VICTORY, { hero: voiceHero });
+        }
 
         // 3. 播放视频
         playVictoryMovie(videoCandidates, () => {
@@ -2977,8 +2997,8 @@ export const GameSession: React.FC<GameSessionProps> = ({
             const sc = game.spellCasting as any;
             const mode = sc.mode || 'single';
             const cardTypeFilter = sc.cardTypeFilter;
-            // 卡牌类型过滤
-            if (cardTypeFilter === 'unit' && card.type !== 'unit' && !card.type?.includes('unit')) {
+            // 卡牌类型过滤 —— [2026-11-19] 判据收口到 `isUnitCard`（原处多写的 `card.type !== 'unit'` 是冗余）
+            if (cardTypeFilter === 'unit' && !isUnitCard(card)) {
                 announce('只能选择单位卡牌！', 'INVALID CARD', 'phase_hint', 2000);
                 return false;
             }
@@ -3019,7 +3039,7 @@ export const GameSession: React.FC<GameSessionProps> = ({
                 const castingCardDef = spellSystem.activeCard?.effects?.[0]
                     ? EFFECT_DB[spellSystem.activeCard.effects[0]]
                     : null;
-                if (req.cardTypeFilter === 'unit' && !card.type?.includes('unit')) {
+                if (req.cardTypeFilter === 'unit' && !isUnitCard(card)) {
                     announce('只能选择单位卡牌！', 'INVALID CARD', 'phase_hint', 2000);
                     return false;
                 }

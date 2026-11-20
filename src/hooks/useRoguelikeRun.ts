@@ -14,7 +14,7 @@ import type { RogueDifficulty } from '../data/roguelike/difficulties'; // [2026-
 import type { RogueInvestment } from '../data/roguelike/events'; // [2026-08-28] 事件投资标记
 import { CARD_DB } from '../data/cards';
 import { getEquipPoolForCard, getEquipmentById, isEquipmentApplicable } from '../data/equipment'; // [2026-08-29 休整·探路] 回归随机装备 · [2026-09-25] 武装任务查询 · [2026-10-06 口径③] 开局发放补闸门
-import { resolveDivinityEffects, getUnlockedNodes } from '../data/roguelike/heroDivinity'; // [2026-09-28 神格神经] 节点效果并入本局强化表
+import { resolveDivinityEffects, getUnlockedNodes, getDisabledNodes } from '../data/roguelike/heroDivinity'; // [2026-09-28 神格神经] 节点效果并入本局强化表 · [2026-11-20] + 玩家自选关闭表
 import { computeRunShards, type ChestInstance } from '../data/roguelike/divinityShards'; // [2026-09-29 程拍板] 神格碎片结算 + 奖励匣（取代悖论点）
 import { advanceQuest, questCount, questKey } from '../logic/questTracker'; // [2026-09-25 莉莉子 武装线] 整局任务进度推进
 import type { QuestEvent } from '../data/questTypes'; // [2026-09-25] 任务事件类型
@@ -223,7 +223,13 @@ export const useRoguelikeRun = () => {
         //   只注入战斗层 ⇒ 战斗内能看到、地图抽屉里看不见（"只有天启共鸣"就是这么来的）。
         //   并进这里后：抽屉可见、战斗分发可见、⑤ 的规则查询（读 game.rogueEnhancements）也走同一条路。
         //   ③④ 的【升级覆盖】在 resolveDivinityEffects 内收口（被升级的原节点不出现）。
-        const divinityIds = resolveDivinityEffects(heroKey, getUnlockedNodes(heroKey));
+        //   [2026-11-20 程拍板] 第三个参数 = 玩家**自己关掉**的节点 ⇒ 开局就剔掉、其余照旧。
+        //     覆盖链会在剩下的人里重算：关掉 ③ ⇒ ① 自动回到生效集（详见该函数注释）。
+        const divinityIds = resolveDivinityEffects(
+            heroKey,
+            getUnlockedNodes(heroKey),
+            getDisabledNodes(heroKey),
+        );
 
         // [2026-09-01 莉莉子 修复] 预分配地图（含节点敌人/强化/BUFF）存 run：
         // 放弃本场战斗返回地图不再重新 generateMapLayout 随机敌人（此前 RogueMapScreen useMemo 随组件重挂载失效）

@@ -1,4 +1,4 @@
-﻿import { GachaPoolEnum, type CardData } from '../types';
+import { GachaPoolEnum, type CardData } from '../types';
 // [2026-11-14 莉莉子 独立审查 · 漏洞7] 凯茜娅升级阈值的**单一真源** = `utils/katyaProgress.ts`。
 //   依赖方向：cards.ts → katyaProgress.ts → types.ts（`katyaProgress` 只 import 类型，**不 import 本文件**）
 //   ⇒ **无循环依赖**。方向反过来（让 katyaProgress 读 cards.ts）才会成环，故常量留在这边取。
@@ -347,7 +347,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // ==========================================
 
   acacia_chrono_echo: {
-    key: 'acacia_chrono_echo', gachaPool: GachaPoolEnum.Permanent, name: '安卡希雅 时之重奏', cost: 2, power: 2, health: 4, maxHealth: 4,
+    key: 'acacia_chrono_echo', gachaPool: GachaPoolEnum.Zenith, name: '安卡希雅 时之重奏', cost: 2, power: 2, health: 4, maxHealth: 4,
     isChampion: true, level: 1, region: 'Acacia',
     description: '【库效】若我方手牌中没有，则在我方手牌中生成一张“安卡希雅的剑舞”。\n入场及获得进攻标识时：生成一张易逝的“灵轨月轮·扩散”。\n参战：变化为“安卡希雅的剑舞”。',
     type: 'unit', keywords: ['Channel', 'Aura', 'Ability'],
@@ -388,7 +388,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isCollectible: false,
   },
   acacia_chrono_echo_support: {
-    key: 'acacia_chrono_echo_support', name: '月震星陨', cost: 2, power: 0, health: 0, maxHealth: 0,
+    key: 'acacia_chrono_echo_support', gachaPool: GachaPoolEnum.Zenith, name: '月震星陨', cost: 2, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'Acacia',
     description: '极速 [支援技]：对所有本回合进攻或格挡过的敌人造成1点伤害。',
     type: 'spell-burst', keywords: [],
@@ -571,7 +571,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   //    描述文案取自《1.0.23凯茜娅-数据表》，仅把 key 换成程拍板的最终注册名。
   // ===========================================================
   katya_klein_rhapsody: {
-    key: 'katya_klein_rhapsody', gachaPool: GachaPoolEnum.Reflection, name: '凯茜娅·狂诗', cost:6, power: 2, health: 10, maxHealth: 10,
+    key: 'katya_klein_rhapsody', gachaPool: GachaPoolEnum.Permanent, name: '凯茜娅·狂诗', cost:6, power: 2, health: 10, maxHealth: 10,
     isChampion: true, level: 1, region: 'katya_klein_rhapsody',
     description: '每打出一张法术牌，各处“凯茜娅·狂诗”永久获得 +1/+0。\n入场与回合开始：生成一张“倾泻”。\n参战：变化为“凯茜娅的狂想”。',
     type: 'unit', keywords: [],
@@ -617,7 +617,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     isCollectible: false,
   },
   katya_chrono_wing: {
-    key: 'katya_chrono_wing', gachaPool: GachaPoolEnum.Reflection, name: '溯时双翼', cost: 3, power: 0, health: 0, maxHealth: 0,
+    key: 'katya_chrono_wing', gachaPool: GachaPoolEnum.Permanent, name: '溯时双翼', cost: 3, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '给予“凯茜娅·狂诗”+2/+0 与【屏障】（本回合）。\n在手牌生成一张【瞬逝】的“溯时双翼·狂乱”。', type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.katya_chrono_wing,
@@ -633,6 +633,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   `[1]` 生成【瞬逝】的「溯时双翼·狂乱」—— 无目标需求的 GENERATE，复用同一份 targets、自行忽略。
     // 链式执行：`logic/spells.ts:74-90` 按数组顺序管道式跑，累加器逐段流转（手牌写入对下一段可见）。
     effects: ['effect_katya_chrono_wing_barrier', 'effect_katya_chrono_wing_frenzy'],
+    ai: { pattern: 'BUFF', priority: 4, config: { targetType: 'ALLY_UNIT', specificTargetKey: 'katya_klein_rhapsody', power: 2, health: 0 } },
   },
   katya_chrono_frenzy: {
     key: 'katya_chrono_frenzy', name: '溯时双翼·狂乱', cost: 1, power: 0, health: 0, maxHealth: 0,
@@ -649,9 +650,10 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   ⚠️ `keywords: ['Volatile']` 只决定**手牌瞬逝**，与"效果持续到回合末"是两件事
     //      （寿命由 `utils/katyaFrenzy.ts` 的 `resetFrenzyRound()` 在回合开始清零管）。
     effects: ['effect_katya_chrono_frenzy_arm'],
+    ai: { pattern: 'AOE_DAMAGE', priority: 3, config: { minTargets: 2, minEnemyUnits: 2 } },
   },
   katya_pierce_torrent: {
-    key: 'katya_pierce_torrent', gachaPool: GachaPoolEnum.Reflection, name: '穿云激流', cost: 5, power: 0, health: 0, maxHealth: 0,
+    key: 'katya_pierce_torrent', gachaPool: GachaPoolEnum.Permanent, name: '穿云激流', cost: 5, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '给予“凯茜娅·狂诗”+4/+0（本回合），随后随机倾泻。\n每击杀一个敌方单位：敌方水晶受到 2 点伤害，她获得 +3/+0（本回合）并继续倾泻。\n结算后，她的攻击力永久减少施法前攻击力的一半。', type: 'spell-slow', keywords: [],
     imageUrl: SPELL_IMAGES.katya_pierce_torrent,
@@ -673,6 +675,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   ⚠️ 目标需求只读 `effects[0]`（`hooks/useSpellSystem.ts:239-242`）⇒ 选"哪一只凯茜娅"由 ① 提供，
     //      ② 复用同一份 targets 且不自己选目标（逐发随机重掷）。
     effects: ['effect_katya_pierce_grant', 'effect_katya_pierce_barrage'],
+    ai: { pattern: 'STRIKE', priority: 5, config: { strikerKey: 'katya_klein_rhapsody' } },
   },
   katya_barrage: {
     key: 'katya_barrage', name: '倾泻', cost: 4, power: 0, health: 0, maxHealth: 0,
@@ -689,10 +692,11 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   效果定义：`data/effectRegistry.ts` 的 `effect_katya_barrage`
     //   结算：`logic/effectProcessor.ts` 的 `case 'BARRAGE'`
     effects: ['effect_katya_barrage'],
+    ai: { pattern: 'DAMAGE', priority: 4, config: { targetType: 'ENEMY_UNIT', damageValue: 2, targetCount: 1 } },
     isCollectible: false, // 倾泻是生成物，不进卡池与构筑
   },
   katya_starfall: {
-    key: 'katya_starfall', gachaPool: GachaPoolEnum.Reflection, name: '滞空碎星', cost: 3, power: 0, health: 0, maxHealth: 0,
+    key: 'katya_starfall', gachaPool: GachaPoolEnum.Permanent, name: '滞空碎星', cost: 3, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '【冻结】一个敌方单位，并生成 2 张 0 费“暗箭”。\n若该单位被冻结时已受伤，改为生成 3 张。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.katya_starfall,
@@ -700,6 +704,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   ① `effect_katya_starfall_freeze`   BUFF + Frostbite（**必须在首位**：目标需求只读 effects[0]）
     //   ② `effect_katya_starfall_generate` GENERATE 2 张 0 费「暗箭」，目标已受伤改 3 张
     effects: ['effect_katya_starfall_freeze', 'effect_katya_starfall_generate'],
+    ai: { pattern: 'FROST', priority: 3, config: { maxPower: 6 } },
   },
   // --- 新增单位：Logistics (后勤) ---
 
@@ -948,7 +953,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
 
 
   'Sacred_Tree_Squad_Lumi': {
-    key: 'Sacred_Tree_Squad_Lumi', gachaPool: GachaPoolEnum.Permanent,
+    key: 'Sacred_Tree_Squad_Lumi', gachaPool: GachaPoolEnum.Zenith,
     name: '”圣树”\n露米',
     region: 'Acacia',
     cost: 1,
@@ -965,7 +970,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_sacred_tree_lumi'],
   },
   'Sacred_Tree_Squad_Margaret': {
-    key: 'Sacred_Tree_Squad_Margaret', gachaPool: GachaPoolEnum.Permanent,
+    key: 'Sacred_Tree_Squad_Margaret', gachaPool: GachaPoolEnum.Zenith,
     name: '”圣树”\n玛格丽特',
     region: 'Acacia',
     cost: 3,
@@ -982,7 +987,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_sacred_tree_margaret'],
   },
   'Sacred_Tree_Squad_Alvina': {
-    key: 'Sacred_Tree_Squad_Alvina', gachaPool: GachaPoolEnum.Permanent,
+    key: 'Sacred_Tree_Squad_Alvina', gachaPool: GachaPoolEnum.Zenith,
     name: '”圣树”\n阿尔维娜',
     region: 'Acacia',
     cost: 5,
@@ -1007,21 +1012,21 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   // ==========================================
 
   temp_spell_09: {
-    key: 'temp_spell_09', name: '御剑归鞘', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
+    key: 'temp_spell_09', gachaPool: GachaPoolEnum.Zenith, name: '御剑归鞘', cost: 3, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
     description: '快速：撤回一个我方单位（返回手牌），并且飞剑1。', type: 'spell-fast', keywords: [],
     effects: ['effect_temp_spell_09', 'effect_temp_spell_09_flying'],
     imageUrl: SPELL_IMAGES.temp_spell_09,
     ai: { pattern: 'RECALL_AND_REPLACE', priority: 2, config: {} }, // [2026-09-26 莉莉子] 补 ai
   },
   temp_spell_19: {
-    key: 'temp_spell_19', name: '破军', cost: 5, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
+    key: 'temp_spell_19', gachaPool: GachaPoolEnum.Zenith, name: '破军', cost: 5, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
     description: '慢速：对一个敌方单位造成3点伤害。若本回合至少飞剑4，则本回合该法术费用-2。', type: 'spell-slow', keywords: [],
     effects: ['effect_temp_spell_19_strike'],
     imageUrl: SPELL_IMAGES.temp_spell_19,
     ai: { pattern: 'DAMAGE', priority: 3, config: { targetType: 'unit', damageValue: 3 } }, // [2026-09-26 莉莉子] 补 ai
   },
   temp_spell_20: {
-    key: 'temp_spell_20', name: '剑鸣回响', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
+    key: 'temp_spell_20', gachaPool: GachaPoolEnum.Zenith, name: '剑鸣回响', cost: 2, power: 0, health: 0, maxHealth: 0, isChampion: false, level: 0, region: 'Acacia',
     description: '慢速：回响，飞剑2。', type: 'spell-slow', keywords: ['Echo'],
     effects: ['effect_temp_spell_20_flying'],
     imageUrl: SPELL_IMAGES.temp_spell_20,
@@ -1137,7 +1142,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
   },
   Reflection_Squad_Melisande: {
     // [2026-11-14 程拍板 · 数值调整] ① 触发条件收窄为「打击**敌方水晶**后」② 加【充能】③ 生命 4 → 3。
-    key: 'Reflection_Squad_Melisande', gachaPool: GachaPoolEnum.Reflection, name: '”映现”\n梅莉桑德', cost: 2, power: 1, health: 3, maxHealth: 3,
+    key: 'Reflection_Squad_Melisande', gachaPool: GachaPoolEnum.Permanent, name: '”映现”\n梅莉桑德', cost: 2, power: 1, health: 3, maxHealth: 3,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '每次打击敌方水晶后，“倾泻”的费用永久 −1（最低 0）。', type: 'unit', keywords: ['Elusive', 'Channel'],
     imageUrl: UNIT_IMAGES.reflection_melisande,
@@ -1152,7 +1157,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_melisande_barrage_discount'],
   },
   Reflection_Squad_Yulalia: {
-    key: 'Reflection_Squad_Yulalia', gachaPool: GachaPoolEnum.Reflection, name: '”映现”\n尤拉莉雅', cost: 3, power: 3, health: 2, maxHealth: 2,
+    key: 'Reflection_Squad_Yulalia', gachaPool: GachaPoolEnum.Permanent, name: '”映现”\n尤拉莉雅', cost: 3, power: 3, health: 2, maxHealth: 2,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '我方每回合首次打出一张法术牌时，她获得【屏障】。\n每次受伤存活后，“倾泻”多发 1 发（无上限）。', type: 'unit', keywords: ['Tough'],
     imageUrl: UNIT_IMAGES.reflection_yulalia,
@@ -1168,7 +1173,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_yulalia_spell_barrier', 'effect_yulalia_barrage_observer'],
   },
   Reflection_Squad_Odnie: {
-    key: 'Reflection_Squad_Odnie', gachaPool: GachaPoolEnum.Reflection, name: '”映现”\n奥德涅', cost: 4, power: 3, health: 6, maxHealth: 6,
+    key: 'Reflection_Squad_Odnie', gachaPool: GachaPoolEnum.Permanent, name: '”映现”\n奥德涅', cost: 4, power: 3, health: 6, maxHealth: 6,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '入场与回合开始：若手牌中有“凯茜娅·狂诗”，生成 2 张【瞬逝】的随机低费法术（费用 ≤ 3）。\n我方累计打出 8 张法术牌后，“倾泻”变为快速法术。', type: 'unit', keywords: ['Channel'],
     imageUrl: UNIT_IMAGES.reflection_odnie,
@@ -1183,7 +1188,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     effects: ['effect_odnie_generate_cheap_spells'],
   },
   katya_transcribe: {
-    key: 'katya_transcribe', gachaPool: GachaPoolEnum.Reflection, name: '复调重奏', cost: 1, power: 0, health: 0, maxHealth: 0,
+    key: 'katya_transcribe', gachaPool: GachaPoolEnum.Permanent, name: '复调重奏', cost: 1, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '选择一张手牌中的法术牌，赋予其【回响】（已是【回响】的法术不可选）。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.katya_transcribe,
@@ -1193,9 +1198,10 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   改了会跨局污染 —— 同 `utils/gameRules.ts:1402` 的警告）。
     //   「已是【回响】不可选」= `targetRequirements[0].excludeKeywords: ['Echo']`（新字段）。
     effects: ['effect_katya_transcribe'],
+    ai: { pattern: 'KEYWORD_TRANSFER', priority: 2, config: { keyword: 'Echo' } },
   },
   katya_supply: {
-    key: 'katya_supply', gachaPool: GachaPoolEnum.Reflection, name: '稳态奇点', cost: 5, power: 0, health: 0, maxHealth: 0,
+    key: 'katya_supply', gachaPool: GachaPoolEnum.Permanent, name: '稳态奇点', cost: 5, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '抽至多 3 张法术牌，并回满法术法力。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.katya_supply,
@@ -1203,12 +1209,13 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   ① `effect_katya_supply_draw`   DRAW value:3 + drawFilter:'spell' + stopWhenHandFull
     //   ② `effect_katya_supply_refill` SPELL_MANA_GAIN + fillToCap（= spellManaCapOf）
     effects: ['effect_katya_supply_draw', 'effect_katya_supply_refill'],
+    ai: { pattern: 'DRAW', priority: 3, config: { drawCount: 3 } },
   },
   katya_barrage_frost: {
     // [2026-11-14 莉莉子 · 程拍板] 冻结段已删、费用 2 → 1。
     //   理由：删掉冻结段后第一发**永不空** —— `RANDOM_ENEMY_OR_NEXUS` 的池子永远含敌方水晶
     //   （`effectProcessor.ts:626-633` 里水晶是无条件入池的），所以降价 1 点作补偿。
-    key: 'katya_barrage_frost', gachaPool: GachaPoolEnum.Reflection, name: '霜矢标记', cost: 1, power: 0, health: 0, maxHealth: 0,
+    key: 'katya_barrage_frost', gachaPool: GachaPoolEnum.Permanent, name: '霜矢标记', cost: 1, power: 0, health: 0, maxHealth: 0,
     isChampion: false, level: 0, region: 'katya_klein_rhapsody',
     description: '对一个随机的敌方单位或敌方水晶造成 1 点伤害；\n在手牌生成一张【瞬逝】的“逆境萌生”。', type: 'spell-burst', keywords: [],
     imageUrl: SPELL_IMAGES.katya_barrage_frost,
@@ -1216,6 +1223,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     //   ⚠️ 原首段 `effect_katya_barrage_frost_freeze` 已从链上摘除（效果定义保留在 registry，见其注释）。
     //   `effects[0]` 现为 STRIKE 且 `targetRequirements: []` ⇒ 施法前**不需要**选目标（与旧版一致）。
     effects: ['effect_katya_barrage_frost_strike', 'effect_katya_barrage_frost_generate'],
+    ai: { pattern: 'DAMAGE', priority: 1, config: { targetType: 'ENEMY_UNIT', damageValue: 1, targetCount: 1 } },
   },
   katya_barrage_frost_cont: {
     key: 'katya_barrage_frost_cont', name: '逆境萌生', cost: 2, power: 0, health: 0, maxHealth: 0,
@@ -1227,6 +1235,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: SPELL_IMAGES.katya_barrage_frost_cont,
     isCollectible: false,
     effects: ['effect_katya_barrage_frost_cont_heal', 'effect_katya_barrage_frost_cont_generate'],
+    ai: { pattern: 'HEAL', priority: 2, config: { targetType: 'ALLY_UNIT', healValue: 2, onlyWounded: true } },
   },
   katya_barrage_frost_end: {
     key: 'katya_barrage_frost_end', name: '胜负终局', cost: 2, power: 0, health: 0, maxHealth: 0,
@@ -1235,6 +1244,7 @@ export const CARD_DB: Record<string, Omit<CardData, 'id' | 'strikeCount' | 'anim
     imageUrl: SPELL_IMAGES.katya_barrage_frost_end,
     isCollectible: false,
     effects: ['effect_katya_barrage_frost_end_freeze', 'effect_katya_barrage_frost_end_buff'],
+    ai: { pattern: 'FROST', priority: 2, config: { maxPower: 99 } },
   },
 
   // ==========================================

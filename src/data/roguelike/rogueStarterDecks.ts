@@ -19,6 +19,11 @@ export const ROGUE_HEROES: RogueHeroInfo[] = [
     { key: 'mauxir_lotus_drive', name: '猫汐尔·莲驱', region: 'Mauxir' },
     { key: 'acacia_chrono_echo', name: '安卡希雅·时之重奏', region: 'Acacia' },
     { key: 'marian', name: '茉莉安·霄鹰', region: 'Marian' }, // [2026-09-26 莉莉子] 肉鸽池补入第 6 位天启者
+    // [2026-11-16 莉莉子] 凯茜娅·狂诗 —— 第 7 位。
+    //   ⚠️ region 必须写**全名** `katya_klein_rhapsody`（`types.ts:2` 的 Region 值就是全名，
+    //   不是 'Katya'）—— 写短名会让 `buildStarterDeck` 兜底与 `buildHeroRecruitOptions`
+    //   的 `c.region === h.region` 全部取不到卡。
+    { key: 'katya_klein_rhapsody', name: '凯茜娅·狂诗', region: 'katya_klein_rhapsody' },
 ];
 
 /** [2026-08-29] 内置默认肉鸽卡组（写死自 dev_full_admin 配置；卡 key → 数量） */
@@ -87,6 +92,27 @@ export const DEFAULT_ROGUE_STARTER_DECKS: Record<string, { name: string; cards: 
             marian_faction_mark: 1, marian_faction_bait: 1, marian_faction_silence: 1,
             Ulster_Squad_Maeve: 1, Crows_Eyest_Squad_An: 1, Bridget_Squad_Feier: 1,
             SacredChants_Squad_Loka: 1, Ghost_Squad_Vez: 1, Danu_Squad_Wendy: 1,
+        },
+    },
+    // [2026-11-16 莉莉子] 凯茜娅·狂诗 —— 倾泻养攻流（流派「诗与枪火」，难度 4）
+    //   结构：本体 ×2 + 映现小队 3（梅莉桑德 ×2）+ 阵营法术 4（霜矢 ×2）+ 外援 4 = 15
+    //   ⚠️ 非本体卡带 2 张（程 2026-11-16 拍板，破「每种 1 张」旧惯例）：
+    //     她的阵营只有 7 张可收集非英雄卡，硬守惯例就得塞 6 张外援 ⇒ 牌组变成
+    //     "外援撑场、她当挂件"，与流派定位相反。
+    //   费用曲线 1/2/3/4/5/6 = 4/3/4/1/1/2：
+    //     本体 6 费、倾泻 4 费（`cards.ts:678`），迷宫开局 1 法力 ⇒ 前五回合空窗，
+    //     1-3 费件必须够。跨阵营的 Logistics 通用件本身全是 1-3 费，正好补位。
+    //   ⚠️ 梅莉桑德 ×2 是节奏引擎：每次打击敌方水晶 → 倾泻费用永久 −1
+    //     （`effectRegistry.ts:3087`）。没有她，要到第 7 回合才打得动第一发倾泻。
+    katya_klein_rhapsody: {
+        name: '肉鸽·凯茜娅 狂诗',
+        cards: {
+            katya_klein_rhapsody: 2,
+            Reflection_Squad_Melisande: 2, katya_barrage_frost: 2,
+            katya_transcribe: 1, Reflection_Squad_Yulalia: 1, katya_starfall: 1,
+            Reflection_Squad_Odnie: 1, katya_supply: 1,
+            Bridget_Squad_Feier: 1, Crows_Eyest_Squad_An: 1,
+            Ulster_Squad_Maeve: 1, SacredChants_Squad_Loka: 1,
         },
     },
 };

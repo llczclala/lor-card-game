@@ -9,7 +9,7 @@ export const GachaPoolEnum = {
     Permanent: 'permanent', // 常守之誓
     Lotus: 'lotus',         // 烬中镜火
     Zenith: 'zenith',       // [2026-09-16 1.0.16] 自往昔归还 —— 收纳「安卡希雅 + 茉莉安」（2026-09-17 由暂定名「苍穹回响」定名）
-    Reflection: 'reflection', // [2026-11-15 1.0.23] 收纳「凯茜娅·狂诗 + 映现小队」
+    // [2026-11-18 程拍板] Reflection('reflection') 已删除 —— 苔丝未完成，凯茜娅暂入常驻池
 } as const;
 export type GachaPoolId = (typeof GachaPoolEnum)[keyof typeof GachaPoolEnum];
 // 完整的 36 个关键词定义
@@ -97,6 +97,12 @@ export interface CardData {
   //      这正是猫汐尔/茉莉安用「卡上镜像 + 账本真源」的同一个理由（`mauxirDamage` / `beaconDeaths`）。
   //   ⚠️ 由 `stampKatyaCard` **幂等贴值**（同值重复贴不产生新对象）。
   katyaDamage?: number;
+  // [2026-11-19 莉莉子 · 神格神经⑥「狂诗·不竭」] 凯茜娅专属：**攻击力下限**。
+  //   ⑥ 生效时由 `stampKatyaCard` 写入（= 账本口径的 `2 + S − D`）；`getPower` 在算出
+  //   「低于该下限」时顶回下限 ⇒ 冻结 / 任意 debuff 写的负 power 全部被挡住。
+  //   ⚠️ 只挡**负向**：正向加成（穿云激流的 +4 等）照常叠加，不受下限影响。
+  //   ⚠️ ⑥ 未生效时必须为 `undefined`（`stampKatyaCard` 显式清掉），否则会残留上一局/上一个强化的下限。
+  powerFloor?: number;
   // [2026-10-06 莉莉子 BUG修复 · 莲台无垠] **本场已应用过的「全法术减费」量**。
   //   为什么要这个标记：减费现在有**两条路** ——
   //     ① 开局对已在手/库的法术**改数据**（卡面能显示绿色减费，玩家看得见）

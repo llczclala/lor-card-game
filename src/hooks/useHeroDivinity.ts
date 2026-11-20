@@ -22,6 +22,7 @@ import {
     getNodeCost,
     isNodeAvailable,
     isNodeUnlocked,
+    setDivinityDisabledSnapshot,
     setDivinityUnlockedSnapshot,
     type DivinityNode,
 } from '../data/roguelike/heroDivinity';
@@ -40,6 +41,16 @@ import {
 
 export interface DivinitySave {
     unlocked: Record<string, string[]>;
+    /**
+     * [2026-11-20 程拍板] **玩家自选关闭**的节点 id（每英雄一份）。
+     *
+     * 语义（与 `unlocked` 严格分开）：
+     *   · unlocked = 花碎片点亮过 ⇒ 永久，决定前置门槛 / 星槽亮度
+     *   · disabled = 玩家想给自己加难度而关掉的 ⇒ 只让"效果注入"少这一条，**随时可恢复**
+     * ⇒ 用"负向列表"而不是正向 enabled：旧存档没有这个字段 ⇒ 默认全部生效，
+     *    不迁移也天然正确（反过来的话，老玩家读到的是一张空 enabled 表 ⇒ 六格全灭，灾难）。
+     */
+    disabled: Record<string, string[]>;
     /** [2026-09-29] 神格碎片钱包（原 paradoxBank: number 已废弃） */
     wallet: ShardWallet;
     /**
@@ -72,7 +83,7 @@ const isDevAccount = (): boolean => StorageUtils.getOrCreateUserId() === 'dev_fu
 const getStorageKey = (): string =>
     `${STORAGE_KEYS.ROGUE_DIVINITY}_${StorageUtils.getOrCreateUserId()}`;
 
-const EMPTY: DivinitySave = { unlocked: {}, wallet: EMPTY_WALLET };
+const EMPTY: DivinitySave = { unlocked: {}, wallet: EMPTY_WALLET, disabled: {} };
 
 /** 旧存档兼容：把 { paradoxBank: number } 迁移成 { wallet: EMPTY_WALLET }（悖论点直接作废） */
 const migrate = (raw: unknown): DivinitySave => {
@@ -80,6 +91,7 @@ const migrate = (raw: unknown): DivinitySave => {
     return {
         unlocked: r.unlocked ?? {},
         wallet: r.wallet ?? EMPTY_WALLET, // 旧 paradoxBank 不折算（体系已废，程未要求补偿）
+        disabled: r.disabled ?? {},       // [2026-11-20] 旧档无此字段 ⇒ 空表 = 全部启用（向后兼容的关键）
         devSeeded: r.devSeeded,           // [2026-10-04] 开发者种子标记（旧档没有 ⇒ undefined ⇒ 会补发一次）
     };
 };
@@ -173,14 +185,34 @@ const listeners = new Set<() => void>();
 /** [2026-09-29] 万能碎片广播只挂一个订阅（多组件实例共用模块级 store，重复挂会重复入账） */
 let _universalShardSubscribed = false;
 
-const syncSnapshot = () => setDivinityUnlockedSnapshot(sharedSave.unlocked);
+const syncSnapshot = () => {
+    setDivinityUnlockedSnapshot(sharedSave.unlocked);
+    setDivinityDisabledSnapshot(sharedSave.disabled ?? {}); // [2026-11-20] 开关与解锁同源同步
+};
 
-const persist = (next: DivinitySave) => {
+/**
+ * 写盘 + 广播。入参是**补丁**：字段都可省，省略的由 store 用自己那份补上（见下方 merged）。
+ *
+ * ⚠️ [2026-11-20] 原写法是 `Pick<DivinitySave,'unlocked'> & Partial<...>`（unlocked 必填）——
+ *   那只是逼调用方每次都写 unlocked，却挡不住**写出错误内容**（`persist({ unlocked: {} })`
+ *   想表达"只改 disabled"时会把全部解锁清空，TS 一声不响）。
+ *   现在一律可选、逐字段兜底：漏写 = 不动，永远不会被"省略"意外抹掉。
+ */
+type DivinityPatch = Partial<DivinitySave>;
+
+const persist = (next: DivinityPatch) => {
     // ⚠️ [2026-10-04 程拍板] `devSeeded` 标记由 store **自己保留**：
     //   多数调用方只写 `{ unlocked, wallet }`（如 unlockNode），根本展开不到这个字段
     //   ⇒ 标记会被抹掉 ⇒ 下次加载 migrate 读到 undefined ⇒ **又补种一次**
     //   ⇒ 开发者点一次节点碎片就回满，等于退化回"锁死"。故在此统一兜住。
-    const merged: DivinitySave = { ...next, devSeeded: sharedSave.devSeeded };
+    // ⚠️ [2026-11-20] `disabled` 同理：unlockNode 一类调用不展开它，
+    //   若不兜住，玩家「先关掉 ③ → 再去点亮 ⑥」这个最自然的操作顺序会让 ③ 偷偷复活。
+    const merged: DivinitySave = {
+        unlocked: next.unlocked ?? sharedSave.unlocked,
+        wallet: next.wallet ?? sharedSave.wallet,
+        disabled: next.disabled ?? sharedSave.disabled ?? {},
+        devSeeded: sharedSave.devSeeded,
+    };
     sharedSave = merged;
     StorageUtils.save(getStorageKey(), merged);
     syncSnapshot();               // data 层的同步视图（排序 / 星槽）跟着更新
@@ -296,11 +328,38 @@ export const useHeroDivinity = () => {
 
     /**
      * [2026-09-28 开发者专属] 重置某天启者的神格神经（清空已解锁节点，便于反复测试）。
-     *   只清解锁表，**不动碎片钱包**。
+     *   只清解锁表，**不动碎片钱包**。[2026-11-20] 连关闭表一起清（否则重置后残留一堆脏 id）。
      */
     const resetHero = useCallback((heroKey: string): void => {
-        if (!(sharedSave.unlocked[heroKey]?.length)) return;
-        persist({ ...sharedSave, unlocked: { ...sharedSave.unlocked, [heroKey]: [] } });
+        const hadUnlocked = (sharedSave.unlocked[heroKey]?.length ?? 0) > 0;
+        const hadDisabled = (sharedSave.disabled?.[heroKey]?.length ?? 0) > 0;
+        if (!hadUnlocked && !hadDisabled) return;
+        persist({
+            unlocked: { ...sharedSave.unlocked, [heroKey]: [] },
+            disabled: { ...(sharedSave.disabled ?? {}), [heroKey]: [] },
+        });
+    }, []);
+
+    // ── [2026-11-20 程拍板] 自选关闭 / 恢复（不花碎片、不动解锁记录）──────
+
+    /** 某英雄**已关闭**的节点 id */
+    const getDisabled = useCallback((heroKey: string): string[] =>
+        sharedSave.disabled?.[heroKey] ?? [], []);
+
+    /**
+     * 切换某节点的「启用 / 关闭」。
+     *   · 只对**已点亮**节点有效（没点亮的谈不上关；返回 false 表示没动任何数据）
+     *   · 解锁记录一概不动 ⇒ 星槽、前置门槛、⑤⑥ 顺序**全都不受影响**（见 `isNodeDisabled` 注释）
+     */
+    const toggleNode = useCallback((heroKey: string, nodeId: string): boolean => {
+        if (!isNodeUnlocked(nodeId, sharedSave.unlocked[heroKey])) return false;
+        const cur = sharedSave.disabled?.[heroKey] ?? [];
+        const nextList = cur.includes(nodeId) ? cur.filter(id => id !== nodeId) : [...cur, nodeId];
+        persist({
+            unlocked: sharedSave.unlocked,
+            disabled: { ...(sharedSave.disabled ?? {}), [heroKey]: nextList },
+        });
+        return true;
     }, []);
 
     // ── 碎片入账（奖励匣 / 每日任务 / 溢出）──
@@ -375,6 +434,9 @@ export const useHeroDivinity = () => {
         canUnlock,
         unlockNode,
         resetHero,               // [开发者] 重置本英雄神格神经
+        // [2026-11-20] 自选启用 / 关闭（给玩家自己加难度用；不花碎片、可随时恢复）
+        getDisabled,
+        toggleNode,
         // 碎片入账
         grantHeroShard,
         grantUniversalShard,

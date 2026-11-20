@@ -90,6 +90,11 @@ export const getPower = (c: CardData) => {
     const raw = (c.power || 0) + (c.buffs?.power || 0) + (c.roundBuffs?.power || 0);
     // [maxPower] 如有攻击力上限，clamp 到该值（底座专用）
     if (c.maxPower !== undefined && raw > c.maxPower) return c.maxPower;
+    // [2026-11-19 莉莉子 · 神格神经⑥「狂诗·不竭」] 凯茜娅的攻击力**下限**：
+    //   冻结注入的负 `roundBuffs.power`、任意 debuff 写的负 power，都会让 raw 掉到下限以下
+    //   ⇒ 在这里顶回。下限由 `stampKatyaCard` 写入（⑥ 未生效时为 undefined，本行完全不介入）。
+    //   ⚠️ 只挡负向：raw 高于下限时原样返回（穿云激流的 +4 等正向加成不受影响）。
+    if (c.powerFloor !== undefined && raw < c.powerFloor) return Math.max(0, c.powerFloor);
     // [2026-07-09] 攻击力下限为 0，不因 debuff 变为负数
     return Math.max(0, raw);
 };

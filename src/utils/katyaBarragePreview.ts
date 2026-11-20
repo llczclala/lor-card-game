@@ -18,7 +18,7 @@
 //    UI 层（手牌 `CardAnimations`）能拿到 `playerBench` / `combatField`，故能算准；
 //    拿不到棋盘的位置（悬停大图 `FloatingCardPreview`）退回账本口径，并在 `fromBoard` 里自证。
 // ==========================================
-import type { CardData } from '../types';
+import type { CardData, CombatFieldItem } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry';
 import { getPower } from '../logic/keywords';
 import { KATYA_KEY, getKatyaStats, getKatyaBarrageObserverBonus } from './katyaProgress';
@@ -44,8 +44,8 @@ export interface BarrageEstimateContext {
     side?: 'player' | 'enemy';
     /** 该方备战席（有它 + field 才能算准 `roundBuffs`） */
     bench?: CardData[] | null;
-    /** 交战区（形状 `{ owner, attacker, blocker }`） */
-    field?: any[] | null;
+    /** 交战区（[2026-11-19 代码债收口] `any[]` → `CombatFieldItem[]`：形状本就是 `{ owner, attacker, blocker }`） */
+    field?: CombatFieldItem[] | null;
 }
 
 /**

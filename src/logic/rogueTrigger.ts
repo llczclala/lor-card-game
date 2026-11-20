@@ -14,6 +14,7 @@
 import { getRogueDefs, flashRogueBuff, applyPermanentBuff, pickRandomAlly, findStrongestUnit, applyStatBalance, applyStrikeEnhancement, isStrikeTargetAlive, isRallyByAttackPowerMet } from './rogueBattle';
 import { applyFrostbite, getPower, getHealth } from './keywords';
 import { isQuestDone, questKey } from './questTracker'; // [2026-09-25 莉莉子] 三线任务化框架：任务解锁判定
+import { setKatyaPowerImmune } from '../utils/katyaProgress'; // [2026-11-19 神格神经⑥] 降攻免疫开关
 import { runSummonEntry } from './summonEntry'; // [2026-10-06 程拍板 · A 方案] 「入场」门铃唯一实现（依赖由 effectProcessor 注入 ⇒ 本 import 不成环）
 // [2026-10-03 莉莉子 · 进攻标识三层分离 ②] 「追加一次进攻权」的唯一出口（备战们统一走它）
 import { grantExtraAttackTurn } from './core';
@@ -1593,6 +1594,14 @@ export const ROGUE_EFFECT_HANDLERS: Partial<Record<BattleEffectClass, RogueEffec
             amount: total,
             floatOnly: true, // [2026-10-10] 只演出：不排微队列（不计数、不重触发）
         });
+        flashRogueBuff(def);
+    },
+
+    // [2026-11-19 莉莉子 · 神格神经⑥「狂诗·不竭」] 「凯茜娅的攻击力不再减少」
+    //   本 handler 只**置位**一个模块级开关；真正的拦截在 `stampKatyaCard`（写 `powerFloor`）
+    //   与 `getPower`（低于下限就顶回）—— 那里是全局热路径、拿不到 game，所以开关必须先落账。
+    KATYA_POWER_IMMUNE: (def, ctx) => {
+        setKatyaPowerImmune(ctx.owner, true);
         flashRogueBuff(def);
     },
 

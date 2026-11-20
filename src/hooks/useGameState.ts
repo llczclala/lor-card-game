@@ -8,7 +8,8 @@ import type { CardData, GameState, GameRecordCategory, SpellStackItem, RecordEnt
 import { createCard, CARD_DB } from '../data/cards';
 import {  calculateNewMana, getLeveledUpCard, getEffectiveSpellCost, upgradeAcaciaHand } from '../utils/gameRules';
 import { resolveSingleCombat, resolveDoubleStrikeCombat, type DoubleStrikeCombatResult } from '../logic/combat'; // [新增] 引入真实血量探针
-import { combatHasFlyingSword, getFlyingSwordOwner, getDefensiveSide, getExtraAttackOwner, combatHasExtraAttack } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具 · [2026-09-26 T17] 额外攻击判定
+import { getFlyingSwordOwner, getDefensiveSide, getExtraAttackOwner } from '../logic/combat'; // [2026-08-24 莉莉子 飞剑竞态根治] 飞剑判定工具 · [2026-09-26 T17] 额外攻击判定
+// ⚠️ [2026-11-19] `combatHasFlyingSword` / `combatHasExtraAttack` 已随两道守卫搬到 `useCombatGuards.ts`
 import { canAfford, grantExtraAttackTurn } from '../logic/core'; // [2026-10-03] 追加进攻权唯一出口（备战的唯一入口）
 // [2026-10-03 莉莉子 · P0 收口] "等升级播完"的唯一实现（原先本文件与 useSpellSystem 各一份）
 import { awaitLevelUpDrain as awaitLevelUpDrainCore, makeLevelUpDrainBudget } from '../utils/levelUpDrain';
@@ -16,11 +17,16 @@ import { runEnemySpellCastBeats } from '../utils/spellCastBeats'; // [2026-09-19
 import { nextAnimId } from '../utils/animId'; // [2026-09-04 莉莉子] 全局唯一动画 ID（替代 Date.now()，修抽卡动画 key 撞车）
 import { eventBus, GameEvents, StrikeEvents } from '../utils/eventBus';
 import { applyChannelOnSummon, applyEchoOnPlay, getPower, getHealth } from '../logic/keywords'; // [2026-09-22 修复] getHealth 统一有效血量口径 // [2026-08-06 莉莉子] Echo 回响
-import { canBlockAttacker, getBlockRejectReason, BLOCK_REJECT_TEXT } from '../logic/blockRules'; // [2026-10-26 莉莉子] 格挡合法性唯一门卫（无法格挡/隐秘/凶恶）
+import { getBlockRejectReason, BLOCK_REJECT_TEXT } from '../logic/blockRules'; // [2026-10-26 莉莉子] 格挡合法性唯一门卫（无法格挡/隐秘/凶恶）
+// ⚠️ [2026-11-19] `canBlockAttacker` 已随自动推进的 `canPlayerAct` 搬到 `useAutoAdvance.ts`
 import { checkCardLevelUp, accumulateMauxirDamage, applyBeaconDeaths, isSummonerOrSummon, markLeveledUp, isLeveledUpForSide, assembleBeaconCard, grantBeaconRespawnEffect, hasLiveMarian, canPlayerRetractBlocker, collectFieldUnits, sideOfUnit, sideOfLevelUpTicket, setNexusMaxSnapshot, isNexusImmune, setSpellCostDownAllSnapshot, applySpellCostDownToNewCard, resetSpellCastState, setSpellCostUpAllSnapshot, resetCostModifiers, getCostTaxOf, clearHandCostTax, addHandCostTax, addChainCostTax, noteRoundPlay, CARD_COST_CAP, noteNexusHit, NEXUS_CAP_AFTER_HITS, bumpHoardStored } from '../utils/gameRules'; // [2026-10-24] 费用修饰器：建局重设 / 累积 / 清零 / 单位卡实扣加税 · 第21条：水晶受伤计数
 import { gameLogger } from '../utils/gameLogger'; // [新增] 引入战术审计黑匣子探针
-import { bumpAnimProgress, animGuard, ANIM_STALL_MS, LEVELUP_STALL_GRACE_MS } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳 · [2026-10-05] + 升级链宽限阈值
+import { bumpAnimProgress } from '../utils/animGuard'; // [2026-09-03] animating 停滞看门狗心跳
+// ⚠️ [2026-11-19] `animGuard` / `ANIM_STALL_MS` / `LEVELUP_STALL_GRACE_MS` 已随看门狗搬到 `useCombatGuards.ts`
 import { recoverCombatSurvivors } from '../utils/combatRecovery'; // [2026-09-03] 交战区幸存者应急归位
+import { useCombatGuards } from './useCombatGuards'; // [2026-11-19 莉莉子 · 编排层分区 L1] 交战区守卫 + animating 看门狗（整块搬出）
+import { useAutoAdvance } from './useAutoAdvance'; // [2026-11-19 莉莉子 · 编排层分区 L1] 自动推进（托管）检测（整块搬出）
+import { appendGameRecord } from '../utils/matchRecord'; // [2026-11-19] 对局记录的结构构造（纯函数）
 import { applyBeaconFuse } from '../utils/beaconFuse'; // [2026-10-09 莉莉子 BUG修复 · BUG-20261009-01] 信标引爆倒计时的唯一实现（进攻宣告 + 飞剑造剑 两个调用点共用）
 // [2026-10-05 莉莉子 BUG修复 · 20261005-03] 【无法攻击】归零/还原的**唯一出口**（模块级账本，hook 与纯逻辑层共用）
 import { applyCantAttackZeroPower, restoreCantAttackPower } from '../utils/cantAttackLedger';
@@ -449,6 +455,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
 
     // ==========================================
     // [2026-07-20] 对局操作记录 — 写入函数
+    // [2026-11-19 代码债收口] 结构构造抽到 `utils/matchRecord.ts` 的纯函数 `appendGameRecord`；
+    //   留在这里的只有「自增 id」与「调 setGame」—— 这两件事必须持有 ref，搬不走。
     // ==========================================
     const recordIdRef = useRef(0);
     const recordAction = (
@@ -458,19 +466,8 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         options?: { cardKey?: string; detail?: string; entities?: RecordEntity[] }
     ) => {
         recordIdRef.current++;
-        setGame(prev => ({
-            ...prev,
-            gameRecords: [...prev.gameRecords, {
-                id: `rec-${recordIdRef.current}`,
-                turn: prev.round,
-                owner,
-                category,
-                summary,
-                cardKey: options?.cardKey,
-                detail: options?.detail,
-                entities: options?.entities,
-            }]
-        }));
+        const id = `rec-${recordIdRef.current}`;
+        setGame(prev => appendGameRecord(prev, { id, category, owner, summary, ...options }));
     };
     // ==========================================
 
@@ -1689,89 +1686,6 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
         });
     }, [game.levelUpCard]);
 
-
-// ==========================================
-    // [新增] 自动推进引擎 (Auto-Advance Engine)
-    // ==========================================
-    const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
-
-    const canPlayerAct = (checkPhase: string) => {
-        const { playerMana, playerSpellMana, playerMaxMana } = stateRef.current.game;
-        const hand = stateRef.current.playerHand;
-        const bench = stateRef.current.playerBench;
-        const field = stateRef.current.combatField;
-
-        // 1. 格挡阶段：检查是否有能用的阻挡者
-        if (checkPhase === 'block_declare') {
-            // [2026-10-26 莉莉子] 合法性统一走门卫（无法格挡 / 隐秘 / 凶恶）——
-            //   此前这里是第 4 份手抄副本，判据一旦与 assignBlocker 分叉，
-            //   就会出现「提示还能操作、实际每次都被拒」或反过来的死锁。
-            const canBlock = bench.some(blocker => {
-                return field.some(fight => {
-                    // 只能挡对面的空位
-                    if (fight.blocker !== null || fight.owner !== 'enemy') return false;
-                    return canBlockAttacker(blocker, fight.attacker);
-                });
-            });
-            if (canBlock) return true;
-
-            // [格挡确认保护] 如果玩家已经分配了格挡单位，视为"可操作"
-            // 此时玩家可以选择"格挡"按钮确认，或点击已分配的格挡者撤回
-            const hasAssignedBlockers = field.some(fight => fight.blocker !== null);
-            if (hasAssignedBlockers) return true;
-        }
-
-        // 2. 响应阶段 (包含格挡阶段)：检查是否有合规的法术可以打出
-        if (checkPhase === 'block_declare' || checkPhase === 'react_to_block') {
-            const canCast = hand.some(card => {
-                if (!card.type.includes('spell')) return false;
-                if (card.type === 'spell-slow') return false; // 战斗中绝不能打慢速法术
-                const effectiveCost = getEffectiveSpellCost(card, playerBench, playerMaxMana, 'player'); // [2026-10-13 F2] 玩家侧：本处 bench 即 playerBench
-                return canAfford(card, playerMana, playerSpellMana, effectiveCost);
-            });
-            if (canCast) return true;
-        }
-
-        return false;
-    };
-
-    useEffect(() => {
-        // [2026-11-07 超元链接] 非权威方（= 联机客方）绝对不做本地自动推进。
-        //   病根：本 effect 直接调 `confirmBlock()` / `passTurn()`，**没有走 fireNetIntent**，
-        //   所以客方也会在 800ms 后自己把回合推过去 —— 与房主的权威状态打架，两边各跑一套引擎。
-        //   默认 true ⇒ 单机六模式行为不变。
-        if (!authoritative) return;
-
-        // 不在动画期、不在结算期、不是微队列未清空期
-        if (game.phase === 'animating' || game.gameResult !== null || pendingActionsRef.current.length > 0) return;
-
-        // 仅在轮到玩家的防守/响应回合进行托管检测
-        if (game.turnOwner === 'player' && (game.phase === 'block_declare' || game.phase === 'react_to_block')) {
-            if (!canPlayerAct(game.phase)) {
-                setIsAutoAdvancing(true);
-
-                // 给予 0.8 秒的视觉缓冲期，让玩家看清敌方刚刚的操作，防晕车
-                const timer = setTimeout(() => {
-                    setIsAutoAdvancing(false);
-                    // [核心修复] 区分格挡阶段和响应阶段的动作！
-                    // [2026-08-24 莉莉子 飞剑竞态根治] 只对真实阶段做合法动作，
-                    // 意外回到 main（如飞剑归位后）一律不动，防止补一脚 passTurn 导致回合误结束
-                    const phaseNow = stateRef.current.game.phase;
-                    if (phaseNow === 'block_declare') {
-                        confirmBlock(); // 格挡阶段无事可做应视为“防线确认完毕”
-                    } else if (phaseNow === 'react_to_block') {
-                        passTurn(); // 只有在战术响应阶段才叫“让过”
-                    }
-                }, 800);
-
-                return () => clearTimeout(timer);
-            }
-        } else {
-            setIsAutoAdvancing(false);
-        }
-    // 注意：绝不可将 passTurn 加入依赖以避免死循环
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game.phase, game.turnOwner, playerHand.length, playerBench.length, game.playerMana, game.playerSpellMana, authoritative]);
 
 
 
@@ -7148,198 +7062,29 @@ export const useGameState = (deck: string[], enemyDeck: string[], isSandbox: boo
     }, []);
 
     // ==========================================
-    // [2026-09-11 莉莉子 死锁逃生·第三道] 交战区不变量守卫
-    // 设计铁律：main（静默阶段）时交战区必须为空——单位只在一脚打击的生命周期内进交战区。
-    // 但既有三道保险各有盲区，合起来漏掉了"phase 非 animating 却残留单位"这一格：
-    //   · try/catch/finally 逃生 → 只管 animating 异步链抛异常的场合
-    //   · animating 看门狗（下方）→ 只在 phase==='animating' 时工作，main 直接 return
-    //   · 回合末归位安全网 → 要等这一回合真的结束才跑得到；而 passTurn 的白名单又规定
-    //     "只有 main 才允许结束回合"（见 passTurn 残留阶段 warn 分支）→ 两边互相等，
-    //     单位就杵在交战区里，玩家看到"非进攻/格挡回合中单位卡死在战场上"。
-    // 本守卫专盯"phase=main 但交战区有人"这种自相矛盾态，稳定超时后把幸存者领回备战席。
-    //
-    // 三重防误伤：
-    //   1) 只认 main —— attack_declare/block_declare/react_to_block 合法持人（玩家正在点选/格挡），
-    //      一律不碰；这几个阶段即便异常也由玩家"取消进攻/确认进攻"和自动推进引擎兜住，不是死锁。
-    //   2) 排除飞剑 —— 飞剑有专属守卫 effect 负责拉回 block_declare（见文件上方飞剑守卫），
-    //      两处若同时动手会抢节奏，故此处让位。
-    //      [2026-09-26 T17 猎影标记] 同理排除「额外攻击战线」：settleStack 把 phase 切到 block_declare
-    //      之前，交战区会先带着该战线短暂停留在 main —— 而 settleStack 排在 resolveStack 的**升级等待
-    //      循环之后**（最长 20s），一旦超 1200ms，本守卫会把强制战斗**静默收回备战席**。
-    //   3) 稳定窗口 —— 先挂起再复核：正常路径 setGame(phase:'main') 与 setCombatField([])
-    //      是同一批次提交的，绝不会被这个窗口误判；只有"矛盾态真的持续"才动手。
-    // 应急归位本身幂等（已在备战席的按 id 跳过），与其它三道保险可共存、无重复入席风险。
+    // [2026-11-19 莉莉子 · 编排层分区 L1] 两道安全网整块搬到 `hooks/useCombatGuards.ts`：
+    //   · 交战区不变量守卫（原 :7150-7200）
+    //   · animating 停滞看门狗（原 :7218-7342）
+    //   行为**逐字不变**，只把「从 hook 闭包读」改成「参数注入」；
+    //   搬家的理由、全部历史注释与三处审查修复的来龙去脉，见该文件头注释。
     // ==========================================
-    const COMBAT_ORPHAN_STABLE_MS = 1200;
-    useEffect(() => {
-        // [2026-09-13 莉莉子 L2-A] 沙盒默认不干预；打开「守卫照跑」后照常执行，用于贴近真机复现
-        if (isSandbox && !sandboxGuardEnabled) return;
-        if (game.gameResult) return;                    // 对局已结束
-        if (game.phase !== 'main') return;              // 战斗/结算阶段合法持人
-        if (combatField.length === 0) return;
-        if (combatHasFlyingSword(combatField)) return;  // 飞剑让位给专属守卫
-        if (combatHasExtraAttack(combatField)) return;  // [2026-09-26 T17] 额外攻击战线同样让位（待 settleStack 切格挡）
-        const timer = setTimeout(() => {
-            const ref = stateRef.current;
-            // 复核实时状态：期间若已回到战斗阶段 / 交战区已清空 / 飞剑现身 / 对局结束，都视作正常，放行
-            if (ref.game.gameResult || ref.game.phase !== 'main') return;
-            if (ref.combatField.length === 0) return;
-            if (combatHasFlyingSword(ref.combatField)) return;
-            if (combatHasExtraAttack(ref.combatField)) return; // [2026-09-26 T17] 同上：额外攻击战线让位
-            console.warn('[CombatOrphanGuard] ⚠️ main 阶段交战区仍有单位滞留，执行应急归位', {
-                round: ref.game.round, turnOwner: ref.game.turnOwner, consecutivePasses: ref.game.consecutivePasses,
-                combatFieldLen: ref.combatField.length,
-                units: ref.combatField.map((f: any) => `${f?.owner === 'player' ? 'P' : 'E'}:${f?.attacker?.key}${f?.blocker ? ' vs ' + f.blocker.key : ''}`),
-            });
-            recoverCombatSurvivors(ref.combatField, ref.playerBench, ref.enemyBench, {
-                setPlayerBench, setEnemyBench, setCombatField, setGame,
-            });
-        }, COMBAT_ORPHAN_STABLE_MS);
-        return () => clearTimeout(timer);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game.phase, game.gameResult, combatField.length, isSandbox, sandboxGuardEnabled]);
+    useCombatGuards({
+        game, combatField, stateRef, setGame,
+        setPlayerBench, setEnemyBench, setCombatField,
+        isSandbox, sandboxGuardEnabled,
+    });
 
     // ==========================================
-    // [2026-09-03 莉莉子 死锁逃生] animating 停滞看门狗
-    // phase 停在 animating 且超过 ANIM_STALL_MS 无心跳推进（正常长演出由 bumpAnimProgress 打点、
-    // 升级影片/队列走下方豁免）→ 强制恢复 main + 交战区应急归位，防对局永久死锁。
-    // 与各 try/finally 逃生互补：两处恢复都带 phase==='animating' 门 + 幂等，
-    // 先触发者把 phase 置 main 后，另一侧读到非 animating 即空转。
-    //
-    // [2026-10-04 莉莉子 · AI 停机保护性修复] **豁免改为"限时 + 进展感知"**：
-    //   病根：原实现只要 levelUpCard/队列非空就整体 return，连 interval 都不建 ⇒
-    //   升级链一旦断掉（画面中途被撤、onComplete 没来），phase 停在 animating 就再无兜底 ——
-    //   **唯一会永久卡死的状态，恰好被唯一的看门狗豁免掉了。**
-    //   现在：豁免照旧（正常长演出不被误伤），但必须"看得见进展" ——
-    //   以 (levelUpCard.id + 队列长度) 为进展指纹，指纹一变即刷新计时；
-    //   连续 LEVELUP_STALL_GRACE_MS 不变 ⇒ 判定断链，强拆（**同时清队列 + 恢复 phase**，
-    //   绝不再把 phase 留在 animating —— 那正是"AI 永久停机"的宿主状态）。
+    // [2026-11-19 莉莉子 · 编排层分区 L1] 自动推进（托管）整块搬到 `hooks/useAutoAdvance.ts`
+    //   （含 `canPlayerAct` 判定 + 800ms 视觉缓冲 + 飞剑竞态防护）。行为逐字不变，只把依赖改为注入。
+    //   ⚠️ 调用位置必须在 `confirmBlock` / `passTurn` **定义之后**（本段原在文件前部，靠 effect 延迟执行绕开 TDZ；
+    //      搬成"立即求值的组件调用"后就不能再放在前面了）。
+    //   历史背景（为什么不能把 passTurn 放进依赖、客方为什么绝不能本地推进）见该文件头注释。
     // ==========================================
-    const levelUpProgressRef = useRef<{ stamp: number; key: string }>({ stamp: Date.now(), key: '' });
-    // [2026-10-04 独立审查 #5 修复] 暂停 / 页面不可见期间**不判定停滞**：
-    //   60s 宽限是墙钟时间，而升级影片在暂停时会被按住（GameSession.tsx:275-290 会暂停根容器内所有 <video>），
-    //   指纹自然不变 ⇒ 原实现会把"玩家暂停了一分钟"误判成断链，强拆掉一次**合法**升级
-    //   （还会吞掉 TUTORIAL_LEVEL_UP_COMPLETE，让教程 resume_upgrade 永远等下去）。
-    //   后台标签页节流 / 系统休眠是同一个签名，一并挡掉。
-    const watchdogPausedRef = useRef(false);
-    useEffect(() => {
-        const onPause = () => { watchdogPausedRef.current = true; };
-        const onResume = () => {
-            watchdogPausedRef.current = false;
-            // 恢复时刷新计时起点，避免把暂停时长算进宽限
-            levelUpProgressRef.current = { stamp: Date.now(), key: '' };
-        };
-        eventBus.on(GameEvents.GAME_PAUSE, onPause);
-        eventBus.on(GameEvents.GAME_RESUME, onResume);
-        return () => {
-            eventBus.off(GameEvents.GAME_PAUSE, onPause);
-            eventBus.off(GameEvents.GAME_RESUME, onResume);
-        };
-    }, []);
-    useEffect(() => {
-        if (game.gameResult) return;
-        // [2026-10-04 独立审查 #4 修复] 布防条件放宽：
-        //   原来只在 `phase === 'animating'` 时布防，但 `levelUpCard` 会在别处写 phase 时**留在场上**
-        //   （passTurn→confirmBlock 写 react_to_block、额外攻击守卫写 block_declare、回合末序列……），
-        //   而 AI 的闸门这次新增了 `levelUpCard` ⇒ 那种组合会变成**没有任何兜底**的永久冻死。
-        //   现在：只要"有人在升级"或"仍在 animating"，就布防。
-        const levelUpPendingNow = !!game.levelUpCard || (game.pendingLevelUps ?? []).length > 0;
-        if (game.phase !== 'animating' && !levelUpPendingNow) return;
-        const iv = setInterval(() => {
-            const g = stateRef.current.game;
-            if (g.gameResult) return;
-            const busy = !!g.levelUpCard || (g.pendingLevelUps ?? []).length > 0;
-            if (g.phase !== 'animating' && !busy) return;
-
-            // 暂停 / 不可见：不计时，并刷新计时起点（恢复后重新获得完整宽限）
-            if (watchdogPausedRef.current || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
-                levelUpProgressRef.current = { stamp: Date.now(), key: levelUpProgressRef.current.key };
-                return;
-            }
-
-            // 进展指纹：升级链是否还在往前走（换人 / 出队都会改变它）
-            const fp = `${g.levelUpCard?.id ?? '-'}|${(g.pendingLevelUps ?? []).length}`;
-            if (fp !== levelUpProgressRef.current.key) {
-                levelUpProgressRef.current = { stamp: Date.now(), key: fp };
-            }
-            const levelUpBusy = busy;
-
-            if (levelUpBusy) {
-                // 升级链豁免：但指纹迟迟不变 ⇒ 断链，强拆并**恢复 phase**（这一步原实现整个缺失）
-                if (Date.now() - levelUpProgressRef.current.stamp < LEVELUP_STALL_GRACE_MS) return;
-                console.error('[AnimWatchdog] 🚨 升级链停滞超时（演出已断链），强制清队列 + 恢复 main', {
-                    round: g.round, turnOwner: g.turnOwner,
-                    levelUpCard: g.levelUpCard?.key ?? null,
-                    pendingLevelUps: (g.pendingLevelUps ?? []).map(c => c.key),
-                    combatFieldLen: stateRef.current.combatField.length,
-                });
-                levelUpProgressRef.current = { stamp: Date.now(), key: '-|0' };
-                setGame(prev => ({
-                    ...prev,
-                    levelUpCard: null,
-                    pendingLevelUps: [],
-                    phase: 'main' as const,
-                    spellStack: [],
-                    spellCasting: null,
-                    activeCard: null,
-                    consecutivePasses: 0,
-                    lastActionTimestamp: Date.now(),
-                }));
-                // [2026-10-04 独立审查 #5 附带] 强拆绕过了 `LevelUpOverlay.onClose`
-                //   （GameSession.tsx:2547 在那里发教程的"升级演出已完整播完"信号）
-                //   ⇒ 教程的 resume_upgrade 会永远等下去。这里补发同一个信号。
-                eventBus.emit(GameEvents.TUTORIAL_LEVEL_UP_COMPLETE);
-                return;
-            }
-
-            // [2026-10-04 独立审查 #4 完成] 非 animating 阶段**不做** animating 停滞判定：
-            //   上方 busy 分支已按"有人在升级"独立处理；这里恢复 animating 专属语义，
-            //   免得 `animGuard.lastBump` 陈旧时对非 animating 阶段误跑战斗区应急归位。
-            if (g.phase !== 'animating') return;
-
-            if (Date.now() - animGuard.lastBump < ANIM_STALL_MS) return; // 仍在推进
-            console.warn('[AnimWatchdog] ⚠️ animating 停滞超时，强制恢复 main', {
-                phase: g.phase, round: g.round, turnOwner: g.turnOwner,
-                spellStack: g.spellStack.map((s: any) => s.card?.key),
-                combatFieldLen: stateRef.current.combatField.length,
-                attackToken: g.attackToken,
-                // [2026-10-10 莉莉子] 补**连斩链现场**（与 AI 看门狗同字段）——
-                //   用来分辨"大招连斩还在逐击推进（只是慢）"还是"链死在半路"。
-                //   📏 量级（已按程指正修正）：链最多清 6~7 个单位、每击 1s ⇒ **链本身只有几秒**；
-                //      `MAX_CHAIN = 20` 只是护栏、不可达 ⇒ 别再把 20s 当解释。
-                // [2026-10-10 莉莉子 · 二轮审查建议③] 补 `prevPhase` / `casterSide` / `skipBeacon` ——
-                //   `prevPhase` 是本类问题（"链收尾还原成 animating"）**唯一**的判据，务必带上。
-                pendingChain: g.pendingChain
-                    ? {
-                        step: g.pendingChain.step, done: g.pendingChain.done,
-                        victimId: g.pendingChain.victimId,
-                        prevPhase: g.pendingChain.prevPhase,
-                        casterSide: g.pendingChain.casterSide,
-                        skipBeacon: !!g.pendingChain.skipBeacon,
-                      }
-                    : null,
-            });
-            recoverCombatSurvivors(stateRef.current.combatField, stateRef.current.playerBench, stateRef.current.enemyBench, {
-                setPlayerBench, setEnemyBench, setCombatField, setGame,
-            });
-            setGame(prev => prev.phase === 'animating'
-                ? { ...prev, phase: 'main' as const, spellStack: [], spellCasting: null, activeCard: null,
-                    consecutivePasses: 0, lastActionTimestamp: Date.now(),
-                    // [2026-10-10 莉莉子 · 二轮独立审查后**撤回**] 这里刻意**不碰 `pendingChain`**：
-                    //   曾试过"停滞时把未完成的链标 `done`"，审查证明它既没用又有害 ——
-                    //   ① 正常链收尾时 `done` 已是 true ⇒ 三元返回**同一引用** ⇒ 驱动器不重跑 ⇒ 空操作；
-                    //   ② 它用**新引用**唤醒驱动器 ⇒ 收尾分支按 `prevPhase` 写回时会把看门狗刚设的
-                    //      `main` 顶掉 ⇒ 死链恢复反而慢一拍；
-                    //   ③ 切后台 / 休眠唤醒后墙钟一跳，看门狗可能在**活链中途**开火 ⇒ 标 done 会
-                    //      **掐掉剩余击数**（改动前不会）。
-                    //   ⇒ 根因在别处：连斩把"链之前的 phase"录成了 `animating` 本身
-                    //      （`effectProcessor.ts` 的 `prevPhase` 取值已修）；活链防误伤见连斩驱动器的**每击心跳**。
-                  }
-                : prev);
-        }, 5000);
-        return () => clearInterval(iv);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game.phase, game.gameResult, game.levelUpCard, game.pendingLevelUps]);
+    const { isAutoAdvancing } = useAutoAdvance({
+        game, stateRef, pendingActionsRef, playerHand, playerBench, authoritative,
+        confirmBlock, passTurn,
+    });
 
     return {
         onHandAnimComplete,

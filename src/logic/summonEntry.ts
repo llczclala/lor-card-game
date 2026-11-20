@@ -2,6 +2,7 @@ import type { CardData, GameState } from '../types';
 import { CARD_DB } from '../data/cards';
 import { EFFECT_DB, isEntryTiming } from '../data/effectRegistry';
 import type { RogueTriggerCtx, Side } from './rogueTrigger'; // ⚠️ **只 import type** ⇒ 运行时零环
+import type { EffectContext } from './effectProcessor'; // [2026-11-19 代码债收口] 同上，纯 type、零运行时环
 
 /**
  * [2026-10-06 程拍板 · A 方案 · 「入场」门铃] **「单位被召唤到场上」的唯一实现**
@@ -25,7 +26,10 @@ import type { RogueTriggerCtx, Side } from './rogueTrigger'; // ⚠️ **只 imp
  *   ⚠️ 若注入缺席（例如某条极早期路径），**只告警并跳过**，绝不抛错。
  */
 export interface SummonEntryDeps {
-    processEffect: (effectId: string, targets: any[], ctx: any) => any;
+    // [2026-11-19 代码债收口] `ctx: any` → `EffectContext`：与 `processEffect` 的实际形参
+    //   （`effectProcessor.ts:435`）逐字一致。`targets` 仍留 `any[]` —— 它的元素是
+    //   "目标引用"的混合形态（卡对象 / id 字符串 / 索引），收口需要先统一目标表示，不在本轮范围。
+    processEffect: (effectId: string, targets: any[], ctx: EffectContext) => any;
     /**
      * ⚠️ [2026-10-10 莉莉子 · 修复 TS2322 @ `effectProcessor.ts:5211`]
      *   `trigger` 写 `any`、**不是 `string`** —— 原因：

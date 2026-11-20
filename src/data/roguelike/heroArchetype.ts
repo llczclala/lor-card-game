@@ -55,6 +55,14 @@ export const HERO_ARCHETYPES: HeroArchetypeInfo[] = [
         difficulty: 3,
         difficultyDesc: '引爆时机是命门：埋早了白费，埋晚了敌人已经打穿你。更棘手的是【暴露】既是资源也是破绽——点亮敌人的同时，也把自己架在了火上。',
     },
+    // [2026-11-16 莉莉子] 凯茜娅·狂诗（难度 4 档，比安卡低一档：不需要双形态操作，但比猫汐尔更被动）
+    {
+        heroKey: 'katya_klein_rhapsody',
+        factionName: '诗与枪火',
+        factionDesc: '中后期爆发流。前期用廉价法术和小队把攻击力一路喂上去，等本体落地，倾泻一口气清场——你打的每一张法术，最后都会变成她枪口里的子弹。',
+        difficulty: 4,
+        difficultyDesc: '本体 6 费，前五回合基本是空窗；更麻烦的是倾泻每开火一次就削自己的攻击力——打得多就打得弱，什么时候收手是这套牌的命门。',
+    },
 ];
 
 export const getHeroArchetype = (heroKey: string): HeroArchetypeInfo | undefined =>

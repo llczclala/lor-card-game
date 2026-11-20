@@ -26,9 +26,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createQrDiag, decodeQrFromGray, rgbaToGray, PAIR_PREFIX } from '../utils/saveSync/qrDecode';
 
 interface QrScannerProps {
-    /** 解出内容时回调（只回调一次） */
+    /** 解出内容时回调（`keepOpen` 为 false 时只回调一次） */
     onResult: (text: string) => void;
     onClose: () => void;
+    /**
+     * [2026-11-18 莉莉子 · 存档二维码直传] 连续扫描模式。
+     * 多帧传输要在一屏里连续扫 6~7 张码，不能扫一张就关。开启后：
+     *   · 解出一张 → 回调 → **不关闭**，冷却 1.2 秒后继续扫
+     *   · 冷却是为了避免同一张码在相邻帧里被重复回调
+     * 关闭扫描器的责任交给调用方（收齐 / 用户点关闭）。
+     */
+    keepOpen?: boolean;
 }
 
 /** 送去解码的最长边（px）。太小 ⇒ 模块像素不够；太大 ⇒ 手机主线程扛不住 */
@@ -50,13 +58,16 @@ interface NativeDetector {
     detect: (src: CanvasImageSource) => Promise<Array<{ rawValue: string }>>;
 }
 
-export const QrScanner: React.FC<QrScannerProps> = ({ onResult, onClose }) => {
+export const QrScanner: React.FC<QrScannerProps> = ({ onResult, onClose, keepOpen }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const rafRef = useRef<number>(0);
     const onResultRef = useRef(onResult);
     onResultRef.current = onResult;
+    /** 连续扫描模式（多帧传输用）—— 用 ref 保持最新，避免把 finish 闭包钉死在首帧值上 */
+    const keepOpenRef = useRef(!!keepOpen);
+    keepOpenRef.current = !!keepOpen;
 
     const [error, setError] = useState<string | null>(null);
     const [ready, setReady] = useState(false);
@@ -151,7 +162,21 @@ export const QrScanner: React.FC<QrScannerProps> = ({ onResult, onClose }) => {
                 }
                 setDiag((d) => ({ ...d, engine: detector ? 'native' : 'js' }));
 
+                // [2026-11-18] 连续扫描的冷却时间戳 —— 同一张码在相邻帧里会被反复解出，
+                // 不冷却的话 onResult 一秒内能触发几十次，接收端会一直"收到重复帧"。
+                let cooldownUntil = 0;
+
                 const finish = (text: string) => {
+                    if (keepOpenRef.current) {
+                        const now = Date.now();
+                        if (now < cooldownUntil) return;
+                        cooldownUntil = now + 1200;
+                        setFound(true);
+                        onResultRef.current(text);
+                        // 不设 done、不 cleanup：继续扫下一张
+                        window.setTimeout(() => { if (!cancelled) setFound(false); }, 1200);
+                        return;
+                    }
                     done = true;
                     setFound(true);
                     cleanup();

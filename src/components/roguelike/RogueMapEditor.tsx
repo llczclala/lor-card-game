@@ -14,7 +14,7 @@
 // ==========================================
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, Plus, Trash2, Copy, Undo2, Redo2, Map as MapIcon, MousePointerClick, Link2 } from 'lucide-react';
+import { X, Plus, Trash2, Copy, Undo2, Redo2, Map as MapIcon, MousePointerClick, Link2, Eye } from 'lucide-react';
 import {
     ROGUE_MAPS, MAP_WIDTH, MAP_HEIGHT,
     type RogueNode, type RogueNodeType,
@@ -25,6 +25,7 @@ import { MapNode } from './MapNode';
 import mapZero from '../../image/map/map_zero.webp';
 import { DIALOGUE_BG_KEYS } from '../../data/roguelike/dialogueBg'; // [2026-08-27] 进入面板背景图选项
 import { ROGUE_EVENTS, ROGUE_EVENT_TYPE_LABELS } from '../../data/roguelike/events'; // [2026-10-09 事件指定] 固定事件下拉选项
+import { NodePreviewHost, isPreviewable } from './modals/NodePreviewHost'; // [2026-11-20] 编辑器内预览节点界面（不参与真实对局）
 
 const NODE_TYPE_OPTIONS: RogueNodeType[] = ['start', 'enhance', 'battle', 'elite', 'boss', 'rest', 'shop', 'event', 'treasure', 'random'];
 const TYPE_LABELS: Record<RogueNodeType, string> = {
@@ -82,6 +83,11 @@ export const RogueMapEditor: React.FC<RogueMapEditorProps> = ({ onClose }) => {
     const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
     // [2026-09-04 连线编辑] 连线模式 + 待连起点（pending 源节点高亮）
     const [linkMode, setLinkMode] = useState(false);
+    /**
+     * [2026-11-20] 节点内容预览：`{ type, eventId }` 在**打开那一刻快照**，
+     * 之后即使选择变化也不会把预览内容换掉（否则弹窗会跟着抖动/重挂载）。
+     */
+    const [preview, setPreview] = useState<{ type: RogueNodeType; eventId?: string } | null>(null);
     const [linkFromId, setLinkFromId] = useState<string | null>(null);
     const linkFromIdRef = useRef(linkFromId);
     useEffect(() => { linkFromIdRef.current = linkFromId; }, [linkFromId]);
@@ -757,6 +763,24 @@ ${body}
                                 {NODE_TYPE_OPTIONS.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
                             </select>
 
+                            {/* [2026-11-20 程拍板] 编辑器内提前打开该节点的界面 —— 方便模拟测试，不参与真实对局 */}
+                            {isPreviewable(selected.type) ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setPreview({
+                                        type: selected.type,
+                                        eventId: selected.type === 'event' ? selected.eventId : undefined,
+                                    })}
+                                    className="w-full mb-4 px-3 py-2 rounded-md bg-violet-600/80 hover:bg-violet-500 text-sm font-bold flex items-center justify-center gap-1.5 transition-colors"
+                                >
+                                    <Eye size={14} /> 打开节点界面（预览）
+                                </button>
+                            ) : (
+                                <p className="text-[11px] text-gray-500 leading-relaxed mb-4">
+                                    战斗类节点没有节点面板 —— 战斗界面在局内对局里。
+                                </p>
+                            )}
+
                             <div className="grid grid-cols-2 gap-3 mb-4">
                                 <div>
                                     <label className="block text-xs text-gray-400 mb-1">X 坐标</label>
@@ -888,6 +912,16 @@ ${body}
                     )}
                 </div>
             </div>
+
+            {/* [2026-11-20] 节点内容预览层（fixed，z-750 → 盖住编辑器、不写任何数据） */}
+            {preview && (
+                <NodePreviewHost
+                    type={preview.type}
+                    difficulty={difficulty}
+                    eventId={preview.eventId}
+                    onClose={() => setPreview(null)}
+                />
+            )}
         </motion.div>
     );
 };

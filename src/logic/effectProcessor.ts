@@ -3,7 +3,7 @@ import { EFFECT_DB } from '../data/effectRegistry';
 // [2026-10-03 莉莉子 · 进攻标识三层分离 ②] 「追加一次进攻权」的唯一出口
 import { grantExtraAttackTurn, spellManaCapOf } from './core'; // [2026-10-08] +spellManaCapOf（法术法力上限口径）
 import { createCard, CARD_DB } from '../data/cards';
-import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand, markLeveledUp, unmarkLeveledUp, assembleBeaconCard, withEquipKeywords, isNexusImmune, carryCostOverride, sideOfLevelUpTicket } from '../utils/gameRules'; // [新增] 引入牌库BUFF · [2026-09-19] 引入信标落场装配器 · [2026-10-03] withEquipKeywords（退级时保留装备/武装授予的关键词）· [2026-10-06] carryCostOverride（转换链保留费用覆盖）
+import { cloneUnitState, accumulateMauxirDamage, isSummonerOrSummon, buffTopUnitInDeck, buffAllUnitsInDeck, getLeveledUpCard, upgradeAcaciaHand, demoteAcaciaHand, markLeveledUp, unmarkLeveledUp, assembleBeaconCard, withEquipKeywords, isNexusImmune, carryCostOverride, carryTransformIdentity, sideOfLevelUpTicket } from '../utils/gameRules'; // [新增] 引入牌库BUFF · [2026-09-19] 引入信标落场装配器 · [2026-10-03] withEquipKeywords（退级时保留装备/武装授予的关键词）· [2026-10-06] carryCostOverride（转换链保留费用覆盖）
 // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔升级进度：交战区贴值（本层用局部数组回写，不走 setState）
 import { applyMauxirProgressToField } from '../utils/mauxirProgress';
 import { eventBus, GameEvents } from '../utils/eventBus';
@@ -685,7 +685,15 @@ export const processEffect = (
             });
         }
         // [2026-10-08 第二波] 卡级增伤（研习批注 +1 / 增补弹药 +2）叠加在全局光环之上
-        return ((hasTatiana || inCombat) ? 1 : 0) + spellResolveSum('damageAdd');
+        // [2026-11-19 莉莉子 · 神格神经①③] 凯茜娅「穿甲弹头」：伤害类法术伤害 +1
+        //   ⚠️ 本条是**法术**口径 ⇒ 只有法术卡（`context.sourceCard.type.startsWith('spell')`）吃；
+        //      单位技能/装备反伤不走这里（它们本来也不该被"法术增伤"影响）。
+        //   ⚠️ 覆盖面：本函数目前只被 STRIKE 的 3 处调用（全屏AOE / 交战区AOE / 直接数值打击）。
+        //      `DAMAGE` / `AOE_DAMAGE` / `SPREAD_DAMAGE` **不走**这里 —— 它们的增伤另行接（见各 case 的 TODO）。
+        //      倾泻（BARRAGE）的「每发 +1」在 `case 'BARRAGE'` 的 `brPerHit` 处单独接。
+        const katyaEnh = owner === 'player' ? nextGame.rogueEnhancements : nextGame.enemyEnhancements;
+        const katyaSpellBonus = ((katyaEnh ?? []).includes('divfx_katya_1') || (katyaEnh ?? []).includes('divfx_katya_3')) ? 1 : 0;
+        return ((hasTatiana || inCombat) ? 1 : 0) + spellResolveSum('damageAdd') + katyaSpellBonus;
     };
 
     // [2026-08-27] 法术狂潮：持有方法术伤害翻倍（红·常驻全局，直接查强化 id 不走 trigger）
@@ -2041,12 +2049,12 @@ export const processEffect = (
                         // 扩散→集束
                         // [2026-10-06 程拍板 ②] 经 `carryCostOverride` 携带费用覆盖：
                         //   迷宫强化生成的 0 费扩散切模式后**仍是 0 费**，不再被打回卡面 2 费。
-                        const replacement = carryCostOverride({ ...createCard('acacia_moon_focus'), id: targetHand[i].id }, targetHand[i]);
+                        const replacement = carryTransformIdentity(carryCostOverride({ ...createCard('acacia_moon_focus'), id: targetHand[i].id }, targetHand[i]), targetHand[i]);
                         targetHand[i] = replacement;
                         console.log(`[圆缺有律] 灵轨月轮·扩散 → 灵轨月轮·集束`);
                     } else if (!newMode && targetHand[i].key === 'acacia_moon_focus') {
                         // 集束→扩散
-                        const replacement = carryCostOverride({ ...createCard('acacia_sword_rain'), id: targetHand[i].id }, targetHand[i]);
+                        const replacement = carryTransformIdentity(carryCostOverride({ ...createCard('acacia_sword_rain'), id: targetHand[i].id }, targetHand[i]), targetHand[i]);
                         targetHand[i] = replacement;
                         console.log(`[圆缺有律] 灵轨月轮·集束 → 灵轨月轮·扩散`);
                     }
@@ -5961,7 +5969,10 @@ export const processEffect = (
             }));
 
             // ── 击杀奖励：水晶 −2 / 凯茜娅 +3/+0（只写 roundBuffs）/ 预算 +3
-            let nextGame: any = { ...context.game };
+            // [2026-11-19 代码债收口] `any` → `GameState`。本处是 BARRAGE pierceLoop 的**局部累加器**，
+            //   它遮蔽了外层 `:440` 那个同名变量（外层是推断类型、本来就受约束）。
+            //   收口后，下面 32 个字段写入全部要过 `GameState` 的字段表 —— 拼错字段名/写不存在的字段会立刻报错。
+            let nextGame: GameState = { ...context.game };
             let nextBudget = pp.budget - 1;
             let nextKills = pp.kills;
             const ppGrant = (c: CardData): CardData =>
@@ -6035,7 +6046,12 @@ export const processEffect = (
                     .map(f => (f.owner === brSide ? f.attacker : f.blocker))
                     .filter(Boolean) as CardData[]),
             ];
-            const brKatya = brMyUnits.find(u => u.key === KATYA_KEY && !u.isDead && u.animState !== 'dying');
+            // [2026-11-19 莉莉子 · 代码审计] 判据与下方 `brIsLive`（:6073）对齐 —— 原先这里只判 `dying`，
+            //   而同一 case 内的 `brIsLive` 判了 `dying` + `ephemeral_dying`。两处不一致本身是债：
+            //   当前凯茜娅不会进幻象态（场景不可达），但只要将来有"把天启者复制成幻象"的机制，
+            //   这里就会把一个正在消散的复制体当成真的本体去读攻击力。补一行、不改任何现有行为。
+            const brKatya = brMyUnits.find(u => u.key === KATYA_KEY && !u.isDead
+                && u.animState !== 'dying' && u.animState !== 'ephemeral_dying');
 
             // ② N：场上本体优先（含临时 buff）；本体不在场则回落到账本口径（2 + S − D）
             //    （账本口径来源：`getKatyaStats` 的 `power`；沙盒/回放场景常用）
@@ -6062,7 +6078,18 @@ export const processEffect = (
             if (brIdealCount > BR_COUNT_HARD_CAP) {
                 console.warn(`[Barrage] 理论发数 ${brIdealCount} 超过**防御性**上限 ${BR_COUNT_HARD_CAP} ⇒ 截断（设计无上限，此处仅防爆）`);
             }
-            const brPerHit = Math.max(1, brParams.damage || 2);
+            // [2026-11-19 莉莉子 · 神格神经①③] 「伤害类法术伤害 +1」对**多段伤害**的口径：
+            //   倾泻是每发结算一次 ⇒ **每发都 +1**（程 2026-11-19 拍板）。
+            //   ⚠️ 扣减公式（下方 `bumpKatyaDrain(… ceil(brFired * 2 / 3))`）**不动**：
+            //      它按"实发数"折算，与每发伤害是两件事；改每发伤害不应连带改扣减。
+            const brKatyaEnh = brSide === 'player' ? nextGame.rogueEnhancements : nextGame.enemyEnhancements;
+            const brSpellBonus = ((brKatyaEnh ?? []).includes('divfx_katya_1') || (brKatyaEnh ?? []).includes('divfx_katya_3')) ? 1 : 0;
+            // [2026-11-19 神格神经⑥] 「凯茜娅的攻击力不再减少」—— 倾泻/穿云激流的扣减全部免掉。
+            //   程 2026-11-19 拍板：**穿云激流的「永久减一半」也免**（不只是常规倾泻的 D）。
+            //   ⚠️ 只免"扣减"，**不免加成**：`bumpKatyaSpell`（S）照常涨。
+            //   ⚠️ 冻结 / 任意 debuff 写的负 power 不在本处 —— 那条走 `getPower` 的兜底（待接）。
+            const brPowerImmune = (brKatyaEnh ?? []).includes('divfx_katya_6');
+            const brPerHit = Math.max(1, (brParams.damage || 2) + brSpellBonus);
 
             // ── [2026-11-14 莉莉子 独立审查 · 漏洞4] **尸体不是目标**：
             //    过滤口径与 `SPREAD_DAMAGE` 的 `isLive`（本文件 `:5972` 附近）逐字一致 ——
@@ -6339,7 +6366,7 @@ export const processEffect = (
                 // ⚠️ 与下方 `⑨` 的 `bumpKatyaDamage` 是**两本独立账**：D = 代价、damage = 升级进度，别混。
                 // =====================================
                 // [2026-11-14 莉莉子 BUG修复] 一手没打出去就不该扣：敌方空场时 plShots=0，原实现照扣一半攻击力（与普通倾泻「0 发不扣」的口径矛盾）。
-                if (plShots > 0 && plDrain > 0) bumpKatyaDrain(plSide, plDrain);
+                if (plShots > 0 && plDrain > 0 && !brPowerImmune) bumpKatyaDrain(plSide, plDrain);
 
                 // ⑨ 收尾：**只推一条** `unit_damage` + 一条 `nexus_damage`（合并飘字）
                 if (plUnitTotal > 0) {
@@ -6415,7 +6442,7 @@ export const processEffect = (
                     //   现统一为 `ceil(实际发数 × 2/3)`：口径与单位完全相同，卡面只需写一次代价。
                     //   ⚠️ 仍留在 `brFired > 0` 里面 —— 水晶免疫时循环一次都不跑（fired=0），
                     //      0 发就不扣（"没打出去，就不该有代价"）。
-                    bumpKatyaDrain(brSide, Math.max(0, Math.ceil(brFired * 2 / 3)));
+                    if (!brPowerImmune) bumpKatyaDrain(brSide, Math.max(0, Math.ceil(brFired * 2 / 3)));
                 }
                 console.log(`[Barrage] 打 ${brFoe} 水晶：N=${brPower} 发数=${brCount} 实际=${brFired} 伤害=${brTotal} 扣减D=${brFired > 0 ? Math.max(0, Math.ceil(brFired * 2 / 3)) : 0}`);
                 break;
@@ -6547,7 +6574,7 @@ export const processEffect = (
                 //   口径仍是**实际发数**：目标残血被当发送走时只按真实打出的发数扣，
                 //   不按满额 `brCount` 扣（与"击杀即停"同源）。
                 if (brTotal > 0) bumpKatyaDamage(brSide, brTotal);
-                bumpKatyaDrain(brSide, Math.max(0, Math.ceil(brFired * 2 / 3)));
+                if (!brPowerImmune) bumpKatyaDrain(brSide, Math.max(0, Math.ceil(brFired * 2 / 3)));
 
                 // ── [2026-11-14 凯茜娅「倾泻」特效] 加特林弹幕（**纯视觉**）
                 //   伤害与账本已在上面全部结算完，这里只把「打了几发 / 每发几点」交给演出层。

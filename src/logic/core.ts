@@ -2,6 +2,7 @@
 import type { CardData, GameState } from '../types';
 import { spellManaCapBonusOf, hoardSpellManaCapOf } from './questTracker';
 import { getBuffById, getBattleEffects } from '../data/roguelike/buffs';
+import { getKatyaSpellCountInRound } from '../utils/katyaProgress';
 
 /**
  * [2026-09-25 莉莉子 强化线] 本场「法术法力池上限」：基础 3 + 共鸣涌流成长 + 囤积的溢出额度。
@@ -44,6 +45,17 @@ export const startManaBonusOf = (g: GameState): number => {
         // [2026-10-13 F3·L4] 读**玩家侧**那一份（本函数是玩家口径）——
         //   原实现读的是**无侧别**的共享键，敌方召唤会加到这里来。
         bonus += g.questProgress?.['div:mauxir:mana:player'] ?? 0;
+    }
+    // [2026-11-19 莉莉子 · 神格神经②④] 每打出一张法术 → **下回合**最大法力 +N
+    //   `g` 是**上回合末**的快照（`prev.round` 即上回合号）⇒ 直接读那一回合的法术数，
+    //   命中即生效，无需任何清零/搬家（见 `katyaProgress.bumpKatyaSpellInRound` 的头注释）。
+    //   ②=+1 / ④=+2 是 `upgrades` 关系，正常只会有一条在场；万一都在，取大的那条。
+    //   ⚠️ 总上限仍由调用方 `calculateRoundStart` 的 `min(10, …)` 兜住，不会无限涨。
+    const katyaEnh = g.rogueEnhancements ?? [];
+    const katyaManaPerSpell = katyaEnh.includes('divfx_katya_4') ? 2
+        : (katyaEnh.includes('divfx_katya_2') ? 1 : 0);
+    if (katyaManaPerSpell > 0) {
+        bonus += katyaManaPerSpell * getKatyaSpellCountInRound('player', g.round);
     }
     return bonus;
 };

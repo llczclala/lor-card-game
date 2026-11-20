@@ -9,6 +9,12 @@ import { getSpellResolveGrantEffects } from '../data/equipment'; // [2026-10-08 
 // [2026-10-06 莉莉子 BUG修复 · BUG-20261006-01] 猫汐尔进度：交战区贴值
 import { applyMauxirProgressToField } from '../utils/mauxirProgress';
 
+// [2026-11-19 莉莉子 · 神格神经③] 「伤害类法术」的判定集合（EffectClass 口径）
+//   项目里没有 `DAMAGE` / `AOE_DAMAGE` 这两个 EffectClass：直伤统一走 STRIKE（+ 目标过滤），
+//   分摊走 SPREAD_DAMAGE、续击走 CHAIN_STRIKE、倾泻走 BARRAGE。
+//   ⚠️ 新增伤害类 EffectClass 时**必须**加进这里，否则 ③ 的「重复施放」会静默漏掉它。
+const DAMAGE_EFFECT_CLASSES = new Set(['STRIKE', 'SPREAD_DAMAGE', 'CHAIN_STRIKE', 'BARRAGE']);
+
 // [新增] 法术抽卡动画计数器，保证 animId 唯一
 let spellDrawCounter = 0;
 
@@ -97,6 +103,26 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
   // [2026-10-08 莉莉子 · 法术专属装备 第二波] **装备追加效果**：拼在 DB 效果链**之后**执行
   //   —— 语义上就是"该卡结算后"（余温笔录回法力 / 页码夹层抽牌），且复用同一套累加器与动画时序
   const effectChain: string[] = [...cardDef.effects, ...getSpellResolveGrantEffects(sourceCard)];
+
+  // ==========================================
+  // [2026-11-19 莉莉子 · 神格神经③「穿甲·连奏」] **伤害类法术重复施放一次**
+  //   口径（程 2026-11-19 拍板）：伤害类法术整张再施放一次（画面两个法术圆盘、瞄准同一目标）。
+  //   实现：把**整条效果链**再跑一遍，复用同一累加器 `acc` ⇒ 第二遍读到的是第一遍结算后的状态
+  //     （攻击力已被倾泻扣过、目标可能已死），这与"真的施放了两次"语义一致。
+  //   ⚠️ 目标数组 `targets` 两遍共用（"瞄准同一个目标"）；目标已死时由各效果自己的
+  //      `isLive` / `brIsLive` 防护挡掉，不会打尸体。
+  //   ⚠️ 动画：`baseDelay` 跨遍累加 ⇒ 两遍是**串行**播的。程要的"两个圆盘"是并排表现，
+  //      属视觉层（`useSpellSystem` 的预演弹道），本轮先通逻辑，视觉另行接。
+  // ==========================================
+  const katyaEnhList = owner === 'player' ? game.rogueEnhancements : game.enemyEnhancements;
+  const isDamageSpell = (cardDef.effects ?? []).some(id => DAMAGE_EFFECT_CLASSES.has(EFFECT_DB[id]?.class));
+  const repeatCast = (katyaEnhList ?? []).includes('divfx_katya_3') && isDamageSpell;
+  const castPasses = repeatCast ? 2 : 1;
+  if (repeatCast) {
+      console.log(`[Spell] ③「穿甲·连奏」⇒ ${cardDef.name} 将重复施放一次（共 ${castPasses} 遍）`);
+  }
+
+  for (let __pass = 0; __pass < castPasses; __pass++) {
   effectChain.forEach(effectId => {
       // 每执行一个效果，都把当前累加器中最新鲜的数据组装成上下文
       const currentContext: EffectContext = {
@@ -214,6 +240,7 @@ export const executeSpellEffect = (cardKey: string, owner: 'player' | 'enemy', t
       acc.combatField = applyMauxirProgressToField(acc.combatField) ?? acc.combatField;
     }
   }
+  } // [2026-11-19 神格神经③] 结束「重复施放」的遍数循环
   // [2026-07-07] 从手牌中移除以动画方式抽到的卡牌
   // effectProcessor 已将卡牌推入 hand 累加器（供后续效果链使用），
   // 但视觉上应由 DRAW_START->onAtCenter 在动画到达中央时再加入手牌。

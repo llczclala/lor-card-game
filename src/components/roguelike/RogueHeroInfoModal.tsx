@@ -6,7 +6,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; // [2026-08-26 莉莉子] 拖拽跟手图标 Portal 到 body，逃出 ScaleWrapper 缩放容器保证 1:1 跟手
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Sword, Shield, Zap, Ghost, Bird, X, RefreshCw, ChevronsRight, ChevronsLeft, Minus, Lock, Search, Filter, ChevronDown, ArrowUpNarrowWide, ArrowDownWideNarrow, RotateCcw, type LucideIcon } from 'lucide-react';
+import { Sparkles, Sword, Shield, Zap, Ghost, Bird, Crosshair, X, RefreshCw, ChevronsRight, ChevronsLeft, Minus, Lock, Search, Filter, ChevronDown, ArrowUpNarrowWide, ArrowDownWideNarrow, RotateCcw, type LucideIcon } from 'lucide-react';
 import { CARD_DB } from '../../data/cards';
 import { LORE_DB } from '../../data/loreData'; // [2026-08-13] 总览背景故事
 import type { CardData } from '../../types';
@@ -43,6 +43,10 @@ const FACTION_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
     acacia_chrono_echo: { icon: Sword, color: HERO_THEMES.acacia_chrono_echo.color },    // Acacia 天蓝
     // [2026-09-16 茉莉安] 霄鹰 → Bird；品红阵营色。不放这里的话会落到 Shield 兜底（与里芙撞）
     marian: { icon: Bird, color: HERO_THEMES.marian.color },                  // Marian 品红
+    // [2026-11-16 凯茜娅] 倾泻＝瞄准射击 → 准星；金黄阵营色。
+    //   ⚠️ 这里用的是 **lucide 通用矢量图标**，与「关键词图标」（`data/keywords.ts` 与特效那套）
+    //      不是一个系统 —— 加一个图标只需 import 一行，不需要美术资源。
+    katya_klein_rhapsody: { icon: Crosshair, color: HERO_THEMES.katya_klein_rhapsody.color },
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1343,6 +1347,8 @@ const DIV_STAR_BADGE_FONT = 13;            // 金星字号（原 text-[13px]）
 const DIV_STAR_BADGE_BORDER = 2;           // 金星描边粗细（原 border-2 = 2）
 const DIV_DOT_PX = pickScalar(16, 32);                     // 可激活提示点直径（原 w-4 h-4 = 16）
 const DIV_DOT_BORDER = 2;                  // 提示点描边粗细（原 border-2 = 2）
+/** [2026-11-20] 「已点亮但被玩家关闭」的节点环色 —— 刻意**不是**未解锁的 #4b5563（更亮一档，读作"熄了"而非"没有"） */
+const DIV_OFF_COLOR = '#6b7280';
 
 // ── ④ 中央天启者卡面 ──
 const DIV_COLUMN_PAD_Y = 4;                // 左右两列上下内边距（原内联 paddingTop / paddingBottom = 4）
@@ -1384,9 +1390,14 @@ const DIV_ACT_BTN_RADIUS = 8;              // 激活按钮圆角（原 rounded-l
 const DIV_ACT_BTN_FONT = pickScalar(12, 24);               // 激活按钮字号（原 text-xs = 12）
 
 export const DivinityContent: React.FC<{ heroKey: string; heroName: string; userSystem?: any }> = ({ heroKey, heroName, userSystem }) => {
-    const { getUnlocked, getHeroShardCount, getUniversalShardCount, getSpendPlan, canUnlock, unlockNode, resetHero } = useHeroDivinity();
+    // [2026-11-20] 关闭表直接读 `save`（state）而不是 getDisabled() ——
+    //   后者的 useCallback 依赖数组为空、内部读模块级 sharedSave，靠"组件恰好重渲染"才正确；
+    //   一旦有人给本组件或 NodeBtn 加 memo / useMemo，就会静默拿到陈旧值。读 state 则天然成立。
+    const { save, getUnlocked, toggleNode, getHeroShardCount, getUniversalShardCount, getSpendPlan, canUnlock, unlockNode, resetHero } = useHeroDivinity();
     const nodes = getDivinityNodes(heroKey);
     const unlocked = getUnlocked(heroKey);
+    // [2026-11-20 程拍板] 玩家**自己关掉**的节点（点亮了但不生效，随时可恢复）
+    const disabled = save.disabled?.[heroKey] ?? [];
     // [2026-09-29 程拍板] 碎片钱包（开发者账号恒 9999）
     const heroShards = getHeroShardCount(heroKey);   // 本英雄专属碎片
     const uniShards = getUniversalShardCount();      // 万能碎片
@@ -1431,9 +1442,11 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
      */
     const NodeBtn: React.FC<{ n: typeof nodes[number]; side: 'left' | 'right'; offsetX: number }> = ({ n, side, offsetX }) => {
         const on = unlocked.includes(n.id);
+        // [2026-11-20] 点亮了但被玩家关掉 = 熄灭态 —— **不是**未解锁，两者视觉必须能分开
+        const off = on && disabled.includes(n.id);
         const st = canUnlock(n);
         const plan = getSpendPlan(heroKey, n);
-        const color = on ? '#facc15' : st.ok ? theme.color : '#4b5563';
+        const color = off ? DIV_OFF_COLOR : on ? '#facc15' : st.ok ? theme.color : '#4b5563';
         const iconSrc = SPELL_IMAGES[getDivinityIconKey(n) as keyof typeof SPELL_IMAGES] as string | undefined;
         const active = picked?.id === n.id;
         return (
@@ -1472,14 +1485,19 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                             <div className="overflow-hidden rounded-full" style={{ width: DIV_ICON_INNER_PX, height: DIV_ICON_INNER_PX, background: '#0b1020' }}>
                                 {iconSrc ? (
                                     <img src={iconSrc} alt={n.name} className="w-full h-full object-cover" draggable={false}
-                                        style={{ filter: on || st.ok ? 'none' : 'grayscale(0.9) brightness(0.6)' }} />
+                                        style={{ filter: off ? 'grayscale(1) brightness(0.62)' : (on || st.ok) ? 'none' : 'grayscale(0.9) brightness(0.6)' }} />
                                 ) : (
                                     <span className="w-full h-full flex items-center justify-center font-black text-white/70" style={{ fontSize: DIV_NODE_SLOT_FONT }}>{n.slot}</span>
                                 )}
                             </div>
                         </div>
-                        {/* 已激活：右下角金星 */}
-                        {on && (
+                        {/* [2026-11-20 程拍板] 已点亮但被关掉：一道斜杠（读作"熄了"，与未解锁的灰化区分开） */}
+                        {off && (
+                            <span className="absolute inset-0 rounded-full pointer-events-none"
+                                style={{ background: 'linear-gradient(135deg, transparent 44%, rgba(148,163,184,0.85) 46%, rgba(148,163,184,0.85) 54%, transparent 56%)' }} />
+                        )}
+                        {/* 已激活：右下角金星（关闭时不给金星，否则和"生效中"撞脸） */}
+                        {on && !off && (
                             <span className="absolute -bottom-1 -right-1 rounded-full bg-amber-400 text-black font-black flex items-center justify-center border-slate-950"
                                 style={{ width: DIV_STAR_BADGE_PX, height: DIV_STAR_BADGE_PX, fontSize: DIV_STAR_BADGE_FONT, borderWidth: DIV_STAR_BADGE_BORDER, borderStyle: 'solid' }}>★</span>
                         )}
@@ -1492,11 +1510,11 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                     {/* 文案：节点号 + 名字 + 状态 */}
                     <div className={`flex flex-col min-w-0 ${side === 'left' ? 'items-end' : 'items-start'}`} style={{ gap: DIV_NODE_TEXT_GAP }}>
                         <span className="font-mono text-gray-500 tracking-wider" style={{ fontSize: DIV_NODE_NUM_FONT }}>节点 {n.slot}</span>
-                        <span className={`font-black leading-tight whitespace-nowrap ${on ? 'text-amber-200' : st.ok ? 'text-white' : 'text-gray-400'}`} style={{ fontSize: DIV_NODE_TITLE_FONT }}>
+                        <span className={`font-black leading-tight whitespace-nowrap ${on && !off ? 'text-amber-200' : off ? 'text-gray-500' : st.ok ? 'text-white' : 'text-gray-400'}`} style={{ fontSize: DIV_NODE_TITLE_FONT }}>
                             {n.name}
                         </span>
-                        <span className={`font-mono flex items-center ${on ? 'text-amber-400/90' : st.ok ? 'text-emerald-300' : 'text-gray-500'}`} style={{ fontSize: DIV_NODE_STATUS_FONT, gap: DIV_NODE_STATUS_GAP }}>
-                            {on ? '已激活' : st.reason === 'locked' ? '🔒 前置未开' : (<><ShardIcon heroKey={heroKey} size={DIV_NODE_SHARD_PX} />{plan.total}</>)}
+                        <span className={`font-mono flex items-center ${off ? 'text-gray-500' : on ? 'text-amber-400/90' : st.ok ? 'text-emerald-300' : 'text-gray-500'}`} style={{ fontSize: DIV_NODE_STATUS_FONT, gap: DIV_NODE_STATUS_GAP }}>
+                            {off ? '已关闭' : on ? '已激活' : st.reason === 'locked' ? '🔒 前置未开' : (<><ShardIcon heroKey={heroKey} size={DIV_NODE_SHARD_PX} />{plan.total}</>)}
                         </span>
                     </div>
                 </button>
@@ -1516,6 +1534,12 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                         ))}
                     </span>
                     <span className="font-mono text-gray-400" style={{ fontSize: DIV_COUNT_FONT }}>{starCount}/{MAX_DIVINITY_LEVEL}</span>
+                    {/* [2026-11-20] 只在真有"点了又关掉"的格子时出现 —— 平时不占版面，也不让玩家误以为少了星。
+                        用「已关 N」而不是「启用 N」：覆盖关系下（③开着时 ① 不注入）"启用数"会虚报条数，
+                        而"关了几格"是玩家自己数得清、也一定对得上的那个数。 */}
+                    {disabled.length > 0 && (
+                        <span className="font-mono text-amber-300/80" style={{ fontSize: DIV_COUNT_FONT }}>已关 {disabled.length}</span>
+                    )}
                 </div>
                 <div className="flex items-center" style={{ gap: DIV_TOP_ROW_GAP }}>
                     {isDev && (
@@ -1631,6 +1655,8 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
             {/* 详情 + 激活 */}
             {picked && (() => {
                 const on = unlocked.includes(picked.id);
+                // [2026-11-20] 已点亮 + 已关闭 ⇒ 这个按钮是「恢复启用」，不是「已激活」
+                const off = on && disabled.includes(picked.id);
                 const st = canUnlock(picked);
                 const plan = getSpendPlan(heroKey, picked);
                 const reqNames = picked.requires.map(r => nodes.find(x => x.id === r)?.name ?? r).join('、');
@@ -1653,6 +1679,13 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                             {picked.slot === 5 && <span className="text-gray-400" style={{ fontSize: DIV_BADGE_FONT }}>（全英雄固定槽）</span>}
                         </div>
                         <p className="text-gray-300 leading-relaxed" style={{ fontSize: DIV_DESC_FONT, marginBottom: DIV_DESC_MARGIN_BOTTOM }}>{picked.description}</p>
+                        {/* [2026-11-20] 关掉"升级档"会让它的低档**自动接回**生效（覆盖链重算）—— 必须说在前面，
+                                否则玩家看到 ① 突然又生效，会以为是自己点错了 */}
+                        {off && picked.upgrades && (
+                            <p className="text-amber-300/80" style={{ fontSize: DIV_REQ_FONT, marginBottom: DIV_COST_MARGIN_BOTTOM }}>
+                                关闭后「{nodes.find(x => x.id === picked.upgrades)?.name ?? picked.upgrades}」那一档会重新生效
+                            </p>
+                        )}
                         {/* [2026-09-29 程拍板] 花费明细：先花专属、万能补足（万能可全额替代）—— 带碎片图标 */}
                         {!on && (
                             <div className="flex flex-wrap items-center font-mono text-gray-400"
@@ -1673,18 +1706,26 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                         )}
                         <div className="flex items-center justify-between" style={{ gap: DIV_DETAIL_FOOT_GAP }}>
                             <span className="text-gray-500" style={{ fontSize: DIV_REQ_FONT }}>
-                                {reqNames ? `前置：${reqNames}` : '无前置'}
+                                {/* [2026-11-20] 已点亮时，这一行改说"生效时机"——前置信息对它已无意义 */}
+                                {on
+                                    ? (off ? '已关闭 · 下一局不生效' : '启用中 · 开局时生效')
+                                    : (reqNames ? `前置：${reqNames}` : '无前置')}
                             </span>
                             <button
                                 type="button"
-                                disabled={!st.ok}
+                                disabled={!on && !st.ok}
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     eventBus.emit(GameEvents.UI_CLICK);
-                                    unlockNode(picked);
+                                    // [2026-11-20 程拍板] 已点亮 ⇒ 这里切换「启用 / 关闭」；未点亮 ⇒ 原来的激活
+                                    if (on) toggleNode(heroKey, picked.id);
+                                    else unlockNode(picked);
                                 }}
                                 className={`font-black tracking-wider transition-all ${
-                                    on ? 'bg-amber-500/20 text-amber-200 cursor-default'
+                                    on
+                                        ? (off
+                                            ? 'bg-white/5 text-gray-300 hover:bg-white/10 border border-white/15'
+                                            : 'bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 border border-amber-300/40')
                                         : st.ok ? 'bg-gradient-to-r from-purple-600 to-fuchsia-500 hover:scale-105 shadow-[0_0_16px_rgba(168,85,247,0.45)] text-white'
                                         : 'bg-white/5 text-gray-500 cursor-not-allowed'
                                 }`}
@@ -1697,7 +1738,8 @@ export const DivinityContent: React.FC<{ heroKey: string; heroName: string; user
                                     fontSize: DIV_ACT_BTN_FONT,
                                 }}
                             >
-                                {on ? '已激活'
+                                {on
+                                    ? (off ? '↻ 恢复启用' : '✕ 关闭此项')
                                     : st.reason === 'locked' ? '前置未开'
                                     : st.reason === 'poor' ? `碎片不足（需 ${plan.total} 片）`
                                     : `激活（${plan.total} 片）`}

@@ -16,12 +16,25 @@ export const isNative = (): boolean => Capacitor.isNativePlatform();
 /**
  * 「超元链接」（1V1 联机）在当前平台是否可用。
  *
- * [2026-11-08 莉莉子] 安卓端暂不支持联机 —— `src/net/` 的传输层依赖 WebRTC 打洞 +
- * 明文 `ws://` 自建信令，在 WebView 里既没验证过、也会被 mixed-content 拦。
- * 所以安卓壳里把入口锁死（灰置 + 文案说明），避免玩家点进去卡在「连不上」。
+ * [2026-11-18 莉莉子] **放开安卓端联机**（原为 `!isNative()` 一律锁死）。
+ *
+ * 原注释给的两个理由现在都不成立了：
+ *   ① 「明文 `ws://` 自建信令会被 mixed-content 拦」—— 2026-11-07 信令服务器入口已**整体移除**，
+ *      现在走的是**手动交换连接码**，不碰任何 ws://。
+ *   ② 「WebRTC 在 WebView 里没验证过」—— 2026-11-18 在雷电（Android 14 / WebView 146）实测：
+ *      `RTCPeerConnection` / `RTCDataChannel` / `RTCIceCandidate` 全可用，
+ *      `new RTCPeerConnection()` + `createDataChannel()` 实际创建成功。
+ *
+ * 联机本身是纯 P2P（`transport-ice.ts` 配了 3 个公网 STUN），**不依赖任何服务端**，
+ * 所以手机和 PC 的能力应当是对等的。
+ *
+ * ⚠️ 仍是**实验性**：WebView 的 ICE 收集完整性、App 切后台后连接是否被挂起，
+ *    都还没有真机验证过。出问题就把这里改回 `!isNative()` —— UI 会自动恢复
+ *    「手机端暂不支持」的灰置文案，不用动组件。
+ *
  * 判定收在这一层，组件只接收 `onlineLocked` 这个 boolean（合 `./index.ts` 铁律）。
  */
-export const canPlayOnline = (): boolean => !isNative();
+export const canPlayOnline = (): boolean => true;
 
 /**
  * 初始化平台差异。PC 版是空操作，安卓壳才生效。

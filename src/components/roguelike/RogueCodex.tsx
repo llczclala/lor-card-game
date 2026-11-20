@@ -285,6 +285,10 @@ export const EFFECT_LABELS: Record<BattleEffectClass, string> = {
     // [2026-09-28 神格神经 · 茉莉安]
     EXPOSE_AND_DAMAGE: '暴露并造成伤害',      // ②④回合开始暴露一个敌人并造成伤害
     BEACON_DAMAGE_MULT: '信标伤害翻倍',       // ⑥常驻查询：獠牙信标亡语伤害翻倍
+    // [2026-11-19 莉莉子 神格神经 · 凯茜娅]
+    SPELL_DAMAGE_BONUS: '伤害法术增伤',       // ①③伤害类法术伤害 +N（倾泻每发 +N）
+    MANA_PER_SPELL_NEXT_ROUND: '法术换法力',  // ②④每打出一张法术 → 下回合最大法力 +N
+    KATYA_POWER_IMMUNE: '攻击力免疫削减',     // ⑥凯茜娅的攻击力不再减少
     // [2026-10-24 莉莉子] 开局给我方手牌 + 牌库每张卡挂一件指定品质装备（紫/蓝/白三档）
     EQUIP_ALL_CARDS: '全卡挂装备',
     // [2026-10-24 莉莉子] 指定费用的我方单位 +N/+M（1 费 +3/+3）

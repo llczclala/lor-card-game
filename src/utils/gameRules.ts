@@ -1,4 +1,4 @@
-import type { CardData, GameState, Keyword } from '../types';
+import type { CardData, GameState, Keyword, CombatFieldItem } from '../types';
 import { EFFECT_DB } from '../data/effectRegistry'; // [新增] 引入效果字典以读取前置条件
 import { createCard, CARD_DB } from '../data/cards'; // [2026-07-31] 安卡升级手牌替换 ｜ [2026-10-23] 读卡的 maxPerSide（每方上限）
 import { EQUIPMENT_BY_ID } from '../data/equipment'; // [2026-10-03] 升级时保留「装备/武装授予的关键词」
@@ -14,7 +14,10 @@ export const hasPoetCaitlinAura = (bench: CardData[]): boolean => {
 };
 
 /** [2026-07-14 锻造者] 检测缇坦妮娅法术增伤光环是否在场（含交战区） */
-export const hasForgerTatianaAura = (bench: CardData[], combatField?: any[]): boolean => {
+// [2026-11-19 代码债收口] `combatField?: any[]` → `CombatFieldItem[]`：
+//   本函数只读 `fight.attacker?.key` / `.isDead`，与 `CombatFieldItem`（attacker: CardData | null）完全兼容。
+//   ⚠️ 这一改会让**所有调用方**都被 tsc 检查一遍 —— 正是用来验证"调用方传的是不是半成品占位"的手段。
+export const hasForgerTatianaAura = (bench: CardData[], combatField?: CombatFieldItem[]): boolean => {
     if (bench.some(c => c.key === 'The_Forger_Squad_Tatiana' && !c.isDead)) return true;
     if (combatField) {
         return combatField.some(fight => {
@@ -396,6 +399,19 @@ export const buffAllUnitsInDeck = (deck: CardData[], power: number, health: numb
 // ⚠️ `bench?` → `CardData[] | undefined`：TS 不允许必填参跟在可选参之后（TS1016）；
 //    调用方显式传 `undefined` 语义完全不变（= 原「不传 bench」）。
 // ==========================================
+// ==========================================
+// [2026-11-19 莉莉子 · 代码债收口 ①] 「这张卡是不是单位」的**唯一判据**
+//   病根：同一句话在 5 处各写了一遍 ——
+//     `CardAnimations.tsx:229` · `GameSession.tsx:2997` · `GameSession.tsx:3038`
+//     · `useSpellSystem.ts:481` · `useSpellSystem.ts:728`
+//   其中 `GameSession:2997` 还多写了一层 `card.type !== 'unit'`（冗余，但说明这五处已经
+//   开始各自漂移）。这类"判据手抄"正是 10-08 誊抄那次「改了两处、第三处还是旧行为」的形状。
+//   口径：与历史代码**逐字一致**用 `includes('unit')`（不改成 `=== 'unit'`）——
+//     本轮只做等价收口、不趁机改语义，避免把一次重构变成一次行为变更。
+// ==========================================
+export const isUnitCard = (card: { type?: string } | null | undefined): boolean =>
+    !!card?.type?.includes('unit');
+
 export const canAffordCard = (
   card: CardData,
   mana: number,
@@ -923,13 +939,46 @@ export const carryCostOverride = <T extends CardData>(next: T, src: CardData): T
         : { ...next, cost: src.costOverride, costOverride: src.costOverride }) as T;
 
 /**
+ * [2026-11-20 莉莉子 BUG修复] 跨「整卡重建」携带**变形身份**与法术专属装备
+ *
+ * ── 病根：`upgradeAcaciaHand` / `demoteAcaciaHand` 与圆缺有律切换（`effectProcessor` 圆缺有律分支）
+ *    都用裸 `createCard(key)` 造新卡，只搬 `id` 与 `costOverride`（见上面的 `carryCostOverride`）
+ *    ⇒ 变形系统盖章的三件套全丢：`isTransformed` / `associatedChampionKey` / `originalBaseKey`
+ *      （盖章处 `hooks/useGameState.ts:1110-1117`，判据 `:1122`）
+ *    ⇒ 情况 B 的判据不成立 ⇒ 这张卡**永远变不回天启者本体**，
+ *      连带法术卡上挂的 `spellOnly` 装备（双生符这类）也被清空。
+ *
+ * ── 触发面比「每次升级都丢」窄，别误判：**只要本体还在场上**，下一轮变形循环会原地重新盖章
+ *    （`useGameState.ts:1110-1117`）⇒ 丢了的字段自己补回来。
+ *    真正永久丢失的只有「重建那一刻本体不在场上」（阵亡 / 还在牌库）。
+ *
+ * ── 口径：只认 `src.isTransformed`。普通卡（玩家直接抽到的剑舞 / 扩散）**行为逐字不变**。
+ * ── 不搬战斗状态（`buffs` / `roundBuffs` / `roundStrikes` / `abilityState` …）：
+ *    升级换的是卡，状态跟着走会造出新的不一致（卡面又不会显示）。
+ */
+type TransformStamp = { isTransformed?: boolean; originalBaseKey?: string };
+
+export const carryTransformIdentity = (next: CardData, src: CardData): CardData => {
+    const s = src as CardData & TransformStamp;
+    if (!s.isTransformed) return next;
+    const out: CardData & TransformStamp = {
+        ...next,
+        isTransformed: true,
+        associatedChampionKey: s.associatedChampionKey,
+        originalBaseKey: s.originalBaseKey ?? s.associatedChampionKey,
+    };
+    if (src.equipment && src.equipment.length) out.equipment = [...src.equipment];
+    return out;
+};
+
+/**
  * [2026-07-31 安卡希雅] 升级后的手牌替换：剑舞→重锋、扩散/集束→月镰剑势
  * 供所有安卡升级路径（朔望之期 / 战斗升级扫描器）统一调用
  */
 export const upgradeAcaciaHand = (hand: CardData[]): CardData[] => {
     return hand.map(c => {
-        if (c.key === 'acacia_chrono_echo_spell') return carryCostOverride({ ...createCard('acacia_chrono_echo_heavy'), id: c.id }, c);
-        if (c.key === 'acacia_sword_rain' || c.key === 'acacia_moon_focus') return carryCostOverride({ ...createCard('acacia_sword_rain_alt'), id: c.id }, c);
+        if (c.key === 'acacia_chrono_echo_spell') return carryTransformIdentity(carryCostOverride({ ...createCard('acacia_chrono_echo_heavy'), id: c.id }, c), c);
+        if (c.key === 'acacia_sword_rain' || c.key === 'acacia_moon_focus') return carryTransformIdentity(carryCostOverride({ ...createCard('acacia_sword_rain_alt'), id: c.id }, c), c);
         // [2026-07-31] 手牌安卡英雄副本：保持 Lv1（显示升级进度、打出后由升级扫描器升到 Lv2），
         // 但标记升级条件已达成（customProgress=1）并让关联法术指向重锋（变形系统不依赖此字段，为防御）
         if (c.key === 'acacia_chrono_echo') {
@@ -945,8 +994,8 @@ export const upgradeAcaciaHand = (hand: CardData[]): CardData[] => {
  */
 export const demoteAcaciaHand = (hand: CardData[]): CardData[] => {
     return hand.map(c => {
-        if (c.key === 'acacia_chrono_echo_heavy') return carryCostOverride({ ...createCard('acacia_chrono_echo_spell'), id: c.id }, c);
-        if (c.key === 'acacia_sword_rain_alt') return carryCostOverride({ ...createCard('acacia_sword_rain'), id: c.id }, c);
+        if (c.key === 'acacia_chrono_echo_heavy') return carryTransformIdentity(carryCostOverride({ ...createCard('acacia_chrono_echo_spell'), id: c.id }, c), c);
+        if (c.key === 'acacia_sword_rain_alt') return carryTransformIdentity(carryCostOverride({ ...createCard('acacia_sword_rain'), id: c.id }, c), c);
         // 手牌/牌库里的 Lv2 安卡副本：降回 Lv1（退级后抽到/打出为 Lv1），升级进度与关联法术一并回退
         if (c.key === 'acacia_chrono_echo' && c.level === 2) {
             return { ...c, level: 1, customProgress: 0, associatedSpellKey: 'acacia_chrono_echo_spell' };
@@ -1164,7 +1213,7 @@ export const cloneUnitState = (sourceCard: CardData, targetTemplate: CardData): 
 // ==========================================
 // [新增] UI 前置侦察兵：检测卡牌的前置在场条件是否满足
 // ==========================================
-export const checkCardConditionActive = (card: CardData, playerBench: CardData[], combatField: any[], game?: GameState): boolean => {
+export const checkCardConditionActive = (card: CardData, playerBench: CardData[], combatField: CombatFieldItem[], game?: GameState): boolean => {
     if (!card.effects || card.effects.length === 0) return false;
 
     // [2026-07-31 圣树·阿尔维娜] 能力触发条件：本回合已飞剑（满足 → 手牌高亮描边，与歌莉娅同款）
@@ -1425,7 +1474,7 @@ export const hasEnlightenment = (maxMana: number): boolean => {
  */
 export const getSpellPlayBlockReason = (
     card: CardData,
-    ctx: { playerBench?: CardData[]; enemyBench?: CardData[]; combatField?: any[] },
+    ctx: { playerBench?: CardData[]; enemyBench?: CardData[]; combatField?: CombatFieldItem[] },
 ): string | null => {
     const BEACON_KEY = 'Marian_Wolf_Tooth_Beacon';
     const isLive = (c: CardData | null | undefined): boolean =>

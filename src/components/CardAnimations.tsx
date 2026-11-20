@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import { motion, AnimatePresence, type Variants, useMotionValue, useVelocity, useTransform, useSpring } from 'framer-motion';
 import { Check, RefreshCw, Crosshair } from 'lucide-react'; // [加回] 图标
-import type { CardData } from '../types';
+import type { CardData, GameState, CombatFieldItem } from '../types';
 import { Card } from './Card';
-import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasForgerTatianaAura, getEffectiveSpellCost } from '../utils/gameRules'; // [2026-10-08 第二波] 显示费用收口（凯特琳光环改由 getEffectiveSpellCost 内部处理）
+import { getSpellPlayBlockReason, canAffordCard, checkCardConditionActive, checkCardReadyToLevelUp, checkShaloGlimpseEnlightened, hasForgerTatianaAura, getEffectiveSpellCost, isUnitCard } from '../utils/gameRules'; // [2026-10-08 第二波] 显示费用收口（凯特琳光环改由 getEffectiveSpellCost 内部处理）· [2026-11-19] + isUnitCard（卡型判据收口）
 import { EFFECT_DB } from '../data/effectRegistry'; // [2026-07-14 锻造者] 读取效果参数用于显示
 // [2026-11-14 莉莉子 🎨视觉层 · 问题 2-1] 「倾泻」(BARRAGE) 卡面**预计伤害**
 //   算式单源在 `utils/katyaBarragePreview.ts`（与 effectProcessor 的 BARRAGE case 逐字对齐）；
@@ -20,9 +20,13 @@ interface PlayerHandProps {
     onCardClick: (card: CardData) => boolean | void; // 兼容 GameSession 的安检返回值
     onHover: (card: CardData | null) => void;
     onViewArt: (card: CardData) => void;
-    game: any; // 传入 game state 以判断出牌条件
+    // [2026-11-19 代码债收口] `combatField: any[]` → `CombatFieldItem[]`。
+    //   ⚠️ 我原先在注释里断言"部分调用方传的是只有 id 的占位"——**这个假设是错的**：
+    //      把 `hasForgerTatianaAura` 的参数先收口后跑 tsc，**全部调用方零报错**，
+    //      说明它们一直传的就是完整 `CombatFieldItem`。教训：先用编译器验证假设，别在注释里写猜测。
+    game: GameState;
     playerBench: CardData[]; // [新增] 需要传入备战席供条件扫描
-    combatField: any[];      // [新增] 需要传入交战区供条件扫描
+    combatField: CombatFieldItem[];      // [新增] 需要传入交战区供条件扫描
     enemyBench?: CardData[]; // [2026-09-19] 法术场上条件（支援技/钢羽傍身）需要
     cardBackUrl: string;
     cardBackVideoUrl?: string; // [2026-08-23 莉莉子] 动态卡背视频 URL
@@ -226,7 +230,7 @@ const AnimatedHandCard = ({
                         // [2026-08-08 莉莉子修复] HAND_CARD 施法瞄准：命中过滤条件的手牌亮蓝色可用高光（战术闪击等）
                         if (isCastingForHand && handTargetFilter) {
                             const { cardTypeFilter, maxCost } = handTargetFilter;
-                            if (cardTypeFilter === 'unit' && !c.type?.includes('unit')) return false;
+                            if (cardTypeFilter === 'unit' && !isUnitCard(c)) return false;
                             if (cardTypeFilter === 'spell' && !c.type?.includes('spell')) return false;
                             if (maxCost !== undefined && (c.cost || 0) >= maxCost) return false;
                             return true;

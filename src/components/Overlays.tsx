@@ -566,6 +566,11 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
 
     const getRegionLabel = (region: string, key: string) => {
         if (key.startsWith('test_')) return 'TEST';
+        // [2026-11-18 莉莉子 BUG修复 · 详情面板顶部被裁]
+        // 凯茜娅的 region 是 `katya_klein_rhapsody`（全游戏最长的阵营 key），
+        // 大写后配合 `tracking-[0.3em]` 在 380px 面板里放不下，
+        // 外层主容器又有 `overflow-hidden` ⇒ 开头的 K 和后面的 LV. 数字一起被切掉。
+        if (region === 'katya_klein_rhapsody') return 'KATYA';
         return region.toUpperCase();
     };
 
@@ -692,7 +697,13 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
             </button>
 
             {/* [修改] 主容器：添加 overflow-hidden 以限制动画遮罩的范围，确保遮罩只在内容区出现 */}
-            <div className="relative flex flex-col md:flex-row max-w-5xl w-full h-full md:h-[90%] items-stretch justify-center gap-0 md:gap-6 overflow-hidden rounded-2xl" onClick={e => e.stopPropagation()}>
+            {/* [2026-11-18 莉莉子 BUG修复 · 手机横屏详情页变上下堆叠]
+                ── 病根：断点用的是 `md:`（768 **CSS 像素**）。手机横屏的 CSS 宽度普遍在 640~900，
+                   dpr 一除正好跨在 768 两侧 ⇒ 同一批 1080p 横屏设备分成两拨：
+                   1920÷3=640 / ÷2.75=698（掉线，变上下堆叠）· 2376÷3=792（过线，左右正常）。
+                ── 修法：布局改按**朝向**判（`landscape:`），横屏一律左右；竖屏才上下堆叠。
+                   面板宽度仍按宽度断点走（见下方信息面板的 sm/md），两者互不干扰。 */}
+            <div className="relative flex flex-col landscape:flex-row max-w-5xl w-full h-full landscape:h-[90%] items-stretch justify-center gap-0 landscape:gap-6 overflow-hidden rounded-2xl" onClick={e => e.stopPropagation()}>
 
                 {/* [新增] 购买确认弹窗挂载点 */}
                 {confirmState && (
@@ -733,7 +744,9 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                 </AnimatePresence>
 
                 {/* --- 左侧：原画容器 --- */}
-                <div className="relative flex-1 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] border border-white/20 group select-none bg-black">
+                {/* [2026-11-18 莉莉子] 补 `min-w-0`：flex 子项默认 min-width:auto，横屏窄机下
+                    信息面板固定 320px 时，卡面这一侧会被内容顶开而挤掉面板 */}
+                <div className="relative flex-1 min-w-0 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)] border border-white/20 group select-none bg-black">
 
                     {/* 图层 1 (底层): 高斯模糊填充背景 */}
                     <div className="absolute inset-0 z-0">
@@ -987,8 +1000,11 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
 
                 {/* --- 右侧：详细信息面板 --- */}
                 {/* [修改] 引用 targetCard 数据 */}
+                {/* [2026-11-18 莉莉子] 宽度按**视口宽度**分档（竖屏 w-full / 横屏窄机 320 / 桌面 380），
+                    与主容器的 `landscape:` 朝向判定解耦：横屏 700 宽时 320 面板给卡面留出空间，
+                    竖屏 390 宽时仍由 w-full 撑满（sm 断点不生效）。 */}
                 <div
-                    className="w-full md:w-[380px] bg-gray-900/95 p-8 rounded-3xl border border-white/10 text-white shadow-2xl flex flex-col gap-6 self-center h-fit max-h-full overflow-y-auto custom-scrollbar mt-4 md:mt-0 relative z-10"
+                    className="w-full sm:w-[320px] md:w-[380px] bg-gray-900/95 p-8 rounded-3xl border border-white/10 text-white shadow-2xl flex flex-col gap-6 self-center h-fit max-h-full overflow-y-auto custom-scrollbar mt-4 landscape:mt-0 relative z-10"
                     onWheel={(e) => e.stopPropagation()}
                 >
 
@@ -1115,12 +1131,14 @@ export const FullArtOverlay = ({ card, onClose, onBuy, onGachaNav, ownedCount = 
                                 Level Up Condition
                             </div>
                             <p className="text-white text-xl font-medium italic text-center leading-relaxed max-w-[80%]">
-                                "{targetCard.name.includes('里芙') ? '此牌打击 2 次。' :
-                                 (targetCard.name.includes('芬妮') ? '水晶生命值 ≤ 其上限的一半。' :
-                                 (targetCard.name.includes('卜卜 灵鉴') ? '目睹打击敌方水晶 3 次' :
-                                 (targetCard.name.includes('猫汐尔 莲驱') ? '召唤师和召唤衍生物累计造成30点伤害' :
-                                 (targetCard.name.includes('安卡希雅 时之重奏') ? '我方打出“朔望之期”' :
-                                 (targetCard.name.includes('茉莉安 霄鹰') ? '我方累计击败两次“獠牙信标”' :'满足特定条件。')))))}"
+                                {/* [2026-11-18 莉莉子 BUG修复 · 凯茜娅显示"满足特定条件"]
+                                    ── 病根：这里原本按**卡牌名字**硬编码了 6 个天启者的升级条件，
+                                       凯茜娅不在列表里 ⇒ 落到兜底文案。
+                                    ── 而 `cards.ts` 里每个天启者**早就有** `levelUpCondition` 字段
+                                       （凯茜娅在 `cards.ts:588`：累计造成 N 点伤害）。
+                                    ── 修法：直接读数据字段，硬编码只作为"老卡没填"的兜底。
+                                       新增天启者只要填了字段，这里**不用再改一行**。 */}
+                                "{targetCard.levelUpCondition ?? '满足特定条件。'}"
                             </p>
                         </div>
                     )}

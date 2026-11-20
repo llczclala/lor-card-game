@@ -19,7 +19,7 @@
 //      它的 ID 一律 = 当前最大 ID + 1。
 //
 // ── 当前分配 ─────────────────────────────────────────────────────
-//   0 ~ 218 共 219 张（= `CARD_DB` 全部卡牌，含 38 张带引号 key 的补登记）。
+//   0 ~ 233 共 234 张（= `CARD_DB` 全部卡牌，含 38 张带引号 key 的补登记）。
 //   12 bit 的 ID 空间（0~4095）还剩 3800 多个，够这个项目涨很多年。
 //
 // ⚠️ 新增卡牌后，跑一次 `npx tsc -b --force` 即可 —— `deckCode.ts` 里有启动期自检，
@@ -255,6 +255,23 @@ export const DECK_CODE_CARD_IDS: Record<string, number> = {
     'Messenger_Squad_Ah_Hua': 216,
     'Messenger_Squad_Gena': 217,
     'Messenger_Squad_WALL_E': 218,
+    // ── [2026-11-18 莉莉子] 凯茜娅·狂诗阵营 15 张（1.0.23 上线时漏登记 ⇒ 卡组码导出直接抛异常）──
+    //   顺序与 `cards.ts` 中定义顺序一致；ID 从 219 起顺延，未与任何既有 ID 冲突。
+    katya_klein_rhapsody: 219,
+    katya_rhapsody_choice: 220,
+    katya_chrono_wing: 221,
+    katya_chrono_frenzy: 222,
+    katya_pierce_torrent: 223,
+    katya_barrage: 224,
+    katya_starfall: 225,
+    Reflection_Squad_Melisande: 226,
+    Reflection_Squad_Yulalia: 227,
+    Reflection_Squad_Odnie: 228,
+    katya_transcribe: 229,
+    katya_supply: 230,
+    katya_barrage_frost: 231,
+    katya_barrage_frost_cont: 232,
+    katya_barrage_frost_end: 233,
 };
 
 /**

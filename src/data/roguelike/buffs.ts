@@ -106,6 +106,17 @@ export type BattleEffectClass = 'GENERATE' | 'SUMMON' | 'BUFF' | 'RALLY' | 'CLON
     // [2026-09-28 神格神经 · 茉莉安]
     | 'EXPOSE_AND_DAMAGE'        // ②④回合开始：暴露一个敌人，并对随机/血量最多的敌人造成 N 点伤害
     | 'BEACON_DAMAGE_MULT'       // ⑥常驻查询型：獠牙信标亡语伤害翻倍（在 SPREAD_DAMAGE 处乘算，无 handler）
+    // [2026-11-19 莉莉子 神格神经 · 凯茜娅] 三条新类（载体 divfx_katya_*，playerEligible:false）
+    //   · SPELL_DAMAGE_BONUS：**常驻查询型**，无 handler —— 生效点 `effectProcessor.getSpellDamageBonus`
+    //     （伤害类法术的伤害 +amount；倾泻这类多段伤害 = **每发** +amount）
+    //     `params.repeatCast: true` ⇒ 伤害类法术结算完再施放一次（③）
+    //   · MANA_PER_SPELL_NEXT_ROUND：**常驻查询型**，无 handler —— 生效点 `core.startManaBonusOf`
+    //     读「上回合打出的法术数 × amount」，下回合最大法力 += 它（下下回合由重算自动清）
+    //   · KATYA_POWER_IMMUNE：**常驻查询型**，无 handler —— 「凯茜娅·狂诗」免疫一切降攻
+    //     （倾泻 D / 穿云激流减半 / 冻结 / 任意 debuff 写的负 power）
+    | 'SPELL_DAMAGE_BONUS'
+    | 'MANA_PER_SPELL_NEXT_ROUND'
+    | 'KATYA_POWER_IMMUNE'
     // [2026-10-24 程拍板] 开局：给我方**手牌 + 牌库**的每张卡各随机挂一件**指定品质**的装备（params.rarity）
     //   池子走项目铁律 `getEquipPoolForCard` —— 自动排除武装 / 非战斗装 / 不适用本卡的件，
     //   法术卡只会拿到 `spellOnly` 件（不会出现"挂了却毫无作用"的空装备）。
@@ -279,6 +290,14 @@ export const MAZE_BUFFS: MazeBuff[] = [
         description: '开局时，从牌库与手牌召唤安卡希娅到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
         rarity: 'legendary', icon: SPELL_IMAGES.acacia_chrono_echo_spell, effect: { type: 'passive' },
         battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['acacia_chrono_echo'], fallbackEquips: 1 } },
+        playerEligible: true, enemyEligible: true,
+    },
+    {
+        // [2026-11-19 莉莉子] 凯茜娅的「开局召唤」——七位同规格，名字四字（呼应流派「诗与枪火」）
+        id: 'enhance_open_katya', name: '枪火先鸣',
+        description: '开局时，从牌库与手牌召唤凯茜娅到备战席；若都没有，则直接召唤她并随机佩戴一件装备。',
+        rarity: 'legendary', icon: SPELL_IMAGES.katya_rhapsody_choice, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SUMMON_FROM_DECK', params: { summonKeys: ['katya_klein_rhapsody'], fallbackEquips: 1 } },
         playerEligible: true, enemyEligible: true,
     },
 
@@ -1189,6 +1208,47 @@ export const MAZE_BUFFS: MazeBuff[] = [
         rarity: 'legendary', icon: SPELL_IMAGES.marian_spell, effect: { type: 'passive' },
         // 常驻查询型（无 handler）：倍率在 effectProcessor 的 SPREAD_DAMAGE 处按本 id 乘算（6 → 12）
         battleEffect: { trigger: 'game_start', effectClass: 'BEACON_DAMAGE_MULT' },
+        playerEligible: false, enemyEligible: false,
+    },
+    // ── [2026-11-19 莉莉子 神格神经 · 凯茜娅（狂诗点杀）] 节点载体（程的设计定稿）──
+    //   口径（程 2026-11-19 拍板）：
+    //     ① 伤害类法术伤害 +1；倾泻这类多段伤害 = **每发** +1
+    //     ② 每打出一张法术，**下回合**最大法力 +1（④ 为 +2）
+    //     ③ 在 ① 基础上再**重复施放一次**（画面两个法术圆盘、瞄准同一目标）
+    //     ⑥ 全法术 −1 + 「凯茜娅·狂诗」**免疫一切降攻**（含穿云激流减半、冻结）
+    {
+        id: 'divfx_katya_1', name: '穿甲弹头', description: '伤害类法术的伤害 +1（倾泻这类多段伤害为每发 +1）。',
+        rarity: 'common', icon: SPELL_IMAGES.katya_barrage, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SPELL_DAMAGE_BONUS', params: { amount: 1 } },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'divfx_katya_2', name: '弹链预压', description: '每打出一张法术，下回合最大法力 +1。',
+        rarity: 'common', icon: SPELL_IMAGES.katya_supply, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'MANA_PER_SPELL_NEXT_ROUND', params: { amount: 1 } },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'divfx_katya_3', name: '穿甲·连奏', description: '伤害类法术的伤害 +1（每发 +1），且重复施放一次。（升级「穿甲弹头」）',
+        rarity: 'uncommon', icon: SPELL_IMAGES.katya_barrage, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'SPELL_DAMAGE_BONUS', params: { amount: 1, repeatCast: true } },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'divfx_katya_4', name: '弹链·满载', description: '每打出一张法术，下回合最大法力 +2。（升级「弹链预压」）',
+        rarity: 'uncommon', icon: SPELL_IMAGES.katya_supply, effect: { type: 'passive' },
+        battleEffect: { trigger: 'game_start', effectClass: 'MANA_PER_SPELL_NEXT_ROUND', params: { amount: 2 } },
+        playerEligible: false, enemyEligible: false,
+    },
+    {
+        id: 'divfx_katya_6', name: '狂诗·不竭',
+        description: '我方所有法术费用 -1；「凯茜娅·狂诗」的攻击力不再减少。',
+        rarity: 'legendary', icon: SPELL_IMAGES.katya_pierce_torrent, effect: { type: 'passive' },
+        battleEffects: [
+            { trigger: 'game_start', effectClass: 'SPELL_COST_DOWN_ALL', params: { amount: 1 } },
+            // 常驻查询型（无 handler）：免疫点在 effectProcessor 的倾泻扣减 + getPower 的降攻兜底
+            { trigger: 'game_start', effectClass: 'KATYA_POWER_IMMUNE' },
+        ],
         playerEligible: false, enemyEligible: false,
     },
 ];

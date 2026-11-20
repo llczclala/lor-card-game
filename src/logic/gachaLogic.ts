@@ -37,7 +37,9 @@ export interface GachaResult {
 }
 
 // [新增] 卡池配置系统 ==========================================
-export type PoolId = 'permanent' | 'lotus' | 'zenith' | 'reflection';
+// [2026-11-18 程拍板] 取消 reflection「镜中狂想」池 —— 苔丝未完成，凯茜娅暂并入常驻池。
+//   池子只保留三个：常守之誓（里芙/芬妮 + 凯茜娅）、烬中镜火、自往昔归还。
+export type PoolId = 'permanent' | 'lotus' | 'zenith';
 
 export interface GachaPoolConfig {
     id: PoolId;
@@ -67,15 +69,18 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
         btnImg: PGgachaBtnImg,
         pityLabel: '绝密保底进度',
         // [2026-09-16 1.0.16] 安卡希雅已迁往新池「自往昔归还」(zenith)
-        heroKeys: ['lyfe', 'fenny'],
+        // [2026-11-18 程拍板] 凯茜娅·狂诗暂入常驻池（苔丝的专属池等苔丝做完再开）
+        heroKeys: ['lyfe', 'fenny', 'katya_klein_rhapsody'],
         cardBackIndices: [1, 2, 3],
         deskIndices: [1, 2, 3, 4],
         // [2026-08-15 莉莉子] 常驻池排除：
         //   ① 卜卜(Pupu)与猫汐尔(Mauxir)体系（重叶/图征后勤、相关法术/衍生物）——专属「烬中镜火」池
         //   ② 明夷/星朗小队（半成品未做完，暂不投放）
+        // [2026-11-18 程拍板] ③ 安卡希雅(Acacia) / 茉莉安(Marian) 已有专属池「自往昔归还」⇒ 不再混入常驻池
         includeInCommonPool: (card) => {
             if (card.key === 'Argo_Deliberate_Infiltration') return false; // [2026-08-15] 蓄意渗透不进共鸣卡池
             if (card.region === 'Pupu' || card.region === 'Mauxir') return false;
+            if (card.region === 'Acacia' || card.region === 'Marian') return false; // [2026-11-18] 专属池已收纳
             if (card.key.startsWith('Mingyi_Squad') || card.key.startsWith('Star_Bright_Squad')) return false;
             return true;
         },
@@ -111,22 +116,6 @@ export const POOLS: Record<PoolId, GachaPoolConfig> = {
             card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
     },
     // ================================================================
-    // [2026-11-15 1.0.23 凯茜娅] 新池 —— 收纳 凯茜娅·狂诗 + 映现小队
-    //   ⚠️ TODO(素材)：项目只有 3 套池立绘（Permanent / GachaPool1 / GachaPool2），
-    //      本池暂时复用 zenith 的 desk/button，专属素材到位后改这两行即可。
-    //   ⚠️ TODO(索引)：cardBackIndices / deskIndices 暂沿用 zenith，避免越界。
-    reflection: {
-        id: 'reflection',
-        name: '镜中狂想',
-        coverImg: ZgachaDeskImg,
-        btnImg: ZgachaBtnImg,
-        pityLabel: '狂诗保底进度',
-        heroKeys: ['katya_klein_rhapsody'],
-        cardBackIndices: [17, 18, 19],
-        deskIndices: [10, 11, 12, 13, 14],
-        includeInCommonPool: (card) =>
-            card.region !== 'Lyfe' && card.region !== 'Fenny' && card.key !== 'Argo_Deliberate_Infiltration',
-    },
 };
 // ================================================================
 

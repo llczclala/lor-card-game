@@ -1611,6 +1611,33 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
                         });
                     }
 
+                    // ══════════════════════════════════════════════════════════════
+                    // [2026-11-18 莉莉子 · 猫汐尔补强] 基座「没打出去的攻击力」直接计入升级进度
+                    // ── 粉丝痛点：敌方备战席空/薄时，10 攻的基座只打得出 2~3 发（`break` 提前退出），
+                    //    剩下 7~8 点攻击力白费 ⇒ 猫汐尔要 30 点，永远升不了级。
+                    // ── 口径（程 2026-11-18 拍板）：**补差 = 攻击力 − 本回合实际开火发数**。
+                    //    · 每发 1 点 ⇒ 打满时补 0，总计入恒等于攻击力（不重复计算）
+                    //    · 被护盾/坚韧吃掉的那一发**仍算"开过火"**，不补
+                    //      —— 护盾/坚韧是**刻意保留的反制手段**，不是要绕过的缺陷
+                    //    · 只在 `mauxir_lotus_pedestal` 上生效（乙型等其它 roundEndAttack 单位不受影响）
+                    // ⚠️ 必须放在 `bullets.length === 0` 的 `continue` **之前**：
+                    //    一发都没打出去（敌方空场）恰恰是最需要补差的情况。
+                    // ══════════════════════════════════════════════════════════════
+                    if (isPedestal && bullets.length < power) {
+                        const unfired = power - bullets.length;
+                        accumulateMauxirDamage(
+                            owner === 'player' ? nextPlayerBench : nextEnemyBench,
+                            nextCombatField,
+                            unfired,
+                            owner === 'player' ? setPlayerBench : setEnemyBench,
+                            owner === 'player' ? stateRef.current.playerHand : stateRef.current.enemyHand,
+                            owner === 'player' ? setPlayerHand : setEnemyHand,
+                            owner === 'player' ? stateRef.current.playerDeck : stateRef.current.enemyDeck,
+                            owner === 'player' ? setPlayerDeck : setEnemyDeckState,
+                            owner,
+                        );
+                    }
+
                     if (bullets.length === 0) continue;
 
                     const linePayload = [{
@@ -1878,10 +1905,17 @@ export function useRoundLifecycle(params: UseRoundLifecycleParams) {
             //    （同一流程后续还会读账本判"是否用过"，只改 state 不改 ref 会读到旧账本）。
             // ==========================================
             if (ctx.dirty.game) {
-                const seededGame: any = stateRef.current.game;
-                const changed: Record<string, any> = {};
-                for (const k of Object.keys(ctx.game as any)) {
-                    if ((ctx.game as any)[k] !== seededGame[k]) changed[k] = (ctx.game as any)[k];
+                // [2026-11-19 代码债收口] 原 `seededGame: any` + `changed: Record<string, any>`：
+                //   这里做的是**按 key 的动态差异合并**（`Object.keys` 遍历），`GameState` 不能用 string 索引，
+                //   所以"把 any 挪到一次显式断言"是这类遍历的正确写法 —— 关键收益是 `changed` 变成
+                //   `Partial<GameState>`：`setGame(prev => ({ ...prev, ...changed }))` 因此重新受类型检查，
+                //   不会再把任意字段灌进 game。
+                const seededGame = stateRef.current.game as unknown as Record<string, unknown>;
+                const ctxGame = ctx.game as unknown as Record<string, unknown>;
+                const changed: Partial<GameState> = {};
+                const changedAny = changed as Record<string, unknown>;
+                for (const k of Object.keys(ctxGame)) {
+                    if (ctxGame[k] !== seededGame[k]) changedAny[k] = ctxGame[k];
                 }
                 if (Object.keys(changed).length > 0) {
                     setGame(prev => ({ ...prev, ...changed }));

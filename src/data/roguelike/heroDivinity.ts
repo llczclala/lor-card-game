@@ -384,7 +384,61 @@ export const MARIAN_DIVINITY_NODES: DivinityNode[] = [
     },
 ];
 
-/** 全部 6 位天启者的神格神经节点（里芙 / 安卡希雅 / 芬妮 / 卜卜 / 猫汐尔 / 茉莉安） */
+/** 凯茜娅·狂诗（狂诗点杀 · 法术驱动）的 6 个节点 —— 程 2026-11-19 设计定稿 */
+export const KATYA_DIVINITY_NODES: DivinityNode[] = [
+    {
+        id: 'div_katya_1', heroKey: 'katya_klein_rhapsody', slot: 1,
+        name: '穿甲弹头',
+        description: '伤害类法术的伤害 +1（倾泻这类多段伤害为每发 +1）。',
+        requires: [],
+        grants: ['divfx_katya_1'],
+        icon: 'katya_barrage',
+    },
+    {
+        id: 'div_katya_2', heroKey: 'katya_klein_rhapsody', slot: 2,
+        name: '弹链预压',
+        description: '每打出一张法术，下回合最大法力 +1。',
+        requires: [],
+        grants: ['divfx_katya_2'],
+        icon: 'katya_supply',
+    },
+    {
+        id: 'div_katya_3', heroKey: 'katya_klein_rhapsody', slot: 3,
+        name: '穿甲·连奏',
+        description: '【升级】伤害类法术的伤害 +1（每发 +1），且重复施放一次。',
+        requires: ['div_katya_1'],
+        upgrades: 'div_katya_1',
+        grants: ['divfx_katya_3'],
+        icon: 'katya_barrage',
+    },
+    {
+        id: 'div_katya_4', heroKey: 'katya_klein_rhapsody', slot: 4,
+        name: '弹链·满载',
+        description: '【升级】每打出一张法术，下回合最大法力 +2。',
+        requires: ['div_katya_2'],
+        upgrades: 'div_katya_2',
+        grants: ['divfx_katya_4'],
+        icon: 'katya_supply',
+    },
+    {
+        id: 'div_katya_5', heroKey: 'katya_klein_rhapsody', slot: 5,
+        name: '神格·潮汐',
+        description: '本场战斗，我方最大法力 +1。',
+        requires: ['div_katya_1', 'div_katya_2', 'div_katya_3', 'div_katya_4'],
+        grants: ['divfx_common_5'],
+        icon: 'katya_spell',
+    },
+    {
+        id: 'div_katya_6', heroKey: 'katya_klein_rhapsody', slot: 6,
+        name: '狂诗·不竭',
+        description: '我方所有法术费用 -1；「凯茜娅·狂诗」的攻击力不再减少。',
+        requires: ['div_katya_5'],
+        grants: ['divfx_katya_6'],
+        icon: 'katya_pierce_torrent',
+    },
+];
+
+/** 全部天启者的神格神经节点（里芙 / 安卡希雅 / 芬妮 / 卜卜 / 猫汐尔 / 茉莉安 / 凯茜娅） */
 export const DIVINITY_NODES: DivinityNode[] = [
     ...LYFE_DIVINITY_NODES,
     ...ACACIA_DIVINITY_NODES,
@@ -392,6 +446,7 @@ export const DIVINITY_NODES: DivinityNode[] = [
     ...BUBU_DIVINITY_NODES,
     ...MAUXIR_DIVINITY_NODES,
     ...MARIAN_DIVINITY_NODES,
+    ...KATYA_DIVINITY_NODES,
 ];
 
 const NODE_BY_ID: Record<string, DivinityNode> = Object.fromEntries(DIVINITY_NODES.map(n => [n.id, n]));
@@ -406,6 +461,9 @@ export const DIVINITY_SUPPORT_ICON: Record<string, string> = {
     mauxir_lotus_drive: 'mauxir_lotus_support',
     acacia_chrono_echo: 'acacia_chrono_echo_support',
     marian: 'marian_support',
+    // [2026-11-19 莉莉子] 凯茜娅**没有支援技卡**（无 `katya_support`）⇒ 指向真实存在的法术图，
+    //   否则 `getDivinityIconKey` 回落 `abc_spell` 占位（手册 §3.2 的硬要求）。
+    katya_klein_rhapsody: 'katya_rhapsody_choice',
 };
 
 /**
@@ -424,6 +482,17 @@ export const getDivinityNodes = (heroKey: string): DivinityNode[] =>
 /** 是否已解锁 */
 export const isNodeUnlocked = (nodeId: string, unlocked: string[] | undefined): boolean =>
     (unlocked ?? []).includes(nodeId);
+
+/**
+ * [2026-11-20 莉莉子 · 自选开关] 该节点是否被玩家**主动关闭**（点亮了、但本局不生效）。
+ *
+ * ⚠️ 与 `isNodeUnlocked` 是**两件独立的事**，绝不能合并：
+ *   · `unlocked` = 花碎片点亮过 ⇒ **永久**，决定前置门槛 / 星槽亮度 / 排序
+ *   · `disabled` = 玩家自己想加难度关掉 ⇒ **随时可恢复**，只影响"效果注入"
+ * 合并会导致：关掉一个节点 → ⑤⑥ 的前置判定崩掉 → 玩家点亮的顺序被自己锁死。
+ */
+export const isNodeDisabled = (nodeId: string, disabled: string[] | undefined): boolean =>
+    (disabled ?? []).includes(nodeId);
 
 /** 前置是否都满足 */
 export const isNodeAvailable = (node: DivinityNode, unlocked: string[] | undefined): boolean =>
@@ -446,10 +515,20 @@ export const getNodeCost = (node: DivinityNode): number => DIVINITY_SHARD_COST[n
  * ⚠️ [2026-09-28 修复] 曾错误地用 `requires` 反推覆盖集合：
  *   ⑤ 的前置含 ①②③④ ⇒ 一点 ⑤ 就把 ③④ 一起"覆盖"掉，界面上表现为"③④ 消失了"；
  *   ⑥ 同理再把 ⑤ 吃掉。程实测发现。**覆盖只能来自 `upgrades`。**
+ *
+ * [2026-11-20 莉莉子 · 自选开关] `disabled` 的语义 = **从"生效集"里剔掉**，然后重算覆盖链。
+ *   于是关掉 ③（+2/+2 版）⇒ ①（+1/+1 版）**自动回落生效** —— 这才是玩家心里"降一档"的直觉；
+ *   若做成"纯减法"（关 ③ 就什么都不生效），玩家会看到①亮着却毫无效果 ⇒ 以为 BUG。
+ *   ⚠️ 反过来若 ① 也关着，则两个都不生效（升级档和低档都熄了）。
  */
-export const resolveDivinityEffects = (heroKey: string, unlocked: string[] | undefined): string[] => {
+export const resolveDivinityEffects = (
+    heroKey: string,
+    unlocked: string[] | undefined,
+    disabled?: string[],
+): string[] => {
     const nodes = getDivinityNodes(heroKey);
-    const owned = nodes.filter(n => isNodeUnlocked(n.id, unlocked));
+    // 生效集 = 已点亮 ∩ 未关闭（关闭只是"不打折"，解锁记录一概不动）
+    const owned = nodes.filter(n => isNodeUnlocked(n.id, unlocked) && !isNodeDisabled(n.id, disabled));
     // 被"升级版"取代的节点（只有 upgrades 声明的关系才算）
     const replaced = new Set(owned.map(n => n.upgrades).filter((v): v is string => !!v));
     const ids: string[] = [];
@@ -467,9 +546,15 @@ export const resolveDivinityEffects = (heroKey: string, unlocked: string[] | und
 //   而无需 data → hooks 反向依赖（避免循环导入）。
 // ==========================================
 let unlockedSnapshot: Record<string, string[]> = {};
+/** [2026-11-20] 玩家主动关闭的节点（与 unlocked 同源同步，见 `useHeroDivinity` 的 persist） */
+let disabledSnapshot: Record<string, string[]> = {};
 
 export const setDivinityUnlockedSnapshot = (map: Record<string, string[]>): void => {
     unlockedSnapshot = map;
+};
+
+export const setDivinityDisabledSnapshot = (map: Record<string, string[]>): void => {
+    disabledSnapshot = map;
 };
 
 /** 某天启者的神格神经等级（星数 0-6）—— 排序 / 星槽渲染用（同步读快照） */
@@ -478,6 +563,9 @@ export const getHeroDivinityLevel = (heroKey: string): number =>
 
 /** 某天启者已解锁的节点 id（同步快照；组件内请优先用 useHeroDivinity 以获得响应式） */
 export const getUnlockedNodes = (heroKey: string): string[] => unlockedSnapshot[heroKey] ?? [];
+
+/** [2026-11-20] 某天启者**已关闭**的节点 id（同步快照；开局注入效果时读它） */
+export const getDisabledNodes = (heroKey: string): string[] => disabledSnapshot[heroKey] ?? [];
 
 // ── 天启者状态筛选（占位接口，本次纵切未涉及）──
 export type HeroStatus = 'unlocked' | 'locked' | 'upgradable' | 'inCampaign';

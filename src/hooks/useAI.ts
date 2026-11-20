@@ -1,12 +1,35 @@
 import { useEffect, useRef } from 'react';
-import type { CardData, GameState } from '../types';
+import type { CardData, GameState, CombatFieldItem } from '../types';
 import { canAffordCard } from '../utils/gameRules';
 import { evaluate } from '../logic/aiSpellStrategies';
 import { getPower, getHealth } from '../logic/keywords'; // [2026-08-29 莉莉子] 真实面板数值（含 buffs/roundBuffs/伤害）——AI 攻血判定必须用它，否则 buff 后的单位被当成白板
 import { canBlockAttacker } from '../logic/blockRules'; // [2026-10-26 莉莉子] 格挡合法性唯一门卫（无法格挡/隐秘/凶恶）——玩家侧与 AI 侧共用
+import { pickBestUnit, type UnitScoreMode } from '../logic/aiUnitValue'; // [2026-11-19 莉莉子] 单位卡出牌价值评估（L6 后半）
 import { resolveAIConfig } from '../data/aiDifficulty';
 import type { AIDifficultyLevel, AIDifficultyConfig } from '../data/aiDifficulty';
 import type { EnemyArchetype } from '../data/enemies/archetypes';
+
+/**
+ * [2026-11-19 莉莉子 · 代码债收口 ②] AI 侧用到的 action 集合。
+ *
+ * 病根：`actions: any` 让 AI 对引擎的**每一次调用都失去类型保护** ——
+ *   方法名拼错（`actions.passTrun`）、参数个数/顺序错、返回值当有值用，编译器一句话都不说，
+ *   只能靠运行时「AI 不动了」才发现。这类错误正是「AI 停机」排查里最耗时的一种。
+ *
+ * 口径：只声明 **useAI 实际用到的 8 个**（用 `actions.xxx` 全量扫出来的），
+ *   不抄 `useGameState` 的整个返回值 —— 那样每次引擎加方法都要来这里补一行。
+ *   ⚠️ 新增 `actions.xxx` 调用时，必须同时在本接口里加一行，否则 `tsc` 直接报错（这正是要的）。
+ */
+type AIActions = {
+    commitAttack: () => void;
+    confirmBlock: () => void;
+    confirmCalibrate: (selectedCardId?: string) => void;
+    passTurn: () => void;
+    playCard: (card: CardData, owner: 'player' | 'enemy', targets?: any[]) => void;
+    setCombatField: React.Dispatch<React.SetStateAction<CombatFieldItem[]>>;
+    setEnemyBench: React.Dispatch<React.SetStateAction<CardData[]>>;
+    setPlayerBench: React.Dispatch<React.SetStateAction<CardData[]>>;
+};
 
 type AIProps = {
     game: GameState;
@@ -14,7 +37,7 @@ type AIProps = {
     enemyBench: CardData[];
     playerBench: CardData[]; // [新增] 玩家备战席
     combatField: any[];
-    actions: any;
+    actions: AIActions;
     setMessage: (msg: string) => void;
     disabled?: boolean; // ★ 教程模式禁用AI自动行动
     paused?: boolean; // [2026-08-30 莉莉子] 局内暂停冻结 AI（暂停时 effect 直接 return 不建 timer）
@@ -813,16 +836,34 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                 } // end of cooldown check
 
                 // 2. 尝试打出单位
-                // 策略：有费就打，铺场优先
-                // [2026-07-08 新增日志] 打出全手牌详情
+                // [2026-11-19 莉莉子 · L6 后半] 由「手牌第一张」改为「按价值挑一张」
+                //   旧：`hand.find(...)` ⇒ **手牌顺序就是决策依据**。三个后果：
+                //     ① 6 费英雄与 2 费白板等价（谁排前面打谁）
+                //     ② 带战吼/召唤的单位排在后面就永远轮不到
+                //     ③ `conservation` 在单位段零消费者 ⇒ 三档难度在这一步逐字相同
+                //   新：`logic/aiUnitValue` 按「每费战力」排序；easy 仍取第一张
+                //      （`capabilities.valueUnitPlay=false`，保留可被玩家利用的蠢）
+                //   口径与已知局限见该文件头注释（不做留费：法力每回合重置；不做组合枚举）
                 console.log(`[AI] 👋 全手牌详情:`, hand.map(c =>
                     `${c.key}(${c.name}) type=${c.type} cost=${c.cost} 可购买=${canAffordCard(c, g.enemyMana, g.enemySpellMana, bench, 'enemy')}`
                 ));
-                const playableUnit = hand.find((c: CardData) =>
+                const playableUnits = hand.filter((c: CardData) =>
                     c && c.type && c.type.includes('unit') && canAffordCard(c, g.enemyMana, g.enemySpellMana, bench, 'enemy')
                 );
+                const unitPickMode: UnitScoreMode = !aiConfigRef.current.capabilities.valueUnitPlay
+                    ? 'none'
+                    : (difficulty === 'hard' ? 'full' : 'simple');
+                const playableUnit = pickBestUnit(playableUnits, {
+                    mana: g.enemyMana, // 单位卡只吃战斗法力（canAffordCard 对 unit 走 mana >= cost）
+                    bench,
+                    mode: unitPickMode,
+                });
 
                 if (playableUnit && bench.length < 6) {
+                    if (unitPickMode !== 'none' && playableUnits.length > 1) {
+                        // 实测用：看得出「为什么没打那张更便宜的」
+                        console.log(`[AI] 🎯 单位择优(mode=${unitPickMode}) 选中 ${playableUnit.key}`, playableUnits.map(u => u.key));
+                    }
                     console.log(`[AI] 🃏 打出单位: ${playableUnit.key}(${playableUnit.name})`);
                     setMessage(`敌方打出：${playableUnit.name}`);
                     actions.playCard(playableUnit, 'enemy');
@@ -958,7 +999,10 @@ export const useAI = ({ game, enemyHand, enemyBench, playerBench, combatField, a
                                 return;
                             }
                             commitAttackInFlightRef.current = true;
-                            const newCombat = cappedAttackers.map((c: CardData) => {
+                            // [2026-11-19 代码债收口] 显式标注返回类型：对象字面量在 `.map` 回调里
+                            //   会被 TS 加宽成 `{ owner: string }`，与 `CombatFieldItem.owner` 的
+                            //   字面量联合不兼容（`actions: any` 时代被静默吞掉，收口后立刻暴露）。
+                            const newCombat = cappedAttackers.map((c: CardData): CombatFieldItem => {
                                 const target = challengerTargets.get(c.id);
                                 return { attacker: c, blocker: target || null, owner: 'enemy', isChallenged: !!target };
                             });

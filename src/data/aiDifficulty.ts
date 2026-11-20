@@ -39,6 +39,9 @@ export interface AICapabilities {
     compareTrampleOpt: boolean;
     /** 算完格挡后复查是否仍然致命，不合格就清空重排。关＝一条链走到黑 */
     reassignOnLethal: boolean;
+    /** [2026-11-19 莉莉子] 出单位时按价值挑（`logic/aiUnitValue`）。
+     *  关＝按手牌顺序取第一张付得起的（旧行为，保留给 easy 当"蠢"的入口）。 */
+    valueUnitPlay: boolean;
 }
 
 /** 单档难度参数集 */
@@ -81,6 +84,7 @@ export const AI_DIFFICULTY: Record<AIDifficultyLevel, AIDifficultyConfig> = {
             dynamicTradeDiff: false,
             compareTrampleOpt: false,
             reassignOnLethal: false,
+            valueUnitPlay: false,
         },
     },
     normal: {
@@ -97,6 +101,7 @@ export const AI_DIFFICULTY: Record<AIDifficultyLevel, AIDifficultyConfig> = {
             dynamicTradeDiff: true,
             compareTrampleOpt: true,
             reassignOnLethal: false,
+            valueUnitPlay: true,
         },
     },
     hard: {
@@ -113,6 +118,7 @@ export const AI_DIFFICULTY: Record<AIDifficultyLevel, AIDifficultyConfig> = {
             dynamicTradeDiff: true,
             compareTrampleOpt: true,
             reassignOnLethal: true,
+            valueUnitPlay: true,
         },
     },
 };

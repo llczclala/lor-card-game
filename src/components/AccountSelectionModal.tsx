@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, Plus, Trash2, Check, X } from 'lucide-react';
 // [修正] 改为从 cards 导入数据，避免直接引用 imageData 可能导致的路径问题
 import { CARD_DB } from '../data/cards';
@@ -17,6 +17,13 @@ import {
 } from '../utils/saveSync/lan';
 // [2026-10-18 跨设备同步] 二维码（自己实现的最小编码器，见 qr.ts 头部说明）
 import { encodeQr, qrToSvgPath } from '../utils/saveSync/qr';
+// [2026-11-18 莉莉子 · 手机 ⇄ 手机] 二维码直传：压缩 + 分帧 + 拼装
+//   为什么需要：`lan.ts` 的架构是「PC 当服务端 / 手机当客户端」，两台手机没有服务端，
+//   所以走不了局域网。把数据本身切成多张二维码轮播，另一台连扫即可，全程离线。
+import {
+    splitIntoFrames, parseFrame, assembleFrames, compressText, decompressText,
+    isCompressionSupported, type FrameMeta,
+} from '../utils/saveSync/qrFrames';
 import { QrScanner } from './QrScanner';
 
 interface AccountSelectionModalProps {
@@ -111,6 +118,21 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
     const [scannerOpen, setScannerOpen] = useState(false);
     const [manualOpen, setManualOpen] = useState(false);
     const [textOpen, setTextOpen] = useState(false);
+
+    // ── [2026-11-18 莉莉子 · 手机 ⇄ 手机] 二维码直传状态 ──────────────────
+    /** 发送端：预计算好的每帧二维码（`encodeQr` 对 v25 很重，一次算完再轮播） */
+    const [directQrs, setDirectQrs] = useState<Array<{ path: string; size: number }>>([]);
+    /** 发送端：当前轮播到第几帧 */
+    const [directIdx, setDirectIdx] = useState(0);
+    const [directBusy, setDirectBusy] = useState(false);
+    const [directMsg, setDirectMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    /**
+     * 接收端的**权威**帧表。`setState` 是异步的，而"收齐判定"必须基于最新值 ——
+     * 用 ref 存真身、state 只负责驱动 UI 进度显示。
+     */
+    const directReceivedRef = useRef<Map<number, string>>(new Map());
+    /** 接收端当前会话（第一张帧确定，用于识别"换了一台发送方"） */
+    const directInMetaRef = useRef<FrameMeta | null>(null);
 
     /**
      * [2026-10-18 跨设备同步] 游戏内自带扫码。
@@ -260,6 +282,108 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
             setLanBusy(false);
         }
     };
+
+    // ══════════════════════════════════════════════════════════════════════
+    // [2026-11-18 莉莉子 · 手机 ⇄ 手机] 二维码直传
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * 发送端：把本机全部账号打包 → 压缩 → 切帧 → **预计算每帧二维码**。
+     * 预计算是必要的：v25 的 `encodeQr` 要试 8 个掩码再评分，轮播时每帧重算会卡成幻灯片。
+     */
+    const handleStartDirect = async () => {
+        setDirectBusy(true);
+        setDirectMsg(null);
+        try {
+            if (!isCompressionSupported()) {
+                throw new Error('当前环境不支持压缩（CompressionStream），无法生成直传二维码');
+            }
+            const accounts = readAllAccountSaves();
+            if (accounts.length === 0) throw new Error('本机没有可传的账号');
+
+            const pack = buildSavePack(accounts, isNative() ? 'mobile' : 'pc', {
+                platform: isNative() ? 'android' : 'pc',
+            });
+            const bytes = await compressText(JSON.stringify(pack));
+            const { frames } = splitIntoFrames(bytes);
+
+            const qrs = frames.map((f) => {
+                const q = encodeQr(f);
+                return { path: qrToSvgPath(q), size: q.size };
+            });
+
+            setDirectQrs(qrs);
+            setDirectIdx(0);
+            setDirectMsg({
+                ok: true,
+                text: `已生成 ${frames.length} 帧（${(bytes.length / 1024).toFixed(1)} KB）—— 让对方连扫，顺序不限`,
+            });
+        } catch (e) {
+            setDirectMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+        } finally {
+            setDirectBusy(false);
+        }
+    };
+
+    /** 停止发送：清掉二维码，回到未开始状态 */
+    const handleStopDirect = () => {
+        setDirectQrs([]);
+        setDirectIdx(0);
+        setDirectMsg(null);
+    };
+
+    /**
+     * 接收端：收到一帧。
+     * @returns true = 这是直传帧（扫码器应继续扫下一张）；false = 不是，交给配对码那条路
+     */
+    const handleDirectFrame = async (text: string): Promise<boolean> => {
+        const f = parseFrame(text);
+        if (!f) return false;
+
+        // 换了发送方（会话 id 变了）⇒ 丢弃旧帧，别把两套数据拼在一起
+        if (directInMetaRef.current && directInMetaRef.current.id !== f.id) {
+            directReceivedRef.current = new Map();
+        }
+        directInMetaRef.current = { id: f.id, total: f.total, crc: f.crc };
+        directReceivedRef.current.set(f.idx, f.data);
+
+        const got = directReceivedRef.current.size;
+        setDirectMsg({ ok: true, text: `已收到 ${got} / ${f.total} 帧…` });
+
+        if (got < f.total) return true;
+
+        // ── 收齐：校验 → 解压 → 解析 → 安装 ──
+        const bytes = assembleFrames(directReceivedRef.current, f.total, f.crc);
+        directReceivedRef.current = new Map();
+
+        if (!bytes) {
+            setDirectMsg({ ok: false, text: '帧数够了但整包校验没过（可能扫到了别的码）—— 请重扫' });
+            return true;
+        }
+        try {
+            const json = await decompressText(bytes);
+            const pack = parseSavePack(json);
+            const rep = installSavePack(pack);
+            onRefreshList?.();
+            setScannerOpen(false);
+            setDirectMsg({
+                ok: true,
+                text: `同步完成：新增 ${rep.installed.length} 个账号 · 跳过 ${rep.skipped.length} 个（已有的不覆盖）`,
+            });
+        } catch (e) {
+            setDirectMsg({ ok: false, text: `存档解析失败：${e instanceof Error ? e.message : String(e)}` });
+        }
+        return true;
+    };
+
+    // 轮播：每帧停留 1.2 秒（够对方扫到，又不至于等到不耐烦）
+    useEffect(() => {
+        if (directQrs.length <= 1) return;
+        const timer = window.setInterval(() => {
+            setDirectIdx((i) => (i + 1) % directQrs.length);
+        }, 1200);
+        return () => window.clearInterval(timer);
+    }, [directQrs.length]);
 
     // 面板关掉时务必收摊（不留一个开着的端口）
     useEffect(() => () => stopLanServer(), []);
@@ -458,6 +582,59 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                                         <b className="text-gray-200">扫到就自动连上，不用填任何东西</b>
                                     </div>
 
+                                    {/* ── [2026-11-18 莉莉子 · 手机 ⇄ 手机] 二维码直传 ──
+                                        两台手机都没有服务端（安卓 WebView 起不了监听 socket），
+                                        所以把存档切成多张二维码轮播，另一台连扫 —— 全程离线。 */}
+                                    <div className="pt-2 border-t border-white/10 space-y-3">
+                                        {directQrs.length === 0 ? (
+                                            <button
+                                                onClick={() => { eventBus.emit(GameEvents.UI_CLICK); void handleStartDirect(); }}
+                                                disabled={directBusy}
+                                                className={`w-full py-4 rounded-2xl text-lg font-black tracking-wide transition-all ${directBusy
+                                                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                                    : 'bg-gradient-to-r from-sky-600 to-cyan-600 hover:from-sky-500 hover:to-cyan-500 text-white shadow-lg shadow-sky-900/40'}`}
+                                            >
+                                                {directBusy ? '正在打包…' : '📤 生成二维码（另一台手机扫）'}
+                                            </button>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <div className="flex justify-center">
+                                                    <div
+                                                        className="bg-white rounded-2xl shadow-2xl"
+                                                        style={{ padding: Math.ceil((320 / directQrs[directIdx].size) * 4) }}
+                                                    >
+                                                        <svg
+                                                            width={320}
+                                                            height={320}
+                                                            viewBox={`0 0 ${directQrs[directIdx].size} ${directQrs[directIdx].size}`}
+                                                            aria-label="存档直传二维码"
+                                                        >
+                                                            <path d={directQrs[directIdx].path} fill="#000" />
+                                                        </svg>
+                                                    </div>
+                                                </div>
+                                                <div className="text-center text-sm font-mono text-cyan-300">
+                                                    第 {directIdx + 1} / {directQrs.length} 帧 · 自动轮播中
+                                                </div>
+                                                <div className="text-sm text-gray-400 text-center leading-relaxed">
+                                                    让对方在「存档互传」里点<b className="text-gray-200">「📷 扫描」</b>，对着这块屏幕连扫<br />
+                                                    <b className="text-gray-200">顺序不限，扫够 {directQrs.length} 张就自动完成</b>
+                                                </div>
+                                                <button
+                                                    onClick={() => { eventBus.emit(GameEvents.UI_CLICK); handleStopDirect(); }}
+                                                    className="w-full text-sm text-gray-500 hover:text-gray-300 underline transition-colors"
+                                                >
+                                                    停止发送
+                                                </button>
+                                            </div>
+                                        )}
+                                        {directMsg && (
+                                            <div className={`text-sm text-center leading-relaxed ${directMsg.ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                                {directMsg.text}
+                                            </div>
+                                        )}
+                                    </div>
+
                                     <button
                                         onClick={() => setManualOpen(v => !v)}
                                         className="w-full text-sm text-gray-500 hover:text-gray-300 underline transition-colors"
@@ -637,7 +814,17 @@ export const AccountSelectionModal: React.FC<AccountSelectionModalProps> = ({
                 {/* [2026-10-18] 全屏实时扫码覆盖层：扫到即自动连接 */}
                 {scannerOpen && (
                     <QrScanner
-                        onResult={(text) => { setScannerOpen(false); void handleScannedText(text); }}
+                        // [2026-11-18 莉莉子 · 手机 ⇄ 手机] 直传是多帧的，扫描器必须**连着扫**：
+                        //   · 是直传帧 → 收下、继续扫（不关）
+                        //   · 是配对码 → 关掉扫描器，走原来的局域网连接
+                        keepOpen
+                        onResult={(text) => {
+                            void (async () => {
+                                if (await handleDirectFrame(text)) return;
+                                setScannerOpen(false);
+                                void handleScannedText(text);
+                            })();
+                        }}
                         onClose={() => setScannerOpen(false)}
                     />
                 )}
